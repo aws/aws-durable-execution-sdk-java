@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -81,7 +82,7 @@ class StepPrimitiveTest {
     private StepPrimitive<String> createOperation(SerDes serDes) {
         return new StepPrimitive<>(
                 OPERATION_IDENTIFIER,
-                ignored -> ExtensionStepResult.succeed(RESULT),
+                ignored -> CompletableFuture.completedFuture(ExtensionStepResult.succeed(RESULT)),
                 TypeToken.get(String.class),
                 ExtensionStepConfig.<String>builder().serDes(serDes).build(),
                 durableContext);

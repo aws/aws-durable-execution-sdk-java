@@ -6,8 +6,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -231,11 +233,11 @@ public abstract class BaseDurableOperation {
      * @throws IllegalStateException if it's in a step
      */
     private void validateCurrentThreadType() {
-        ThreadType current = getCurrentThreadContext().threadType();
-        if (current == ThreadType.STEP) {
+        var threadContext = getCurrentThreadContext();
+        if (threadContext != null && threadContext.threadType() == ThreadType.STEP) {
             var message = String.format(
                     "Nested %s operation is not supported on %s from within a %s execution.",
-                    getType(), getName(), current);
+                    getType(), getName(), threadContext.threadType());
             throw new IllegalStateException(message);
         }
     }
@@ -307,58 +309,140 @@ public abstract class BaseDurableOperation {
      * @param threadType the thread type (STEP or CONTEXT)
      */
     protected void runUserHandler(Runnable runnable, ThreadType threadType) {
+        runUserHandlerAsync(
+                () -> {
+                    runnable.run();
+                    return CompletableFuture.completedFuture(null);
+                },
+                (ignored, throwable) -> throwable == null
+                        ? CompletableFuture.completedFuture(null)
+                        : CompletableFuture.failedFuture(throwable),
+                threadType,
+                false);
+    }
+
+    /**
+     * Runs an asynchronous operation user function without retaining a platform thread while its stage is incomplete.
+     *
+     * <p>When {@code deactivateWhileWaiting} is true, the logical durable thread is marked inactive after the callback
+     * returns an incomplete stage and is reactivated before {@code completionHandler} runs. This is appropriate for
+     * durable handler and child-context code that awaits other durable operations. Step bodies remain active while
+     * asynchronous side effects are in flight.
+     */
+    protected <T> void runUserHandlerAsync(
+            Supplier<? extends CompletionStage<T>> userFunction,
+            BiFunction<T, Throwable, ? extends CompletionStage<Void>> completionHandler,
+            ThreadType threadType,
+            boolean deactivateWhileWaiting) {
         String operationId = getOperationId();
         logger.debug("Starting user handler for operation {} ({})", operationId, threadType);
-        Runnable wrapped = () -> {
-            executionManager.setCurrentThreadContext(new ThreadContext(operationId, threadType));
+        Objects.requireNonNull(userFunction, "userFunction cannot be null");
+        Objects.requireNonNull(completionHandler, "completionHandler cannot be null");
 
-            try {
-                runnable.run();
-            } catch (Throwable throwable) {
-                // Operations wrap the user function and handle all outcomes except for SuspendExecutionException.
-                // Anything else reaching here is unexpected and terminates the execution.
-                if (!executionManager.isExecutionCompletedExceptionally()
-                        && !(throwable instanceof SuspendExecutionException)) {
-                    logger.error("An unhandled exception is thrown from user function: ", throwable);
-                    throw terminateExecutionWithIllegalDurableOperationException(
-                            "An unhandled exception is thrown from user function: " + throwable);
-                }
-            } finally {
-                if (operationId != null) {
-                    try {
-                        logger.trace("deregistering thread {} after running user handler {}", operationId, getName());
-                        // if this is a child context or a step context, we need to
-                        // deregister the context's thread from the execution manager
-                        deregisterActiveThread(operationId);
-                    } catch (SuspendExecutionException e) {
-                        // Expected when this is the last active thread. Must catch here because:
-                        // 1/ This runs in a worker thread detached from handlerFuture
-                        // 2/ Uncaught exception would prevent stepAsync().get() from resume
-                        // Suspension/Termination is already signaled via
-                        // suspendExecutionFuture/terminateExecutionFuture
-                        // before the throw.
-                    }
-                }
-            }
-        };
-
-        // runUserHandler is used to ensure that only one user handler is running at a time
         if (runningUserHandler.get() != null && !runningUserHandler.get().isDone()) {
             logger.error("User handler already running for operation {} ({})", getOperationId(), threadType);
             throw terminateExecutionWithIllegalDurableOperationException(
                     "User handler already running: " + getOperationId());
         }
 
-        // Thread registration is intentionally split across two threads:
-        // 1. registerActiveThread on the PARENT thread — ensures the child is tracked before the
-        //    parent can deregister and trigger suspension (race prevention).
-        // 2. setCurrentContext on the CHILD thread — sets the ThreadLocal so operations inside
-        //    the child context know which context they belong to.
-        // registerActiveThread is idempotent (no-op if already registered).
         registerActiveThread(operationId);
+        var lifecycle = new CompletableFuture<Void>();
+        runningUserHandler.set(lifecycle);
+        CompletableFuture.runAsync(
+                        () -> startAsyncUserHandler(
+                                userFunction, completionHandler, threadType, deactivateWhileWaiting, lifecycle),
+                        getContext().getDurableConfig().getExecutorService())
+                .exceptionally(throwable -> {
+                    finishAsyncUserHandler(threadType, lifecycle, throwable);
+                    return null;
+                });
+    }
 
-        runningUserHandler.set(CompletableFuture.runAsync(
-                wrapped, getContext().getDurableConfig().getExecutorService()));
+    private <T> void startAsyncUserHandler(
+            Supplier<? extends CompletionStage<T>> userFunction,
+            BiFunction<T, Throwable, ? extends CompletionStage<Void>> completionHandler,
+            ThreadType threadType,
+            boolean deactivateWhileWaiting,
+            CompletableFuture<Void> lifecycle) {
+        executionManager.setCurrentThreadContext(new ThreadContext(getOperationId(), threadType));
+        CompletionStage<T> userStage;
+        try {
+            userStage = Objects.requireNonNull(userFunction.get(), "User function stage cannot be null");
+        } catch (Throwable throwable) {
+            userStage = CompletableFuture.failedFuture(throwable);
+        }
+
+        var userFuture = copyStage(userStage);
+        if (deactivateWhileWaiting && !userFuture.isDone()) {
+            userFuture = executionManager.deactivateCurrentThreadUntilComplete(userFuture);
+        }
+
+        userFuture
+                .handle(AsyncUserFunctionResult<T>::new)
+                .thenComposeAsync(
+                        result -> runAsyncCompletionHandler(result, completionHandler, threadType),
+                        getContext().getDurableConfig().getExecutorService())
+                .whenCompleteAsync(
+                        (ignored, throwable) -> finishAsyncUserHandler(threadType, lifecycle, throwable),
+                        getContext().getDurableConfig().getExecutorService());
+    }
+
+    private <T> CompletionStage<Void> runAsyncCompletionHandler(
+            AsyncUserFunctionResult<T> result,
+            BiFunction<T, Throwable, ? extends CompletionStage<Void>> completionHandler,
+            ThreadType threadType) {
+        executionManager.setCurrentThreadContext(new ThreadContext(getOperationId(), threadType));
+        try {
+            return Objects.requireNonNull(
+                    completionHandler.apply(
+                            result.value(),
+                            result.throwable() == null
+                                    ? null
+                                    : ExceptionHelper.unwrapCompletableFuture(result.throwable())),
+                    "Completion handler stage cannot be null");
+        } catch (Throwable throwable) {
+            return CompletableFuture.failedFuture(throwable);
+        }
+    }
+
+    private void finishAsyncUserHandler(ThreadType threadType, CompletableFuture<Void> lifecycle, Throwable throwable) {
+        executionManager.setCurrentThreadContext(new ThreadContext(getOperationId(), threadType));
+        var cause = throwable == null ? null : ExceptionHelper.unwrapCompletableFuture(throwable);
+        if (cause != null
+                && !executionManager.isExecutionCompletedExceptionally()
+                && !(cause instanceof SuspendExecutionException)) {
+            logger.error("An unhandled exception is thrown from user function: ", cause);
+            try {
+                terminateExecutionWithIllegalDurableOperationException(
+                        "An unhandled exception is thrown from user function: " + cause);
+            } catch (Throwable ignored) {
+                // Termination is already recorded by the execution manager.
+            }
+        }
+        try {
+            logger.trace("deregistering thread {} after running user handler {}", getOperationId(), getName());
+            deregisterActiveThread(getOperationId());
+        } catch (SuspendExecutionException ignored) {
+            // Suspension is already recorded by the execution manager.
+        } finally {
+            if (cause == null) {
+                lifecycle.complete(null);
+            } else {
+                lifecycle.completeExceptionally(cause);
+            }
+        }
+    }
+
+    private static <T> CompletableFuture<T> copyStage(CompletionStage<T> stage) {
+        var future = new CompletableFuture<T>();
+        stage.whenComplete((value, throwable) -> {
+            if (throwable == null) {
+                future.complete(value);
+            } else {
+                future.completeExceptionally(ExceptionHelper.unwrapCompletableFuture(throwable));
+            }
+        });
+        return future;
     }
 
     /**
@@ -391,6 +475,34 @@ public abstract class BaseDurableOperation {
             return null; // unreachable — sneakyThrow always throws
         }
     }
+
+    /** Runs an asynchronous user function inside the plugin user-function hook boundary. */
+    protected <T> CompletionStage<T> runUserFunctionAsync(
+            Integer attempt, Supplier<? extends CompletionStage<T>> userFunction) {
+        var pluginRunner = getPluginRunner();
+        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(
+                operationIdentifier, durableContext.getParentId(), durableContext.isReplaying(), attempt);
+        pluginRunner.onUserFunctionStart(startInfo);
+
+        final CompletionStage<T> stage;
+        try {
+            stage = Objects.requireNonNull(userFunction.get(), "User function stage cannot be null");
+        } catch (Throwable throwable) {
+            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, false, throwable));
+            return CompletableFuture.failedFuture(throwable);
+        }
+        var result = copyStage(stage);
+        if (!result.isDone()) {
+            pluginRunner.onUserFunctionAsyncReturn(startInfo);
+        }
+
+        return result.whenComplete((ignored, throwable) -> {
+            var cause = throwable == null ? null : ExceptionHelper.unwrapCompletableFuture(throwable);
+            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, cause == null, cause));
+        });
+    }
+
+    private record AsyncUserFunctionResult<T>(T value, Throwable throwable) {}
 
     /**
      * Receives operation updates from ExecutionManager. Completes the internal future when the operation reaches a

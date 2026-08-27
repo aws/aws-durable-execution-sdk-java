@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Function;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
@@ -48,8 +49,9 @@ public final class DurableParallelOperation extends DurableConcurrencyOperation 
         private final Object lock = new Object();
         private final ParallelConfig config;
         private final SerDes defaultSerDes;
+        private final ExtensionContext parentContext;
         private final List<BranchDefinition<?>> branches = new ArrayList<>();
-        private final DurableFuture<ParallelResult> parentFuture;
+        private final CompletionStage<ParallelResult> parentStage;
         private ExtensionContext childContext;
         private OperationConcurrencyCoordinator coordinator;
         private ParallelResult replayState;
@@ -57,9 +59,10 @@ public final class DurableParallelOperation extends DurableConcurrencyOperation 
 
         ParallelOperationFuture(ExtensionContext context, String name, ParallelConfig config) {
             this.config = config;
+            parentContext = context;
             defaultSerDes = context.getDurableConfig().getSerDes();
             var parent = context.reserve(name);
-            parentFuture = parent.runInChildContextAsync(
+            parentStage = parent.runInChildContextAsync(
                     PARALLEL.getValue(),
                     parallelResultType(),
                     this::executeInChildContext,
@@ -91,29 +94,32 @@ public final class DurableParallelOperation extends DurableConcurrencyOperation 
         @Override
         public ParallelResult get() {
             closeRegistration();
-            return rebuildResult(parentFuture.get());
+            return rebuildResult(CompletionStageDurableFuture.from(parentContext, parentStage)
+                    .get());
         }
 
         @Override
         public CompletableFuture<Void> completionFuture() {
-            return parentFuture.completionFuture();
+            return CompletionStageDurableFuture.from(parentContext, parentStage).completionFuture();
         }
 
         @Override
         public void close() {
             if (closeRegistration()) {
-                parentFuture.get();
+                CompletionStageDurableFuture.from(parentContext, parentStage).get();
             }
         }
 
-        private ExtensionContextResult<ParallelResult> executeInChildContext() {
+        private CompletionStage<ExtensionContextResult<ParallelResult>> executeInChildContext() {
             var replay = ExtensionContextReplayContext.<ParallelResult>getCurrentContext();
             initializeCoordinator(ExtensionContext.getCurrentContext(), replay);
             var completion = replayState == null
                     ? coordinator.awaitCompletion()
                     : coordinator.awaitCompletion(expectedCompletion(replayState));
-            var result = constructResult(completion);
-            return ExtensionContextResult.replayChildren(result, result);
+            return completion.thenApply(completed -> {
+                var result = constructResult(completed);
+                return ExtensionContextResult.replayChildren(result, result);
+            });
         }
 
         private void initializeCoordinator(
@@ -141,10 +147,10 @@ public final class DurableParallelOperation extends DurableConcurrencyOperation 
                     () -> reservation.runInChildContextAsync(
                             PARALLEL_BRANCH.getValue(),
                             definition.resultType,
-                            () -> ExtensionContextResult.replayChildrenAboveSize(
+                            () -> CompletableFuture.completedFuture(ExtensionContextResult.replayChildrenAboveSize(
                                     definition.function.apply(DurableContext.requireCurrentContext()),
                                     null,
-                                    LARGE_RESULT_THRESHOLD),
+                                    LARGE_RESULT_THRESHOLD)),
                             branchConfig(definition.config)),
                     skipped);
             definition.future.bind(item.future());

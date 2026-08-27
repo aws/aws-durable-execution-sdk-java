@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import org.junit.jupiter.api.Test;
-import software.amazon.lambda.durable.DurableFuture;
 
 class DeferredDurableFutureTest {
     @Test
@@ -24,7 +23,7 @@ class DeferredDurableFutureTest {
 
         assertFalse(result.isDone());
 
-        deferred.bind(new TestFuture<>("result"));
+        deferred.bind(CompletableFuture.completedFuture("result"));
 
         assertEquals("result", result.join());
     }
@@ -33,12 +32,12 @@ class DeferredDurableFutureTest {
     void completionSignalObtainedBeforeBindingTracksDelegate() {
         var deferred = new DurableConcurrencyOperation.DeferredDurableFuture<String>();
         var completion = deferred.completionFuture();
-        var delegate = new TestFuture<>("result");
+        var delegate = new CompletableFuture<String>();
 
         deferred.bind(delegate);
         assertFalse(completion.isDone());
 
-        delegate.complete();
+        delegate.complete("result");
 
         completion.join();
     }
@@ -46,33 +45,11 @@ class DeferredDurableFutureTest {
     @Test
     void bindRejectsASecondDelegate() {
         var deferred = new DurableConcurrencyOperation.DeferredDurableFuture<String>();
-        deferred.bind(new TestFuture<>("first"));
+        deferred.bind(CompletableFuture.completedFuture("first"));
 
-        var exception = assertThrows(IllegalStateException.class, () -> deferred.bind(new TestFuture<>("second")));
+        var exception = assertThrows(
+                IllegalStateException.class, () -> deferred.bind(CompletableFuture.completedFuture("second")));
 
-        assertEquals("A deferred durable future can only be bound once", exception.getMessage());
-    }
-
-    private static final class TestFuture<T> implements DurableFuture<T> {
-        private final T result;
-        private final CompletableFuture<Void> completion = new CompletableFuture<>();
-
-        private TestFuture(T result) {
-            this.result = result;
-        }
-
-        @Override
-        public T get() {
-            return result;
-        }
-
-        @Override
-        public CompletableFuture<Void> completionFuture() {
-            return completion;
-        }
-
-        private void complete() {
-            completion.complete(null);
-        }
+        assertEquals("A deferred stage can only be bound once", exception.getMessage());
     }
 }

@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.operation;
 import static software.amazon.lambda.durable.model.OperationSubType.STEP;
 
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
@@ -58,16 +59,25 @@ public final class DurableStepOperation {
         ParameterValidator.validateOperationName(name);
 
         var context = ExtensionContext.getCurrentContext();
-        return context.reserve(name)
-                .stepAsync(
-                        STEP.getValue(),
-                        resultType,
-                        ignored -> ExtensionStepResult.succeed(function.get()),
-                        ExtensionStepConfig.<T>builder()
-                                .serDes(config.serDes())
-                                .retryStrategy(adapt(config.retryStrategy()))
-                                .semanticsPerRetry(adapt(config.semanticsPerRetry()))
-                                .build());
+        return CompletionStageDurableFuture.from(
+                context,
+                STEP.name(),
+                name,
+                context.reserve(name)
+                        .stepAsync(
+                                STEP.getValue(),
+                                resultType,
+                                ignored ->
+                                        CompletableFuture.completedFuture(ExtensionStepResult.succeed(function.get())),
+                                extensionConfig(config)));
+    }
+
+    static <T> ExtensionStepConfig<T> extensionConfig(StepConfig config) {
+        return ExtensionStepConfig.<T>builder()
+                .serDes(config.serDes())
+                .retryStrategy(adapt(config.retryStrategy()))
+                .semanticsPerRetry(adapt(config.semanticsPerRetry()))
+                .build();
     }
 
     private static <T> ExtensionStepConfig.RetryStrategy<T> adapt(RetryStrategy retryStrategy) {

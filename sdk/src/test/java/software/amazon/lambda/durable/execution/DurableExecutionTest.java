@@ -6,13 +6,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -24,9 +28,12 @@ import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
 
 class DurableExecutionTest {
 
@@ -106,6 +113,95 @@ class DurableExecutionTest {
 
         assertEquals(ExecutionStatus.PENDING, output.status());
         assertNull(output.result());
+    }
+
+    @Test
+    void testExecuteAsyncSuspendsOnExtensionStageWithoutBlockingHandlerThread() {
+        var executionOp = Operation.builder()
+                .id(EXECUTION_OP_ID)
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
+                .executionDetails(ExecutionDetails.builder()
+                        .inputPayload("\"test-input\"")
+                        .build())
+                .build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp))
+                        .build());
+
+        var startThread = new AtomicReference<Thread>();
+        var asyncReturnThread = new AtomicReference<Thread>();
+        var plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationStart(InvocationInfo info) {
+                startThread.set(Thread.currentThread());
+            }
+
+            @Override
+            public void onInvocationAsyncReturn(InvocationInfo info) {
+                asyncReturnThread.set(Thread.currentThread());
+            }
+        };
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withPlugins(plugin)
+                .build();
+        var output = DurableExecutor.executeAsync(
+                input,
+                null,
+                get(String.class),
+                (userInput, context) -> ((ExtensionContext) context)
+                        .reserve("wait")
+                        .waitAsync(OperationSubType.WAIT.getValue(), Duration.ofMinutes(5))
+                        .thenApply(ignored -> "done"),
+                config);
+
+        assertEquals(ExecutionStatus.PENDING, output.status());
+        assertNull(output.result());
+        assertSame(startThread.get(), asyncReturnThread.get());
+    }
+
+    @Test
+    void testExecuteAsyncCompletesReplayedExtensionStage() {
+        var executionOp = Operation.builder()
+                .id(EXECUTION_OP_ID)
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
+                .executionDetails(ExecutionDetails.builder()
+                        .inputPayload("\"test-input\"")
+                        .build())
+                .build();
+        var completedWait = Operation.builder()
+                .id(OPERATION_ID1)
+                .name("wait")
+                .type(OperationType.WAIT)
+                .subType(OperationSubType.WAIT.getValue())
+                .status(OperationStatus.SUCCEEDED)
+                .build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token2",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp, completedWait))
+                        .build());
+
+        var output = DurableExecutor.executeAsync(
+                input,
+                null,
+                get(String.class),
+                (userInput, context) -> ((ExtensionContext) context)
+                        .reserve("wait")
+                        .waitAsync(OperationSubType.WAIT.getValue(), Duration.ofMinutes(5))
+                        .thenCompose(ignored -> CompletableFuture.completedFuture("done")),
+                configWithMockClient());
+
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertTrue(output.result().contains("done"));
     }
 
     @Test

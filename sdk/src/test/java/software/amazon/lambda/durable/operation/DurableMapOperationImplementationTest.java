@@ -28,7 +28,6 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableContext;
-import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.exception.MapIterationFailedException;
@@ -69,7 +68,7 @@ class DurableMapOperationImplementationTest {
                 (item, index, child) -> item + index,
                 config);
 
-        assertSame(parentFuture, actual);
+        assertSame(parentFuture.join(), actual.get());
         var function = extensionFunction();
         var parentConfig = ArgumentCaptor.forClass(ExtensionContextConfig.class);
         verify(parent)
@@ -90,17 +89,18 @@ class DurableMapOperationImplementationTest {
                         eq(TypeToken.get(String.class)),
                         any(ExtensionContextFunction.class),
                         any(ExtensionContextConfig.class)))
-                .thenReturn(new CompletedFuture<>("a0"));
+                .thenReturn(CompletableFuture.completedFuture("a0"));
         when(second.runInChildContextAsync(
                         eq(MAP_ITERATION.getValue()),
                         eq(TypeToken.get(String.class)),
                         any(ExtensionContextFunction.class),
                         any(ExtensionContextConfig.class)))
-                .thenReturn(new CompletedFuture<>("b1"));
+                .thenReturn(CompletableFuture.completedFuture("b1"));
 
         try (var ignoredContext = BaseContextImpl.attachCurrentContext(child);
                 var ignoredReplay = ExtensionContextReplayContext.attach(false, null)) {
-            var result = function.getValue().apply().result();
+            var result =
+                    function.getValue().apply().toCompletableFuture().join().result();
             assertEquals(List.of("a0", "b1"), result.results());
         }
 
@@ -163,7 +163,7 @@ class DurableMapOperationImplementationTest {
                         eq(TypeToken.get(String.class)),
                         any(ExtensionContextFunction.class),
                         any(ExtensionContextConfig.class)))
-                .thenReturn(new CompletedFuture<>("completed"));
+                .thenReturn(CompletableFuture.completedFuture("completed"));
         var replayState = new MapResult<>(
                 List.of(MapResult.MapResultItem.<String>skipped(), MapResult.MapResultItem.succeeded("completed")),
                 MIN_SUCCESSFUL_REACHED);
@@ -171,7 +171,7 @@ class DurableMapOperationImplementationTest {
         MapResult<String> result;
         try (var ignoredContext = BaseContextImpl.attachCurrentContext(child);
                 var ignoredReplay = ExtensionContextReplayContext.attach(false, true, replayState)) {
-            result = function.getValue().apply().result();
+            result = function.getValue().apply().toCompletableFuture().join().result();
         }
 
         assertEquals(replayState, result);
@@ -234,22 +234,11 @@ class DurableMapOperationImplementationTest {
         return (ArgumentCaptor) ArgumentCaptor.forClass(ExtensionContextFunction.class);
     }
 
-    @SuppressWarnings("unchecked")
-    private DurableFuture<MapResult<String>> mockMapFuture() {
-        return mock(DurableFuture.class);
+    private CompletableFuture<MapResult<String>> mockMapFuture() {
+        return CompletableFuture.completedFuture(new MapResult<>(
+                List.of(MapResult.MapResultItem.succeeded("result")),
+                software.amazon.lambda.durable.model.ConcurrencyCompletionStatus.ALL_COMPLETED));
     }
 
     private interface CurrentContext extends DurableContext, ExtensionContext {}
-
-    private record CompletedFuture<T>(T result) implements DurableFuture<T> {
-        @Override
-        public T get() {
-            return result;
-        }
-
-        @Override
-        public CompletableFuture<Void> completionFuture() {
-            return CompletableFuture.completedFuture(null);
-        }
-    }
 }

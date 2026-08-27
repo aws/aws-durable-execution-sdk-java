@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletionStage;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
@@ -26,6 +28,30 @@ class ExtensionOperationTest {
                 .collect(Collectors.toSet());
 
         assertEquals(expected, actual);
+    }
+
+    @Test
+    void exposesCompletionStagesAcrossTheAsyncSpi() throws Exception {
+        var expected = Map.of(
+                "stepAsync", CompletionStage.class,
+                "waitAsync", CompletionStage.class,
+                "invokeAsync", CompletionStage.class,
+                "createCallback", ExtensionCallback.class,
+                "runInChildContextAsync", CompletionStage.class);
+
+        var actual = Arrays.stream(ExtensionOperation.class.getDeclaredMethods())
+                .filter(method -> !method.isSynthetic())
+                .collect(Collectors.toMap(Method::getName, Method::getReturnType));
+
+        assertEquals(expected, actual);
+        assertEquals(
+                CompletionStage.class,
+                ExtensionStepFunction.class
+                        .getDeclaredMethod("apply", Object.class)
+                        .getReturnType());
+        assertEquals(
+                CompletionStage.class,
+                ExtensionContextFunction.class.getDeclaredMethod("apply").getReturnType());
     }
 
     private static String signature(Method method) {

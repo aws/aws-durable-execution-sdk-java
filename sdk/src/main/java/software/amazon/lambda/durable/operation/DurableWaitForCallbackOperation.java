@@ -3,9 +3,10 @@
 package software.amazon.lambda.durable.operation;
 
 import static software.amazon.lambda.durable.execution.ExecutionManager.isTerminalStatus;
-import static software.amazon.lambda.durable.operation.DurableStepOperation.step;
 
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -22,6 +23,7 @@ import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextFailure;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
+import software.amazon.lambda.durable.extension.ExtensionStepResult;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.util.ParameterValidator;
@@ -86,11 +88,13 @@ public final class DurableWaitForCallbackOperation {
         ParameterValidator.validateOperationName(name, MAX_NAME_LENGTH);
 
         var parent = context.reserve(name);
-        return parent.runInChildContextAsync(
-                OperationSubType.WAIT_FOR_CALLBACK.getValue(),
-                resultType,
-                () -> executeInChildContext(name, resultType, submitter, config),
-                extensionConfig(config));
+        return CompletionStageDurableFuture.from(
+                context,
+                parent.runInChildContextAsync(
+                        OperationSubType.WAIT_FOR_CALLBACK.getValue(),
+                        resultType,
+                        () -> executeInChildContext(name, resultType, submitter, config),
+                        extensionConfig(config)));
     }
 
     private static BiConsumer<String, StepContext> adapt(Runnable submitter) {
@@ -102,7 +106,7 @@ public final class DurableWaitForCallbackOperation {
         };
     }
 
-    private static <T> ExtensionContextResult<T> executeInChildContext(
+    private static <T> CompletionStage<ExtensionContextResult<T>> executeInChildContext(
             String name,
             TypeToken<T> resultType,
             BiConsumer<String, StepContext> submitter,
@@ -113,15 +117,19 @@ public final class DurableWaitForCallbackOperation {
                         OperationSubType.CALLBACK.getValue(),
                         resultType,
                         DurableCallbackOperation.extensionConfig(config.callbackConfig()));
-        step(
-                name + SUBMITTER_SUFFIX,
-                Void.class,
-                () -> {
-                    submitter.accept(callback.callbackId(), StepContext.requireCurrentContext());
-                    return null;
-                },
-                config.stepConfig());
-        return ExtensionContextResult.replayChildrenAboveSize(callback.get(), null, LARGE_RESULT_THRESHOLD);
+        var submitterStage = child.reserve(name + SUBMITTER_SUFFIX)
+                .stepAsync(
+                        OperationSubType.STEP.getValue(),
+                        TypeToken.get(Void.class),
+                        ignored -> {
+                            submitter.accept(callback.callbackId(), StepContext.requireCurrentContext());
+                            return CompletableFuture.completedFuture(ExtensionStepResult.succeed(null));
+                        },
+                        DurableStepOperation.extensionConfig(config.stepConfig()));
+        return submitterStage
+                .thenCompose(ignored -> callback.result())
+                .thenApply(
+                        result -> ExtensionContextResult.replayChildrenAboveSize(result, null, LARGE_RESULT_THRESHOLD));
     }
 
     private static ExtensionContextConfig extensionConfig(WaitForCallbackConfig config) {

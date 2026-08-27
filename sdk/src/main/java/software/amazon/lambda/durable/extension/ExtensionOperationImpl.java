@@ -4,9 +4,9 @@ package software.amazon.lambda.durable.extension;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
 import software.amazon.awssdk.services.lambda.model.OperationType;
-import software.amazon.lambda.durable.DurableCallbackFuture;
 import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
@@ -42,7 +42,7 @@ public final class ExtensionOperationImpl implements ExtensionOperation {
     }
 
     @Override
-    public <T> DurableFuture<T> stepAsync(
+    public <T> CompletionStage<T> stepAsync(
             String subType, TypeToken<T> resultType, ExtensionStepFunction<T> function, ExtensionStepConfig<T> config) {
         validateSubType(subType);
         Objects.requireNonNull(resultType, "resultType cannot be null");
@@ -61,22 +61,22 @@ public final class ExtensionOperationImpl implements ExtensionOperation {
                 config,
                 context);
         operation.execute();
-        return operation;
+        return resultStage(operation, operation);
     }
 
     @Override
-    public DurableFuture<Void> waitAsync(String subType, Duration duration) {
+    public CompletionStage<Void> waitAsync(String subType, Duration duration) {
         validateSubType(subType);
         ParameterValidator.validateDuration(duration, "Wait duration");
         claim();
         var operation = new WaitPrimitive(
                 new PrimitiveOperationIdentifier(operationId, name, OperationType.WAIT, subType), duration, context);
         operation.execute();
-        return operation;
+        return resultStage(operation, operation);
     }
 
     @Override
-    public <T, U> DurableFuture<T> invokeAsync(
+    public <T, U> CompletionStage<T> invokeAsync(
             String subType, String functionName, U payload, TypeToken<T> resultType, ExtensionInvokeConfig config) {
         validateSubType(subType);
         Objects.requireNonNull(resultType, "resultType cannot be null");
@@ -100,11 +100,11 @@ public final class ExtensionOperationImpl implements ExtensionOperation {
                 config,
                 context);
         operation.execute();
-        return operation;
+        return resultStage(operation, operation);
     }
 
     @Override
-    public <T> DurableCallbackFuture<T> createCallback(
+    public <T> ExtensionCallback<T> createCallback(
             String subType, TypeToken<T> resultType, ExtensionCallbackConfig config) {
         validateSubType(subType);
         Objects.requireNonNull(resultType, "resultType cannot be null");
@@ -121,11 +121,12 @@ public final class ExtensionOperationImpl implements ExtensionOperation {
                 config,
                 context);
         operation.execute();
-        return operation;
+        var result = resultStage(operation, operation);
+        return new ExtensionCallback<>(operation.callbackId(), result);
     }
 
     @Override
-    public <T> DurableFuture<T> runInChildContextAsync(
+    public <T> CompletionStage<T> runInChildContextAsync(
             String subType,
             TypeToken<T> resultType,
             ExtensionContextFunction<T> function,
@@ -148,7 +149,14 @@ public final class ExtensionOperationImpl implements ExtensionOperation {
                 context,
                 lateCheckpointOwner);
         operation.execute();
-        return operation;
+        return resultStage(operation, operation);
+    }
+
+    private static <T> CompletionStage<T> resultStage(DurableFuture<T> future, BasePrimitive operation) {
+        return operation
+                .getCompletionFuture()
+                .thenApply(ignored -> future.get())
+                .minimalCompletionStage();
     }
 
     private void validateSubType(String subType) {

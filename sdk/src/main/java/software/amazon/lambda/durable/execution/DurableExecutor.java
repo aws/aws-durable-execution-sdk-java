@@ -5,8 +5,10 @@ package software.amazon.lambda.durable.execution;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import org.slf4j.Logger;
@@ -54,6 +56,27 @@ public class DurableExecutor {
             TypeToken<I> inputType,
             BiFunction<I, DurableContext, O> handler,
             DurableConfig config) {
+        return executeAsync(
+                input,
+                lambdaContext,
+                inputType,
+                (userInput, durableContext) ->
+                        CompletableFuture.completedFuture(handler.apply(userInput, durableContext)),
+                config);
+    }
+
+    /**
+     * Executes a durable handler whose result is produced asynchronously.
+     *
+     * <p>The handler may return an incomplete stage without retaining a platform thread. If it is awaiting durable
+     * operations, the logical root context is marked inactive so the invocation can suspend and replay normally.
+     */
+    public static <I, O> DurableExecutionOutput executeAsync(
+            DurableExecutionInput input,
+            Context lambdaContext,
+            TypeToken<I> inputType,
+            BiFunction<I, DurableContext, ? extends CompletionStage<O>> handler,
+            DurableConfig config) {
         var pluginRunner = config.getPluginRunner();
         try (var executionManager = new ExecutionManager(input, config, lambdaContext)) {
             var isFirstInvocation = !executionManager.isReplaying();
@@ -63,47 +86,76 @@ public class DurableExecutor {
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
             var pluginExecutionInput = new AtomicReference<>();
-            var handlerFuture = CompletableFuture.supplyAsync(
-                    () -> {
-                        executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
+            var handlerFuture = new CompletableFuture<O>();
+            CompletableFuture.runAsync(
+                            () -> {
+                                executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
 
-                        // Deserialize once and share the value with the plugin hooks and the handler below. A second
-                        // deserialization would double the cost, hand plugins a different object than the handler, and
-                        // re-run any side effects in a stateful custom SerDes. A failure is captured rather than thrown
-                        // so onInvocationStart still fires before it surfaces, keeping the start/end hooks paired.
-                        // SerDes is a public extension point whose deserialize declares no checked exceptions, so an
-                        // implementation may sneaky-throw one; capture every Throwable and rethrow it unchanged.
-                        I userInput = null;
-                        Throwable inputFailure = null;
-                        try {
-                            userInput = extractUserInput(
-                                    executionManager.getExecutionOperation(), config.getSerDes(), inputType);
-                        } catch (Throwable t) {
-                            inputFailure = t;
-                        }
-                        pluginExecutionInput.set(userInput);
+                                // Deserialize once and share the value with the plugin hooks and the handler below. A
+                                // second
+                                // deserialization would double the cost, hand plugins a different object than the
+                                // handler, and
+                                // re-run any side effects in a stateful custom SerDes. A failure is captured rather
+                                // than thrown
+                                // so onInvocationStart still fires before it surfaces, keeping the start/end hooks
+                                // paired.
+                                // SerDes is a public extension point whose deserialize declares no checked exceptions,
+                                // so an
+                                // implementation may sneaky-throw one; capture every Throwable and rethrow it
+                                // unchanged.
+                                I userInput = null;
+                                Throwable inputFailure = null;
+                                try {
+                                    userInput = extractUserInput(
+                                            executionManager.getExecutionOperation(), config.getSerDes(), inputType);
+                                } catch (Throwable t) {
+                                    inputFailure = t;
+                                }
+                                pluginExecutionInput.set(userInput);
 
-                        // onInvocationStart runs on the user thread so plugins can
-                        // inject ThreadLocal objects, update MDC, etc.
-                        // executionStartTime comes from the initial EXECUTION operation in the first backend event.
-                        pluginRunner.onInvocationStart(new InvocationInfo(
-                                requestId,
-                                executionArn,
-                                isFirstInvocation,
-                                executionManager.getExecutionOperation().startTimestamp(),
-                                userInput));
-                        if (inputFailure != null) {
-                            ExceptionHelper.sneakyThrow(inputFailure);
-                        }
+                                // onInvocationStart runs on the user thread so plugins can
+                                // inject ThreadLocal objects, update MDC, etc.
+                                // executionStartTime comes from the initial EXECUTION operation in the first backend
+                                // event.
+                                var invocationInfo = new InvocationInfo(
+                                        requestId,
+                                        executionArn,
+                                        isFirstInvocation,
+                                        executionManager.getExecutionOperation().startTimestamp(),
+                                        userInput);
+                                pluginRunner.onInvocationStart(invocationInfo);
+                                if (inputFailure != null) {
+                                    ExceptionHelper.sneakyThrow(inputFailure);
+                                }
 
-                        var context = DurableContextImpl.createRootContext(executionManager, config, lambdaContext);
-                        // use a try-with-resources to clear logger properties
-                        try (var ignoredContext = DurableContextImpl.attachCurrentContext(context);
-                                var ignoredLogger = DurableLogger.attachContext()) {
-                            return handler.apply(userInput, context);
+                                var context =
+                                        DurableContextImpl.createRootContext(executionManager, config, lambdaContext);
+                                final CompletionStage<O> resultStage;
+                                try (var ignoredContext = DurableContextImpl.attachCurrentContext(context);
+                                        var ignoredLogger = DurableLogger.attachContext()) {
+                                    resultStage = handler.apply(userInput, context);
+                                }
+                                var resultFuture = copyStage(Objects.requireNonNull(
+                                        resultStage, "Durable async handler stage cannot be null"));
+                                if (!resultFuture.isDone()) {
+                                    pluginRunner.onInvocationAsyncReturn(invocationInfo);
+                                    resultFuture = executionManager.deactivateCurrentThreadUntilComplete(resultFuture);
+                                }
+                                resultFuture.whenComplete((result, throwable) -> {
+                                    if (throwable == null) {
+                                        handlerFuture.complete(result);
+                                    } else {
+                                        handlerFuture.completeExceptionally(
+                                                ExceptionHelper.unwrapCompletableFuture(throwable));
+                                    }
+                                });
+                            },
+                            config.getExecutorService())
+                    .whenComplete((ignored, throwable) -> {
+                        if (throwable != null) {
+                            handlerFuture.completeExceptionally(ExceptionHelper.unwrapCompletableFuture(throwable));
                         }
-                    },
-                    config.getExecutorService()); // Get executor from config for running user code
+                    });
 
             // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
             // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
@@ -249,6 +301,18 @@ public class DurableExecutor {
         return serDes.deserialize(inputPayload, inputType);
     }
 
+    private static <T> CompletableFuture<T> copyStage(CompletionStage<T> stage) {
+        var future = new CompletableFuture<T>();
+        stage.whenComplete((result, throwable) -> {
+            if (throwable == null) {
+                future.complete(result);
+            } else {
+                future.completeExceptionally(ExceptionHelper.unwrapCompletableFuture(throwable));
+            }
+        });
+        return future;
+    }
+
     /**
      * Wraps a user handler in a RequestHandler that can be used by the Lambda runtime.
      *
@@ -262,5 +326,13 @@ public class DurableExecutor {
     public static <I, O> RequestHandler<DurableExecutionInput, DurableExecutionOutput> wrap(
             TypeToken<I> inputType, BiFunction<I, DurableContext, O> handler, DurableConfig config) {
         return (input, context) -> execute(input, context, inputType, handler, config);
+    }
+
+    /** Wraps an asynchronous durable handler in a Lambda {@link RequestHandler}. */
+    public static <I, O> RequestHandler<DurableExecutionInput, DurableExecutionOutput> wrapAsync(
+            TypeToken<I> inputType,
+            BiFunction<I, DurableContext, ? extends CompletionStage<O>> handler,
+            DurableConfig config) {
+        return (input, context) -> executeAsync(input, context, inputType, handler, config);
     }
 }

@@ -17,6 +17,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.HexFormat;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -35,9 +36,8 @@ class ExtensionOperationIntegrationTest {
     @Test
     void reservedOperationsReplayWhenLaunchOrderChanges() {
         var extensionExecutions = new AtomicInteger();
-        var runner =
-                LocalDurableTestRunner.create(String.class, (input, context) -> pairAsync("pair", extensionExecutions)
-                        .get());
+        var runner = LocalDurableTestRunner.createAsync(
+                String.class, (input, context) -> pairAsync("pair", extensionExecutions));
 
         var result = runner.runUntilComplete("input");
 
@@ -53,9 +53,8 @@ class ExtensionOperationIntegrationTest {
     @Test
     void customExtensionFixtureSupportsLocalIdsAndSubtypesAcrossReplay() {
         var extensionExecutions = new AtomicInteger();
-        var runner = LocalDurableTestRunner.create(
-                String.class, (input, context) -> customOperationsAsync("custom", extensionExecutions)
-                        .get());
+        var runner = LocalDurableTestRunner.createAsync(
+                String.class, (input, context) -> customOperationsAsync("custom", extensionExecutions));
 
         var result = runner.runUntilComplete("input");
 
@@ -97,7 +96,7 @@ class ExtensionOperationIntegrationTest {
 
     @Test
     void extensionCanExplicitlyCreateChildContext() {
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.createAsync(String.class, (input, context) -> {
             var outer = ExtensionContext.getCurrentContext();
             return outer.reserve("child")
                     .runInChildContextAsync(
@@ -106,18 +105,17 @@ class ExtensionOperationIntegrationTest {
                             () -> {
                                 var child = ExtensionContext.getCurrentContext();
                                 assertNotSame(outer, child);
-                                var nested = child.reserve("value", "node")
+                                return child.reserve("value", "node")
                                         .stepAsync(
                                                 OperationSubType.STEP.getValue(),
                                                 TypeToken.get(String.class),
-                                                state -> ExtensionStepResult.succeed("nested"),
+                                                state -> CompletableFuture.completedFuture(
+                                                        ExtensionStepResult.succeed("nested")),
                                                 ExtensionStepConfig.<String>builder()
                                                         .build())
-                                        .get();
-                                return ExtensionContextResult.completed(nested);
+                                        .thenApply(ExtensionContextResult::completed);
                             },
-                            ExtensionContextConfig.builder().build())
-                    .get();
+                            ExtensionContextConfig.builder().build());
         });
 
         var result = runner.runUntilComplete("input");
@@ -130,28 +128,23 @@ class ExtensionOperationIntegrationTest {
 
     @Test
     void customPrimitiveSubtypesAreStoredWithoutChangingOperationTypes() {
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+        var runner = LocalDurableTestRunner.createAsync(String.class, (input, context) -> {
             var extension = ExtensionContext.getCurrentContext();
-            extension
-                    .reserve("custom-step")
-                    .stepAsync(
-                            "AcmeStep",
-                            TypeToken.get(String.class),
-                            state -> ExtensionStepResult.succeed("step"),
-                            ExtensionStepConfig.<String>builder().build())
-                    .get();
-            extension
-                    .reserve("custom-wait")
-                    .waitAsync("AcmeWait", Duration.ofSeconds(1))
-                    .get();
-            return extension
-                    .reserve("custom-context")
-                    .runInChildContextAsync(
-                            "AcmeContext",
-                            TypeToken.get(String.class),
-                            () -> ExtensionContextResult.completed("done"),
-                            ExtensionContextConfig.builder().build())
-                    .get();
+            var step = extension.reserve("custom-step");
+            var wait = extension.reserve("custom-wait");
+            var childContext = extension.reserve("custom-context");
+            var stepResult = step.stepAsync(
+                    "AcmeStep",
+                    TypeToken.get(String.class),
+                    state -> CompletableFuture.completedFuture(ExtensionStepResult.succeed("step")),
+                    ExtensionStepConfig.<String>builder().build());
+            var waitResult = wait.waitAsync("AcmeWait", Duration.ofSeconds(1));
+            var contextResult = childContext.runInChildContextAsync(
+                    "AcmeContext",
+                    TypeToken.get(String.class),
+                    () -> CompletableFuture.completedFuture(ExtensionContextResult.completed("done")),
+                    ExtensionContextConfig.builder().build());
+            return stepResult.thenCompose(ignored -> waitResult.thenCompose(alsoIgnored -> contextResult));
         });
 
         var result = runner.runUntilComplete("input");
@@ -168,19 +161,19 @@ class ExtensionOperationIntegrationTest {
 
     @Test
     void statefulExtensionStepCheckpointsStateAcrossRetries() {
-        var runner =
-                LocalDurableTestRunner.create(Integer.class, (input, context) -> ExtensionContext.getCurrentContext()
+        var runner = LocalDurableTestRunner.createAsync(
+                Integer.class, (input, context) -> ExtensionContext.getCurrentContext()
                         .reserve("stateful")
                         .stepAsync(
                                 "AcmeStateful",
                                 TypeToken.get(Integer.class),
-                                state -> state >= 2
-                                        ? ExtensionStepResult.succeed(state)
-                                        : ExtensionStepResult.retry(state + 1, Duration.ofSeconds(1)),
+                                state -> CompletableFuture.completedFuture(
+                                        state >= 2
+                                                ? ExtensionStepResult.succeed(state)
+                                                : ExtensionStepResult.retry(state + 1, Duration.ofSeconds(1))),
                                 ExtensionStepConfig.<Integer>builder()
                                         .initialState(0)
-                                        .build())
-                        .get());
+                                        .build()));
 
         var result = runner.runUntilComplete(0);
 
@@ -195,8 +188,8 @@ class ExtensionOperationIntegrationTest {
         var attempts = new AtomicInteger();
         var failedState = new AtomicReference<String>();
         var resumedState = new AtomicReference<String>();
-        var runner =
-                LocalDurableTestRunner.create(String.class, (input, context) -> ExtensionContext.getCurrentContext()
+        var runner = LocalDurableTestRunner.createAsync(
+                String.class, (input, context) -> ExtensionContext.getCurrentContext()
                         .reserve("retry")
                         .stepAsync(
                                 "AcmeRetry",
@@ -206,7 +199,7 @@ class ExtensionOperationIntegrationTest {
                                         throw new IllegalStateException("retry");
                                     }
                                     resumedState.set(state);
-                                    return ExtensionStepResult.succeed("done");
+                                    return CompletableFuture.completedFuture(ExtensionStepResult.succeed("done"));
                                 },
                                 ExtensionStepConfig.<String>builder()
                                         .initialState("initial")
@@ -216,8 +209,7 @@ class ExtensionOperationIntegrationTest {
                                                     ? ExtensionStepResult.retry("retried", Duration.ofSeconds(1))
                                                     : ExtensionStepResult.doNotRetry();
                                         })
-                                        .build())
-                        .get());
+                                        .build()));
 
         var result = runner.runUntilComplete("input");
 
@@ -233,8 +225,9 @@ class ExtensionOperationIntegrationTest {
     void extensionContextExposesStoredReplayStateWhileReplayingChildren() {
         var replayState = new AtomicReference<String>();
         var executions = new AtomicInteger();
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var result = ExtensionContext.getCurrentContext()
+        var runner = LocalDurableTestRunner.createAsync(String.class, (input, context) -> {
+            var extension = ExtensionContext.getCurrentContext();
+            var result = extension
                     .reserve("advanced")
                     .runInChildContextAsync(
                             "AcmeContext",
@@ -245,12 +238,12 @@ class ExtensionOperationIntegrationTest {
                                 if (replay.isReplayingChildren()) {
                                     replayState.set(replay.getReplayState());
                                 }
-                                return ExtensionContextResult.replayChildren("full", "stored");
+                                return CompletableFuture.completedFuture(
+                                        ExtensionContextResult.replayChildren("full", "stored"));
                             },
-                            ExtensionContextConfig.builder().build())
-                    .get();
-            context.wait("replay", Duration.ofSeconds(1));
-            return result;
+                            ExtensionContextConfig.builder().build());
+            var replay = extension.reserve("replay").waitAsync(OperationSubType.WAIT.getValue(), Duration.ofSeconds(1));
+            return result.thenCompose(value -> replay.thenApply(ignored -> value));
         });
 
         var result = runner.runUntilComplete("input");

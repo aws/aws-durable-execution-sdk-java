@@ -11,6 +11,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -34,10 +35,9 @@ class DurableWaitForConditionOperationTest {
     void conditionFunctionReceivesOnlyStateAndUsesStepContextFromTls() {
         var context = mock(CurrentExtensionContext.class);
         var reservation = mock(ExtensionOperation.class);
-        var future = mockStringFuture();
+        var future = CompletableFuture.completedFuture("VALUE");
         var stepContext = mock(StepContext.class);
         when(context.reserve("condition")).thenReturn(reservation);
-        when(future.get()).thenReturn("VALUE");
         when(reservation.stepAsync(
                         eq(OperationSubType.WAIT_FOR_CONDITION.getValue()),
                         eq(TypeToken.get(String.class)),
@@ -59,8 +59,8 @@ class DurableWaitForConditionOperationTest {
                         check.capture(),
                         any(ExtensionStepConfig.class));
         try (var ignored = BaseContextImpl.attachCurrentContext(stepContext)) {
-            var result =
-                    (ExtensionStepResult.Succeeded<String>) check.getValue().apply("value");
+            var result = (ExtensionStepResult.Succeeded<String>)
+                    check.getValue().apply("value").toCompletableFuture().join();
             assertEquals("VALUE", result.value());
         }
     }
@@ -79,11 +79,6 @@ class DurableWaitForConditionOperationTest {
     @SuppressWarnings({"rawtypes", "unchecked"})
     private ArgumentCaptor<ExtensionStepFunction<String>> extensionFunction() {
         return (ArgumentCaptor) ArgumentCaptor.forClass(ExtensionStepFunction.class);
-    }
-
-    @SuppressWarnings("unchecked")
-    private DurableFuture<String> mockStringFuture() {
-        return mock(DurableFuture.class);
     }
 
     private interface CurrentExtensionContext extends DurableContext, ExtensionContext {}

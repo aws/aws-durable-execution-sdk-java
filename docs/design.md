@@ -298,6 +298,7 @@ software.amazon.lambda.durable
 │   └── BaseContextImpl      # Scoped current-context attachment
 │
 ├── operation/                # Public built-in operation APIs + implementations
+│   ├── CompletionStageDurableFuture # Internal adapter for existing Java APIs
 │   ├── DurableConcurrencyOperation # Shared map/parallel config, futures, and coordinator
 │   ├── DurableStepOperation # Owns nested StepConfig
 │   ├── DurableWaitOperation
@@ -322,6 +323,7 @@ software.amazon.lambda.durable
 ├── extension/                # Public SPI for extension authors plus its internal bridge
 │   ├── ExtensionContext
 │   ├── ExtensionOperation
+│   ├── ExtensionCallback<T> # Immediate callback ID + asynchronous result
 │   ├── ExtensionOperationImpl # Internal bridge to primitive engines
 │   ├── ExtensionStepFunction<T>
 │   ├── ExtensionStepConfig<T> # Owns extension StepSemantics and retry contracts

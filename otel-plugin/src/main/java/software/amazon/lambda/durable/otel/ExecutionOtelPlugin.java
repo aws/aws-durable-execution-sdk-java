@@ -237,6 +237,13 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     }
 
     @Override
+    public void onInvocationAsyncReturn(InvocationInfo info) {
+        if (tracingEnabled && enableMdc) {
+            MdcSpanEnricher.clear();
+        }
+    }
+
+    @Override
     public void onInvocationEnd(InvocationEndInfo info) {
         if (!tracingEnabled) {
             return;
@@ -476,16 +483,32 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     }
 
     @Override
-    public void onUserFunctionEnd(UserFunctionEndInfo info) {
+    public void onUserFunctionAsyncReturn(UserFunctionStartInfo info) {
+        closeUserFunctionScope(info.id(), info.attempt());
+    }
+
+    private void closeUserFunctionScope(String operationId, Integer attempt) {
         if (!tracingEnabled) return;
+        var key = attemptKey(operationId, attempt);
 
-        var key = attemptKey(info.id(), info.attempt());
-
-        // Close scope first (must happen on same thread as makeCurrent)
+        // Scope must be closed on the same thread as makeCurrent.
         var scope = attemptScopes.remove(key);
         if (scope != null) {
             scope.close();
         }
+
+        // Keep trace_id for handler-level logs between operations.
+        if (enableMdc) {
+            MDC.remove(MdcSpanEnricher.MDC_SPAN_ID);
+        }
+    }
+
+    @Override
+    public void onUserFunctionEnd(UserFunctionEndInfo info) {
+        if (!tracingEnabled) return;
+
+        closeUserFunctionScope(info.id(), info.attempt());
+        var key = attemptKey(info.id(), info.attempt());
 
         // CONTEXT operations don't have attempt spans — scope cleanup is all we need
         if ("CONTEXT".equals(info.type())) {

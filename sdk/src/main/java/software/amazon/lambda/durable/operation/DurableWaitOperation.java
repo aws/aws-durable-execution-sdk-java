@@ -26,6 +26,6 @@ public final class DurableWaitOperation {
         Objects.requireNonNull(context, "context cannot be null");
         ParameterValidator.validateOperationName(name);
         ParameterValidator.validateDuration(duration, "Wait duration");
-        return context.reserve(name).waitAsync(WAIT.getValue(), duration);
+        return CompletionStageDurableFuture.from(context, context.reserve(name).waitAsync(WAIT.getValue(), duration));
     }
 }

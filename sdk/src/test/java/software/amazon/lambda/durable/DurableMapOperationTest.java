@@ -41,7 +41,7 @@ class DurableMapOperationTest {
         var expected = new MapResult<>(
                 List.of(MapResult.MapResultItem.succeeded("VALUE")),
                 software.amazon.lambda.durable.model.ConcurrencyCompletionStatus.ALL_COMPLETED);
-        var parentFuture = new CompletedFuture<>(expected);
+        var parentFuture = CompletableFuture.completedFuture(expected);
         when(context.getDurableConfig()).thenReturn(DurableConfig.builder().build());
         when(context.reserve("map")).thenReturn(parent);
         when(parent.runInChildContextAsync(
@@ -74,10 +74,10 @@ class DurableMapOperationTest {
                         eq(TypeToken.get(String.class)),
                         any(ExtensionContextFunction.class),
                         any(ExtensionContextConfig.class)))
-                .thenReturn(new CompletedFuture<>("VALUE"));
+                .thenReturn(CompletableFuture.completedFuture("VALUE"));
         try (var ignoredContext = BaseContextImpl.attachCurrentContext(context);
                 var ignoredReplay = ExtensionContextReplayContext.attach(false, null)) {
-            parentFunction.getValue().apply();
+            parentFunction.getValue().apply().toCompletableFuture().join();
         }
 
         @SuppressWarnings("unchecked")
@@ -90,22 +90,12 @@ class DurableMapOperationTest {
                         itemFunction.capture(),
                         any(ExtensionContextConfig.class));
         try (var ignored = BaseContextImpl.attachCurrentContext(context)) {
-            assertEquals("VALUE", itemFunction.getValue().apply().result());
+            assertEquals(
+                    "VALUE",
+                    itemFunction.getValue().apply().toCompletableFuture().join().result());
         }
         assertThrows(IllegalStateException.class, MapItemContext::getCurrentContext);
     }
 
     private interface CurrentContext extends DurableContext, ExtensionContext {}
-
-    private record CompletedFuture<T>(T result) implements DurableFuture<T> {
-        @Override
-        public T get() {
-            return result;
-        }
-
-        @Override
-        public CompletableFuture<Void> completionFuture() {
-            return CompletableFuture.completedFuture(null);
-        }
-    }
 }

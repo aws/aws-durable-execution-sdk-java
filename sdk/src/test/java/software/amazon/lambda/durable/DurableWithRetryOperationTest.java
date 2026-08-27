@@ -10,6 +10,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -32,9 +33,8 @@ class DurableWithRetryOperationTest {
     void retryBodyUsesSupplierAndScopedAttempt() {
         var context = mock(CurrentExtensionContext.class);
         var parent = mock(ExtensionOperation.class);
-        var future = mockIntegerFuture();
+        var future = CompletableFuture.completedFuture(1);
         when(context.reserve("retry")).thenReturn(parent);
-        when(future.get()).thenReturn(1);
         when(parent.runInChildContextAsync(
                         eq(OperationSubType.WITH_RETRY.getValue()),
                         any(TypeToken.class),
@@ -54,7 +54,8 @@ class DurableWithRetryOperationTest {
                         function.capture(),
                         any(ExtensionContextConfig.class));
         try (var ignored = BaseContextImpl.attachCurrentContext(context)) {
-            assertEquals(1, function.getValue().apply().result());
+            assertEquals(
+                    1, function.getValue().apply().toCompletableFuture().join().result());
         }
         assertThrows(IllegalStateException.class, WithRetryContext::getCurrentContext);
     }
@@ -62,11 +63,6 @@ class DurableWithRetryOperationTest {
     @SuppressWarnings({"rawtypes", "unchecked"})
     private ArgumentCaptor<ExtensionContextFunction<Object>> extensionFunction() {
         return (ArgumentCaptor) ArgumentCaptor.forClass(ExtensionContextFunction.class);
-    }
-
-    @SuppressWarnings("unchecked")
-    private DurableFuture<Integer> mockIntegerFuture() {
-        return mock(DurableFuture.class);
     }
 
     private interface CurrentExtensionContext extends DurableContext, ExtensionContext {}

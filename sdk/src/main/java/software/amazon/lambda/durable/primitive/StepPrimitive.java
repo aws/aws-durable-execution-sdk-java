@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.primitive;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -74,8 +75,7 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
             }
             case STARTED -> {
                 if (isAtMostOnce()) {
-                    handleExtensionStepFailure(
-                            new StepInterruptedException(existing), extensionState(existing), nextAttempt(existing));
+                    failInterruptedStep(existing);
                 } else {
                     resumeExtensionStep(existing);
                 }
@@ -85,6 +85,18 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
                 throw terminateExecutionWithIllegalDurableOperationException(
                         "Unexpected extension step status: " + existing.status());
         }
+    }
+
+    private void failInterruptedStep(Operation existing) {
+        var state = extensionState(existing);
+        var attempt = nextAttempt(existing);
+        runUserHandlerAsync(
+                () -> handleExtensionStepFailure(new StepInterruptedException(existing), state, attempt),
+                (ignored, throwable) -> throwable == null
+                        ? CompletableFuture.completedFuture(null)
+                        : CompletableFuture.failedFuture(throwable),
+                ThreadType.STEP,
+                false);
     }
 
     private void resumeExtensionStep(Operation existing) {
@@ -112,47 +124,74 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
     }
 
     private void executeExtensionStepLogic(T state, int attempt) {
-        Runnable userHandler = () -> {
-            var stepContext = getContext().createStepContext(getOperationId(), getName(), attempt);
-            try (var ignoredContext = BaseContextImpl.attachCurrentContext(stepContext);
-                    var ignoredLogger = DurableLogger.attachContext()) {
-                try {
-                    checkpointStarted();
-                    var result = runUserFunction(attempt, () -> extensionFunction.apply(state));
-                    handleExtensionStepResult(result, attempt);
-                } catch (Throwable e) {
-                    handleExtensionStepFailure(e, state, attempt);
-                }
-            }
-        };
-        runUserHandler(userHandler, ThreadType.STEP);
+        var stepContext = getContext().createStepContext(getOperationId(), getName(), attempt);
+        runUserHandlerAsync(
+                () -> {
+                    try (var ignoredContext = BaseContextImpl.attachCurrentContext(stepContext);
+                            var ignoredLogger = DurableLogger.attachContext()) {
+                        checkpointStarted();
+                        return runUserFunctionAsync(attempt, () -> extensionFunction.apply(state));
+                    }
+                },
+                (result, throwable) -> {
+                    try (var ignoredContext = BaseContextImpl.attachCurrentContext(stepContext);
+                            var ignoredLogger = DurableLogger.attachContext()) {
+                        return handleExtensionStepCompletion(result, throwable, state, attempt);
+                    }
+                },
+                ThreadType.STEP,
+                false);
     }
 
-    private void handleExtensionStepResult(ExtensionStepResult<T> result, int attempt) {
+    private CompletionStage<Void> handleExtensionStepCompletion(
+            ExtensionStepResult<T> result, Throwable throwable, T state, int attempt) {
+        if (throwable != null) {
+            return handleExtensionStepFailure(throwable, state, attempt);
+        }
+
+        final CompletionStage<Void> success;
+        try {
+            success = handleExtensionStepResult(result, attempt);
+        } catch (Throwable failure) {
+            return handleExtensionStepFailure(failure, state, attempt);
+        }
+        return success.handle((ignored, failure) -> failure == null
+                        ? CompletableFuture.<Void>completedFuture(null)
+                        : handleExtensionStepFailure(failure, state, attempt))
+                .thenCompose(Function.identity());
+    }
+
+    private CompletionStage<Void> handleExtensionStepResult(ExtensionStepResult<T> result, int attempt) {
         if (result == null) {
-            throw new NullPointerException("Extension step function result cannot be null");
+            return CompletableFuture.failedFuture(
+                    new NullPointerException("Extension step function result cannot be null"));
         }
         if (result instanceof ExtensionStepResult.Succeeded<T> succeeded) {
-            handleStepSucceeded(succeeded.value());
-            return;
+            return handleStepSucceeded(succeeded.value());
         }
         if (result instanceof ExtensionStepResult.Retry<T> retry) {
-            handleExtensionStepRetry(retry.state(), ignored -> retry.delay(), null, attempt);
-            return;
+            return handleExtensionStepRetry(retry.state(), ignored -> retry.delay(), null, attempt);
         }
         var retry = (ExtensionStepResult.RetryAfterNormalization<T>) result;
-        handleExtensionStepRetry(retry.state(), retry::delay, null, attempt);
+        return handleExtensionStepRetry(retry.state(), retry::delay, null, attempt);
     }
 
-    private void handleExtensionStepRetry(ExtensionStepResult.Retry<T> retry, ErrorObject error, int attempt) {
-        handleExtensionStepRetry(retry.state(), ignored -> retry.delay(), error, attempt);
+    private CompletionStage<Void> handleExtensionStepRetry(
+            ExtensionStepResult.Retry<T> retry, ErrorObject error, int attempt) {
+        return handleExtensionStepRetry(retry.state(), ignored -> retry.delay(), error, attempt);
     }
 
-    private void handleExtensionStepRetry(
+    private CompletionStage<Void> handleExtensionStepRetry(
             T state, Function<T, Duration> delayStrategy, ErrorObject error, int attempt) {
-        var serializedState = serializeAndDeserializeResult(state);
-        var delay = delayStrategy.apply(serializedState.deserialized());
-        var retryDelaySeconds = Math.toIntExact(delay.toSeconds());
+        final SerializedResult<T> serializedState;
+        final int retryDelaySeconds;
+        try {
+            serializedState = serializeAndDeserializeResult(state);
+            var delay = delayStrategy.apply(serializedState.deserialized());
+            retryDelaySeconds = Math.toIntExact(delay.toSeconds());
+        } catch (Throwable throwable) {
+            return CompletableFuture.failedFuture(throwable);
+        }
         var update = OperationUpdate.builder()
                 .action(OperationAction.RETRY)
                 .payload(serializedState.serialized())
@@ -162,9 +201,11 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
         if (error != null) {
             update.error(error);
         }
-        sendOperationUpdate(update);
-        pollReadyAndExecuteExtensionStep(
-                serializedState.deserialized(), attempt + 1, Instant.now().plusSeconds(retryDelaySeconds));
+        return sendOperationUpdateAsync(update)
+                .thenRun(() -> pollReadyAndExecuteExtensionStep(
+                        serializedState.deserialized(),
+                        attempt + 1,
+                        Instant.now().plusSeconds(retryDelaySeconds)));
     }
 
     private void pollReadyAndExecuteExtensionStep(T state, int attempt, Instant nextAttemptTimestamp) {
@@ -175,27 +216,35 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
                 .thenRun(() -> executeExtensionStepLogic(state, attempt));
     }
 
-    private void handleExtensionStepFailure(Throwable exception, T state, int attempt) {
+    private CompletionStage<Void> handleExtensionStepFailure(Throwable exception, T state, int attempt) {
         exception = ExceptionHelper.unwrapCompletableFuture(exception);
-        if (exception instanceof SuspendExecutionException suspendExecutionException) {
-            throw suspendExecutionException;
+        if (exception instanceof SuspendExecutionException) {
+            return CompletableFuture.failedFuture(exception);
         }
         if (exception instanceof UnrecoverableDurableExecutionException unrecoverable) {
-            throw terminateExecution(unrecoverable);
+            try {
+                terminateExecution(unrecoverable);
+            } catch (Throwable throwable) {
+                return CompletableFuture.failedFuture(throwable);
+            }
         }
-        var error = exception instanceof DurableOperationException durableOperationException
-                ? durableOperationException.getErrorObject()
-                : serializeException(exception);
+        final ErrorObject error;
+        try {
+            error = exception instanceof DurableOperationException durableOperationException
+                    ? durableOperationException.getErrorObject()
+                    : serializeException(exception);
+        } catch (Throwable throwable) {
+            return CompletableFuture.failedFuture(throwable);
+        }
 
         var retryStrategy = extensionConfig.retryStrategy();
         if (retryStrategy != null) {
             var decision = retryStrategy.makeRetryDecision(exception, state, attempt);
             if (decision instanceof ExtensionStepResult.Retry<T> retry) {
-                handleExtensionStepRetry(retry, error, attempt);
-                return;
+                return handleExtensionStepRetry(retry, error, attempt);
             }
         }
-        sendOperationUpdate(
+        return sendOperationUpdateAsync(
                 OperationUpdate.builder().action(OperationAction.FAIL).error(error));
     }
 
@@ -215,16 +264,17 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
         }
     }
 
-    private void handleStepSucceeded(T result) {
-        var serializedResult = serializeAndDeserializeResult(result);
+    private CompletionStage<Void> handleStepSucceeded(T result) {
+        final SerializedResult<T> serializedResult;
+        try {
+            serializedResult = serializeAndDeserializeResult(result);
+        } catch (Throwable throwable) {
+            return CompletableFuture.failedFuture(throwable);
+        }
 
-        // Send SUCCEED
         var successUpdate =
                 OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serializedResult.serialized());
-
-        // sendOperationUpdate must be synchronous here. When waiting for the return of this call,
-        // the context threads waiting for the result of this step operation will be wakened up and registered.
-        sendOperationUpdate(successUpdate);
+        return sendOperationUpdateAsync(successUpdate);
     }
 
     @Override

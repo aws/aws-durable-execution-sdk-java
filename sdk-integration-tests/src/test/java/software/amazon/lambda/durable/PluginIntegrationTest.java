@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -345,7 +347,7 @@ class PluginIntegrationTest {
     void plugin_receivesPrimitiveLifecycleForCustomExtension() {
         var plugin = new RecordingPlugin();
         var config = DurableConfig.builder().withPlugins(plugin).build();
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> customExtension(), config);
+        var runner = LocalDurableTestRunner.createAsync(String.class, (input, context) -> customExtension(), config);
 
         var result = runner.runUntilComplete("input");
 
@@ -356,15 +358,14 @@ class PluginIntegrationTest {
         assertFalse(operationNames.contains("custom-extension"));
     }
 
-    private static String customExtension() {
+    private static CompletionStage<String> customExtension() {
         return ExtensionContext.getCurrentContext()
                 .reserve("inner-step")
                 .stepAsync(
                         OperationSubType.STEP.getValue(),
                         TypeToken.get(String.class),
-                        state -> ExtensionStepResult.succeed("done"),
-                        ExtensionStepConfig.<String>builder().build())
-                .get();
+                        state -> CompletableFuture.completedFuture(ExtensionStepResult.succeed("done")),
+                        ExtensionStepConfig.<String>builder().build());
     }
 
     @Test

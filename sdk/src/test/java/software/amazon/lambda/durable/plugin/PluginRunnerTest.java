@@ -71,21 +71,25 @@ class PluginRunnerTest {
         var runner = new PluginRunner(List.of(plugin));
 
         runner.onInvocationStart(invocationInfo());
+        runner.onInvocationAsyncReturn(invocationInfo());
         runner.onInvocationEnd(invocationEndInfo());
         runner.onOperationStart(operationInfo());
         runner.onOperationEnd(operationEndInfo());
         runner.onOperationChange(operationChangeInfo());
         runner.onUserFunctionStart(attemptInfo());
+        runner.onUserFunctionAsyncReturn(attemptInfo());
         runner.onUserFunctionEnd(attemptEndInfo());
 
         assertEquals(
                 List.of(
                         "p:onInvocationStart",
+                        "p:onInvocationAsyncReturn",
                         "p:onInvocationEnd",
                         "p:onOperationStart",
                         "p:onOperationEnd",
                         "p:onOperationChange",
                         "p:onUserFunctionStart",
+                        "p:onUserFunctionAsyncReturn",
                         "p:onUserFunctionEnd"),
                 calls);
     }
@@ -264,6 +268,11 @@ class PluginRunnerTest {
         }
 
         @Override
+        public void onInvocationAsyncReturn(InvocationInfo info) {
+            calls.add(name + ":onInvocationAsyncReturn");
+        }
+
+        @Override
         public void onInvocationEnd(InvocationEndInfo info) {
             calls.add(name + ":onInvocationEnd");
         }
@@ -286,6 +295,11 @@ class PluginRunnerTest {
         @Override
         public void onUserFunctionStart(UserFunctionStartInfo info) {
             calls.add(name + ":onUserFunctionStart");
+        }
+
+        @Override
+        public void onUserFunctionAsyncReturn(UserFunctionStartInfo info) {
+            calls.add(name + ":onUserFunctionAsyncReturn");
         }
 
         @Override

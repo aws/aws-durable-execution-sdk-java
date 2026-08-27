@@ -7,9 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
@@ -49,15 +52,12 @@ class ExtensionOperationImplTest {
 
         var first = context.reserve("first");
         var second = context.reserve("second");
-        var secondFuture = second.waitAsync(OperationSubType.WAIT.getValue(), Duration.ofSeconds(1));
-        var firstFuture = first.waitAsync(OperationSubType.WAIT.getValue(), Duration.ofSeconds(1));
+        second.waitAsync(OperationSubType.WAIT.getValue(), Duration.ofSeconds(1));
+        first.waitAsync(OperationSubType.WAIT.getValue(), Duration.ofSeconds(1));
 
-        assertEquals(
-                "sequential-2",
-                assertInstanceOf(BasePrimitive.class, secondFuture).getOperationId());
-        assertEquals(
-                "sequential-1",
-                assertInstanceOf(BasePrimitive.class, firstFuture).getOperationId());
+        var operations = registeredOperations(context);
+        assertEquals("sequential-2", operations.get(0).getOperationId());
+        assertEquals("sequential-1", operations.get(1).getOperationId());
     }
 
     @Test
@@ -67,11 +67,9 @@ class ExtensionOperationImplTest {
         doCallRealMethod().when(context).reserve("custom", "node-a");
         replay(context, "custom-node-a", "custom", OperationType.WAIT, OperationSubType.WAIT.getValue());
 
-        var future =
-                context.reserve("custom", "node-a").waitAsync(OperationSubType.WAIT.getValue(), Duration.ofSeconds(1));
+        context.reserve("custom", "node-a").waitAsync(OperationSubType.WAIT.getValue(), Duration.ofSeconds(1));
 
-        assertEquals(
-                "custom-node-a", assertInstanceOf(BasePrimitive.class, future).getOperationId());
+        assertEquals("custom-node-a", registeredOperations(context).get(0).getOperationId());
     }
 
     @Test
@@ -83,9 +81,14 @@ class ExtensionOperationImplTest {
                 ExtensionStepConfig.<String>builder().initialState("initial").build();
 
         var future = new ExtensionOperationImpl(context, "1", "step", null)
-                .stepAsync("AcmeStateful", resultType, state -> ExtensionStepResult.succeed(state + "-done"), config);
+                .stepAsync(
+                        "AcmeStateful",
+                        resultType,
+                        state -> CompletableFuture.completedFuture(ExtensionStepResult.succeed(state + "-done")),
+                        config);
 
-        assertOperation(future, StepPrimitive.class, "1", "step", "AcmeStateful");
+        future.toCompletableFuture().join();
+        assertOperation(registeredOperations(context).get(0), StepPrimitive.class, "1", "step", "AcmeStateful");
     }
 
     @Test
@@ -114,13 +117,18 @@ class ExtensionOperationImplTest {
                 .runInChildContextAsync(
                         "AcmeContext",
                         resultType,
-                        () -> ExtensionContextResult.completed("result"),
+                        () -> CompletableFuture.completedFuture(ExtensionContextResult.completed("result")),
                         ExtensionContextConfig.builder().build());
 
-        assertOperation(wait, WaitPrimitive.class, "1", "wait", "AcmeWait");
-        assertOperation(invoke, InvokePrimitive.class, "2", "invoke", "AcmeInvoke");
-        assertOperation(callback, CallbackPrimitive.class, "3", "callback", "AcmeCallback");
-        assertOperation(child, ChildContextPrimitive.class, "4", "child", "AcmeContext");
+        wait.toCompletableFuture().join();
+        invoke.toCompletableFuture().join();
+        callback.result().toCompletableFuture().join();
+        child.toCompletableFuture().join();
+        var operations = registeredOperations(context);
+        assertOperation(operations.get(0), WaitPrimitive.class, "1", "wait", "AcmeWait");
+        assertOperation(operations.get(1), InvokePrimitive.class, "2", "invoke", "AcmeInvoke");
+        assertOperation(operations.get(2), CallbackPrimitive.class, "3", "callback", "AcmeCallback");
+        assertOperation(operations.get(3), ChildContextPrimitive.class, "4", "child", "AcmeContext");
     }
 
     @Test
@@ -131,7 +139,8 @@ class ExtensionOperationImplTest {
 
         assertThrows(NullPointerException.class, () -> operation.waitAsync(null, Duration.ofSeconds(1)));
         assertThrows(IllegalArgumentException.class, () -> operation.waitAsync(" ", Duration.ofSeconds(1)));
-        assertOperation(operation.waitAsync("Wait", Duration.ofSeconds(1)), WaitPrimitive.class, "1", "wait", "Wait");
+        operation.waitAsync("Wait", Duration.ofSeconds(1)).toCompletableFuture().join();
+        assertOperation(registeredOperations(context).get(0), WaitPrimitive.class, "1", "wait", "Wait");
     }
 
     @Test
@@ -143,10 +152,15 @@ class ExtensionOperationImplTest {
 
         assertThrows(
                 NullPointerException.class,
-                () -> operation.stepAsync("Step", null, state -> ExtensionStepResult.succeed("result"), stepConfig));
+                () -> operation.stepAsync(
+                        "Step",
+                        null,
+                        state -> CompletableFuture.completedFuture(ExtensionStepResult.succeed("result")),
+                        stepConfig));
         assertThrows(IllegalArgumentException.class, () -> operation.waitAsync("Wait", null));
         assertThrows(IllegalArgumentException.class, () -> operation.waitAsync("Wait", Duration.ofMillis(999)));
-        assertOperation(operation.waitAsync("Wait", Duration.ofSeconds(1)), WaitPrimitive.class, "1", "wait", "Wait");
+        operation.waitAsync("Wait", Duration.ofSeconds(1)).toCompletableFuture().join();
+        assertOperation(registeredOperations(context).get(0), WaitPrimitive.class, "1", "wait", "Wait");
     }
 
     @Test
@@ -162,7 +176,7 @@ class ExtensionOperationImplTest {
                 () -> operation.stepAsync(
                         "Step",
                         TypeToken.get(String.class),
-                        state -> ExtensionStepResult.succeed("second"),
+                        state -> CompletableFuture.completedFuture(ExtensionStepResult.succeed("second")),
                         ExtensionStepConfig.<String>builder().build()));
     }
 
@@ -209,5 +223,12 @@ class ExtensionOperationImplTest {
         assertEquals(id, operation.getOperationId());
         assertEquals(name, operation.getName());
         assertEquals(subType, operation.getSubTypeValue());
+    }
+
+    private List<BasePrimitive> registeredOperations(DurableContextImpl context) {
+        return mockingDetails(context.getExecutionManager()).getInvocations().stream()
+                .filter(invocation -> invocation.getMethod().getName().equals("registerOperation"))
+                .map(invocation -> assertInstanceOf(BasePrimitive.class, invocation.getArgument(0)))
+                .toList();
     }
 }

@@ -59,6 +59,10 @@ public class PluginRunner {
         run(p -> p.onInvocationStart(info));
     }
 
+    public void onInvocationAsyncReturn(InvocationInfo info) {
+        run(p -> p.onInvocationAsyncReturn(info));
+    }
+
     /**
      * Called at the end of each invocation. Awaited — the SDK blocks until all plugins return, allowing plugins to
      * flush spans/metrics before Lambda freezes.
@@ -81,6 +85,10 @@ public class PluginRunner {
 
     public void onUserFunctionStart(UserFunctionStartInfo info) {
         run(p -> p.onUserFunctionStart(info));
+    }
+
+    public void onUserFunctionAsyncReturn(UserFunctionStartInfo info) {
+        run(p -> p.onUserFunctionAsyncReturn(info));
     }
 
     public void onUserFunctionEnd(UserFunctionEndInfo info) {

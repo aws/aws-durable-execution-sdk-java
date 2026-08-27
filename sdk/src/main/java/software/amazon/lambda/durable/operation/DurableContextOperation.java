@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.operation;
 import static software.amazon.lambda.durable.model.OperationSubType.RUN_IN_CHILD_CONTEXT;
 
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import software.amazon.lambda.durable.DurableContext;
@@ -75,16 +76,20 @@ public final class DurableContextOperation {
         Objects.requireNonNull(config, "RunInChildContextConfig cannot be null");
         ParameterValidator.validateOperationName(name);
 
-        return context.reserve(name)
-                .runInChildContextAsync(
-                        RUN_IN_CHILD_CONTEXT.getValue(),
-                        resultType,
-                        () -> ExtensionContextResult.replayChildrenAboveSize(
-                                function.apply(DurableContext.requireCurrentContext()), null, LARGE_RESULT_THRESHOLD),
-                        ExtensionContextConfig.builder()
-                                .serDes(config.serDes())
-                                .isVirtual(config.isVirtual())
-                                .build());
+        return CompletionStageDurableFuture.from(
+                context,
+                context.reserve(name)
+                        .runInChildContextAsync(
+                                RUN_IN_CHILD_CONTEXT.getValue(),
+                                resultType,
+                                () -> CompletableFuture.completedFuture(ExtensionContextResult.replayChildrenAboveSize(
+                                        function.apply(DurableContext.requireCurrentContext()),
+                                        null,
+                                        LARGE_RESULT_THRESHOLD)),
+                                ExtensionContextConfig.builder()
+                                        .serDes(config.serDes())
+                                        .isVirtual(config.isVirtual())
+                                        .build()));
     }
 
     /** Configuration for durable CONTEXT operations. */

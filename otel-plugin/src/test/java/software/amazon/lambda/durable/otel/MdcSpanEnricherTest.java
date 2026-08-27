@@ -89,4 +89,58 @@ class MdcSpanEnricherTest {
         assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
         assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
     }
+
+    @Test
+    void asyncReturn_releasesThreadLocalScopeBeforeLogicalFunctionEnd() {
+        var spanExporter = InMemorySpanExporter.create();
+        var plugin = new InvocationOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(true)
+                        .build());
+        var startInfo = new UserFunctionStartInfo("op-1", "step", "STEP", "Step", null, Instant.now(), false, 1);
+
+        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec-mdc-async", true, Instant.now()));
+        plugin.onUserFunctionStart(startInfo);
+
+        assertNotNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
+        plugin.onUserFunctionAsyncReturn(startInfo);
+        assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
+        assertTrue(spanExporter.getFinishedSpanItems().stream()
+                .noneMatch(span -> span.getName().equals("step attempt 1")));
+
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+        assertTrue(spanExporter.getFinishedSpanItems().stream()
+                .anyMatch(span -> span.getName().equals("step attempt 1")));
+
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", "arn:exec-mdc-async", true, InvocationStatus.SUCCEEDED, null));
+    }
+
+    @Test
+    void asyncInvocationReturn_clearsMdcBeforeLogicalInvocationEnd() {
+        var spanExporter = InMemorySpanExporter.create();
+        var plugin = new InvocationOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(true)
+                        .build());
+        var invocationInfo = new InvocationInfo("req-1", "arn:exec-async-handler", true, Instant.now());
+
+        plugin.onInvocationStart(invocationInfo);
+        assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
+
+        plugin.onInvocationAsyncReturn(invocationInfo);
+        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
+        assertTrue(spanExporter.getFinishedSpanItems().stream()
+                .noneMatch(span -> span.getName().equals("Invocation")));
+
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req-1", "arn:exec-async-handler", true, InvocationStatus.SUCCEEDED, null));
+        assertTrue(spanExporter.getFinishedSpanItems().stream()
+                .anyMatch(span -> span.getName().equals("Invocation")));
+    }
 }

@@ -4,8 +4,8 @@ package software.amazon.lambda.durable.extension;
 
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicInteger;
-import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.OperationSubType;
 
@@ -13,14 +13,14 @@ import software.amazon.lambda.durable.model.OperationSubType;
 public final class PairOperations {
     private PairOperations() {}
 
-    public static DurableFuture<String> pairAsync(String name, AtomicInteger extensionExecutions) {
+    public static CompletionStage<String> pairAsync(String name, AtomicInteger extensionExecutions) {
         var extension = ExtensionContext.getCurrentContext();
         var left = extension.reserve(name + "-left");
         var right = extension.reserve(name + "-right");
         var pause = extension.reserve(name + "-pause");
 
-        DurableFuture<String> leftFuture;
-        DurableFuture<String> rightFuture;
+        CompletionStage<String> leftFuture;
+        CompletionStage<String> rightFuture;
         if (extensionExecutions.getAndIncrement() % 2 == 0) {
             leftFuture = stepAsync(left, "L");
             rightFuture = stepAsync(right, "R");
@@ -29,11 +29,11 @@ public final class PairOperations {
             leftFuture = stepAsync(left, "L");
         }
 
-        return new PairFuture(
-                leftFuture, rightFuture, pause.waitAsync(OperationSubType.WAIT.getValue(), Duration.ofSeconds(1)));
+        return pause.waitAsync(OperationSubType.WAIT.getValue(), Duration.ofSeconds(1))
+                .thenCompose(ignored -> leftFuture.thenCombine(rightFuture, String::concat));
     }
 
-    public static DurableFuture<String> customOperationsAsync(String name, AtomicInteger extensionExecutions) {
+    public static CompletionStage<String> customOperationsAsync(String name, AtomicInteger extensionExecutions) {
         var extension = ExtensionContext.getCurrentContext();
         ExtensionOperation step;
         ExtensionOperation wait;
@@ -51,52 +51,23 @@ public final class PairOperations {
         var stepFuture = step.stepAsync(
                 "AcmeStep",
                 TypeToken.get(String.class),
-                state -> ExtensionStepResult.succeed("step"),
+                state -> CompletableFuture.completedFuture(ExtensionStepResult.succeed("step")),
                 ExtensionStepConfig.<String>builder().build());
         var waitFuture = wait.waitAsync("AcmeWait", Duration.ofSeconds(1));
         var contextFuture = context.runInChildContextAsync(
                 "AcmeContext",
                 TypeToken.get(String.class),
-                () -> ExtensionContextResult.completed("context"),
+                () -> CompletableFuture.completedFuture(ExtensionContextResult.completed("context")),
                 ExtensionContextConfig.builder().build());
-        return new CustomOperationsFuture(stepFuture, waitFuture, contextFuture);
+        return waitFuture.thenCompose(ignored ->
+                stepFuture.thenCombine(contextFuture, (stepResult, contextResult) -> stepResult + ":" + contextResult));
     }
 
-    private static DurableFuture<String> stepAsync(ExtensionOperation operation, String result) {
+    private static CompletionStage<String> stepAsync(ExtensionOperation operation, String result) {
         return operation.stepAsync(
                 OperationSubType.STEP.getValue(),
                 TypeToken.get(String.class),
-                state -> ExtensionStepResult.succeed(result),
+                state -> CompletableFuture.completedFuture(ExtensionStepResult.succeed(result)),
                 ExtensionStepConfig.<String>builder().build());
-    }
-
-    private record PairFuture(DurableFuture<String> left, DurableFuture<String> right, DurableFuture<Void> pause)
-            implements DurableFuture<String> {
-        @Override
-        public String get() {
-            pause.get();
-            return left.get() + right.get();
-        }
-
-        @Override
-        public CompletableFuture<Void> completionFuture() {
-            return CompletableFuture.allOf(left.completionFuture(), right.completionFuture(), pause.completionFuture());
-        }
-    }
-
-    private record CustomOperationsFuture(
-            DurableFuture<String> step, DurableFuture<Void> pause, DurableFuture<String> context)
-            implements DurableFuture<String> {
-        @Override
-        public String get() {
-            pause.get();
-            return step.get() + ":" + context.get();
-        }
-
-        @Override
-        public CompletableFuture<Void> completionFuture() {
-            return CompletableFuture.allOf(
-                    step.completionFuture(), pause.completionFuture(), context.completionFuture());
-        }
     }
 }

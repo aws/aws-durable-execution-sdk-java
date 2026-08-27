@@ -8,24 +8,25 @@ Extension-author contracts are in `software.amazon.lambda.durable.extension`. Bu
 `software.amazon.lambda.durable.operation`, with operation-specific TLS metadata contexts nested under their owning
 operation classes.
 
-Application code calls only the extension's API:
+An asynchronous handler or facade calls only the extension's API:
 
 ```java
 import static com.example.durable.PairOperations.pairAsync;
 
-var result = pairAsync("pair", left, right).get();
+return pairAsync("pair", left, right);
 ```
 
 The extension retrieves the active scope internally:
 
 ```java
-import software.amazon.lambda.durable.DurableFuture;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 
 public final class PairOperations {
     private PairOperations() {}
 
-    public static DurableFuture<String> pairAsync(
+    public static CompletionStage<String> pairAsync(
             String name, Supplier<String> leftFunction, Supplier<String> rightFunction) {
         var extension = ExtensionContext.getCurrentContext();
         var left = extension.reserve(name + "-left");
@@ -35,20 +36,27 @@ public final class PairOperations {
         var leftFuture = left.stepAsync(
                 "PairStep",
                 TypeToken.get(String.class),
-                state -> ExtensionStepResult.succeed(leftFunction.get()),
+                state -> CompletableFuture.completedFuture(
+                        ExtensionStepResult.succeed(leftFunction.get())),
                 config);
         var rightFuture = right.stepAsync(
                 "PairStep",
                 TypeToken.get(String.class),
-                state -> ExtensionStepResult.succeed(rightFunction.get()),
+                state -> CompletableFuture.completedFuture(
+                        ExtensionStepResult.succeed(rightFunction.get())),
                 config);
-        return new PairFuture(leftFuture, rightFuture);
+        return leftFuture.thenCombine(rightFuture, String::concat);
     }
 }
 ```
 
 There is no extension registration API and no automatic child-context boundary. The extension chooses whether to
 compose primitives in the current scope or explicitly create a child context.
+
+`ExtensionOperation`, `ExtensionStepFunction`, and `ExtensionContextFunction` use `CompletionStage` end to end.
+`DurableExecutor.executeAsync` and `wrapAsync` accept asynchronous root handlers, allowing language facades such as
+Kotlin coroutine adapters to suspend without retaining a platform thread. The existing Java operation APIs continue
+to expose `DurableFuture` through an internal compatibility adapter.
 
 ## Static operation APIs
 
@@ -186,6 +194,10 @@ var result = DurableMapOperation.map("process", items, Result.class, item -> {
 Current context is not propagated to application-created threads. Durable primitives must be created from an
 SDK-managed durable context thread.
 
+An incomplete stage may resume on an arbitrary thread. Capture the active `ExtensionContext`, `DurableContext`, or
+operation-specific metadata before returning the stage, or propagate it through the language facade's own coroutine
+context. Do not look up SDK thread-local context from an arbitrary completion callback.
+
 ## Primitive reservations
 
 Extensions with deterministic call order can use the matching built-in operation directly. Schedulers whose
@@ -204,12 +216,12 @@ var config = ExtensionStepConfig.<String>builder().build();
 var secondResult = second.stepAsync(
         "ScheduledStep",
         TypeToken.get(String.class),
-        state -> ExtensionStepResult.succeed(runSecond()),
+        state -> CompletableFuture.completedFuture(ExtensionStepResult.succeed(runSecond())),
         config);
 var firstResult = first.stepAsync(
         "ScheduledStep",
         TypeToken.get(String.class),
-        state -> ExtensionStepResult.succeed(runFirst()),
+        state -> CompletableFuture.completedFuture(ExtensionStepResult.succeed(runFirst())),
         config);
 ```
 
@@ -217,9 +229,8 @@ A reservation can create exactly one primitive: step, wait, chained invoke, call
 `IllegalStateException`. Raw operation IDs are never exposed.
 
 `ExtensionOperation` exposes one fully specified asynchronous method for each primitive. Callers always provide the
-subtype, use `TypeToken<T>` for typed results, and supply the complete primitive configuration. Extensions can call
-`get()` when they need blocking behavior or use the matching built-in operation when reservation-time ID allocation is
-not needed.
+subtype, use `TypeToken<T>` for typed results, and supply the complete primitive configuration. Results compose with
+the standard `CompletionStage` operators without blocking.
 
 Create reservations in the same order on every replay. Reordering, inserting, or removing reservations is a workflow
 compatibility change because it can associate existing checkpoints with different logical primitives. Launching
@@ -234,7 +245,8 @@ var node = ExtensionContext.getCurrentContext().reserve("process-node", "node-a"
 var result = node.stepAsync(
         "ProcessNode",
         TypeToken.get(NodeResult.class),
-        state -> ExtensionStepResult.succeed(processNode("node-a")),
+        state -> CompletableFuture.completedFuture(
+                ExtensionStepResult.succeed(processNode("node-a"))),
         ExtensionStepConfig.<NodeResult>builder().build());
 ```
 
@@ -261,7 +273,8 @@ var result = ExtensionContext.getCurrentContext()
         .stepAsync(
                 "AcmeNode",
                 TypeToken.get(NodeResult.class),
-                state -> ExtensionStepResult.succeed(processNode("node-a")),
+                state -> CompletableFuture.completedFuture(
+                        ExtensionStepResult.succeed(processNode("node-a"))),
                 ExtensionStepConfig.<NodeResult>builder().build());
 ```
 
@@ -279,9 +292,9 @@ var result = ExtensionContext.getCurrentContext()
         .stepAsync(
                 "AcmePoll",
                 TypeToken.get(PollState.class),
-                state -> state.complete()
+                state -> CompletableFuture.completedFuture(state.complete()
                         ? ExtensionStepResult.succeed(state)
-                        : ExtensionStepResult.retry(refresh(state), Duration.ofSeconds(5)),
+                        : ExtensionStepResult.retry(refresh(state), Duration.ofSeconds(5))),
                 ExtensionStepConfig.<PollState>builder()
                         .initialState(initialState)
                         .build());
@@ -325,7 +338,8 @@ var result = ExtensionContext.getCurrentContext()
                     var replay = ExtensionContextReplayContext.<BatchResult>getCurrentContext();
                     var previous = replay.isReplayingChildren() ? replay.getReplayState() : null;
                     var current = rebuildBatch(previous);
-                    return ExtensionContextResult.replayChildren(current, compact(current));
+                    return CompletableFuture.completedFuture(
+                            ExtensionContextResult.replayChildren(current, compact(current)));
                 },
                 ExtensionContextConfig.builder()
                         .emitUserFunctionEvents(false)
@@ -360,46 +374,42 @@ through `failure.operation()`, plus read-only child-operation summaries.
 An extension creates a child context only when its own semantics require isolation:
 
 ```java
-var result = ExtensionContext.getCurrentContext()
+var resultStage = ExtensionContext.getCurrentContext()
         .reserve("isolated-work")
         .runInChildContextAsync(
                 "IsolatedWork",
                 TypeToken.get(Result.class),
-                () -> ExtensionContextResult.completed(executeIsolatedWork()),
-                ExtensionContextConfig.builder().build())
-        .get();
+                () -> CompletableFuture.completedFuture(
+                        ExtensionContextResult.completed(executeIsolatedWork())),
+                ExtensionContextConfig.builder().build());
 ```
 
 Inside the function, `DurableContext.requireCurrentContext()` and `ExtensionContext.getCurrentContext()` return the
 child context.
 
-## Custom durable futures
+## Composing asynchronous results
 
-An asynchronous extension may return an SDK primitive future or implement `DurableFuture<T>`. Custom composed futures
-that participate in `DurableFuture.anyOf` override `completionFuture()`:
+Extension primitives return standard stages, so custom operations compose without SDK-specific future types:
 
 ```java
-private record PairFuture(DurableFuture<String> left, DurableFuture<String> right)
-        implements DurableFuture<String> {
-    @Override
-    public String get() {
-        return left.get() + right.get();
-    }
-
-    @Override
-    public CompletableFuture<Void> completionFuture() {
-        return CompletableFuture.allOf(left.completionFuture(), right.completionFuture());
-    }
-}
+CompletionStage<String> pair =
+        leftResult.thenCombine(rightResult, String::concat);
 ```
 
-Completing or cancelling the returned completion signal must not mutate the underlying durable operations.
+The stage completes with the checkpointed result or failure and propagates durable suspension or unrecoverable
+termination exceptionally. Completing or cancelling a caller-created dependent stage does not mutate the underlying
+durable operation.
 
 ## Plugins and failures
 
 Extensions do not create an automatic plugin lifecycle event or checkpoint boundary. Plugins observe the primitive
 operations created by the extension. If the extension explicitly creates a child context, plugins also observe that
 child-context operation.
+
+When an asynchronous root handler or primitive user function returns an incomplete stage, plugins receive
+`onInvocationAsyncReturn` or `onUserFunctionAsyncReturn` on the original user thread before that thread is released.
+The corresponding end hook remains the logical completion boundary and may run on the thread that completes the
+stage. Plugins should release thread-local scopes in the async-return hook and finish logical spans in the end hook.
 
 Serialization, suspension, replay, cancellation, failures, and checkpointing retain the semantics of the underlying
 primitive operations.
@@ -423,4 +433,4 @@ or `primitive`.
 The extension-author SPI includes `ExtensionContext`, `ExtensionOperation`, stateful-step contracts, and configurable
 extension-context contracts under `software.amazon.lambda.durable.extension`. Static operation APIs are under
 `software.amazon.lambda.durable.operation`; operation-specific TLS contexts are nested under their owning operation
-classes, while `DurableFuture.completionFuture()` remains on the root SDK interface.
+classes. The extension SPI uses `CompletionStage`; the existing Java operation APIs retain `DurableFuture`.

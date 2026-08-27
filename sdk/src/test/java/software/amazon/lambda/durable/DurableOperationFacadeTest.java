@@ -22,6 +22,7 @@ import static software.amazon.lambda.durable.model.OperationSubType.STEP;
 import static software.amazon.lambda.durable.model.OperationSubType.WAIT;
 
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,7 @@ import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.extension.ExtensionCallback;
 import software.amazon.lambda.durable.extension.ExtensionCallbackConfig;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
@@ -128,7 +130,10 @@ class DurableOperationFacadeTest {
                         any(ExtensionStepConfig.class)))
                 .thenReturn(future);
 
-        assertSame(future, DurableStepOperation.stepAsync("step", String.class, () -> "result"));
+        assertEquals(
+                "result",
+                DurableStepOperation.stepAsync("step", String.class, () -> "result")
+                        .get());
 
         @SuppressWarnings("unchecked")
         var function = (ArgumentCaptor<ExtensionStepFunction<String>>)
@@ -138,7 +143,8 @@ class DurableOperationFacadeTest {
                         eq(STEP.getValue()), any(TypeToken.class), function.capture(), any(ExtensionStepConfig.class));
         try (var ignored = BaseContextImpl.attachCurrentContext(mock(StepContext.class))) {
             var result = assertInstanceOf(
-                    ExtensionStepResult.Succeeded.class, function.getValue().apply(null));
+                    ExtensionStepResult.Succeeded.class,
+                    function.getValue().apply(null).toCompletableFuture().join());
             assertEquals("result", result.value());
         }
     }
@@ -163,7 +169,10 @@ class DurableOperationFacadeTest {
                 .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
                 .build();
 
-        assertSame(future, DurableStepOperation.stepAsync("step", resultType, () -> "result", config));
+        assertEquals(
+                "result",
+                DurableStepOperation.stepAsync("step", resultType, () -> "result", config)
+                        .get());
 
         var extensionConfig = ArgumentCaptor.forClass(ExtensionStepConfig.class);
         verify(reservation)
@@ -210,7 +219,7 @@ class DurableOperationFacadeTest {
                 ignored -> "result",
                 StepConfig.builder().build());
 
-        assertSame(future, result);
+        assertEquals("result", result.get());
         @SuppressWarnings("unchecked")
         var function = (ArgumentCaptor<ExtensionStepFunction<String>>)
                 (ArgumentCaptor<?>) ArgumentCaptor.forClass(ExtensionStepFunction.class);
@@ -219,7 +228,8 @@ class DurableOperationFacadeTest {
                         eq(STEP.getValue()), any(TypeToken.class), function.capture(), any(ExtensionStepConfig.class));
         try (var ignored = BaseContextImpl.attachCurrentContext(mock(StepContext.class))) {
             var stepResult = assertInstanceOf(
-                    ExtensionStepResult.Succeeded.class, function.getValue().apply(null));
+                    ExtensionStepResult.Succeeded.class,
+                    function.getValue().apply(null).toCompletableFuture().join());
             assertEquals("result", stepResult.value());
         }
     }
@@ -235,7 +245,7 @@ class DurableOperationFacadeTest {
 
         var result = context.waitAsync("wait", duration);
 
-        assertSame(future, result);
+        assertEquals(null, result.get());
     }
 
     @Test
@@ -257,7 +267,7 @@ class DurableOperationFacadeTest {
 
         var result = context.invokeAsync("invoke", "function", "payload", TypeToken.get(String.class), config);
 
-        assertSame(future, result);
+        assertEquals("result", result.get());
         var extensionConfig = ArgumentCaptor.forClass(ExtensionInvokeConfig.class);
         verify(reservation)
                 .invokeAsync(
@@ -274,7 +284,7 @@ class DurableOperationFacadeTest {
     @Test
     void durableContextCallbackUsesPrimitiveExtension() {
         @SuppressWarnings("unchecked")
-        var future = (DurableCallbackFuture<String>) mock(DurableCallbackFuture.class);
+        var future = (ExtensionCallback<String>) mock(ExtensionCallback.class);
         var reservation = mock(ExtensionOperation.class);
         var context = mockDurableContext();
         var serDes = mock(SerDes.class);
@@ -286,10 +296,13 @@ class DurableOperationFacadeTest {
         when(((ExtensionContext) context).reserve("callback")).thenReturn(reservation);
         when(reservation.createCallback(eq(CALLBACK.getValue()), any(TypeToken.class), any()))
                 .thenReturn(future);
+        when(future.callbackId()).thenReturn("callback-id");
+        when(future.result()).thenReturn(CompletableFuture.completedFuture("result"));
 
         var result = context.createCallback("callback", TypeToken.get(String.class), config);
 
-        assertSame(future, result);
+        assertEquals("callback-id", result.callbackId());
+        assertEquals("result", result.get());
         var extensionConfig = ArgumentCaptor.forClass(ExtensionCallbackConfig.class);
         verify(reservation)
                 .createCallback(eq(CALLBACK.getValue()), eq(TypeToken.get(String.class)), extensionConfig.capture());
@@ -318,7 +331,7 @@ class DurableOperationFacadeTest {
                 ignored -> "result",
                 RunInChildContextConfig.builder().serDes(serDes).isVirtual(true).build());
 
-        assertSame(future, result);
+        assertEquals("result", result.get());
         var extensionConfig = ArgumentCaptor.forClass(ExtensionContextConfig.class);
         verify(reservation)
                 .runInChildContextAsync(
@@ -344,7 +357,10 @@ class DurableOperationFacadeTest {
                         any(ExtensionContextConfig.class)))
                 .thenReturn(future);
 
-        assertSame(future, DurableContextOperation.runInChildContextAsync("child", String.class, () -> "result"));
+        assertEquals(
+                "result",
+                DurableContextOperation.runInChildContextAsync("child", String.class, () -> "result")
+                        .get());
 
         @SuppressWarnings("unchecked")
         var function = (ArgumentCaptor<ExtensionContextFunction<String>>)
@@ -356,7 +372,9 @@ class DurableOperationFacadeTest {
                         function.capture(),
                         any(ExtensionContextConfig.class));
         try (var ignored = BaseContextImpl.attachCurrentContext(context)) {
-            assertEquals("result", function.getValue().apply().result());
+            assertEquals(
+                    "result",
+                    function.getValue().apply().toCompletableFuture().join().result());
         }
     }
 
@@ -368,7 +386,7 @@ class DurableOperationFacadeTest {
         var waitFuture = mockFuture();
         var invokeFuture = mockStringFuture();
         @SuppressWarnings("unchecked")
-        var callbackFuture = (DurableCallbackFuture<String>) mock(DurableCallbackFuture.class);
+        var callbackFuture = (ExtensionCallback<String>) mock(ExtensionCallback.class);
         var waitReservation = mock(ExtensionOperation.class);
         var invokeReservation = mock(ExtensionOperation.class);
         var callbackReservation = mock(ExtensionOperation.class);
@@ -381,10 +399,17 @@ class DurableOperationFacadeTest {
                 .thenReturn(invokeFuture);
         when(callbackReservation.createCallback(eq(CALLBACK.getValue()), any(TypeToken.class), any()))
                 .thenReturn(callbackFuture);
+        when(callbackFuture.callbackId()).thenReturn("callback-id");
+        when(callbackFuture.result()).thenReturn(CompletableFuture.completedFuture("callback"));
 
-        assertEquals(waitFuture, DurableWaitOperation.waitAsync("wait", duration));
-        assertEquals(invokeFuture, DurableInvokeOperation.invokeAsync("invoke", "function", "payload", String.class));
-        assertEquals(callbackFuture, DurableCallbackOperation.createCallback("callback", String.class));
+        assertEquals(null, DurableWaitOperation.waitAsync("wait", duration).get());
+        assertEquals(
+                "result",
+                DurableInvokeOperation.invokeAsync("invoke", "function", "payload", String.class)
+                        .get());
+        var callback = DurableCallbackOperation.createCallback("callback", String.class);
+        assertEquals("callback-id", callback.callbackId());
+        assertEquals("callback", callback.get());
     }
 
     @Test
@@ -397,6 +422,18 @@ class DurableOperationFacadeTest {
         var childConfig = RunInChildContextConfig.builder().build();
         when(((ExtensionContext) context).reserve("step")).thenReturn(stepReservation);
         when(((ExtensionContext) context).reserve("child")).thenReturn(childReservation);
+        when(stepReservation.stepAsync(
+                        eq(STEP.getValue()),
+                        any(TypeToken.class),
+                        any(ExtensionStepFunction.class),
+                        any(ExtensionStepConfig.class)))
+                .thenReturn(CompletableFuture.completedFuture("step"));
+        when(childReservation.runInChildContextAsync(
+                        eq(RUN_IN_CHILD_CONTEXT.getValue()),
+                        any(TypeToken.class),
+                        any(ExtensionContextFunction.class),
+                        any(ExtensionContextConfig.class)))
+                .thenReturn(CompletableFuture.completedFuture("child"));
 
         DurableStepOperation.stepAsync(
                 "step", new TypeToken<String>() {}, () -> "step", stepConfig.toOperationConfig());
@@ -423,14 +460,12 @@ class DurableOperationFacadeTest {
                 IllegalStateException.class, () -> DurableStepOperation.step("step", String.class, () -> "result"));
     }
 
-    @SuppressWarnings("unchecked")
-    private DurableFuture<Void> mockFuture() {
-        return mock(DurableFuture.class);
+    private CompletableFuture<Void> mockFuture() {
+        return CompletableFuture.completedFuture(null);
     }
 
-    @SuppressWarnings("unchecked")
-    private DurableFuture<String> mockStringFuture() {
-        return mock(DurableFuture.class);
+    private CompletableFuture<String> mockStringFuture() {
+        return CompletableFuture.completedFuture("result");
     }
 
     private DurableContext mockDurableContext() {

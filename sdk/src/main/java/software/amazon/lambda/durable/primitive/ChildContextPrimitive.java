@@ -5,6 +5,8 @@ package software.amazon.lambda.durable.primitive;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -164,25 +166,39 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
         //       third level child context "hash(hash(hash(1)-2)-1)".
         var contextId = getOperationId();
 
-        Runnable userHandler = () -> {
-            // use a try-with-resources to
-            // - add thread id/type to thread local when the step starts
-            // - clear logger properties when the step finishes
-            //
-            // A parent operation may own late-checkpoint suppression for this child.
-            var childContext = createChildContext(contextId);
-            try (var ignoredContext = DurableContextImpl.attachCurrentContext(childContext);
-                    var ignoredLogger = DurableLogger.attachContext()) {
-                try {
-                    executeFunction(childContext);
-                } catch (Throwable e) {
-                    handleChildContextFailure(e);
-                }
-            }
-        };
+        var childContext = createChildContext(contextId);
+        runUserHandlerAsync(
+                () -> {
+                    try (var ignoredContext = DurableContextImpl.attachCurrentContext(childContext);
+                            var ignoredLogger = DurableLogger.attachContext()) {
+                        return executeFunction(childContext);
+                    }
+                },
+                (result, throwable) -> {
+                    try (var ignoredContext = DurableContextImpl.attachCurrentContext(childContext);
+                            var ignoredLogger = DurableLogger.attachContext()) {
+                        return handleFunctionCompletion(result, throwable);
+                    }
+                },
+                ThreadType.CONTEXT,
+                extensionFunction != null);
+    }
 
-        // Execute user provided child context code in user-configured executor
-        runUserHandler(userHandler, ThreadType.CONTEXT);
+    private CompletionStage<Void> handleFunctionCompletion(ExtensionContextResult<T> result, Throwable throwable) {
+        if (throwable != null) {
+            return handleChildContextFailure(throwable);
+        }
+
+        final CompletionStage<Void> success;
+        try {
+            success = handleFunctionSuccess(result);
+        } catch (Throwable failure) {
+            return handleChildContextFailure(failure);
+        }
+        return success.handle((ignored, failure) -> failure == null
+                        ? CompletableFuture.<Void>completedFuture(null)
+                        : handleChildContextFailure(failure))
+                .thenCompose(Function.identity());
     }
 
     private DurableContextImpl createChildContext(String contextId) {
@@ -192,57 +208,60 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
         return getContext().createChildContext(contextId, getName(), isVirtual);
     }
 
-    private void executeFunction(DurableContextImpl childContext) {
+    private CompletionStage<ExtensionContextResult<T>> executeFunction(DurableContextImpl childContext) {
         if (extensionFunction == null) {
             var result = runUserFunction(null, () -> function.apply(childContext));
-            handleChildContextSuccess(result);
-            return;
+            return CompletableFuture.completedFuture(ExtensionContextResult.completed(result));
         }
 
         try (var ignoredReplayContext =
                 ExtensionContextReplayContext.attach(replayChildren.get(), validatingReplay.get(), replayState.get())) {
-            var result = extensionConfig.emitUserFunctionEvents()
-                    ? runUserFunction(null, extensionFunction::apply)
+            return extensionConfig.emitUserFunctionEvents()
+                    ? runUserFunctionAsync(null, extensionFunction::apply)
                     : extensionFunction.apply();
-            handleExtensionContextSuccess(
-                    Objects.requireNonNull(result, "Extension context function result cannot be null"));
         }
     }
 
-    private void handleChildContextSuccess(T result) {
+    private CompletionStage<Void> handleFunctionSuccess(ExtensionContextResult<T> result) {
+        Objects.requireNonNull(result, "Extension context function result cannot be null");
+        return extensionFunction == null
+                ? handleChildContextSuccess(result.result())
+                : handleExtensionContextSuccess(result);
+    }
+
+    private CompletionStage<Void> handleChildContextSuccess(T result) {
         var serializedResult = serializeAndDeserializeResult(result);
 
         if (shouldSkipCheckpoint()) {
             cacheSuccessAndComplete(serializedResult.deserialized());
-        } else {
-            checkpointSuccess(serializedResult.deserialized(), serializedResult.serialized());
+            return CompletableFuture.completedFuture(null);
         }
+        return checkpointSuccess(serializedResult.deserialized(), serializedResult.serialized());
     }
 
-    private void handleExtensionContextSuccess(ExtensionContextResult<T> result) {
+    private CompletionStage<Void> handleExtensionContextSuccess(ExtensionContextResult<T> result) {
         if (validatingReplay.get()) {
             cacheSuccessAndComplete(replayState.get());
-            return;
+            return CompletableFuture.completedFuture(null);
         }
 
         var serializedResult = serializeAndDeserializeResult(result.result());
         if (shouldSkipCheckpoint()) {
             cacheSuccessAndComplete(serializedResult.deserialized());
-            return;
+            return CompletableFuture.completedFuture(null);
         }
 
         var resultBytes = serializedSize(serializedResult.serialized());
         if (result.shouldReplayChildren(resultBytes)) {
             cachedOperationResult.set(DeserializedOperationResult.succeeded(serializedResult.deserialized()));
-            sendOperationUpdate(OperationUpdate.builder()
+            return sendOperationUpdateAsync(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
                     .payload(serializeReplayState(result.replayState()))
                     .contextOptions(
                             ContextOptions.builder().replayChildren(true).build()));
-        } else {
-            sendOperationUpdate(
-                    OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serializedResult.serialized()));
         }
+        return sendOperationUpdateAsync(
+                OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serializedResult.serialized()));
     }
 
     private String serializeReplayState(T replayState) {
@@ -263,35 +282,35 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
         markAlreadyCompleted();
     }
 
-    private void checkpointSuccess(T result, String serialized) {
+    private CompletionStage<Void> checkpointSuccess(T result, String serialized) {
         if (serializedSize(serialized) < LARGE_RESULT_THRESHOLD) {
-            sendOperationUpdate(
+            return sendOperationUpdateAsync(
                     OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serialized));
-        } else {
-            // Large result: checkpoint with empty payload + ReplayChildren flag.
-            // Store the result so get() can return it directly without deserializing the empty payload.
-            cachedOperationResult.set(DeserializedOperationResult.succeeded(result));
-            sendOperationUpdate(OperationUpdate.builder()
-                    .action(OperationAction.SUCCEED)
-                    .payload("")
-                    .contextOptions(
-                            ContextOptions.builder().replayChildren(true).build()));
         }
+        // Large result: checkpoint with empty payload + ReplayChildren flag.
+        // Store the result so get() can return it directly without deserializing the empty payload.
+        cachedOperationResult.set(DeserializedOperationResult.succeeded(result));
+        return sendOperationUpdateAsync(OperationUpdate.builder()
+                .action(OperationAction.SUCCEED)
+                .payload("")
+                .contextOptions(ContextOptions.builder().replayChildren(true).build()));
     }
 
     private int serializedSize(String serialized) {
         return serialized == null ? 0 : serialized.getBytes(StandardCharsets.UTF_8).length;
     }
 
-    private void handleChildContextFailure(Throwable exception) {
+    private CompletionStage<Void> handleChildContextFailure(Throwable exception) {
         exception = ExceptionHelper.unwrapCompletableFuture(exception);
-        if (exception instanceof SuspendExecutionException suspendExecutionException) {
-            // Rethrow Error immediately — do not checkpoint
-            throw suspendExecutionException;
+        if (exception instanceof SuspendExecutionException) {
+            return CompletableFuture.failedFuture(exception);
         }
         if (exception instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
-            // terminate the execution and throw the exception if it's not recoverable
-            throw terminateExecution(unrecoverableDurableExecutionException);
+            try {
+                throw terminateExecution(unrecoverableDurableExecutionException);
+            } catch (Throwable throwable) {
+                return CompletableFuture.failedFuture(throwable);
+            }
         }
 
         final ErrorObject errorObject;
@@ -312,10 +331,10 @@ public class ChildContextPrimitive<T> extends SerializablePrimitive<T> {
                 fireOnOperationEnd(null, exception, false);
             }
             markAlreadyCompleted();
-            return;
+            return CompletableFuture.completedFuture(null);
         }
 
-        sendOperationUpdate(
+        return sendOperationUpdateAsync(
                 OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject));
     }
 

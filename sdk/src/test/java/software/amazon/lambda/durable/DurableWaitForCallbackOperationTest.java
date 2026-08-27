@@ -10,10 +10,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import software.amazon.lambda.durable.context.BaseContextImpl;
+import software.amazon.lambda.durable.extension.ExtensionCallback;
 import software.amazon.lambda.durable.extension.ExtensionCallbackConfig;
 import software.amazon.lambda.durable.extension.ExtensionContext;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
@@ -35,9 +37,8 @@ class DurableWaitForCallbackOperationTest {
     void callbackSubmitterUsesRunnableAndScopedCallbackId() {
         var context = mock(ExtensionContext.class);
         var parent = mock(ExtensionOperation.class);
-        var parentFuture = mockStringFuture();
+        var parentFuture = CompletableFuture.completedFuture("approved");
         when(context.reserve("callback")).thenReturn(parent);
-        when(parentFuture.get()).thenReturn("approved");
         when(parent.runInChildContextAsync(
                         eq(OperationSubType.WAIT_FOR_CALLBACK.getValue()),
                         eq(TypeToken.get(String.class)),
@@ -69,9 +70,8 @@ class DurableWaitForCallbackOperationTest {
         var callbackReservation = mock(ExtensionOperation.class);
         var submitterReservation = mock(ExtensionOperation.class);
         @SuppressWarnings("unchecked")
-        var callback = (DurableCallbackFuture<String>) mock(DurableCallbackFuture.class);
-        @SuppressWarnings("unchecked")
-        var submitterFuture = (DurableFuture<Void>) mock(DurableFuture.class);
+        var callback = (ExtensionCallback<String>) mock(ExtensionCallback.class);
+        var submitterFuture = CompletableFuture.<Void>completedFuture(null);
         when(child.reserve("callback-callback")).thenReturn(callbackReservation);
         when(child.reserve("callback-submitter")).thenReturn(submitterReservation);
         when(callbackReservation.createCallback(
@@ -86,10 +86,12 @@ class DurableWaitForCallbackOperationTest {
                         any(ExtensionStepConfig.class)))
                 .thenReturn(submitterFuture);
         when(callback.callbackId()).thenReturn("callback-id");
-        when(callback.get()).thenReturn("approved");
+        when(callback.result()).thenReturn(CompletableFuture.completedFuture("approved"));
 
         try (var ignored = BaseContextImpl.attachCurrentContext(child)) {
-            assertEquals("approved", function.getValue().apply().result());
+            assertEquals(
+                    "approved",
+                    function.getValue().apply().toCompletableFuture().join().result());
         }
 
         @SuppressWarnings("unchecked")
@@ -102,14 +104,9 @@ class DurableWaitForCallbackOperationTest {
                         submitter.capture(),
                         any(ExtensionStepConfig.class));
         try (var ignored = BaseContextImpl.attachCurrentContext(mock(StepContext.class))) {
-            submitter.getValue().apply(null);
+            submitter.getValue().apply(null).toCompletableFuture().join();
         }
         assertThrows(IllegalStateException.class, WaitForCallbackContext::getCurrentContext);
-    }
-
-    @SuppressWarnings("unchecked")
-    private DurableFuture<String> mockStringFuture() {
-        return mock(DurableFuture.class);
     }
 
     private interface CurrentContext extends DurableContext, ExtensionContext {}

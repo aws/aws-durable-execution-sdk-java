@@ -40,7 +40,8 @@ public final class DurableCallbackOperation {
         Objects.requireNonNull(resultType, "resultType cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
         ParameterValidator.validateOperationName(name);
-        return context.reserve(name).createCallback(CALLBACK.getValue(), resultType, extensionConfig(config));
+        var callback = context.reserve(name).createCallback(CALLBACK.getValue(), resultType, extensionConfig(config));
+        return CompletionStageDurableFuture.callback(context, callback.callbackId(), callback.result());
     }
 
     static ExtensionCallbackConfig extensionConfig(CallbackConfig config) {

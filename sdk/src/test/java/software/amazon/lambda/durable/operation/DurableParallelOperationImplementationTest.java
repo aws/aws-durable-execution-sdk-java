@@ -26,7 +26,6 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
-import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.exception.ParallelBranchFailedException;
@@ -47,7 +46,6 @@ class DurableParallelOperationImplementationTest {
         var context = mock(ExtensionContext.class);
         var parent = mock(ExtensionOperation.class);
         var parentFuture = mockParallelResultFuture();
-        var parentCompletion = new CompletableFuture<Void>();
         var serDes = new JacksonSerDes();
         when(context.getDurableConfig())
                 .thenReturn(DurableConfig.builder().withSerDes(serDes).build());
@@ -58,7 +56,6 @@ class DurableParallelOperationImplementationTest {
                         any(ExtensionContextFunction.class),
                         any(ExtensionContextConfig.class)))
                 .thenReturn(parentFuture);
-        when(parentFuture.completionFuture()).thenReturn(parentCompletion);
 
         var parallel = DurableParallelOperation.parallel(
                 context,
@@ -68,9 +65,8 @@ class DurableParallelOperationImplementationTest {
                         .build());
         var firstFuture = parallel.branch("first", String.class, child -> "first");
         var secondFuture = parallel.branch("second", String.class, child -> "second");
-        assertSame(parentCompletion, parallel.completionFuture());
+        assertTrue(parallel.completionFuture().isDone());
         parallel.close();
-        verify(parentFuture).get();
 
         var parentFunction = extensionFunction();
         var parentConfig = ArgumentCaptor.forClass(ExtensionContextConfig.class);
@@ -94,18 +90,23 @@ class DurableParallelOperationImplementationTest {
                         eq(TypeToken.get(String.class)),
                         any(ExtensionContextFunction.class),
                         any(ExtensionContextConfig.class)))
-                .thenReturn(new CompletedFuture<>("first"));
+                .thenReturn(CompletableFuture.completedFuture("first"));
         when(second.runInChildContextAsync(
                         eq(PARALLEL_BRANCH.getValue()),
                         eq(TypeToken.get(String.class)),
                         any(ExtensionContextFunction.class),
                         any(ExtensionContextConfig.class)))
-                .thenReturn(new CompletedFuture<>("second"));
+                .thenReturn(CompletableFuture.completedFuture("second"));
 
         ParallelResult result;
         try (var ignoredContext = BaseContextImpl.attachCurrentContext(child);
                 var ignoredReplay = ExtensionContextReplayContext.attach(false, null)) {
-            result = parentFunction.getValue().apply().result();
+            result = parentFunction
+                    .getValue()
+                    .apply()
+                    .toCompletableFuture()
+                    .join()
+                    .result();
         }
 
         assertEquals(2, result.size());
@@ -173,7 +174,7 @@ class DurableParallelOperationImplementationTest {
                         eq(TypeToken.get(String.class)),
                         any(ExtensionContextFunction.class),
                         any(ExtensionContextConfig.class)))
-                .thenReturn(new CompletedFuture<>("completed"));
+                .thenReturn(CompletableFuture.completedFuture("completed"));
         var replayState = new ParallelResult(
                 2,
                 1,
@@ -185,7 +186,12 @@ class DurableParallelOperationImplementationTest {
         ParallelResult result;
         try (var ignoredContext = BaseContextImpl.attachCurrentContext(child);
                 var ignoredReplay = ExtensionContextReplayContext.attach(true, replayState)) {
-            result = parentFunction.getValue().apply().result();
+            result = parentFunction
+                    .getValue()
+                    .apply()
+                    .toCompletableFuture()
+                    .join()
+                    .result();
         }
 
         assertEquals(replayState, result);
@@ -201,7 +207,7 @@ class DurableParallelOperationImplementationTest {
     void getIncludesLateBranchesAsSkipped() {
         var context = mock(ExtensionContext.class);
         var parent = mock(ExtensionOperation.class);
-        var parentFuture = mockParallelResultFuture();
+        var parentFuture = new CompletableFuture<ParallelResult>();
         when(context.getDurableConfig()).thenReturn(DurableConfig.builder().build());
         when(context.reserve("parallel")).thenReturn(parent);
         when(parent.runInChildContextAsync(
@@ -210,14 +216,13 @@ class DurableParallelOperationImplementationTest {
                         any(ExtensionContextFunction.class),
                         any(ExtensionContextConfig.class)))
                 .thenReturn(parentFuture);
-        when(parentFuture.get())
-                .thenReturn(new ParallelResult(
-                        1,
-                        1,
-                        0,
-                        0,
-                        ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED,
-                        List.of(ParallelResult.Status.SUCCEEDED)));
+        parentFuture.complete(new ParallelResult(
+                1,
+                1,
+                0,
+                0,
+                ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED,
+                List.of(ParallelResult.Status.SUCCEEDED)));
 
         var parallel = DurableParallelOperation.parallel(
                 context, "parallel", ParallelConfig.builder().build());
@@ -260,22 +265,10 @@ class DurableParallelOperationImplementationTest {
         return (ArgumentCaptor) ArgumentCaptor.forClass(ExtensionContextFunction.class);
     }
 
-    @SuppressWarnings("unchecked")
-    private DurableFuture<ParallelResult> mockParallelResultFuture() {
-        return mock(DurableFuture.class);
+    private CompletableFuture<ParallelResult> mockParallelResultFuture() {
+        return CompletableFuture.completedFuture(
+                new ParallelResult(0, 0, 0, 0, ConcurrencyCompletionStatus.ALL_COMPLETED, List.of()));
     }
 
     private interface CurrentContext extends DurableContext, ExtensionContext {}
-
-    private record CompletedFuture<T>(T result) implements DurableFuture<T> {
-        @Override
-        public T get() {
-            return result;
-        }
-
-        @Override
-        public CompletableFuture<Void> completionFuture() {
-            return CompletableFuture.completedFuture(null);
-        }
-    }
 }

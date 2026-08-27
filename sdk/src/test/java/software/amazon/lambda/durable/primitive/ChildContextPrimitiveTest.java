@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
@@ -36,7 +37,6 @@ import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.extension.ExtensionContextConfig;
 import software.amazon.lambda.durable.extension.ExtensionContextFailure;
-import software.amazon.lambda.durable.extension.ExtensionContextFunction;
 import software.amazon.lambda.durable.extension.ExtensionContextReplayContext;
 import software.amazon.lambda.durable.extension.ExtensionContextResult;
 import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
@@ -146,10 +146,10 @@ class ChildContextPrimitiveTest {
     }
 
     private ChildContextPrimitive<String> createExtensionOperation(
-            String subType, ExtensionContextFunction<String> function, ExtensionContextConfig config) {
+            String subType, Supplier<ExtensionContextResult<String>> function, ExtensionContextConfig config) {
         return new ChildContextPrimitive<>(
                 new PrimitiveOperationIdentifier("1", "test-context", OperationType.CONTEXT, subType),
-                function,
+                () -> CompletableFuture.completedFuture(function.get()),
                 TypeToken.get(String.class),
                 config,
                 durableContext);

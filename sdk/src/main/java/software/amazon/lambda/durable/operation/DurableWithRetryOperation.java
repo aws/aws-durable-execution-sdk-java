@@ -4,6 +4,8 @@ package software.amazon.lambda.durable.operation;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import software.amazon.lambda.durable.DurableContext;
@@ -55,17 +57,33 @@ public final class DurableWithRetryOperation {
         Objects.requireNonNull(operation, "operation cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
 
+        var stage = withRetryStage(
+                context,
+                name,
+                (attempt, durableContext) ->
+                        CompletableFuture.completedFuture(operation.apply(attempt, durableContext)),
+                config);
+        return CompletionStageDurableFuture.from(context, stage);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> CompletionStage<T> withRetryStage(
+            ExtensionContext context,
+            String name,
+            BiFunction<Integer, DurableContext, ? extends CompletionStage<T>> operation,
+            WithRetryConfig config) {
         var contextName = name != null ? name : ANONYMOUS_CONTEXT_NAME;
         var future = context.reserve(contextName)
                 .runInChildContextAsync(
                         OperationSubType.WITH_RETRY.getValue(),
                         new TypeToken<Object>() {},
-                        () -> ExtensionContextResult.replayChildrenAboveSize(
-                                executeRetryLoop(name, operation, config), null, LARGE_RESULT_THRESHOLD),
+                        () -> executeRetryLoop(name, operation, config, 1)
+                                .thenApply(result -> ExtensionContextResult.replayChildrenAboveSize(
+                                        result, null, LARGE_RESULT_THRESHOLD)),
                         ExtensionContextConfig.builder()
                                 .isVirtual(!config.wrapInChildContext())
                                 .build());
-        return (DurableFuture<T>) future;
+        return (CompletionStage<T>) (CompletionStage<?>) future;
     }
 
     private static <T> BiFunction<Integer, DurableContext, T> adapt(Supplier<T> operation) {
@@ -77,30 +95,53 @@ public final class DurableWithRetryOperation {
         };
     }
 
-    private static <T> T executeRetryLoop(
-            String name, BiFunction<Integer, DurableContext, T> operation, WithRetryConfig config) {
+    private static <T> CompletionStage<T> executeRetryLoop(
+            String name,
+            BiFunction<Integer, DurableContext, ? extends CompletionStage<T>> operation,
+            WithRetryConfig config,
+            int attempt) {
         var durableContext = DurableContext.requireCurrentContext();
         var extensionContext = ExtensionContext.getCurrentContext();
-        var attempt = 1;
-        while (true) {
-            try {
-                return operation.apply(attempt, durableContext);
-            } catch (SuspendExecutionException | UnrecoverableDurableExecutionException e) {
-                throw e;
-            } catch (Exception e) {
-                var decision = config.retryStrategy().makeRetryDecision(e, attempt);
-                if (!decision.shouldRetry()) {
-                    throw e;
-                }
-                var delay = decision.delay().isZero() ? DEFAULT_BACKOFF_DELAY : decision.delay();
-                extensionContext
-                        .reserve(backoffName(name, attempt))
-                        .waitAsync(OperationSubType.WAIT.getValue(), delay)
-                        .get();
-                attempt++;
-            }
+        final CompletionStage<T> attemptStage;
+        try {
+            attemptStage = Objects.requireNonNull(
+                    operation.apply(attempt, durableContext), "Retry operation stage cannot be null");
+        } catch (Throwable throwable) {
+            return handleRetryFailure(name, operation, config, attempt, extensionContext, throwable);
         }
+        return attemptStage
+                .handle(RetryAttemptResult<T>::new)
+                .thenCompose(result -> result.throwable() == null
+                        ? CompletableFuture.completedFuture(result.value())
+                        : handleRetryFailure(name, operation, config, attempt, extensionContext, result.throwable()));
     }
+
+    private static <T> CompletionStage<T> handleRetryFailure(
+            String name,
+            BiFunction<Integer, DurableContext, ? extends CompletionStage<T>> operation,
+            WithRetryConfig config,
+            int attempt,
+            ExtensionContext extensionContext,
+            Throwable throwable) {
+        var cause = software.amazon.lambda.durable.util.ExceptionHelper.unwrapCompletableFuture(throwable);
+        if (cause instanceof SuspendExecutionException || cause instanceof UnrecoverableDurableExecutionException) {
+            return CompletableFuture.failedFuture(cause);
+        }
+        if (!(cause instanceof Exception exception)) {
+            return CompletableFuture.failedFuture(cause);
+        }
+        var decision = config.retryStrategy().makeRetryDecision(exception, attempt);
+        if (!decision.shouldRetry()) {
+            return CompletableFuture.failedFuture(cause);
+        }
+        var delay = decision.delay().isZero() ? DEFAULT_BACKOFF_DELAY : decision.delay();
+        return extensionContext
+                .reserve(backoffName(name, attempt))
+                .waitAsync(OperationSubType.WAIT.getValue(), delay)
+                .thenCompose(ignored -> executeRetryLoop(name, operation, config, attempt + 1));
+    }
+
+    private record RetryAttemptResult<T>(T value, Throwable throwable) {}
 
     private static String backoffName(String name, int attempt) {
         return name != null ? name + BACKOFF_SUFFIX + attempt : ANONYMOUS_BACKOFF_PREFIX + attempt;

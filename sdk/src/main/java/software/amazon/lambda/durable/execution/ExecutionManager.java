@@ -13,6 +13,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicReference;
@@ -75,6 +76,7 @@ public class ExecutionManager implements SafeCloseable {
         ACTIVE,
         DEREGISTERING,
         WAITING,
+        SUSPENDING,
         COMPLETED,
         SUSPENDED
     }
@@ -248,24 +250,48 @@ public class ExecutionManager implements SafeCloseable {
      * @return the completed result
      */
     public <T> T awaitFuture(CompletableFuture<T> future) {
-        var threadContext = getCurrentThreadContext();
-        CompletableFuture<T> awaitedFuture = future;
-
-        if (threadContext != null && !future.isDone()) {
-            var waitState = new AtomicReference<>(FutureWaitState.ACTIVE);
-            awaitedFuture = future.whenComplete(
-                    (ignored, throwable) -> completeFutureWait(threadContext.threadId(), waitState));
-            if (waitState.compareAndSet(FutureWaitState.ACTIVE, FutureWaitState.DEREGISTERING)) {
-                deregisterActiveThreadForFuture(threadContext.threadId(), waitState);
-            }
-        }
-
         try {
-            return awaitedFuture.join();
+            return deactivateCurrentThreadUntilComplete(future).join();
         } catch (Throwable throwable) {
             ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
             return null;
         }
+    }
+
+    /**
+     * Marks the current durable context thread inactive until the supplied stage completes.
+     *
+     * <p>No platform thread is blocked. The returned future completes only after the logical durable thread has been
+     * reactivated, or exceptionally when the invocation suspends or terminates.
+     *
+     * @param stage the asynchronous work awaited by the current durable context
+     * @param <T> the result type
+     * @return a future that completes after durable-thread reactivation
+     */
+    public <T> CompletableFuture<T> deactivateCurrentThreadUntilComplete(CompletionStage<T> stage) {
+        Objects.requireNonNull(stage, "stage cannot be null");
+        var source = copyStage(stage);
+        var threadContext = getCurrentThreadContext();
+        if (threadContext == null || source.isDone()) {
+            return source;
+        }
+
+        var waitState = new AtomicReference<>(FutureWaitState.ACTIVE);
+        var result = new CompletableFuture<T>();
+        source.whenComplete((value, throwable) -> {
+            completeFutureWait(threadContext.threadId(), waitState);
+            completeResult(result, value, throwable);
+        });
+        executionExceptionFuture.whenComplete((ignored, throwable) -> {
+            if (throwable != null) {
+                result.completeExceptionally(ExceptionHelper.unwrapCompletableFuture(throwable));
+            }
+        });
+
+        if (waitState.compareAndSet(FutureWaitState.ACTIVE, FutureWaitState.DEREGISTERING)) {
+            deregisterActiveThreadForFuture(threadContext.threadId(), waitState);
+        }
+        return result;
     }
 
     private void completeFutureWait(String threadId, AtomicReference<FutureWaitState> waitState) {
@@ -275,7 +301,7 @@ public class ExecutionManager implements SafeCloseable {
                 return;
             }
             if (waitState.compareAndSet(current, FutureWaitState.COMPLETED)) {
-                if (current == FutureWaitState.WAITING) {
+                if (current == FutureWaitState.WAITING || current == FutureWaitState.SUSPENDING) {
                     registerActiveThreadIfRunning(threadId);
                 }
                 return;
@@ -284,6 +310,7 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     void deregisterActiveThreadForFuture(String threadId, AtomicReference<FutureWaitState> waitState) {
+        var shouldSuspend = false;
         synchronized (activeThreads) {
             removeActiveThread(threadId);
             if (!waitState.compareAndSet(FutureWaitState.DEREGISTERING, FutureWaitState.WAITING)) {
@@ -292,9 +319,19 @@ public class ExecutionManager implements SafeCloseable {
                 }
                 return;
             }
-            if (activeThreads.isEmpty()
-                    && waitState.compareAndSet(FutureWaitState.WAITING, FutureWaitState.SUSPENDED)) {
-                suspendForNoActiveThreads();
+            if (activeThreads.isEmpty()) {
+                shouldSuspend = waitState.compareAndSet(FutureWaitState.WAITING, FutureWaitState.SUSPENDING);
+            }
+        }
+        if (shouldSuspend) {
+            synchronized (activeThreads) {
+                if (activeThreads.isEmpty()) {
+                    if (waitState.compareAndSet(FutureWaitState.SUSPENDING, FutureWaitState.SUSPENDED)) {
+                        signalSuspendForNoActiveThreads();
+                    }
+                } else {
+                    waitState.compareAndSet(FutureWaitState.SUSPENDING, FutureWaitState.WAITING);
+                }
             }
         }
     }
@@ -352,9 +389,14 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private void suspendForNoActiveThreads() {
+        var exception = signalSuspendForNoActiveThreads();
+        throw exception;
+    }
+
+    private SuspendExecutionException signalSuspendForNoActiveThreads() {
         logger.info("No active threads remaining - suspending execution");
         preSuspendCheck();
-        suspendExecution();
+        return signalSuspendExecution();
     }
 
     private void preSuspendCheck() {
@@ -461,10 +503,14 @@ public class ExecutionManager implements SafeCloseable {
 
     /** Suspends the execution by completing the execution exception future with a {@link SuspendExecutionException}. */
     public void suspendExecution() {
-        var ex = new SuspendExecutionException();
-        stopAllOperations(ex);
-        executionExceptionFuture.completeExceptionally(ex);
-        throw ex;
+        throw signalSuspendExecution();
+    }
+
+    private SuspendExecutionException signalSuspendExecution() {
+        var exception = new SuspendExecutionException();
+        stopAllOperations(exception);
+        executionExceptionFuture.completeExceptionally(exception);
+        return exception;
     }
 
     /**
@@ -496,5 +542,19 @@ public class ExecutionManager implements SafeCloseable {
             }
             return null;
         });
+    }
+
+    private static <T> CompletableFuture<T> copyStage(CompletionStage<T> stage) {
+        var result = new CompletableFuture<T>();
+        stage.whenComplete((value, throwable) -> completeResult(result, value, throwable));
+        return result;
+    }
+
+    private static <T> void completeResult(CompletableFuture<T> result, T value, Throwable throwable) {
+        if (throwable == null) {
+            result.complete(value);
+        } else {
+            result.completeExceptionally(ExceptionHelper.unwrapCompletableFuture(throwable));
+        }
     }
 }

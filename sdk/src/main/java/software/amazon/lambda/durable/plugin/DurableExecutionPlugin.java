@@ -26,10 +26,22 @@ public interface DurableExecutionPlugin {
     default void onInvocationStart(InvocationInfo info) {}
 
     /**
+     * Called when an asynchronous durable handler returns an incomplete completion stage.
+     *
+     * <p>This hook fires on the same thread as {@link #onInvocationStart(InvocationInfo)} and before that thread is
+     * released. Plugins that install thread-local state in {@code onInvocationStart} should release it here. The
+     * invocation remains in progress until {@link #onInvocationEnd(InvocationEndInfo)} fires.
+     */
+    default void onInvocationAsyncReturn(InvocationInfo info) {}
+
+    /**
      * Called at the end of each Lambda invocation. Use to flush spans/metrics before Lambda freezes.
      *
      * <p>This hook is awaited — the SDK blocks until it returns. This is the only safe flush point before Lambda
      * freezes the execution environment.
+     *
+     * <p>For an asynchronous durable handler, this hook may fire on the thread that completes the returned stage.
+     * Thread-local state must therefore be released in {@link #onInvocationAsyncReturn(InvocationInfo)}.
      *
      * <p>Check {@link InvocationEndInfo#invocationStatus()} to detect if the execution reached a terminal state in this
      * invocation (useful for writing summary records or flushing final data).
@@ -74,10 +86,22 @@ public interface DurableExecutionPlugin {
     default void onUserFunctionStart(UserFunctionStartInfo info) {}
 
     /**
+     * Called after an asynchronous user function returns an incomplete completion stage.
+     *
+     * <p>This hook fires on the same thread as {@link #onUserFunctionStart(UserFunctionStartInfo)} and before that
+     * thread is released. Plugins that install thread-local state in {@code onUserFunctionStart}, such as an
+     * OpenTelemetry scope, should release it here. The logical user function remains in progress until
+     * {@link #onUserFunctionEnd(UserFunctionEndInfo)} fires.
+     */
+    default void onUserFunctionAsyncReturn(UserFunctionStartInfo info) {}
+
+    /**
      * Called when a user-provided function finishes executing. This fires for both step attempts and child context
      * functions.
      *
-     * <p>This hook fires on the same thread as user code, so plugins can close OTel scopes here.
+     * <p>For synchronous user functions, this hook fires on the same thread as user code. For asynchronous user
+     * functions, it may fire on the thread that completes the returned stage. Thread-local state for an asynchronous
+     * function must therefore be released in {@link #onUserFunctionAsyncReturn(UserFunctionStartInfo)}.
      *
      * <p>It fires for every terminal outcome of the user function: normal return, a thrown failure, and suspension.
      * {@link UserFunctionEndInfo#succeeded()} is {@code true} only on normal return; it is {@code false} for both a

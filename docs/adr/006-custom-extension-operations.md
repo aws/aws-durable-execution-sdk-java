@@ -50,8 +50,14 @@ exposes only one fully specified asynchronous method per primitive instead of mi
 families. Extension libraries can add their own conveniences, and deterministic operations can use the matching
 built-in operation directly.
 
+The extension SPI is asynchronous end to end. Primitive methods and extension user-function callbacks exchange
+`CompletionStage` values rather than `DurableFuture` or direct results. This makes the SPI suitable for nonblocking
+language facades, including Kotlin coroutine adapters, without retaining a platform thread across suspension.
+`DurableExecutor.executeAsync` and `wrapAsync` provide the corresponding asynchronous root-handler boundary.
+
 The existing `DurableContext` methods remain compatibility APIs. Their implementations delegate to the same built-in
-operation classes used by the static APIs.
+operation classes used by the static APIs. Those Java APIs continue to return `DurableFuture` through an adapter over
+the asynchronous SPI.
 
 Each built-in operation owns its public nested configuration type, such as
 `DurableStepOperation.StepConfig` or `DurableMapOperation.MapConfig`. The compatibility types under
@@ -184,32 +190,36 @@ Extension authors never provide or observe the final globally stored operation I
 `ExtensionOperation` provides one subtype-aware method for every primitive:
 
 ```java
-<T> DurableFuture<T> stepAsync(
+<T> CompletionStage<T> stepAsync(
         String subType,
         TypeToken<T> resultType,
         ExtensionStepFunction<T> function,
         ExtensionStepConfig<T> config);
 
-DurableFuture<Void> waitAsync(String subType, Duration duration);
+CompletionStage<Void> waitAsync(String subType, Duration duration);
 
-<T, U> DurableFuture<T> invokeAsync(
+<T, U> CompletionStage<T> invokeAsync(
         String subType,
         String functionName,
         U payload,
         TypeToken<T> resultType,
         ExtensionInvokeConfig config);
 
-<T> DurableCallbackFuture<T> createCallback(
+<T> ExtensionCallback<T> createCallback(
         String subType,
         TypeToken<T> resultType,
         ExtensionCallbackConfig config);
 
-<T> DurableFuture<T> runInChildContextAsync(
+<T> CompletionStage<T> runInChildContextAsync(
         String subType,
         TypeToken<T> resultType,
         ExtensionContextFunction<T> function,
         ExtensionContextConfig config);
 ```
+
+`ExtensionCallback` exposes an immediately available callback ID and a `CompletionStage<T>` result. An
+`ExtensionStepFunction<T>` returns `CompletionStage<ExtensionStepResult<T>>`, and an
+`ExtensionContextFunction<T>` returns `CompletionStage<ExtensionContextResult<T>>`.
 
 `ExtensionStepConfig` owns its nested `StepSemantics` and `RetryStrategy` contracts. Exception retry strategies reuse
 the fixed-delay `ExtensionStepResult.retry(state, delay)` outcome as their retry decision. Stateful continuations may
@@ -302,13 +312,13 @@ Resolution order is:
 This preserves the existing fallback behavior for callback failures and timeouts, map iterations, parallel branches,
 with-retry contexts, and ordinary child contexts.
 
-### Support Composed Durable Futures
+### Support Composed Completion Stages
 
-`DurableFuture.completionFuture()` provides a public, non-mutating completion signal. Custom composed futures override
-it when they support `DurableFuture.anyOf`.
+Extension operations compose with standard `CompletionStage` operators. The SDK's built-in Java operation facades
+adapt their final stages to `DurableFuture` to preserve the existing customer API.
 
-Map and parallel use a shared concurrency coordinator built from reserved extension context operations and public
-completion signals. The coordinator is not a durable operation and creates no checkpoint of its own.
+Map and parallel use a shared stage-based concurrency coordinator built from reserved extension context operations.
+The coordinator is not a durable operation and creates no checkpoint of its own.
 
 ### Implement Built-Ins Through Extensions
 

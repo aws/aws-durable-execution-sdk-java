@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -76,7 +77,7 @@ class DurableWaitForConditionOperationImplementationTest {
         var actual = DurableWaitForConditionOperation.waitForConditionAsync(
                 context, "ready", resultType, (state, step) -> WaitForConditionResult.continuePolling("next"), config);
 
-        assertEquals(future.get(), actual.get());
+        assertEquals(future.join(), actual.get());
         var function = extensionFunction();
         var extensionConfig = ArgumentCaptor.forClass(ExtensionStepConfig.class);
         verify(reservation)
@@ -93,7 +94,7 @@ class DurableWaitForConditionOperationImplementationTest {
         try (var ignored = BaseContextImpl.attachCurrentContext(stepContext)) {
             var retry = assertInstanceOf(
                     ExtensionStepResult.RetryAfterNormalization.class,
-                    function.getValue().apply("state"));
+                    function.getValue().apply("state").toCompletableFuture().join());
             assertEquals("next", retry.state());
             assertFalse(strategyCalled.get());
             assertEquals(Duration.ofSeconds(7), retry.delay("normalized"));
@@ -113,9 +114,7 @@ class DurableWaitForConditionOperationImplementationTest {
                         .error(ErrorObject.builder().errorMessage("failed").build())
                         .build())
                 .build();
-        DurableFuture<String> delegate = () -> {
-            throw new StepFailedException(operation);
-        };
+        var delegate = CompletableFuture.<String>failedFuture(new StepFailedException(operation));
 
         var future = createFuture(delegate);
 
@@ -125,23 +124,15 @@ class DurableWaitForConditionOperationImplementationTest {
 
     @Test
     void futureDelegatesCompletionSignal() {
-        var completion = new CompletableFuture<Void>();
-        DurableFuture<String> delegate = new DurableFuture<>() {
-            @Override
-            public String get() {
-                return "done";
-            }
+        var delegate = new CompletableFuture<String>();
+        var completion = createFuture(delegate).completionFuture();
 
-            @Override
-            public CompletableFuture<Void> completionFuture() {
-                return completion;
-            }
-        };
-
-        assertSame(completion, createFuture(delegate).completionFuture());
+        assertFalse(completion.isDone());
+        delegate.complete("done");
+        completion.join();
     }
 
-    private DurableFuture<String> createFuture(DurableFuture<String> delegate) {
+    private DurableFuture<String> createFuture(CompletionStage<String> delegate) {
         var context = mock(ExtensionContext.class);
         var reservation = mock(ExtensionOperation.class);
         var resultType = TypeToken.get(String.class);
@@ -165,10 +156,7 @@ class DurableWaitForConditionOperationImplementationTest {
         return (ArgumentCaptor) ArgumentCaptor.forClass(ExtensionStepFunction.class);
     }
 
-    @SuppressWarnings("unchecked")
-    private DurableFuture<String> mockStringFuture() {
-        var future = (DurableFuture<String>) mock(DurableFuture.class);
-        when(future.get()).thenReturn("done");
-        return future;
+    private CompletableFuture<String> mockStringFuture() {
+        return CompletableFuture.completedFuture("done");
     }
 }

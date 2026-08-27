@@ -14,11 +14,12 @@ import static software.amazon.lambda.durable.operation.DurableConcurrencyOperati
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
-import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.operation.DurableConcurrencyOperation.CompletionConfig;
 import software.amazon.lambda.durable.operation.DurableConcurrencyOperation.OperationConcurrencyCoordinator;
@@ -38,7 +39,7 @@ class OperationConcurrencyCoordinatorTest {
         coordinator.register(() -> launch(third, launched, thirdLaunched));
         coordinator.closeRegistration();
 
-        var result = CompletableFuture.supplyAsync(coordinator::awaitCompletion);
+        var result = coordinator.awaitCompletion().toCompletableFuture();
         firstTwoLaunched.await();
 
         assertEquals(2, launched.get());
@@ -64,7 +65,7 @@ class OperationConcurrencyCoordinatorTest {
             return next;
         });
 
-        var result = CompletableFuture.supplyAsync(coordinator::awaitCompletion);
+        var result = coordinator.awaitCompletion().toCompletableFuture();
         var launchedWithoutExternalSignal = nextLaunched.await(200, TimeUnit.MILLISECONDS);
         coordinator.closeRegistration();
         next.complete();
@@ -92,7 +93,7 @@ class OperationConcurrencyCoordinatorTest {
         });
         coordinator.closeRegistration();
 
-        var result = CompletableFuture.supplyAsync(coordinator::awaitCompletion);
+        var result = coordinator.awaitCompletion().toCompletableFuture();
         first.complete();
         var completion = result.join();
 
@@ -114,7 +115,7 @@ class OperationConcurrencyCoordinatorTest {
         coordinator.register(() -> succeeded);
         coordinator.closeRegistration();
 
-        var result = CompletableFuture.supplyAsync(coordinator::awaitCompletion);
+        var result = coordinator.awaitCompletion().toCompletableFuture();
         failed.complete();
         succeeded.complete();
         var completion = result.join();
@@ -139,7 +140,7 @@ class OperationConcurrencyCoordinatorTest {
                     : CompletionConfig.CompletionDecision.continueExecution();
         });
         var coordinator = new OperationConcurrencyCoordinator(1, completionConfig);
-        var result = CompletableFuture.supplyAsync(coordinator::awaitCompletion);
+        var result = coordinator.awaitCompletion().toCompletableFuture();
         var item = new TestFuture<>("result");
 
         coordinator.register(() -> item);
@@ -171,22 +172,24 @@ class OperationConcurrencyCoordinatorTest {
         }));
         coordinator.closeRegistration();
 
-        var exception = assertThrows(IllegalDurableOperationException.class, coordinator::awaitCompletion);
+        var completionException = assertThrows(
+                CompletionException.class,
+                () -> coordinator.awaitCompletion().toCompletableFuture().join());
+        var exception = (IllegalDurableOperationException) completionException.getCause();
 
         assertTrue(exception.getMessage().contains("completion failed"));
     }
 
-    private static <T> DurableFuture<T> launch(
+    private static <T> CompletionStage<T> launch(
             TestFuture<T> future, AtomicInteger launched, CountDownLatch launchLatch) {
         launched.incrementAndGet();
         launchLatch.countDown();
         return future;
     }
 
-    private static final class TestFuture<T> implements DurableFuture<T> {
+    private static final class TestFuture<T> extends CompletableFuture<T> {
         private final T result;
         private final RuntimeException failure;
-        private final CompletableFuture<Void> completion = new CompletableFuture<>();
 
         private TestFuture(T result) {
             this.result = result;
@@ -198,21 +201,12 @@ class OperationConcurrencyCoordinatorTest {
             this.failure = failure;
         }
 
-        @Override
-        public T get() {
-            if (failure != null) {
-                throw failure;
-            }
-            return result;
-        }
-
-        @Override
-        public CompletableFuture<Void> completionFuture() {
-            return completion.thenApply(ignored -> null);
-        }
-
         private void complete() {
-            completion.complete(null);
+            if (failure != null) {
+                completeExceptionally(failure);
+            } else {
+                complete(result);
+            }
         }
     }
 }

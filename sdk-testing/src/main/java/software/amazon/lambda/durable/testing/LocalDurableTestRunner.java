@@ -7,6 +7,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiFunction;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -38,7 +40,7 @@ public class LocalDurableTestRunner<I, O> {
 
     private final TypeToken<I> inputType;
     private final TypeToken<O> outputType;
-    private final BiFunction<I, DurableContext, O> handler;
+    private final BiFunction<I, DurableContext, ? extends CompletionStage<O>> handler;
     private final LocalMemoryExecutionClient storage;
     private final SerDes serDes;
     private final DurableConfig customerConfig;
@@ -47,7 +49,7 @@ public class LocalDurableTestRunner<I, O> {
     private LocalDurableTestRunner(
             TypeToken<I> inputType,
             TypeToken<O> outputType,
-            BiFunction<I, DurableContext, O> handlerFn,
+            BiFunction<I, DurableContext, ? extends CompletionStage<O>> handlerFn,
             DurableConfig customerConfig) {
         this.inputType = inputType;
         this.outputType = outputType;
@@ -88,7 +90,7 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
-        return new LocalDurableTestRunner<>(TypeToken.get(inputType), null, handlerFn, null);
+        return new LocalDurableTestRunner<>(TypeToken.get(inputType), null, asAsync(handlerFn), null);
     }
 
     /**
@@ -109,6 +111,18 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             TypeToken<I> inputType, BiFunction<I, DurableContext, O> handlerFn) {
+        return new LocalDurableTestRunner<>(inputType, null, asAsync(handlerFn), null);
+    }
+
+    /** Creates a LocalDurableTestRunner for an asynchronous durable handler with default configuration. */
+    public static <I, O> LocalDurableTestRunner<I, O> createAsync(
+            Class<I> inputType, BiFunction<I, DurableContext, ? extends CompletionStage<O>> handlerFn) {
+        return new LocalDurableTestRunner<>(TypeToken.get(inputType), null, handlerFn, null);
+    }
+
+    /** Creates a LocalDurableTestRunner for an asynchronous durable handler with default configuration. */
+    public static <I, O> LocalDurableTestRunner<I, O> createAsync(
+            TypeToken<I> inputType, BiFunction<I, DurableContext, ? extends CompletionStage<O>> handlerFn) {
         return new LocalDurableTestRunner<>(inputType, null, handlerFn, null);
     }
 
@@ -125,6 +139,14 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             Class<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig config) {
+        return new LocalDurableTestRunner<>(TypeToken.get(inputType), null, asAsync(handlerFn), config);
+    }
+
+    /** Creates a LocalDurableTestRunner for an asynchronous durable handler with custom configuration. */
+    public static <I, O> LocalDurableTestRunner<I, O> createAsync(
+            Class<I> inputType,
+            BiFunction<I, DurableContext, ? extends CompletionStage<O>> handlerFn,
+            DurableConfig config) {
         return new LocalDurableTestRunner<>(TypeToken.get(inputType), null, handlerFn, config);
     }
     /**
@@ -163,6 +185,14 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(
             TypeToken<I> inputType, BiFunction<I, DurableContext, O> handlerFn, DurableConfig config) {
+        return new LocalDurableTestRunner<>(inputType, null, asAsync(handlerFn), config);
+    }
+
+    /** Creates a LocalDurableTestRunner for an asynchronous durable handler with custom configuration. */
+    public static <I, O> LocalDurableTestRunner<I, O> createAsync(
+            TypeToken<I> inputType,
+            BiFunction<I, DurableContext, ? extends CompletionStage<O>> handlerFn,
+            DurableConfig config) {
         return new LocalDurableTestRunner<>(inputType, null, handlerFn, config);
     }
 
@@ -179,7 +209,7 @@ public class LocalDurableTestRunner<I, O> {
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(Class<I> inputType, DurableHandler<I, O> handler) {
         return new LocalDurableTestRunner<>(
-                TypeToken.get(inputType), null, handler::handleRequest, handler.getConfiguration());
+                TypeToken.get(inputType), null, asAsync(handler::handleRequest), handler.getConfiguration());
     }
 
     /**
@@ -233,16 +263,23 @@ public class LocalDurableTestRunner<I, O> {
      * @return LocalDurableTestRunner configured with the handler's settings
      */
     public static <I, O> LocalDurableTestRunner<I, O> create(TypeToken<I> inputType, DurableHandler<I, O> handler) {
-        return new LocalDurableTestRunner<>(inputType, null, handler::handleRequest, handler.getConfiguration());
+        return new LocalDurableTestRunner<>(
+                inputType, null, asAsync(handler::handleRequest), handler.getConfiguration());
     }
 
     /** Run a single invocation (may return PENDING if waiting/retrying). */
     public TestResult<O> run(I input) {
         var durableInput = createDurableInput(input);
 
-        var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, customerConfig);
+        var output =
+                DurableExecutor.executeAsync(durableInput, mockLambdaContext(), inputType, handler, customerConfig);
 
         return storage.toTestResult(output, outputType, serDes);
+    }
+
+    private static <I, O> BiFunction<I, DurableContext, CompletionStage<O>> asAsync(
+            BiFunction<I, DurableContext, O> handler) {
+        return (input, context) -> CompletableFuture.completedFuture(handler.apply(input, context));
     }
 
     /**

@@ -14,11 +14,11 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import software.amazon.lambda.durable.DurableContext;
-import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.context.BaseContextImpl;
@@ -67,7 +67,7 @@ class DurableWithRetryOperationImplementationTest {
                 },
                 config.toOperationConfig());
 
-        assertSame(future, actual);
+        assertEquals("done", actual.get());
         var function = extensionFunction();
         var contextConfig = ArgumentCaptor.forClass(ExtensionContextConfig.class);
         verify(parent)
@@ -86,7 +86,7 @@ class DurableWithRetryOperationImplementationTest {
                 .thenReturn(waitFuture);
         BaseContextImpl.setCurrentContext(child);
 
-        var result = function.getValue().apply();
+        var result = function.getValue().apply().toCompletableFuture().join();
 
         assertEquals("done", result.result());
         assertFalse(result.shouldReplayChildren(256 * 1024 - 1));
@@ -101,14 +101,12 @@ class DurableWithRetryOperationImplementationTest {
         return (ArgumentCaptor) ArgumentCaptor.forClass(ExtensionContextFunction.class);
     }
 
-    @SuppressWarnings("unchecked")
-    private DurableFuture<Object> mockObjectFuture() {
-        return mock(DurableFuture.class);
+    private CompletableFuture<Object> mockObjectFuture() {
+        return CompletableFuture.completedFuture("done");
     }
 
-    @SuppressWarnings("unchecked")
-    private DurableFuture<Void> mockVoidFuture() {
-        return mock(DurableFuture.class);
+    private CompletableFuture<Void> mockVoidFuture() {
+        return CompletableFuture.completedFuture(null);
     }
 
     private interface CurrentExtensionContext extends DurableContext, ExtensionContext {}

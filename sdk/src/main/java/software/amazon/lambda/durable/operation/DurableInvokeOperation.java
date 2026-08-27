@@ -67,8 +67,11 @@ public final class DurableInvokeOperation {
         Objects.requireNonNull(resultType, "resultType cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
         ParameterValidator.validateOperationName(name);
-        return context.reserve(name)
-                .invokeAsync(CHAINED_INVOKE.getValue(), functionName, payload, resultType, extensionConfig(config));
+        return CompletionStageDurableFuture.from(
+                context,
+                context.reserve(name)
+                        .invokeAsync(
+                                CHAINED_INVOKE.getValue(), functionName, payload, resultType, extensionConfig(config)));
     }
 
     private static ExtensionInvokeConfig extensionConfig(InvokeConfig config) {

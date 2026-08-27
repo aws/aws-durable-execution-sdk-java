@@ -4,10 +4,13 @@ package software.amazon.lambda.durable.primitive;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
@@ -22,6 +25,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -45,10 +49,12 @@ import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.extension.ExtensionStepConfig;
-import software.amazon.lambda.durable.extension.ExtensionStepFunction;
 import software.amazon.lambda.durable.extension.ExtensionStepResult;
 import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.UserFunctionEndInfo;
+import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -209,6 +215,79 @@ class StatefulExtensionStepPrimitiveTest {
     }
 
     @Test
+    void incompleteAsyncStepBodyDoesNotRetainTheUserExecutorThread() throws Exception {
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            var startThread = new AtomicReference<Thread>();
+            var asyncReturnThread = new AtomicReference<Thread>();
+            var endThread = new AtomicReference<Thread>();
+            var asyncReturnObserved = new CountDownLatch(1);
+            var endObserved = new CountDownLatch(1);
+            var plugin = new DurableExecutionPlugin() {
+                @Override
+                public void onUserFunctionStart(UserFunctionStartInfo info) {
+                    startThread.set(Thread.currentThread());
+                }
+
+                @Override
+                public void onUserFunctionAsyncReturn(UserFunctionStartInfo info) {
+                    asyncReturnThread.set(Thread.currentThread());
+                    asyncReturnObserved.countDown();
+                }
+
+                @Override
+                public void onUserFunctionEnd(UserFunctionEndInfo info) {
+                    endThread.set(Thread.currentThread());
+                    endObserved.countDown();
+                }
+            };
+            when(durableContext.getDurableConfig())
+                    .thenReturn(DurableConfig.builder()
+                            .withExecutorService(executor)
+                            .withPlugins(plugin)
+                            .build());
+            when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID))
+                    .thenReturn(null);
+            when(executionManager.sendOperationUpdate(any())).thenReturn(CompletableFuture.completedFuture(null));
+            var functionStarted = new CountDownLatch(1);
+            var functionResult = new CompletableFuture<ExtensionStepResult<Integer>>();
+            var operation = new StepPrimitive<>(
+                    new PrimitiveOperationIdentifier(
+                            OPERATION_ID,
+                            OPERATION_NAME,
+                            OperationType.STEP,
+                            OperationSubType.WAIT_FOR_CONDITION.getValue()),
+                    state -> {
+                        functionStarted.countDown();
+                        return functionResult;
+                    },
+                    TypeToken.get(Integer.class),
+                    ExtensionStepConfig.<Integer>builder().serDes(SERDES).build(),
+                    durableContext);
+
+            operation.execute();
+
+            assertTrue(functionStarted.await(2, TimeUnit.SECONDS));
+            assertTrue(asyncReturnObserved.await(2, TimeUnit.SECONDS));
+            assertSame(startThread.get(), asyncReturnThread.get());
+            var executorAvailable = new CountDownLatch(1);
+            executor.execute(executorAvailable::countDown);
+            assertTrue(executorAvailable.await(2, TimeUnit.SECONDS));
+            assertFalse(operation.getRunningUserHandler().isDone());
+
+            functionResult.complete(ExtensionStepResult.succeed(42));
+
+            assertTrue(endObserved.await(2, TimeUnit.SECONDS));
+            assertNotSame(asyncReturnThread.get(), endThread.get());
+            operation.getRunningUserHandler().get(2, TimeUnit.SECONDS);
+            verify(executionManager, timeout(1000))
+                    .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void exceptionRetryWithoutStateDoesNotCheckpointPayload() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
         when(executionManager.pollForOperationUpdates(eq(OPERATION_ID), any(Instant.class)))
@@ -263,10 +342,11 @@ class StatefulExtensionStepPrimitiveTest {
                         OPERATION_NAME,
                         OperationType.STEP,
                         OperationSubType.WAIT_FOR_CONDITION.getValue()),
-                state -> ExtensionStepResult.retryAfterNormalization("raw", normalized -> {
-                    strategyState.set(normalized);
-                    return Duration.ofSeconds(7);
-                }),
+                state -> CompletableFuture.completedFuture(
+                        ExtensionStepResult.retryAfterNormalization("raw", normalized -> {
+                            strategyState.set(normalized);
+                            return Duration.ofSeconds(7);
+                        })),
                 TypeToken.get(String.class),
                 ExtensionStepConfig.<String>builder()
                         .serDes(new NormalizingSerDes())
@@ -354,11 +434,12 @@ class StatefulExtensionStepPrimitiveTest {
         assertTrue(called.await(2, TimeUnit.SECONDS));
     }
 
-    private StepPrimitive<Integer> createOperation(ExtensionStepFunction<Integer> function) {
+    private StepPrimitive<Integer> createOperation(Function<Integer, ExtensionStepResult<Integer>> function) {
         return createOperation(function, null);
     }
 
-    private StepPrimitive<Integer> createOperation(ExtensionStepFunction<Integer> function, Integer initialState) {
+    private StepPrimitive<Integer> createOperation(
+            Function<Integer, ExtensionStepResult<Integer>> function, Integer initialState) {
         return createOperationWithConfig(
                 function,
                 ExtensionStepConfig.<Integer>builder()
@@ -368,14 +449,14 @@ class StatefulExtensionStepPrimitiveTest {
     }
 
     private StepPrimitive<Integer> createOperationWithConfig(
-            ExtensionStepFunction<Integer> function, ExtensionStepConfig<Integer> config) {
+            Function<Integer, ExtensionStepResult<Integer>> function, ExtensionStepConfig<Integer> config) {
         return new StepPrimitive<>(
                 new PrimitiveOperationIdentifier(
                         OPERATION_ID,
                         OPERATION_NAME,
                         OperationType.STEP,
                         OperationSubType.WAIT_FOR_CONDITION.getValue()),
-                function,
+                state -> CompletableFuture.completedFuture(function.apply(state)),
                 TypeToken.get(Integer.class),
                 config,
                 durableContext);

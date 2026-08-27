@@ -10,12 +10,11 @@ import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import software.amazon.lambda.durable.DurableFuture;
-import software.amazon.lambda.durable.context.BaseContext;
-import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
@@ -245,17 +244,17 @@ public abstract class DurableConcurrencyOperation {
         }
 
         static final class Item<T> {
-            private final Supplier<DurableFuture<T>> launcher;
-            private final DeferredDurableFuture<T> future = new DeferredDurableFuture<>();
+            private final Supplier<? extends CompletionStage<T>> launcher;
+            private final DeferredStage<T> future = new DeferredStage<>();
             private volatile ItemStatus status;
 
-            private Item(Supplier<DurableFuture<T>> launcher, ItemStatus status) {
+            private Item(Supplier<? extends CompletionStage<T>> launcher, ItemStatus status) {
                 this.launcher = launcher;
                 this.status = status;
             }
 
-            DurableFuture<T> future() {
-                return future;
+            CompletionStage<T> future() {
+                return future.stage();
             }
 
             ItemStatus status() {
@@ -283,11 +282,11 @@ public abstract class DurableConcurrencyOperation {
                     .completionDecisionFunction();
         }
 
-        <T> Item<T> register(Supplier<DurableFuture<T>> launcher) {
+        <T> Item<T> register(Supplier<? extends CompletionStage<T>> launcher) {
             return register(launcher, false);
         }
 
-        <T> Item<T> register(Supplier<DurableFuture<T>> launcher, boolean skipped) {
+        <T> Item<T> register(Supplier<? extends CompletionStage<T>> launcher, boolean skipped) {
             Objects.requireNonNull(launcher, "launcher cannot be null");
             synchronized (lock) {
                 if (registrationClosed) {
@@ -310,34 +309,45 @@ public abstract class DurableConcurrencyOperation {
             }
         }
 
-        Completion awaitCompletion() {
+        CompletionStage<Completion> awaitCompletion() {
             return awaitCompletion(null);
         }
 
-        Completion awaitCompletion(ExpectedCompletionStatus expectedCompletionStatus) {
+        CompletionStage<Completion> awaitCompletion(ExpectedCompletionStatus expectedCompletionStatus) {
             try {
-                return awaitCompletionLoop(expectedCompletionStatus);
+                return awaitCompletionLoop(expectedCompletionStatus).exceptionally(throwable -> {
+                    var cause = ExceptionHelper.unwrapCompletableFuture(throwable);
+                    if (cause instanceof SuspendExecutionException suspendExecutionException) {
+                        throw suspendExecutionException;
+                    }
+                    if (cause instanceof UnrecoverableDurableExecutionException unrecoverableException) {
+                        throw unrecoverableException;
+                    }
+                    throw new IllegalDurableOperationException(
+                            "Unexpected exception in concurrency operation: " + cause);
+                });
             } catch (Throwable exception) {
                 var cause = ExceptionHelper.unwrapCompletableFuture(exception);
                 if (cause instanceof SuspendExecutionException suspendExecutionException) {
-                    throw suspendExecutionException;
+                    return CompletableFuture.failedFuture(suspendExecutionException);
                 }
                 if (cause instanceof UnrecoverableDurableExecutionException unrecoverableException) {
-                    throw unrecoverableException;
+                    return CompletableFuture.failedFuture(unrecoverableException);
                 }
-                throw new IllegalDurableOperationException("Unexpected exception in concurrency operation: " + cause);
+                return CompletableFuture.failedFuture(new IllegalDurableOperationException(
+                        "Unexpected exception in concurrency operation: " + cause));
             }
         }
 
-        private Completion awaitCompletionLoop(ExpectedCompletionStatus expectedCompletionStatus) {
+        private CompletionStage<Completion> awaitCompletionLoop(ExpectedCompletionStatus expectedCompletionStatus) {
             while (true) {
-                DurableFuture<?>[] waiters;
+                CompletableFuture<?>[] waiters;
                 synchronized (lock) {
                     collectCompletedItems();
                     var decision = completionDecision(expectedCompletionStatus);
                     if (decision != null) {
                         markIncompleteItemsSkipped();
-                        return new Completion(decision, items);
+                        return CompletableFuture.completedFuture(new Completion(decision, items));
                     }
 
                     launchPendingItems();
@@ -345,14 +355,16 @@ public abstract class DurableConcurrencyOperation {
                     decision = completionDecision(expectedCompletionStatus);
                     if (decision != null) {
                         markIncompleteItemsSkipped();
-                        return new Completion(decision, items);
+                        return CompletableFuture.completedFuture(new Completion(decision, items));
                     }
                     if (running.size() < maxConcurrency && !pending.isEmpty()) {
                         continue;
                     }
                     waiters = completionWaiters();
                 }
-                DurableFuture.anyOf(waiters);
+                return CompletableFuture.anyOf(waiters)
+                        .handle((ignored, throwable) -> null)
+                        .thenCompose(ignored -> awaitCompletionLoop(expectedCompletionStatus));
             }
         }
 
@@ -383,7 +395,7 @@ public abstract class DurableConcurrencyOperation {
 
         private void complete(Item<?> item) {
             try {
-                item.future.get();
+                item.future.join();
                 item.status = ItemStatus.SUCCEEDED;
                 succeeded++;
             } catch (SuspendExecutionException | UnrecoverableDurableExecutionException exception) {
@@ -408,14 +420,14 @@ public abstract class DurableConcurrencyOperation {
             return decision.shouldComplete() ? decision : null;
         }
 
-        private DurableFuture<?>[] completionWaiters() {
+        private CompletableFuture<?>[] completionWaiters() {
             if (changed.isDone()) {
                 changed = new CompletableFuture<>();
             }
-            var waiters = new ArrayList<DurableFuture<?>>();
-            running.stream().map(item -> new CompletionOnlyFuture(item.future)).forEach(waiters::add);
-            waiters.add(new SignalFuture(changed));
-            return waiters.toArray(DurableFuture[]::new);
+            var waiters = new ArrayList<CompletableFuture<?>>();
+            running.stream().map(item -> item.future.signal()).forEach(waiters::add);
+            waiters.add(changed);
+            return waiters.toArray(CompletableFuture[]::new);
         }
 
         private void markIncompleteItemsSkipped() {
@@ -429,74 +441,67 @@ public abstract class DurableConcurrencyOperation {
         private void notifyChanged() {
             changed.complete(null);
         }
-
-        private record CompletionOnlyFuture(DurableFuture<?> delegate) implements DurableFuture<Void> {
-            @Override
-            public Void get() {
-                return null;
-            }
-
-            @Override
-            public CompletableFuture<Void> completionFuture() {
-                return delegate.completionFuture();
-            }
-        }
-
-        private record SignalFuture(CompletableFuture<Void> signal) implements DurableFuture<Void> {
-            @Override
-            public Void get() {
-                signal.join();
-                return null;
-            }
-
-            @Override
-            public CompletableFuture<Void> completionFuture() {
-                return signal.thenApply(ignored -> null);
-            }
-        }
     }
 
     protected static final class DeferredDurableFuture<T> implements DurableFuture<T> {
-        private final AtomicBoolean bound = new AtomicBoolean();
-        private final CompletableFuture<DurableFuture<T>> delegateFuture = new CompletableFuture<>();
-        private final CompletableFuture<Void> completionSignal = new CompletableFuture<>();
+        private final DeferredStage<T> delegate = new DeferredStage<>();
 
-        void bind(DurableFuture<T> delegate) {
-            Objects.requireNonNull(delegate, "delegate cannot be null");
-            if (!bound.compareAndSet(false, true)) {
-                throw new IllegalStateException("A deferred durable future can only be bound once");
-            }
-
-            delegateFuture.complete(delegate);
-            delegate.completionFuture().whenComplete((ignored, throwable) -> {
-                if (throwable == null) {
-                    completionSignal.complete(null);
-                } else {
-                    completionSignal.completeExceptionally(throwable);
-                }
-            });
+        void bind(CompletionStage<T> stage) {
+            delegate.bind(stage);
         }
 
         @Override
         public T get() {
-            return awaitDelegate().get();
+            return CompletionStageDurableFuture.from(delegate.stage()).get();
         }
 
         @Override
         public CompletableFuture<Void> completionFuture() {
-            return completionSignal.thenApply(ignored -> null);
+            return CompletionStageDurableFuture.from(delegate.stage()).completionFuture();
         }
 
         boolean isDone() {
-            return completionSignal.isDone();
+            return delegate.isDone();
+        }
+    }
+
+    private static final class DeferredStage<T> {
+        private final AtomicBoolean bound = new AtomicBoolean();
+        private final CompletableFuture<T> result = new CompletableFuture<>();
+
+        void bind(CompletionStage<T> stage) {
+            Objects.requireNonNull(stage, "stage cannot be null");
+            if (!bound.compareAndSet(false, true)) {
+                throw new IllegalStateException("A deferred stage can only be bound once");
+            }
+            stage.whenComplete((value, throwable) -> {
+                if (throwable == null) {
+                    result.complete(value);
+                } else {
+                    result.completeExceptionally(ExceptionHelper.unwrapCompletableFuture(throwable));
+                }
+            });
         }
 
-        private DurableFuture<T> awaitDelegate() {
-            var context = BaseContext.getCurrentContext();
-            if (context instanceof BaseContextImpl contextImpl) {
-                return contextImpl.getExecutionManager().awaitFuture(delegateFuture);
+        CompletionStage<T> stage() {
+            return result.minimalCompletionStage();
+        }
+
+        CompletableFuture<Void> signal() {
+            return result.handle((ignored, throwable) -> null);
+        }
+
+        boolean isDone() {
+            return result.isDone();
+        }
+
+        T join() {
+            try {
+                return result.join();
+            } catch (Throwable throwable) {
+                ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
+                return null;
             }
-            return delegateFuture.join();
         }
     }
 }

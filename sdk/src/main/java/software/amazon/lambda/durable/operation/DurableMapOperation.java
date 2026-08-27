@@ -12,6 +12,8 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import software.amazon.lambda.durable.DurableContext;
@@ -84,6 +86,16 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
             TypeToken<O> resultType,
             DurableContext.MapFunction<I, O> function,
             MapConfig config) {
+        return CompletionStageDurableFuture.from(context, mapStage(context, name, items, resultType, function, config));
+    }
+
+    private static <I, O> CompletionStage<MapResult<O>> mapStage(
+            ExtensionContext context,
+            String name,
+            Collection<I> items,
+            TypeToken<O> resultType,
+            DurableContext.MapFunction<I, O> function,
+            MapConfig config) {
         Objects.requireNonNull(context, "context cannot be null");
         Objects.requireNonNull(items, "items cannot be null");
         Objects.requireNonNull(function, "function cannot be null");
@@ -131,7 +143,7 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
         };
     }
 
-    private static <I, O> ExtensionContextResult<MapResult<O>> executeInChildContext(
+    private static <I, O> CompletionStage<ExtensionContextResult<MapResult<O>>> executeInChildContext(
             String name,
             List<I> items,
             List<String> iterationNames,
@@ -147,7 +159,7 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
                                     + " may affect replay and plugin instrumentation. Enable"
                                     + " DurableConfig.withCheckpointEmptyMap(true) to checkpoint empty maps.",
                             name);
-            return ExtensionContextResult.completed(MapResult.empty());
+            return CompletableFuture.completedFuture(ExtensionContextResult.completed(MapResult.empty()));
         }
 
         var replay = ExtensionContextReplayContext.<MapResult<O>>getCurrentContext();
@@ -160,7 +172,8 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
             validateReplayCardinality(name, items, replayState);
         }
         if (replay.isValidatingReplay()) {
-            return validateCompletedReplay(name, items, iterationNames, resultType, function, config, replayState);
+            return CompletableFuture.completedFuture(
+                    validateCompletedReplay(name, items, iterationNames, resultType, function, config, replayState));
         }
 
         var coordinator = new OperationConcurrencyCoordinator(config.maxConcurrency(), config.completionConfig());
@@ -170,11 +183,13 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
         var completion = replayState == null
                 ? coordinator.awaitCompletion()
                 : coordinator.awaitCompletion(expectedCompletion(replayState));
-        var result = constructResult(registeredItems, completion.completionDecision());
-        var strippedResult = stripMapResult(result);
-        return config.itemNamer() == null
-                ? ExtensionContextResult.replayChildrenAboveSize(result, strippedResult, LARGE_RESULT_THRESHOLD)
-                : ExtensionContextResult.replayChildren(result, strippedResult);
+        return completion.thenApply(completed -> {
+            var result = constructResult(registeredItems, completed.completionDecision());
+            var strippedResult = stripMapResult(result);
+            return config.itemNamer() == null
+                    ? ExtensionContextResult.replayChildrenAboveSize(result, strippedResult, LARGE_RESULT_THRESHOLD)
+                    : ExtensionContextResult.replayChildren(result, strippedResult);
+        });
     }
 
     private static <I, O> ExtensionContextResult<MapResult<O>> validateCompletedReplay(
@@ -243,7 +258,7 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
         return registeredItems;
     }
 
-    private static <I, O> DurableFuture<O> launchIteration(
+    private static <I, O> CompletionStage<O> launchIteration(
             ExtensionOperation reservation,
             I item,
             int index,
@@ -253,10 +268,10 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
         return reservation.runInChildContextAsync(
                 MAP_ITERATION.getValue(),
                 resultType,
-                () -> ExtensionContextResult.replayChildrenAboveSize(
+                () -> CompletableFuture.completedFuture(ExtensionContextResult.replayChildrenAboveSize(
                         function.apply(item, index, DurableContext.requireCurrentContext()),
                         null,
-                        LARGE_RESULT_THRESHOLD),
+                        LARGE_RESULT_THRESHOLD)),
                 config);
     }
 
@@ -290,8 +305,7 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
             } else if (item.status() == FAILED) {
                 results.set(index, failedResult(item));
             } else {
-                results.set(
-                        index, MapResult.MapResultItem.succeeded(item.future().get()));
+                results.set(index, MapResult.MapResultItem.succeeded(completedValue(item.future())));
             }
         }
         return new MapResult<>(results, completionDecision.completionStatus());
@@ -299,7 +313,7 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
 
     private static <O> MapResult.MapResultItem<O> failedResult(OperationConcurrencyCoordinator.Item<O> item) {
         try {
-            item.future().get();
+            completedValue(item.future());
             throw new IllegalStateException("Failed map item completed successfully");
         } catch (SuspendExecutionException | UnrecoverableDurableExecutionException exception) {
             throw exception;
@@ -315,6 +329,15 @@ public final class DurableMapOperation extends DurableConcurrencyOperation {
                         .map(item -> new MapResult.MapResultItem<O>(item.status(), null, null))
                         .toList(),
                 result.completionReason());
+    }
+
+    private static <T> T completedValue(CompletionStage<T> stage) {
+        try {
+            return stage.toCompletableFuture().join();
+        } catch (Throwable throwable) {
+            ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
+            return null;
+        }
     }
 
     private static void validateMinSuccessful(List<?> items, MapConfig config) {

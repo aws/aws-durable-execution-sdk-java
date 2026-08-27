@@ -97,12 +97,12 @@ public final class DurableWaitForConditionOperation {
                 .stepAsync(
                         OperationSubType.WAIT_FOR_CONDITION.getValue(),
                         resultType,
-                        state -> evaluate(state, checkFunction, config),
+                        state -> CompletableFuture.completedFuture(evaluate(state, checkFunction, config)),
                         ExtensionStepConfig.<T>builder()
                                 .initialState(config.initialState())
                                 .serDes(config.serDes())
                                 .build());
-        return new WaitForConditionFuture<>(future);
+        return new WaitForConditionFuture<>(CompletionStageDurableFuture.from(context, future));
     }
 
     private static <T> BiFunction<T, StepContext, WaitForConditionResult<T>> adapt(
