@@ -103,11 +103,10 @@ public interface DurableExecutionPlugin {
      * functions, it may fire on the thread that completes the returned stage. Thread-local state for an asynchronous
      * function must therefore be released in {@link #onUserFunctionAsyncReturn(UserFunctionStartInfo)}.
      *
-     * <p>It fires for every terminal outcome of the user function: normal return, a thrown failure, and suspension.
-     * {@link UserFunctionEndInfo#succeeded()} is {@code true} only on normal return; it is {@code false} for both a
-     * genuine failure and a suspension. On suspension the {@link UserFunctionEndInfo#error()} is the SDK's internal
-     * {@code SuspendExecutionException}, which is not a user error — plugins that count failures should treat a
-     * suspension as a neutral outcome (for example by checking the error type) rather than a failure.
+     * <p>It fires for every outcome of the user function: normal return, a thrown failure, and suspension. Check
+     * {@link UserFunctionEndInfo#outcome()} to distinguish them. A suspended function reports
+     * {@link UserFunctionOutcome#INCOMPLETE}; its {@link UserFunctionEndInfo#error()} is the SDK's internal
+     * {@code SuspendExecutionException}, not a user error.
      */
     default void onUserFunctionEnd(UserFunctionEndInfo info) {}
 }

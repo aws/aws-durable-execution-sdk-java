@@ -11,6 +11,7 @@ import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 
 /** Integration tests that verify checkpoint behavior using LocalMemoryExecutionClient */
@@ -104,5 +105,25 @@ class DurableExecutionCheckpointTest {
                 .filter(u -> u.type() == OperationType.EXECUTION)
                 .toList();
         assertTrue(executionUpdates.isEmpty());
+    }
+
+    @Test
+    void testLargeResultCanReplayWithoutDuplicateExecutionOperation() {
+        // A >6MB result checkpoints a SUCCEEDED EXECUTION operation into storage. Because the EXECUTION operation ID is
+        // stable across reinvocations, a second run must not collide the stored EXECUTION operation with the fresh one
+        // when ExecutionManager builds its ID-keyed operation map. Regression for the large-result replay path.
+        var largeString = "x".repeat(7 * 1024 * 1024); // 7MB string, exceeds the Lambda response limit
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> largeString);
+
+        // First run checkpoints the large EXECUTION result and stores the EXECUTION operation.
+        var first = runner.runUntilComplete("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, first.getStatus());
+        assertEquals(largeString, first.getResult(String.class));
+
+        // Second run replays over the stored state; it must not throw a duplicate-key error while collecting
+        // operations, and the completed large result must still be recoverable on replay.
+        var second = runner.runUntilComplete("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, second.getStatus());
+        assertEquals(largeString, second.getResult(String.class));
     }
 }

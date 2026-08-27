@@ -86,16 +86,16 @@ public class PluginExample extends DurableHandler<GreetingRequest, String> {
         @Override
         public void onUserFunctionStart(UserFunctionStartInfo info) {
             System.out.printf(
-                    "[PLUGIN] onUserFunctionStart: name=%s, type=%s, attempt=%s, isReplayingChildren=%s%n",
-                    info.name(), info.type(), info.attempt(), info.isReplayingChildren());
+                    "[PLUGIN] onUserFunctionStart: name=%s, type=%s, attempt=%s, isReplay=%s%n",
+                    info.name(), info.type(), info.attempt(), info.isReplay());
         }
 
         @Override
         public void onUserFunctionEnd(UserFunctionEndInfo info) {
             System.out.printf(
-                    "[PLUGIN] onUserFunctionEnd: name=%s, succeeded=%s, error=%s%n",
+                    "[PLUGIN] onUserFunctionEnd: name=%s, outcome=%s, error=%s%n",
                     info.name(),
-                    info.succeeded(),
+                    info.outcome(),
                     info.error() != null ? info.error().getMessage() : null);
         }
     }

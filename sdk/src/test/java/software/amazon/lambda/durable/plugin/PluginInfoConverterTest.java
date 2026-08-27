@@ -5,6 +5,8 @@ package software.amazon.lambda.durable.plugin;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
@@ -13,6 +15,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -238,11 +241,71 @@ class PluginInfoConverterTest {
         assertNull(info.result());
     }
 
+    // ─── toOperationItemMap ──────────────────────────────────────────────
+
+    @Test
+    void toOperationItemMap_extractsResult_fromSucceededStep() {
+        var operation = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.STEP)
+                .status(OperationStatus.SUCCEEDED)
+                .stepDetails(StepDetails.builder()
+                        .attempt(2)
+                        .result("{\"value\":42}")
+                        .build())
+                .build();
+
+        var info = PluginInfoConverter.toOperationItemMap(List.of(operation), Set.of())
+                .get(OPERATION_ID);
+
+        assertEquals("{\"value\":42}", info.result());
+        assertEquals(2, info.attempt());
+    }
+
+    @Test
+    void toOperationItemMap_omitsResult_fromFailedStep() {
+        var operation = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.STEP)
+                .status(OperationStatus.FAILED)
+                .stepDetails(StepDetails.builder()
+                        .attempt(2)
+                        .result("{\"intermediate\":true}")
+                        .build())
+                .build();
+
+        var info = PluginInfoConverter.toOperationItemMap(List.of(operation), Set.of())
+                .get(OPERATION_ID);
+
+        assertNull(info.result());
+    }
+
+    @Test
+    void operationChangeItemInfo_toString_omitsResult() {
+        var info = new OperationChangeItemInfo(
+                OPERATION_ID,
+                OPERATION_NAME,
+                "STEP",
+                "Step",
+                PARENT_ID,
+                START,
+                END,
+                OperationStatus.SUCCEEDED,
+                1,
+                false,
+                null,
+                "s3cret-result");
+
+        assertFalse(info.toString().contains("s3cret-result"), "operation result must not leak into logs");
+    }
+
     // ─── toUserFunctionStartInfo ────────────────────────────────────────
 
     @Test
     void toUserFunctionStartInfo_stepAttempt() {
-        var info = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, PARENT_ID, false, 3);
+        var info = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, PARENT_ID, true, 3);
 
         assertEquals(OPERATION_ID, info.id());
         assertEquals(OPERATION_NAME, info.name());
@@ -250,17 +313,17 @@ class PluginInfoConverterTest {
         assertEquals("Step", info.subType());
         assertEquals(PARENT_ID, info.parentId());
         assertNotNull(info.startTimestamp());
-        assertFalse(info.isReplayingChildren());
+        assertTrue(info.isReplay());
         assertEquals(3, info.attempt());
     }
 
     @Test
     void toUserFunctionStartInfo_contextOperation() {
-        var info = PluginInfoConverter.toUserFunctionStartInfo(MAP_IDENTIFIER, PARENT_ID, true, null);
+        var info = PluginInfoConverter.toUserFunctionStartInfo(MAP_IDENTIFIER, PARENT_ID, false, null);
 
         assertEquals("CONTEXT", info.type());
         assertEquals("Map", info.subType());
-        assertTrue(info.isReplayingChildren());
+        assertFalse(info.isReplay());
         assertNull(info.attempt());
     }
 
@@ -268,17 +331,17 @@ class PluginInfoConverterTest {
 
     @Test
     void toUserFunctionEndInfo_succeeded() {
-        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, PARENT_ID, false, 1);
+        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, PARENT_ID, true, 1);
 
-        var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, true, null);
+        var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.SUCCEEDED, null);
 
         assertEquals(OPERATION_ID, endInfo.id());
         assertEquals(OPERATION_NAME, endInfo.name());
         assertEquals(startInfo.startTimestamp(), endInfo.startTimestamp());
         assertNotNull(endInfo.endTimestamp());
-        assertFalse(endInfo.isReplayingChildren());
+        assertTrue(endInfo.isReplay());
         assertEquals(1, endInfo.attempt());
-        assertTrue(endInfo.succeeded());
+        assertEquals(UserFunctionOutcome.SUCCEEDED, endInfo.outcome());
         assertNull(endInfo.error());
     }
 
@@ -287,10 +350,21 @@ class PluginInfoConverterTest {
         var error = new RuntimeException("step failed");
         var startInfo = PluginInfoConverter.toUserFunctionStartInfo(STEP_IDENTIFIER, null, false, 2);
 
-        var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, false, error);
+        var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.FAILED, error);
 
-        assertFalse(endInfo.succeeded());
+        assertEquals(UserFunctionOutcome.FAILED, endInfo.outcome());
         assertEquals(error, endInfo.error());
         assertEquals(2, endInfo.attempt());
+    }
+
+    @Test
+    void toUserFunctionEndInfo_incomplete() {
+        var error = new SuspendExecutionException();
+        var startInfo = PluginInfoConverter.toUserFunctionStartInfo(MAP_IDENTIFIER, null, false, null);
+
+        var endInfo = PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.INCOMPLETE, error);
+
+        assertEquals(UserFunctionOutcome.INCOMPLETE, endInfo.outcome());
+        assertSame(error, endInfo.error());
     }
 }

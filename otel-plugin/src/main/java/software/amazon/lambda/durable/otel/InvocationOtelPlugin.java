@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.otel;
 import static software.amazon.lambda.durable.otel.SpanAttributes.*;
 
 import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanBuilder;
 import io.opentelemetry.api.trace.SpanContext;
@@ -46,20 +47,11 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  *   <li><b>Attempt span</b> — one per user function execution (step attempt, child context run)
  * </ul>
  *
- * <p><b>Workflow span behavior by provider:</b>
- *
- * <ul>
- *   <li>When using the ADOT Java agent ({@link #InvocationOtelPlugin()}), the Workflow span appears as a separate root
- *       trace because it uses {@code setNoParent()} with deterministic trace and span IDs. It serves as a correlation
- *       anchor across invocations. The Invocation span and its children nest under the ADOT agent's Lambda segment as
- *       subsegments.
- *   <li>When using a custom {@link io.opentelemetry.sdk.trace.SdkTracerProviderBuilder} (no ADOT agent), the Workflow
- *       span is similarly unparented. Invocation roots receive provider-generated trace IDs, and operation and attempt
- *       spans link to the Workflow span for execution-level correlation.
- * </ul>
- *
- * <p>The Workflow trace ID is derived from the execution start time and ARN, and is independent of the ambient
- * Lambda/X-Ray trace. Invocation spans inherit the active ambient context, or extracted upstream context as a fallback.
+ * <p>The Workflow span is parented onto the execution ancestor resolved at invocation start (the propagated remote
+ * server span when one is valid, otherwise a synthetic execution root), so it joins the execution trace with a trace ID
+ * stable across invocations. It serves as a correlation anchor: operation and attempt spans link to it while remaining
+ * parented to the per-invocation span. The Invocation span parents onto the same-trace ambient span when available,
+ * otherwise onto the execution ancestor so it stays on the execution trace.
  *
  * <p>Requires the ADOT Lambda Layer for trace export. Configure with:
  *
@@ -76,8 +68,8 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * operation, attempt) do not appear as nested subsegments of the Lambda platform segment. This is a known limitation of
  * the OTLP-to-X-Ray conversion: the ADOT collector cannot attach OTLP-exported spans as subsegments of the Lambda
  * service's native X-Ray segment because that segment is created outside the OTLP pipeline. Use the "Group by nodes"
- * view to inspect parent-child relationships within the ambient Invocation trace and the links to the independent
- * Workflow trace.
+ * view to inspect parent-child relationships within the shared execution trace and the links between operation spans
+ * and the Workflow span.
  *
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
@@ -99,6 +91,16 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
     private volatile Span workflowSpan;
     private volatile Span invocationSpan;
     private volatile String durableExecutionArn;
+    // Trace ID and flags of the execution trace, published together as one snapshot so readers never pair a trace ID
+    // with mismatched flags.
+    private volatile ExecutionTrace executionTrace;
+    // The execution's single sampling intent for this invocation, computed once at onInvocationStart and attached to
+    // every durable span's parent context so DurableSampler applies it (a resolved decision verbatim, or a deferral to
+    // its own delegate) without re-invoking the configured sampler per span.
+    private volatile DurableSamplingDecision.Intent samplingIntent;
+
+    /** Immutable snapshot of the resolved execution trace, read atomically through a single volatile reference. */
+    private record ExecutionTrace(String traceId, TraceFlags flags) {}
 
     // Thread-safe storage for operation spans (keyed by operationId) — open spans that need ending
     private final ConcurrentHashMap<String, Span> operationSpans = new ConcurrentHashMap<>();
@@ -162,6 +164,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      */
     public InvocationOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, OtelPluginConfig config) {
         this.idGenerator = DeterministicIdGenerator.installOn(tracerProviderBuilder);
+        // Wrap the configured sampler so durable spans use the execution's single precomputed decision.
+        DurableSampler.installOn(tracerProviderBuilder);
 
         this.sdkTracerProvider = tracerProviderBuilder.build();
         this.tracer = sdkTracerProvider.get(config.instrumentationName());
@@ -198,40 +202,47 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
         this.durableExecutionArn = info.durableExecutionArn();
 
-        // Prefer the active Java-agent span, then fall back to explicitly extracted upstream context.
-        var invocationParent = extractCurrentSpanContext();
-        if (invocationParent == null) {
-            invocationParent = contextExtractor.extract();
-        }
+        var extracted = contextExtractor.extract();
 
-        // Workflow root span — one logical span per durable execution, created unconditionally (independent of the
-        // X-Ray parent below). Deterministic span ID from the ARN so it is the same across invocations; exported once,
-        // on the terminal invocation. Operation and attempt spans link to it for execution-level correlation while
+        // Resolve the execution ancestor the Workflow span parents onto so it joins the stable-per-execution trace.
+        var canonicalTraceId = ExecutionTraceContext.canonicalTraceId(
+                extracted, info.durableExecutionArn(), info.executionStartTime(), idGenerator);
+        // Resolve the execution's sampling decision once for this invocation as a full SamplingResult, then apply it to
+        // every durable span via DurableSampler (see below). The execution ancestor's trace flags are derived from the
+        // same decision so a parent-based sampler stays consistent with it.
+        var decision = OtelPluginSupport.resolveSamplingResult(
+                sdkTracerProvider,
+                extracted,
+                Span.current(),
+                canonicalTraceId,
+                workflowSpanName,
+                Attributes.of(DURABLE_EXECUTION_ARN, info.durableExecutionArn()));
+        // A null decision is unresolved on the agent path: defer to DurableSampler's own delegate (keyed by trace ID),
+        // rather than fabricating a decision that would bypass an installed drop/rate-limit policy.
+        samplingIntent = decision != null
+                ? DurableSamplingDecision.Intent.resolved(decision)
+                : DurableSamplingDecision.Intent.deferred(canonicalTraceId);
+        var sampled = OtelPluginSupport.isSampled(decision);
+        var execCtx = ExecutionTraceContext.resolve(
+                extracted, canonicalTraceId, info.durableExecutionArn(), idGenerator, () -> sampled);
+        executionTrace = new ExecutionTrace(canonicalTraceId, execCtx.traceFlags());
+
+        // Workflow span — one logical span per durable execution, parented onto the execution ancestor so it joins the
+        // execution trace. Deterministic span ID from the ARN so it is the same across invocations; exported once, on
+        // the terminal invocation. Operation and attempt spans link to it for execution-level correlation while
         // remaining parented to the per-invocation span (this plugin stays invocation-rooted).
         var workflowSpanBuilder = tracer.spanBuilder(workflowSpanName)
                 .setSpanKind(SpanKind.INTERNAL)
-                .setNoParent()
+                .setParent(withDurableDecision(Context.root().with(Span.wrap(execCtx.executionAncestor()))))
                 .setAttribute(DURABLE_EXECUTION_ARN, info.durableExecutionArn())
                 .setStartTimestamp(info.executionStartTime());
-        var workflowTraceId =
-                idGenerator.generateTraceIdForExecution(info.durableExecutionArn(), info.executionStartTime());
         var workflowSpanId = idGenerator.generateWorkflowSpanId(info.durableExecutionArn());
-        workflowSpan = idGenerator.startSpan(workflowSpanBuilder, workflowTraceId, workflowSpanId);
+        // Force the span ID only; the trace ID comes from the parent so the Workflow span joins the execution trace.
+        workflowSpan = startDurableSpan(workflowSpanBuilder, null, workflowSpanId);
 
-        // Determine parent context for the invocation span.
-        Context parentContext;
-        if (invocationParent != null && invocationParent.parentSpanId() != null) {
-            // Reconstruct a remote parent from the extracted trace context (X-Ray header or current span).
-            // This connects plugin spans to the Lambda service's X-Ray segments.
-            var parentSpanContext = SpanContext.createFromRemoteParent(
-                    invocationParent.traceId(),
-                    invocationParent.parentSpanId(),
-                    TraceFlags.getSampled(),
-                    TraceState.getDefault());
-            parentContext = Context.root().with(Span.wrap(parentSpanContext));
-        } else {
-            parentContext = Context.root();
-        }
+        // Invocation span parent — the same-trace ambient span when available, then the execution ancestor, so the
+        // Invocation span stays on the execution trace.
+        var parentContext = invocationParentContext(execCtx, canonicalTraceId);
 
         // Create an INTERNAL span for the invocation.
         var spanBuilder = tracer.spanBuilder("Invocation")
@@ -244,7 +255,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             spanBuilder.setAttribute(AttributeKey.stringKey("faas.invocation_id"), info.requestId());
         }
 
-        invocationSpan = spanBuilder.startSpan();
+        invocationSpan = startDurableSpan(spanBuilder);
 
         // Inject MDC on the handler thread so handler-level logs (between steps) have trace context.
         // This runs on the same thread as context.getLogger() calls in the handler.
@@ -307,6 +318,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
         invocationSpan.end();
         invocationSpan = null;
+        samplingIntent = null;
 
         // End the Workflow span only on a terminal status, so it is exported exactly once per execution
         // (SUCCEEDED -> OK, FAILED -> ERROR; non-terminal statuses leave it un-ended / not exported this invocation).
@@ -356,6 +368,12 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
                 .setAttribute(DURABLE_OPERATION_TYPE, info.type())
                 .setAttribute(DURABLE_OPERATION_STATUS, info.status() != null ? info.status() : "STARTED");
 
+        // On replay, this span is a distinct segment of an operation whose initial span ran in an earlier invocation;
+        // link back to that initial logical operation span first, then to the Workflow span, so the links are ordered
+        // [operation, Workflow]. A non-replay operation span carries only the Workflow link.
+        if (info.isReplay()) {
+            addInitialOperationLink(spanBuilder, info.id());
+        }
         // Link to the Workflow span for execution-level correlation (operation stays parented to the invocation span).
         addWorkflowLink(spanBuilder);
 
@@ -367,8 +385,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         }
 
         var span = info.isReplay()
-                ? spanBuilder.startSpan()
-                : idGenerator.startSpan(
+                ? startDurableSpan(spanBuilder)
+                : startDurableSpan(
                         spanBuilder, null, idGenerator.generateSpanIdForOperation(durableExecutionArn, info.id()));
 
         // Store the open span — will be ended in onOperationEnd or onInvocationEnd
@@ -412,6 +430,9 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
                     .setAttribute(DURABLE_EXECUTION_ARN, durableExecutionArn)
                     .setAttribute(DURABLE_OPERATION_ID, info.id())
                     .setAttribute(DURABLE_OPERATION_TYPE, info.type());
+            // This continuation segment completes an operation whose initial span ran earlier; link back to that
+            // initial operation span first, then to the Workflow span (the spec expects [operation, Workflow]).
+            addInitialOperationLink(spanBuilder, info.id());
             addWorkflowLink(spanBuilder);
 
             if (info.name() != null) {
@@ -421,7 +442,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
                 spanBuilder.setAttribute(DURABLE_OPERATION_SUBTYPE, info.subType());
             }
 
-            var continuationSpan = spanBuilder.startSpan();
+            var continuationSpan = startDurableSpan(spanBuilder);
 
             if (info.status() != null) {
                 continuationSpan.setAttribute(DURABLE_OPERATION_STATUS, info.status());
@@ -492,7 +513,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             spanBuilder.setAttribute(DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
         }
 
-        var span = spanBuilder.startSpan();
+        var span = startDurableSpan(spanBuilder);
         attemptSpans.put(key, span);
 
         // Make span current on this thread so auto-instrumented calls become children
@@ -541,14 +562,19 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         var span = attemptSpans.remove(key);
         if (span == null) return;
 
-        var outcome = info.succeeded() ? "SUCCEEDED" : "FAILED";
-        span.setAttribute(DURABLE_ATTEMPT_OUTCOME, outcome);
+        span.setAttribute(DURABLE_ATTEMPT_OUTCOME, info.outcome().name());
 
-        if (!info.succeeded() && info.error() != null) {
-            span.setStatus(StatusCode.ERROR, info.error().getMessage());
-            span.recordException(info.error());
-        } else if (info.succeeded()) {
-            span.setStatus(StatusCode.OK);
+        switch (info.outcome()) {
+            case SUCCEEDED -> span.setStatus(StatusCode.OK);
+            case FAILED -> {
+                if (info.error() != null) {
+                    span.setStatus(StatusCode.ERROR, info.error().getMessage());
+                    span.recordException(info.error());
+                }
+            }
+            case INCOMPLETE -> {
+                // An incomplete user function is expected when the durable execution suspends.
+            }
         }
 
         if (info.endTimestamp() != null) {
@@ -602,18 +628,67 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         operationContexts.clear();
     }
 
+    /**
+     * The parent context for the Invocation span: the active ambient span when it is on the execution trace, otherwise
+     * the execution ancestor so the Invocation span stays within the same trace.
+     */
+    private Context invocationParentContext(ExecutionTraceContext execCtx, String canonicalTraceId) {
+        var ambient = Span.current().getSpanContext();
+        if (ambient.isValid() && ambient.getTraceId().equals(canonicalTraceId)) {
+            return withDurableDecision(Context.root().with(Span.current()));
+        }
+        return withDurableDecision(Context.root().with(Span.wrap(execCtx.executionAncestor())));
+    }
+
     private Context resolveParentContext(String parentId) {
         if (parentId != null) {
             var parentSpanContext = operationContexts.get(parentId);
             if (parentSpanContext != null) {
-                return Context.current().with(Span.wrap(parentSpanContext));
+                return withDurableDecision(Context.current().with(Span.wrap(parentSpanContext)));
             }
         }
         // Fall back to invocation span as parent
         if (invocationSpan != null) {
-            return Context.current().with(invocationSpan);
+            return withDurableDecision(Context.current().with(invocationSpan));
         }
-        return Context.current();
+        return withDurableDecision(Context.current());
+    }
+
+    /**
+     * Attaches the execution's sampling intent to a durable span's parent context so {@link DurableSampler} applies it
+     * (a resolved decision verbatim, or a deferral to its own delegate) instead of re-invoking the configured sampler
+     * per span. When no intent has been resolved (telemetry disabled for the invocation) the context is unchanged.
+     */
+    private Context withDurableDecision(Context context) {
+        var intent = samplingIntent;
+        return intent != null ? DurableSamplingDecision.store(context, intent) : context;
+    }
+
+    /**
+     * Starts a durable span with the execution's sampling intent published on the current thread for the duration of
+     * the sampler call, so {@link DurableSampler} applies it even when the plugin and the agent-installed sampler run
+     * in different class loaders (see {@link DurableSamplingDecision}). Falls back to a plain start when no intent has
+     * been resolved.
+     */
+    private Span startDurableSpan(SpanBuilder spanBuilder) {
+        var intent = samplingIntent;
+        if (intent == null) {
+            return spanBuilder.startSpan();
+        }
+        try (var ignored = DurableSamplingDecision.openScope(intent)) {
+            return spanBuilder.startSpan();
+        }
+    }
+
+    /** Starts a durable span with a forced span ID, publishing the sampling intent as in {@link #startDurableSpan}. */
+    private Span startDurableSpan(SpanBuilder spanBuilder, String traceId, String spanId) {
+        var intent = samplingIntent;
+        if (intent == null) {
+            return idGenerator.startSpan(spanBuilder, traceId, spanId);
+        }
+        try (var ignored = DurableSamplingDecision.openScope(intent)) {
+            return idGenerator.startSpan(spanBuilder, traceId, spanId);
+        }
     }
 
     /** Adds a link to the Workflow span, if one exists, for execution-level correlation. */
@@ -622,6 +697,24 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         if (currentWorkflowSpan != null) {
             spanBuilder.addLink(currentWorkflowSpan.getSpanContext());
         }
+    }
+
+    /**
+     * Links a continuation or replay operation span back to the initial logical operation span, whose ID is
+     * deterministic on the execution trace, so the segments of one logical operation stay correlated across
+     * invocations.
+     */
+    private void addInitialOperationLink(SpanBuilder spanBuilder, String operationId) {
+        var trace = executionTrace;
+        if (trace == null || operationId == null) {
+            return;
+        }
+        var initial = SpanContext.create(
+                trace.traceId(),
+                idGenerator.generateSpanIdForOperation(durableExecutionArn, operationId),
+                trace.flags(),
+                TraceState.getDefault());
+        spanBuilder.addLink(initial);
     }
 
     private static boolean isTerminal(InvocationEndInfo info) {
@@ -648,9 +741,5 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     private static String attemptKey(String operationId, Integer attempt) {
         return operationId + "-" + (attempt != null ? attempt : "ctx");
-    }
-
-    private static ExtractedContext extractCurrentSpanContext() {
-        return OtelPluginSupport.extractCurrentSpanContext();
     }
 }

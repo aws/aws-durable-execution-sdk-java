@@ -247,7 +247,17 @@ class PluginRunnerTest {
 
     private static UserFunctionEndInfo attemptEndInfo() {
         return new UserFunctionEndInfo(
-                "op-1", "test-step", "STEP", null, null, Instant.now(), Instant.now(), false, 1, true, null);
+                "op-1",
+                "test-step",
+                "STEP",
+                null,
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null);
     }
 
     // ─── Test plugin implementations ─────────────────────────────────────

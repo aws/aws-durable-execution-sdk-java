@@ -4,12 +4,14 @@ package software.amazon.lambda.durable.plugin;
 
 import java.time.Instant;
 import java.util.Collection;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.internal.PrimitiveOperationIdentifier;
 import software.amazon.lambda.durable.model.OperationIdentifier;
-import software.amazon.lambda.durable.primitive.BasePrimitive;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
 /** Utility methods for converting SDK internal types to plugin info records. */
 public final class PluginInfoConverter {
@@ -119,18 +121,17 @@ public final class PluginInfoConverter {
      *
      * @param identifier the operation identifier containing id, name, type, and subType
      * @param parentId the parent operation ID (may be null)
-     * @param isReplay true if the user function is called during replay (context operations)
+     * @param isReplay true if this operation was present in the checkpointed state delivered at invocation start
      * @param attempt the 1-based attempt number (null for context operations)
      * @return a UserFunctionStartInfo record
      */
     public static UserFunctionStartInfo toUserFunctionStartInfo(
-            OperationIdentifier identifier, String parentId, boolean isReplayingChildren, Integer attempt) {
-        return toUserFunctionStartInfo(
-                PrimitiveOperationIdentifier.from(identifier), parentId, isReplayingChildren, attempt);
+            OperationIdentifier identifier, String parentId, boolean isReplay, Integer attempt) {
+        return toUserFunctionStartInfo(PrimitiveOperationIdentifier.from(identifier), parentId, isReplay, attempt);
     }
 
     public static UserFunctionStartInfo toUserFunctionStartInfo(
-            PrimitiveOperationIdentifier identifier, String parentId, boolean isReplayingChildren, Integer attempt) {
+            PrimitiveOperationIdentifier identifier, String parentId, boolean isReplay, Integer attempt) {
         return new UserFunctionStartInfo(
                 identifier.operationId(),
                 identifier.name(),
@@ -138,7 +139,7 @@ public final class PluginInfoConverter {
                 identifier.subType(),
                 parentId,
                 Instant.now(),
-                isReplayingChildren,
+                isReplay,
                 attempt);
     }
 
@@ -146,12 +147,12 @@ public final class PluginInfoConverter {
      * Creates a {@link UserFunctionEndInfo} from a start info and outcome.
      *
      * @param startInfo the start info from when the function began
-     * @param succeeded true if the function completed without error
-     * @param error the error if the function failed (may be null)
+     * @param outcome the user function outcome
+     * @param error the error if the function failed or exited incompletely (may be null)
      * @return a UserFunctionEndInfo record
      */
     public static UserFunctionEndInfo toUserFunctionEndInfo(
-            UserFunctionStartInfo startInfo, boolean succeeded, Throwable error) {
+            UserFunctionStartInfo startInfo, UserFunctionOutcome outcome, Throwable error) {
         return new UserFunctionEndInfo(
                 startInfo.id(),
                 startInfo.name(),
@@ -160,9 +161,9 @@ public final class PluginInfoConverter {
                 startInfo.parentId(),
                 startInfo.startTimestamp(),
                 Instant.now(),
-                startInfo.isReplayingChildren(),
+                startInfo.isReplay(),
                 startInfo.attempt(),
-                succeeded,
+                outcome,
                 error);
     }
 
@@ -174,25 +175,41 @@ public final class PluginInfoConverter {
      * @param durableExecutionArn the durable execution ARN
      * @param updatedOperations the durable operations whose status changed in this checkpoint response
      * @param allOperations all durable operations tracked for the execution after this response
+     * @param initialOperationIds ids of the operations delivered in this invocation's initial state, used to populate
+     *     each item's {@code isReplay} indicator
      * @return an OperationChangeInfo record
      */
     public static OperationChangeInfo toOperationChangeInfo(
             String requestId,
             String durableExecutionArn,
             Collection<Operation> updatedOperations,
-            Collection<Operation> allOperations) {
+            Collection<Operation> allOperations,
+            Set<String> initialOperationIds) {
         return new OperationChangeInfo(
                 requestId,
                 durableExecutionArn,
-                updatedOperations.stream()
-                        .collect(Collectors.toUnmodifiableMap(
-                                Operation::id, PluginInfoConverter::toOperationChangeItemInfo)),
-                allOperations.stream()
-                        .collect(Collectors.toUnmodifiableMap(
-                                Operation::id, PluginInfoConverter::toOperationChangeItemInfo)));
+                toOperationItemMap(updatedOperations, initialOperationIds),
+                toOperationItemMap(allOperations, initialOperationIds));
     }
 
-    private static OperationChangeItemInfo toOperationChangeItemInfo(Operation operation) {
+    /**
+     * Converts durable operations to an unmodifiable map of {@link OperationChangeItemInfo}, keyed by operation ID.
+     *
+     * @param operations the durable operations to convert
+     * @param initialOperationIds ids of the operations delivered in this invocation's initial state, used to populate
+     *     each item's {@code isReplay} indicator
+     * @return an unmodifiable map of operation ID to item info
+     */
+    public static Map<String, OperationChangeItemInfo> toOperationItemMap(
+            Collection<Operation> operations, Set<String> initialOperationIds) {
+        return operations.stream()
+                .collect(Collectors.toUnmodifiableMap(
+                        Operation::id,
+                        operation ->
+                                toOperationChangeItemInfo(operation, initialOperationIds.contains(operation.id()))));
+    }
+
+    private static OperationChangeItemInfo toOperationChangeItemInfo(Operation operation, boolean isReplay) {
         return new OperationChangeItemInfo(
                 operation.id(),
                 operation.name(),
@@ -201,7 +218,10 @@ public final class PluginInfoConverter {
                 operation.parentId(),
                 operation.startTimestamp(),
                 operation.endTimestamp(),
-                BasePrimitive.extractErrorFromOperation(operation),
-                operation.status());
+                operation.status(),
+                operation.stepDetails() != null ? operation.stepDetails().attempt() : null,
+                isReplay,
+                BaseDurableOperation.extractErrorFromOperation(operation),
+                extractResult(operation));
     }
 }

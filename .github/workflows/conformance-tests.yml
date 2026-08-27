@@ -8,6 +8,8 @@ name: Conformance Tests
 # shipping its template + handlers under conformance-tests/.
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
     paths:

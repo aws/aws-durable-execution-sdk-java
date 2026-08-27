@@ -32,6 +32,7 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 import software.amazon.lambda.durable.plugin.PluginRunner;
+import software.amazon.lambda.durable.plugin.UserFunctionOutcome;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -463,14 +464,25 @@ public abstract class BaseDurableOperation {
     protected <T> T runUserFunction(Integer attempt, Supplier<T> userFunction) {
         var pluginRunner = getPluginRunner();
         var startInfo = PluginInfoConverter.toUserFunctionStartInfo(
-                operationIdentifier, durableContext.getParentId(), durableContext.isReplaying(), attempt);
+                operationIdentifier,
+                durableContext.getParentId(),
+                executionManager.wasObservedAtInvocationStart(getOperationId()),
+                attempt);
         pluginRunner.onUserFunctionStart(startInfo);
         try {
             T result = userFunction.get();
-            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, true, null));
+            pluginRunner.onUserFunctionEnd(
+                    PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.SUCCEEDED, null));
             return result;
         } catch (Throwable e) {
-            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, false, e));
+            var error = ExceptionHelper.unwrapCompletableFuture(e);
+            if (error == null) {
+                error = e;
+            }
+            var outcome = error instanceof SuspendExecutionException
+                    ? UserFunctionOutcome.INCOMPLETE
+                    : UserFunctionOutcome.FAILED;
+            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, outcome, error));
             ExceptionHelper.sneakyThrow(e);
             return null; // unreachable — sneakyThrow always throws
         }
@@ -481,14 +493,24 @@ public abstract class BaseDurableOperation {
             Integer attempt, Supplier<? extends CompletionStage<T>> userFunction) {
         var pluginRunner = getPluginRunner();
         var startInfo = PluginInfoConverter.toUserFunctionStartInfo(
-                operationIdentifier, durableContext.getParentId(), durableContext.isReplaying(), attempt);
+                operationIdentifier,
+                durableContext.getParentId(),
+                executionManager.wasObservedAtInvocationStart(getOperationId()),
+                attempt);
         pluginRunner.onUserFunctionStart(startInfo);
 
         final CompletionStage<T> stage;
         try {
             stage = Objects.requireNonNull(userFunction.get(), "User function stage cannot be null");
         } catch (Throwable throwable) {
-            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, false, throwable));
+            var error = ExceptionHelper.unwrapCompletableFuture(throwable);
+            if (error == null) {
+                error = throwable;
+            }
+            var outcome = error instanceof SuspendExecutionException
+                    ? UserFunctionOutcome.INCOMPLETE
+                    : UserFunctionOutcome.FAILED;
+            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, outcome, error));
             return CompletableFuture.failedFuture(throwable);
         }
         var result = copyStage(stage);
@@ -498,7 +520,12 @@ public abstract class BaseDurableOperation {
 
         return result.whenComplete((ignored, throwable) -> {
             var cause = throwable == null ? null : ExceptionHelper.unwrapCompletableFuture(throwable);
-            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, cause == null, cause));
+            var outcome = cause == null
+                    ? UserFunctionOutcome.SUCCEEDED
+                    : cause instanceof SuspendExecutionException
+                            ? UserFunctionOutcome.INCOMPLETE
+                            : UserFunctionOutcome.FAILED;
+            pluginRunner.onUserFunctionEnd(PluginInfoConverter.toUserFunctionEndInfo(startInfo, outcome, cause));
         });
     }
 
