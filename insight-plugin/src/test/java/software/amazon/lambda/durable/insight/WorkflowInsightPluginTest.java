@@ -40,8 +40,8 @@ class WorkflowInsightPluginTest {
         }
     }
 
-    private static final RetryStrategy RETRY_ONCE =
-            RetryStrategies.exponentialBackoff(2, Duration.ofSeconds(1), Duration.ofSeconds(1), 2.0, JitterStrategy.NONE);
+    private static final RetryStrategy RETRY_ONCE = RetryStrategies.exponentialBackoff(
+            2, Duration.ofSeconds(1), Duration.ofSeconds(1), 2.0, JitterStrategy.NONE);
 
     private DurableConfig configWith(CapturingExporter exporter, WorkflowInsightConfig.Builder cfg) {
         var plugin = WorkflowInsight.workflowInsight(cfg.addExporter(exporter).build());
