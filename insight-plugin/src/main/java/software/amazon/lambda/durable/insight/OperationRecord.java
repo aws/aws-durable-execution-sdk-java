@@ -165,6 +165,17 @@ public final class OperationRecord {
         return c;
     }
 
+    /**
+     * Deep copy for per-exporter isolation: like {@link #copy()} but the {@code result} payload's mutable container
+     * structure is rebuilt so one exporter cannot mutate a later exporter's copy. {@code error} is an immutable
+     * {@link ErrorInfo} and is shared safely.
+     */
+    public OperationRecord deepCopy() {
+        OperationRecord c = copy();
+        c.result = Json.deepCopyContent(result);
+        return c;
+    }
+
     /** Serializes to the camelCase wire map, omitting absent (null) fields, in the JS field order. */
     public Map<String, Object> toWireMap() {
         Map<String, Object> data = new LinkedHashMap<>();
