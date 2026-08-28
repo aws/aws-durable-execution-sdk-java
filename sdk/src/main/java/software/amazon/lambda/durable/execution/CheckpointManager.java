@@ -209,6 +209,12 @@ class CheckpointManager {
             // Starting the backend request is coordinated with the last-thread suspension decision. Once suspension
             // wins that race, no later poll/checkpoint may advance backend state behind the PENDING response.
             if (!tryStartCheckpointProcessing.getAsBoolean()) {
+                if (!request.isEmpty()) {
+                    logger.error(
+                            "Checkpoint invariant violation: skipping {} operation updates because execution has already"
+                                    + " completed",
+                            request.size());
+                }
                 logger.debug("Skipping checkpoint API call because execution has already completed");
                 return;
             }
