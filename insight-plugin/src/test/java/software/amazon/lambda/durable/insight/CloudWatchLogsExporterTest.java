@@ -26,13 +26,12 @@ class CloudWatchLogsExporterTest {
         r.executionArn = "arn:aws:lambda:us-west-2:1:function:f:$LATEST/durable-execution/exec-1/invocation-1";
         r.status = "SUCCEEDED";
         r.startTime = "2026-08-05T00:00:00Z";
-        r.operations()
-                .add(new OperationRecord()
-                        .id("op-1")
-                        .name("greet")
-                        .type("STEP")
-                        .subType("Step")
-                        .status("SUCCEEDED"));
+        r.addOperation(new OperationRecord()
+                .id("op-1")
+                .name("greet")
+                .type("STEP")
+                .subType("Step")
+                .status("SUCCEEDED"));
         return r;
     }
 

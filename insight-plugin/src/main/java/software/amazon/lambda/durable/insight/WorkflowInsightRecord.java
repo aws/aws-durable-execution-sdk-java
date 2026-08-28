@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.insight;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +42,12 @@ public final class WorkflowInsightRecord {
     Boolean droppedOutput;
 
     public List<OperationRecord> operations() {
-        return operations;
+        return Collections.unmodifiableList(operations);
+    }
+
+    /** Package-private mutator to append an operation during record construction (public accessor stays immutable). */
+    void addOperation(OperationRecord operation) {
+        operations.add(operation);
     }
 
     public String executionArn() {
@@ -88,6 +94,25 @@ public final class WorkflowInsightRecord {
         c.droppedOperations = droppedOperations;
         c.droppedInput = droppedInput;
         c.droppedOutput = droppedOutput;
+        return c;
+    }
+
+    /**
+     * Deep copy for per-exporter isolation. Each operation record is deep-copied and the execution
+     * {@code input}/{@code output} payloads have their mutable container structure rebuilt, so a custom exporter that
+     * clears, redacts, or mutates operations or nested content cannot corrupt any exporter that runs after it. Because
+     * truncation returns the original record when it already fits, this copy is taken per exporter before shaping.
+     * {@code error} is an immutable {@link ErrorInfo} and is shared safely.
+     */
+    public WorkflowInsightRecord deepCopy() {
+        WorkflowInsightRecord c = copy();
+        List<OperationRecord> deepOps = new ArrayList<>(operations.size());
+        for (OperationRecord op : operations) {
+            deepOps.add(op.deepCopy());
+        }
+        c.operations = deepOps;
+        c.input = Json.deepCopyContent(input);
+        c.output = Json.deepCopyContent(output);
         return c;
     }
 

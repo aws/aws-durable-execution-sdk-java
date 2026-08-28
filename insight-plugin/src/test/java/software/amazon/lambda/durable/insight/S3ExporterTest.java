@@ -28,13 +28,12 @@ class S3ExporterTest {
         r.functionName = "f";
         r.status = "SUCCEEDED";
         r.startTime = "2026-08-05T00:00:00Z";
-        r.operations()
-                .add(new OperationRecord()
-                        .id("op-1")
-                        .name("greet")
-                        .type("STEP")
-                        .subType("Step")
-                        .status("SUCCEEDED"));
+        r.addOperation(new OperationRecord()
+                .id("op-1")
+                .name("greet")
+                .type("STEP")
+                .subType("Step")
+                .status("SUCCEEDED"));
         return r;
     }
 

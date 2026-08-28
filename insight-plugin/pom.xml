@@ -28,6 +28,12 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
+        <!-- Java-time (Instant/Duration) support so SDK-default payload types serialize as ISO-8601 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+
         <!-- AWS SDK exporters (S3 + CloudWatch Logs) -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
