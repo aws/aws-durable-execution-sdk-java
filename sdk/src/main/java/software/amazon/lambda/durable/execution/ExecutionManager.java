@@ -71,6 +71,8 @@ public class ExecutionManager implements SafeCloseable {
     private final Set<String> activeThreads = Collections.synchronizedSet(new HashSet<>());
     private static final ThreadLocal<ThreadContext> currentThreadContext = new ThreadLocal<>();
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
+    // Guarded by activeThreads so starting a checkpoint request is atomic with the last-thread suspension decision.
+    private int checkpointRequestsInFlight;
 
     // ===== Checkpoint Batching =====
     private final CheckpointManager checkpointManager;
@@ -85,8 +87,13 @@ public class ExecutionManager implements SafeCloseable {
                 input.updatedOperationIds() != null ? Set.copyOf(input.updatedOperationIds()) : Collections.emptySet();
 
         // Create checkpoint batcher for internal coordination
-        this.checkpointManager =
-                new CheckpointManager(config, durableExecutionArn, input.checkpointToken(), this::onCheckpointComplete);
+        this.checkpointManager = new CheckpointManager(
+                config,
+                durableExecutionArn,
+                input.checkpointToken(),
+                this::onCheckpointComplete,
+                this::tryStartCheckpointProcessing,
+                this::finishCheckpointProcessing);
 
         this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()
                 .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
@@ -187,7 +194,7 @@ public class ExecutionManager implements SafeCloseable {
 
     // ===== Checkpoint Completion Handler =====
     /** Called by CheckpointManager when a checkpoint completes. Updates operationStorage and notify operations . */
-    private void onCheckpointComplete(List<Operation> newOperations) {
+    void onCheckpointComplete(List<Operation> newOperations) {
         var updatedOperations = new ArrayList<Operation>();
         newOperations.forEach(op -> {
             // Detect a status change against the previously stored operation
@@ -195,12 +202,15 @@ public class ExecutionManager implements SafeCloseable {
             if (previous == null || previous.status() != op.status()) {
                 updatedOperations.add(op);
             }
-            // Update operation storage
-            operationStorage.put(op.id(), op);
-            // call registered operation's onCheckpointComplete method for completed operations
-            registeredOperations.computeIfPresent(op.id(), (id, operation) -> {
-                operation.onCheckpointComplete(op);
-                return operation;
+            // Publish the updated state and notify its waiter atomically. Otherwise, a waiter can observe the terminal
+            // state before its completion future is completed and attempt to suspend with no pending operations.
+            registeredOperations.compute(op.id(), (id, registeredOperation) -> {
+                if (registeredOperation == null) {
+                    operationStorage.put(op.id(), op);
+                } else {
+                    registeredOperation.processCheckpointUpdate(op, () -> operationStorage.put(op.id(), op));
+                }
+                return registeredOperation;
             });
         });
 
@@ -301,14 +311,14 @@ public class ExecutionManager implements SafeCloseable {
      * @param threadId the thread ID to deregister
      */
     public void deregisterActiveThread(String threadId) {
-        // Skip if already suspended
-        if (executionExceptionFuture.isDone()) {
-            return;
-        }
-
         // Add synchronized block to avoid remove then check race condition and make sure that
         // the suspendExecution is called only once
         synchronized (activeThreads) {
+            // Skip if already suspended
+            if (executionExceptionFuture.isDone()) {
+                return;
+            }
+
             boolean removed = activeThreads.remove(threadId);
             if (removed) {
                 logger.trace("Deregistered thread '{}' Active threads: {}", threadId, activeThreads.size());
@@ -316,12 +326,40 @@ public class ExecutionManager implements SafeCloseable {
                 logger.warn("Thread '{}' not active, cannot deregister", threadId);
             }
 
-            if (activeThreads.isEmpty()) {
+            if (shouldSuspendExecution()) {
                 logger.info("No active threads remaining - suspending execution");
                 preSuspendCheck();
                 suspendExecution();
             }
         }
+    }
+
+    boolean tryStartCheckpointProcessing() {
+        synchronized (activeThreads) {
+            if (executionExceptionFuture.isDone()) {
+                return false;
+            }
+            checkpointRequestsInFlight++;
+            return true;
+        }
+    }
+
+    void finishCheckpointProcessing() {
+        synchronized (activeThreads) {
+            if (checkpointRequestsInFlight == 0) {
+                throw new IllegalStateException("No checkpoint request is in flight");
+            }
+            checkpointRequestsInFlight--;
+            if (shouldSuspendExecution()) {
+                logger.info("Checkpoint processing completed with no active threads - suspending execution");
+                preSuspendCheck();
+                signalSuspension();
+            }
+        }
+    }
+
+    private boolean shouldSuspendExecution() {
+        return activeThreads.isEmpty() && checkpointRequestsInFlight == 0 && !executionExceptionFuture.isDone();
     }
 
     private void preSuspendCheck() {
@@ -428,10 +466,14 @@ public class ExecutionManager implements SafeCloseable {
 
     /** Suspends the execution by completing the execution exception future with a {@link SuspendExecutionException}. */
     public void suspendExecution() {
+        throw signalSuspension();
+    }
+
+    private SuspendExecutionException signalSuspension() {
         var ex = new SuspendExecutionException();
         stopAllOperations(ex);
         executionExceptionFuture.completeExceptionally(ex);
-        throw ex;
+        return ex;
     }
 
     /**
