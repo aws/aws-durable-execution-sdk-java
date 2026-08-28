@@ -92,6 +92,7 @@ jobs:
             "sdk/target/aws-durable-execution-sdk-java-${RELEASE_VERSION}.jar" \
             "sdk-testing/target/aws-durable-execution-sdk-java-testing-${RELEASE_VERSION}.jar" \
             "otel-plugin/target/aws-durable-execution-sdk-java-plugin-otel-${RELEASE_VERSION}.jar" \
+            "insight-plugin/target/aws-durable-execution-sdk-java-plugin-insight-${RELEASE_VERSION}.jar" \
             --clobber
 
       - name: Checkout default branch

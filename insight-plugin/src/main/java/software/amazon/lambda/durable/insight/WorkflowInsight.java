@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.insight;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -11,6 +12,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.insight.exporters.LambdaLogExporter;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
@@ -176,8 +179,12 @@ public final class WorkflowInsight {
         private void emit(WorkflowInsightRecord record) {
             for (InsightExporter exporter : exporters) {
                 try {
+                    // Give each exporter its own deep copy: truncation returns the original record when it already
+                    // fits, so without this a custom exporter that mutates operations or nested content would corrupt
+                    // every exporter that runs after it.
+                    WorkflowInsightRecord isolated = record.deepCopy();
                     WorkflowInsightRecord shaped =
-                            Truncation.truncateRecord(record, exporter.maxRecordSizeBytes(), exporter::render);
+                            Truncation.truncateRecord(isolated, exporter.maxRecordSizeBytes(), exporter::render);
                     exporter.export(shaped);
                     exporter.flush();
                 } catch (RuntimeException e) {
@@ -232,7 +239,15 @@ public final class WorkflowInsight {
             if (operations == null) {
                 return out;
             }
-            for (OperationChangeItemInfo item : operations.values()) {
+            // The hook contract supplies a map with no iteration-order guarantee (the core snapshot originates from a
+            // concurrent map). Sort by startTimestamp ascending (null timestamps last), then by a stable operation id
+            // tie-breaker, so the emitted operations array is deterministic and OperationsIndex's "latest occurrence"
+            // scalar fields reflect true chronological order rather than arbitrary map iteration order.
+            List<OperationChangeItemInfo> items = new ArrayList<>(operations.values());
+            items.sort(Comparator.comparing(
+                            OperationChangeItemInfo::startTimestamp, Comparator.nullsLast(Comparator.naturalOrder()))
+                    .thenComparing(OperationChangeItemInfo::id, Comparator.nullsLast(Comparator.naturalOrder())));
+            for (OperationChangeItemInfo item : items) {
                 // The SDK core tracks the invocation/execution itself as a pseudo-entry of type EXECUTION; it is not a
                 // customer operation and the record already carries the execution status/timing at top level.
                 if ("EXECUTION".equals(item.type())) {
@@ -326,6 +341,17 @@ public final class WorkflowInsight {
     }
 
     private static ErrorInfo toErrorInfo(Throwable t) {
+        // Operation and execution snapshot errors are exposed as DurableOperationException wrappers, so the wrapper's
+        // own class/message would lose the original checkpointed failure identity. When the checkpointed ErrorObject is
+        // present, derive name/message from its errorType/errorMessage, falling back to the throwable's own fields for
+        // any value the ErrorObject leaves null.
+        if (t instanceof DurableOperationException doe && doe.getErrorObject() != null) {
+            ErrorObject error = doe.getErrorObject();
+            String name =
+                    error.errorType() != null ? error.errorType() : t.getClass().getSimpleName();
+            String message = error.errorMessage() != null ? error.errorMessage() : t.getMessage();
+            return new ErrorInfo(name, message);
+        }
         return new ErrorInfo(t.getClass().getSimpleName(), t.getMessage());
     }
 
