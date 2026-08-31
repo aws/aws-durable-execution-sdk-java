@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.insight.exporters.LambdaLogExporter;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
@@ -33,9 +34,12 @@ import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
  * {@link OperationChangeItemInfo#result()}; these are the fields PR&nbsp;#618 surfaced on the hook records, so
  * {@code input}, {@code output}, and operation {@code result} are now populated exactly as in the JS plugin.
  *
- * <p>Per-execution state (keyed by execution ARN) holds only the stable start time, the parsed ARN, the cached input,
- * and the one-time sampling decision. State is preserved across non-terminal (PENDING/RETRYING) invocations so
- * suspend/resume keeps a single stable start time, and is removed only once the execution reaches a terminal state.
+ * <p>Per-execution state (keyed by execution ARN) holds only the stable start time, the parsed ARN, the one-time
+ * sampling decision, and a detached snapshot of the execution input. State is removed on every {@code onInvocationEnd}
+ * — including non-terminal PENDING/RETRYING suspends — so a suspended execution never leaks a retained entry for the
+ * lifetime of a warm container. Nothing is lost across a resume: the next invocation recreates the same stable start
+ * time from {@link InvocationInfo#executionStartTime()}, the same sampling decision deterministically from the ARN, and
+ * the input snapshot from {@link InvocationInfo#executionInput()}.
  *
  * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
@@ -65,7 +69,7 @@ public final class WorkflowInsight {
         }
     }
 
-    private static final class InsightPlugin implements DurableExecutionPlugin {
+    static final class InsightPlugin implements DurableExecutionPlugin {
         private final double samplingRate;
         private final WorkflowInsightConfig.EmitMode emitMode;
         private final boolean topLevelOnly;
@@ -75,6 +79,11 @@ public final class WorkflowInsight {
         private final List<InsightExporter> exporters;
 
         private final Map<String, ExecutionState> byArn = new ConcurrentHashMap<>();
+
+        /** Test seam: number of live per-execution state entries retained across invocations. */
+        int retainedStateCount() {
+            return byArn.size();
+        }
 
         InsightPlugin(WorkflowInsightConfig config) {
             this.samplingRate = resolveSamplingRate(config.samplingRate());
@@ -102,7 +111,11 @@ public final class WorkflowInsight {
             if (!state.sampledIn) {
                 return;
             }
-            state.cachedInput = info.executionInput();
+            // Detach the execution input from the live handler value immediately, before the user handler or any
+            // content transform can mutate it. This raw, detached snapshot is the single source of truth for input on
+            // every emission (start / change / end); each build hands transforms a separate defensive copy so a
+            // mutating transform cannot corrupt it.
+            state.cachedInput = Json.deepCopyContent(info.executionInput());
             if (emitMode == WorkflowInsightConfig.EmitMode.ON_CHANGE) {
                 emit(buildRecord(
                         state,
@@ -110,7 +123,7 @@ public final class WorkflowInsight {
                         "RUNNING",
                         info.operations(),
                         null,
-                        info.executionInput(),
+                        state.cachedInput,
                         null,
                         null));
             }
@@ -139,38 +152,43 @@ public final class WorkflowInsight {
         @Override
         public void onInvocationEnd(InvocationEndInfo info) {
             ExecutionState state = getState(info.durableExecutionArn(), info.executionStartTime());
-            String status = mapStatus(info.invocationStatus());
-            boolean isTerminal = "SUCCEEDED".equals(status) || "FAILED".equals(status);
-            boolean isFailure = "FAILED".equals(status);
-            boolean shouldEmit;
-            switch (emitMode) {
-                case ON_CHANGE:
-                    shouldEmit = true;
-                    break;
-                case ON_FAILURE:
-                    shouldEmit = isFailure;
-                    break;
-                case ON_COMPLETE:
-                default:
-                    shouldEmit = isTerminal;
-                    break;
-            }
+            try {
+                String status = mapStatus(info.invocationStatus());
+                boolean isTerminal = "SUCCEEDED".equals(status) || "FAILED".equals(status);
+                boolean isFailure = "FAILED".equals(status);
+                boolean shouldEmit;
+                switch (emitMode) {
+                    case ON_CHANGE:
+                        shouldEmit = true;
+                        break;
+                    case ON_FAILURE:
+                        shouldEmit = isFailure;
+                        break;
+                    case ON_COMPLETE:
+                    default:
+                        shouldEmit = isTerminal;
+                        break;
+                }
 
-            if (state.sampledIn && shouldEmit) {
-                emit(buildRecord(
-                        state,
-                        info.durableExecutionArn(),
-                        status,
-                        info.operations(),
-                        Instant.now(),
-                        info.executionInput(),
-                        info.executionResult(),
-                        info.executionError()));
-            }
-
-            // Only clear state once the execution is truly finished. onInvocationEnd also fires on non-terminal
-            // suspends (PENDING/RETRYING); clearing there would lose the original startTime/cachedInput across resumes.
-            if (isTerminal) {
+                if (state.sampledIn && shouldEmit) {
+                    emit(buildRecord(
+                            state,
+                            info.durableExecutionArn(),
+                            status,
+                            info.operations(),
+                            Instant.now(),
+                            state.cachedInput,
+                            info.executionResult(),
+                            info.executionError()));
+                }
+            } finally {
+                // Remove per-execution state on EVERY invocation end, including non-terminal PENDING/RETRYING suspends,
+                // once any emission work above is done. Nothing durable is lost: the next invocation's onInvocation
+                // start recreates the stable startTime from InvocationInfo.executionStartTime() (stable across
+                // resumes),
+                // the one-time sampling decision deterministically from the ARN, and the input snapshot from
+                // InvocationInfo.executionInput(). Retaining state instead leaked one entry per suspended execution for
+                // the lifetime of the warm container.
                 byArn.remove(info.durableExecutionArn());
             }
         }
@@ -332,7 +350,11 @@ public final class WorkflowInsight {
         }
         if (transform != null) {
             try {
-                return transform.apply(value);
+                // Hand the transform its own defensive copy: the value may be the cached raw input snapshot reused
+                // across multiple emissions (ON_CHANGE), so a transform that mutates its argument in place must not
+                // corrupt that snapshot or any later emission's view of it. Omit on throw so a failing redactor never
+                // leaks the raw value.
+                return transform.apply(Json.deepCopyContent(value));
             } catch (RuntimeException e) {
                 return null;
             }
@@ -341,18 +363,35 @@ public final class WorkflowInsight {
     }
 
     private static ErrorInfo toErrorInfo(Throwable t) {
-        // Operation and execution snapshot errors are exposed as DurableOperationException wrappers, so the wrapper's
-        // own class/message would lose the original checkpointed failure identity. When the checkpointed ErrorObject is
-        // present, derive name/message from its errorType/errorMessage, falling back to the throwable's own fields for
-        // any value the ErrorObject leaves null.
-        if (t instanceof DurableOperationException doe && doe.getErrorObject() != null) {
-            ErrorObject error = doe.getErrorObject();
+        // Operation and execution snapshot errors are exposed wrapped: operation failures as DurableOperationException
+        // and unrecoverable execution failures as UnrecoverableDurableExecutionException. The wrapper's own
+        // class/message would lose the original checkpointed failure identity. When the checkpointed ErrorObject is
+        // present (from either wrapper), derive name/message from its errorType/errorMessage, falling back to the
+        // throwable's own fields for any value the ErrorObject leaves null.
+        ErrorObject error = extractErrorObject(t);
+        if (error != null) {
             String name =
                     error.errorType() != null ? error.errorType() : t.getClass().getSimpleName();
             String message = error.errorMessage() != null ? error.errorMessage() : t.getMessage();
             return new ErrorInfo(name, message);
         }
         return new ErrorInfo(t.getClass().getSimpleName(), t.getMessage());
+    }
+
+    /**
+     * Returns the checkpointed {@link ErrorObject} carried by the SDK's error wrappers, or {@code null} when the
+     * throwable is neither wrapper or carries no {@code ErrorObject}. Both {@link DurableOperationException} (operation
+     * failures) and {@link UnrecoverableDurableExecutionException} (unrecoverable execution failures) expose the
+     * original checkpointed identity via {@code getErrorObject()}.
+     */
+    private static ErrorObject extractErrorObject(Throwable t) {
+        if (t instanceof DurableOperationException doe) {
+            return doe.getErrorObject();
+        }
+        if (t instanceof UnrecoverableDurableExecutionException udee) {
+            return udee.getErrorObject();
+        }
+        return null;
     }
 
     private static String emptyToNull(String s) {

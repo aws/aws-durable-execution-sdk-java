@@ -28,6 +28,7 @@ on:
       - 'sdk/**'
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
+      - 'insight-plugin/**'
       - 'examples/**'
       - 'pom.xml'
   push:
@@ -40,6 +41,7 @@ on:
       - 'sdk/**'
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
+      - 'insight-plugin/**'
       - 'examples/**'
       - 'pom.xml'
 

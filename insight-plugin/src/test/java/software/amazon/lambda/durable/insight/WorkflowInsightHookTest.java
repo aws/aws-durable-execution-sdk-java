@@ -99,22 +99,25 @@ class WorkflowInsightHookTest {
     }
 
     @Test
-    void statePreservedAcrossPendingKeepsStableStartTime() {
+    void suspendResumeKeepsStableStartTimeAndLeavesNoRetainedState() {
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
                 .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
                 .addExporter(exporter)
                 .build());
 
-        plugin.onInvocationStart(start(true));
-        plugin.onInvocationEnd(end(InvocationStatus.PENDING, null, null)); // suspend, state retained
+        plugin.onInvocationStart(start(true)); // first invocation
+        plugin.onInvocationEnd(end(InvocationStatus.PENDING, null, null)); // suspend -> state removed
+        plugin.onInvocationStart(start(false)); // resume invocation re-seeds state
         plugin.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null)); // resume + terminal
 
-        // start(RUNNING) + pending(RUNNING) + terminal(SUCCEEDED); all share the stable startTime.
-        assertEquals(3, exporter.records.size());
+        // start(RUNNING) + pending(RUNNING) + resume-start(RUNNING) + terminal(SUCCEEDED); all share the stable
+        // startTime recreated from InvocationInfo.executionStartTime() across the suspend boundary.
+        assertEquals(4, exporter.records.size());
         String startTime = exporter.records.get(0).startTime();
         assertTrue(exporter.records.stream().allMatch(r -> startTime.equals(r.startTime())));
         assertEquals(START.toString(), startTime);
+        assertEquals(0, plugin.retainedStateCount(), "no per-execution state retained after invocation end");
     }
 
     @Test
