@@ -7,7 +7,7 @@
     <parent>
         <groupId>software.amazon.lambda.durable</groupId>
         <artifactId>aws-durable-execution-sdk-java-parent</artifactId>
-        <version>2.1.1-SNAPSHOT</version>
+        <version>2.2.1-SNAPSHOT</version>
     </parent>
 
     <artifactId>aws-durable-execution-sdk-java-conformance-tests</artifactId>
@@ -39,7 +39,7 @@
         <dependency>
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-lambda-java-log4j2</artifactId>
-            <version>1.6.4</version>
+            <version>1.6.5</version>
         </dependency>
 
         <!-- DynamoDB: attempt tracking for the interrupted-child test (3-12),

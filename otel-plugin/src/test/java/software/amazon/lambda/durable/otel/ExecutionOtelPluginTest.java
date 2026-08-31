@@ -17,9 +17,11 @@ import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import java.time.Instant;
+import java.util.List;
 import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
@@ -693,6 +695,64 @@ class ExecutionOtelPluginTest {
                 "Child operation should be parented to its parent operation span");
     }
 
+    @Test
+    void contextOperation_currentContextCarriesResolvedFlags_withAlwaysOffSampler() {
+        // The operation span is deferred to onOperationEnd, so the context made current during a CONTEXT operation is a
+        // non-recording placeholder. Its trace flags must come from the Invocation span (already run through
+        // DurableSampler), so descendants inherit the resolved decision. With always_off the resolved decision is
+        // unsampled, so the current context inside the context body must be unsampled — not a provisional sampled bit.
+        var exporter = InMemorySpanExporter.create();
+        var offPlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder()
+                        .setSampler(Sampler.alwaysOff())
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
+
+        offPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        offPlugin.onOperationStart(
+                new OperationInfo("ctx-1", "my-ctx", "CONTEXT", "Context", null, Instant.now(), null, null, false));
+        offPlugin.onUserFunctionStart(
+                new UserFunctionStartInfo("ctx-1", "my-ctx", "CONTEXT", "Context", null, Instant.now(), false, 1));
+
+        var current = Span.current().getSpanContext();
+        assertTrue(current.isValid(), "A context is made current inside a context operation body");
+        assertFalse(
+                current.getTraceFlags().isSampled(),
+                "The current context must carry the always_off delegate's resolved unsampled flags (from the "
+                        + "Invocation span), not a provisional sampled bit that would let descendants bypass the "
+                        + "drop policy");
+
+        offPlugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "ctx-1",
+                "my-ctx",
+                "CONTEXT",
+                "Context",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
+        offPlugin.onOperationEnd(new OperationEndInfo(
+                "ctx-1",
+                "my-ctx",
+                "CONTEXT",
+                "Context",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null));
+        offPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+    }
+
     // ─── Failure propagation ─────────────────────────────────────────────
 
     @Test
@@ -881,13 +941,97 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        // Only the invocation span is exported. The still-open operation span is NOT force-ended (no PENDING
-        // span here), and the Workflow span is not exported on a non-terminal invocation.
+        // Only the invocation span is exported. A still-open operation has no recording span (creation is deferred to
+        // onOperationEnd), so there is nothing to abandon, and the Workflow span is not exported on a non-terminal
+        // invocation.
         assertEquals(1, spans.size());
         assertEquals("Invocation", spans.get(0).getName());
         assertTrue(
                 spans.stream().noneMatch(s -> s.getName().equals("my-wait")),
                 "An operation still open at invocation end must not be ended/exported in onInvocationEnd");
+    }
+
+    @Test
+    void openAttemptSpan_isEndedAtInvocationEnd_notAbandoned() {
+        // A user function that starts but never ends (e.g. the execution suspends mid-attempt) must not leave a
+        // recording span abandoned: onInvocationEnd force-ends it so it is exported.
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "stuck", "STEP", "Step", null, Instant.now(), false, 1));
+        // No onUserFunctionEnd — the invocation suspends.
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+
+        var attemptSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().contains("stuck"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Open attempt span must be ended and exported, not abandoned"));
+        assertTrue(attemptSpan.hasEnded(), "Attempt span must be ended");
+    }
+
+    @Test
+    void everyRecordingSpanIsEnded_onNonTerminalInvocation() {
+        // No recording span may be left un-ended when the execution returns a non-terminal status.
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onOperationStart(
+                new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
+        // Suspend mid-attempt: neither onUserFunctionEnd nor onOperationEnd fires.
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+
+        // Whatever spans were exported this invocation must all be ended (InMemorySpanExporter only records ended
+        // spans, so an abandoned recording span would simply be missing — assert the attempt span made it out ended).
+        var spans = spanExporter.getFinishedSpanItems();
+        assertTrue(spans.stream().allMatch(SpanData::hasEnded), "All exported spans are ended");
+        assertTrue(
+                spans.stream().anyMatch(s -> s.getName().contains("step-a")),
+                "The open attempt span is force-ended and exported rather than abandoned");
+    }
+
+    @Test
+    void noRecordingSpanIsLeftOpen_onPending_trackedByLifecycleProcessor() {
+        assertNoOpenSpansOnNonTerminal(InvocationStatus.PENDING);
+    }
+
+    @Test
+    void noRecordingSpanIsLeftOpen_onRetrying_trackedByLifecycleProcessor() {
+        assertNoOpenSpansOnNonTerminal(InvocationStatus.RETRYING);
+    }
+
+    /**
+     * Drives an invocation that suspends mid-attempt and ends with the given non-terminal status, using a lifecycle
+     * processor that observes onStart/onEnd. Unlike an exporter (which only receives ended spans), this catches a span
+     * that started but was abandoned un-ended. Asserts nothing is left open, that the attempt span was actually started
+     * (so the check is not vacuous), and that the deferred Workflow span never started.
+     */
+    private void assertNoOpenSpansOnNonTerminal(InvocationStatus status) {
+        var lifecycle = new LifecycleTrackingSpanProcessor();
+        var trackingPlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(lifecycle),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
+
+        trackingPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        trackingPlugin.onOperationStart(
+                new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
+        trackingPlugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
+        // Suspend mid-attempt: neither onUserFunctionEnd nor onOperationEnd fires.
+        trackingPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, status, null));
+
+        assertTrue(
+                lifecycle.startedSpanNames().stream().anyMatch(n -> n.contains("step-a")),
+                "The attempt span must have started, so the no-open-spans assertion is meaningful");
+        assertEquals(
+                List.of(),
+                lifecycle.openSpanNames(),
+                "No recording span may be left open on a " + status + " invocation");
+        assertFalse(
+                lifecycle.startedSpanNames().contains("Workflow"),
+                "The deferred Workflow span must not start on a non-terminal invocation");
     }
 
     @Test

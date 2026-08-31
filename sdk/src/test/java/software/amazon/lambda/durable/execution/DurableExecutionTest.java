@@ -12,7 +12,10 @@ import static software.amazon.lambda.durable.TypeToken.get;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -26,11 +29,14 @@ import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.internal.ChainedInvokePayloadFrame;
@@ -113,6 +119,86 @@ class DurableExecutionTest {
 
         assertEquals(ExecutionStatus.PENDING, output.status());
         assertNull(output.result());
+    }
+
+    @Test
+    void waiterFirstTerminalCheckpointReturnsSuccessfulOutput() {
+        var pendingStep = Operation.builder()
+                .id("step")
+                .name("step")
+                .type(OperationType.STEP)
+                .subType(OperationSubType.STEP.getValue())
+                .status(OperationStatus.PENDING)
+                .build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp(), pendingStep))
+                        .build());
+        var checkpointAttempted = new CountDownLatch(1);
+        var checkpointFuture = new AtomicReference<CompletableFuture<Void>>();
+
+        var output = DurableExecutor.execute(
+                input,
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    var durableContext = (DurableContextImpl) ctx;
+                    var manager = durableContext.getExecutionManager();
+
+                    class TestOperation extends BaseDurableOperation {
+                        TestOperation() {
+                            super(OperationIdentifier.of("step", "step", OperationSubType.STEP), durableContext, null);
+                        }
+
+                        @Override
+                        protected void start() {}
+
+                        @Override
+                        protected void replay(Operation existing) {}
+
+                        Operation awaitCompletion() {
+                            return waitForOperationCompletion();
+                        }
+
+                        @Override
+                        protected void deregisterActiveThread(String threadId) {
+                            checkpointFuture.set(CompletableFuture.runAsync(() -> {
+                                checkpointAttempted.countDown();
+                                try {
+                                    manager.onCheckpointComplete(List.of(Operation.builder()
+                                            .id("step")
+                                            .name("step")
+                                            .type(OperationType.STEP)
+                                            .subType(OperationSubType.STEP.getValue())
+                                            .status(OperationStatus.SUCCEEDED)
+                                            .build()));
+                                } finally {
+                                    manager.finishCheckpointProcessing();
+                                }
+                            }));
+                            try {
+                                assertTrue(checkpointAttempted.await(5, TimeUnit.SECONDS));
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                throw new AssertionError(e);
+                            }
+                            super.deregisterActiveThread(threadId);
+                        }
+                    }
+
+                    var operation = new TestOperation();
+                    operation.execute();
+                    assertTrue(manager.tryStartCheckpointProcessing());
+                    var completed = operation.awaitCompletion();
+                    checkpointFuture.get().join();
+                    return completed.statusAsString();
+                },
+                configWithMockClient());
+
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertTrue(output.result().contains(OperationStatus.SUCCEEDED.toString()));
     }
 
     @Test
@@ -448,6 +534,18 @@ class DurableExecutionTest {
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(executionOp))
                         .build());
+    }
+
+    private Operation executionOp() {
+        return Operation.builder()
+                .id(EXECUTION_OP_ID)
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
+                .executionDetails(ExecutionDetails.builder()
+                        .inputPayload("\"test-input\"")
+                        .build())
+                .build();
     }
 
     private static final class RequiredPrefixSerDes implements SerDes {
