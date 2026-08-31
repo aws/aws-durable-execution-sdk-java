@@ -47,14 +47,17 @@ public final class Json {
 
     /**
      * Deep-copies JSON content (execution input/output and operation results) so a mutation by one exporter cannot leak
-     * into another exporter's record. Maps and lists are rebuilt recursively. Immutable scalar values are shared. Other
-     * serializable objects are converted into detached JSON-compatible object graphs, preserving their emitted JSON
-     * while preventing mutable POJO state from being shared between exporters.
+     * into another exporter's record. Maps and lists are rebuilt recursively. Known-immutable scalar values
+     * ({@code String}, {@code Boolean}, {@code Character}, {@code Enum}, and {@code null}) are shared. Everything else,
+     * including all {@link Number} values, is routed through {@link ObjectMapper#convertValue} into a detached
+     * JSON-compatible object graph. {@code Number} is deliberately <em>not</em> treated as an immutable shortcut:
+     * mutable subclasses such as {@link java.util.concurrent.atomic.AtomicInteger}/{@code AtomicLong} (or any custom
+     * serializable {@code Number}) would otherwise be shared by reference and let one exporter mutate a later
+     * exporter's record. Conversion yields an immutable numeric leaf while keeping the emitted JSON numeric.
      */
     static Object deepCopyContent(Object value) {
         if (value == null
                 || value instanceof String
-                || value instanceof Number
                 || value instanceof Boolean
                 || value instanceof Character
                 || value instanceof Enum<?>) {
