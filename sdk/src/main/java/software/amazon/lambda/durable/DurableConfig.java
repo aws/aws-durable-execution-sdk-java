@@ -92,14 +92,6 @@ public final class DurableConfig {
         return t;
     });
 
-    /** Default executor for customer SerDes calls and blocking payload storage I/O. */
-    private static final ExecutorService DEFAULT_SERDES_THREAD_POOL = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r);
-        t.setName("durable-serdes-" + t.getId());
-        t.setDaemon(true);
-        return t;
-    });
-
     private final DurableExecutionClient durableExecutionClient;
     private final SerDes serDes;
     private final ExecutorService executorService;
@@ -118,8 +110,7 @@ public final class DurableConfig {
         this.serDes = Objects.requireNonNullElseGet(builder.serDes, JacksonSerDes::new);
         this.executorService =
                 Objects.requireNonNullElseGet(builder.executorService, DurableConfig::createDefaultExecutor);
-        this.serDesExecutorService = Objects.requireNonNullElseGet(
-                builder.serDesExecutorService, DurableConfig::createDefaultSerDesExecutor);
+        this.serDesExecutorService = builder.serDesExecutorService;
         this.loggerConfig = Objects.requireNonNullElseGet(builder.loggerConfig, LoggerConfig::defaults);
         this.pollingStrategy = Objects.requireNonNullElse(builder.pollingStrategy, PollingStrategies.Presets.DEFAULT);
         this.checkpointDelay = Objects.requireNonNullElseGet(builder.checkpointDelay, () -> Duration.ofSeconds(0));
@@ -178,7 +169,7 @@ public final class DurableConfig {
     /**
      * Gets the executor used for customer SerDes calls and blocking payload storage I/O.
      *
-     * @return SerDes ExecutorService instance (never null)
+     * @return the configured executor, or {@code null} when SerDes calls execute inline
      */
     public ExecutorService getSerDesExecutorService() {
         return serDesExecutorService;
@@ -255,10 +246,7 @@ public final class DurableConfig {
         if (getExecutorService() == null) {
             throw new IllegalStateException("ExecutorService configuration failed");
         }
-        if (getSerDesExecutorService() == null) {
-            throw new IllegalStateException("SerDes ExecutorService configuration failed");
-        }
-        if (getSerDesExecutorService() == getExecutorService()) {
+        if (getSerDesExecutorService() != null && getSerDesExecutorService() == getExecutorService()) {
             throw new IllegalStateException(
                     "SerDes ExecutorService must be different from the user operation ExecutorService");
         }
@@ -336,11 +324,6 @@ public final class DurableConfig {
     private static ExecutorService createDefaultExecutor() {
         logger.debug("Creating default ExecutorService");
         return DEFAULT_USER_THREAD_POOL;
-    }
-
-    private static ExecutorService createDefaultSerDesExecutor() {
-        logger.debug("Creating default SerDes ExecutorService");
-        return DEFAULT_SERDES_THREAD_POOL;
     }
 
     /** Builder for DurableConfig. Provides fluent API for configuring SDK components. */

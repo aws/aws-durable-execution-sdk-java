@@ -11,7 +11,9 @@ import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.serde.FileSystemSerDes;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class FileSystemSerDesIntegrationTest {
@@ -42,6 +44,27 @@ class FileSystemSerDesIntegrationTest {
         assertEquals(1, stepRuns.get());
         try (var files = Files.walk(tempDir)) {
             assertTrue(files.filter(Files::isRegularFile).count() >= 2);
+        }
+    }
+
+    @Test
+    void operationConfigControlsWhereFilesystemStorageIsUsed() throws Exception {
+        var fileSystemSerDes = FileSystemSerDes.builder(tempDir).build();
+        var config = DurableConfig.builder().withSerDes(new JacksonSerDes()).build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step(
+                        "filesystem-step",
+                        String.class,
+                        stepContext -> input + "-stored",
+                        StepConfig.builder().serDes(fileSystemSerDes).build()),
+                config);
+
+        var result = runner.runUntilComplete("value");
+
+        assertEquals("value-stored", result.getResult(String.class));
+        try (var files = Files.walk(tempDir)) {
+            assertEquals(1, files.filter(Files::isRegularFile).count());
         }
     }
 }

@@ -40,8 +40,13 @@ public final class SerDesRunner {
                 }
             });
 
+    /**
+     * Creates an invocation-scoped runner.
+     *
+     * @param executorService executor for SerDes calls, or {@code null} to execute inline
+     */
     public SerDesRunner(ExecutorService executorService) {
-        this.executorService = Objects.requireNonNull(executorService, "executorService cannot be null");
+        this.executorService = executorService;
     }
 
     /** Serializes a value with the supplied durable payload context. */
@@ -111,6 +116,13 @@ public final class SerDesRunner {
     private <T> CompletableFuture<T> submit(SerDesContext context, Supplier<T> action) {
         Objects.requireNonNull(context, "context cannot be null");
         Objects.requireNonNull(action, "action cannot be null");
+        if (executorService == null) {
+            try {
+                return CompletableFuture.completedFuture(SerDesContext.callWithContext(context, action));
+            } catch (Throwable failure) {
+                return CompletableFuture.failedFuture(failure);
+            }
+        }
         return CompletableFuture.supplyAsync(() -> SerDesContext.callWithContext(context, action), executorService);
     }
 

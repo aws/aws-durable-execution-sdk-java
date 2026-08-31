@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.serde;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
@@ -34,15 +37,21 @@ import software.amazon.lambda.durable.exception.SerDesException;
 public final class FileSystemSerDes implements SerDes {
     private static final String ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
     private static final int ENVELOPE_VERSION = 1;
-    private static final int OVERFLOW_THRESHOLD_BYTES = 256 * 1024 - 1024;
+    private static final int DEFAULT_CHECKPOINT_ENVELOPE_LIMIT_BYTES = 256 * 1024 - 1024;
     private static final ObjectMapper ENVELOPE_MAPPER = new ObjectMapper();
+    private static final ObjectReader ENVELOPE_READER = ENVELOPE_MAPPER
+            .reader()
+            .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+            .with(DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY);
     private static final Pattern DURABLE_EXECUTION_ARN_PATTERN = Pattern.compile(
             "^arn:[^:]*:lambda:[^:]*:[^:]*:function:([^:/]+):[^:/]+/durable-execution/([^/]+)/([^/]+)$");
+    private static final Pattern SHA_256_DIGEST_PATTERN = Pattern.compile("[0-9a-f]{64}");
 
     private final Path basePath;
     private final FileSystemSerDesMode storageMode;
     private final FileSystemPathEncoding pathEncoding;
     private final SerDes delegate;
+    private final int checkpointEnvelopeLimitBytes;
     private final Function<Object, Map<String, Object>> previewGenerator;
 
     private FileSystemSerDes(Builder builder) {
@@ -50,6 +59,7 @@ public final class FileSystemSerDes implements SerDes {
         storageMode = builder.storageMode;
         pathEncoding = builder.pathEncoding;
         delegate = builder.delegate;
+        checkpointEnvelopeLimitBytes = builder.checkpointEnvelopeLimitBytes;
         previewGenerator = builder.previewGenerator;
     }
 
@@ -72,7 +82,7 @@ public final class FileSystemSerDes implements SerDes {
 
         if (storageMode == FileSystemSerDesMode.OVERFLOW) {
             var inlineEnvelope = inlineEnvelope(serialized);
-            if (inlineEnvelope.getBytes(StandardCharsets.UTF_8).length <= OVERFLOW_THRESHOLD_BYTES) {
+            if (fitsCheckpoint(inlineEnvelope)) {
                 return inlineEnvelope;
             }
         }
@@ -95,11 +105,9 @@ public final class FileSystemSerDes implements SerDes {
         }
 
         var serialized = readPayload(envelope.get("file").textValue());
-        if (envelope.hasNonNull("sha256")) {
-            var expected = envelope.get("sha256").textValue();
-            if (!expected.equals(sha256(serialized))) {
-                throw new SerDesException("Filesystem SerDes payload digest does not match stored content");
-            }
+        var expected = envelope.get("sha256").textValue();
+        if (!expected.equals(sha256(serialized))) {
+            throw new SerDesException("Filesystem SerDes payload digest does not match stored content");
         }
         return delegate.deserialize(serialized, typeToken);
     }
@@ -126,7 +134,7 @@ public final class FileSystemSerDes implements SerDes {
             }
         }
         var encoded = writeEnvelope(envelope);
-        if (encoded.getBytes(StandardCharsets.UTF_8).length > OVERFLOW_THRESHOLD_BYTES) {
+        if (!fitsCheckpoint(encoded)) {
             throw new SerDesException("Filesystem SerDes file envelope exceeds the checkpoint payload limit");
         }
 
@@ -137,26 +145,24 @@ public final class FileSystemSerDes implements SerDes {
     private JsonNode parseEnvelope(String data) {
         final JsonNode node;
         try {
-            node = ENVELOPE_MAPPER.readTree(data);
-        } catch (IOException e) {
-            return null;
-        }
-        if (node == null || !node.isObject()) {
-            return null;
-        }
-
-        if (node.has(ENVELOPE_MARKER)) {
-            if (!node.get(ENVELOPE_MARKER).canConvertToInt()
-                    || node.get(ENVELOPE_MARKER).intValue() != ENVELOPE_VERSION
-                    || !isValidEnvelope(node)) {
-                throw new SerDesException("Malformed filesystem SerDes envelope");
+            node = ENVELOPE_READER.readTree(data);
+        } catch (JsonProcessingException e) {
+            if (data.contains(ENVELOPE_MARKER)) {
+                throw new SerDesException("Malformed filesystem SerDes envelope", e);
             }
-            return node;
+            return null;
+        }
+        if (node == null || !node.isObject() || !node.has(ENVELOPE_MARKER)) {
+            return null;
         }
 
-        // Read envelopes produced by the JavaScript SDK while leaving ordinary user JSON untouched.
-        var legacyFieldCount = node.has("preview") ? 2 : 1;
-        return node.size() == legacyFieldCount && isValidEnvelope(node) ? node : null;
+        if (!node.get(ENVELOPE_MARKER).isIntegralNumber()
+                || !node.get(ENVELOPE_MARKER).canConvertToInt()
+                || node.get(ENVELOPE_MARKER).intValue() != ENVELOPE_VERSION
+                || !isValidEnvelope(node)) {
+            throw new SerDesException("Malformed filesystem SerDes envelope");
+        }
+        return node;
     }
 
     private static boolean isValidEnvelope(JsonNode node) {
@@ -165,10 +171,18 @@ public final class FileSystemSerDes implements SerDes {
         if (hasData == hasFile) {
             return false;
         }
-        if (node.has("preview") && !node.get("preview").isObject()) {
+        if (hasData) {
+            return node.size() == 2;
+        }
+        if (!node.has("sha256")
+                || !node.get("sha256").isTextual()
+                || !SHA_256_DIGEST_PATTERN
+                        .matcher(node.get("sha256").textValue())
+                        .matches()) {
             return false;
         }
-        return !node.has("sha256") || node.get("sha256").isTextual();
+        var hasPreview = node.has("preview");
+        return (!hasPreview || node.get("preview").isObject()) && node.size() == (hasPreview ? 4 : 3);
     }
 
     private Path payloadPath(SerDesContext context, String digest) {
@@ -240,6 +254,10 @@ public final class FileSystemSerDes implements SerDes {
         return pathEncoding == FileSystemPathEncoding.HASH ? sha256(value) : percentEncode(value);
     }
 
+    private boolean fitsCheckpoint(String envelope) {
+        return envelope.getBytes(StandardCharsets.UTF_8).length <= checkpointEnvelopeLimitBytes;
+    }
+
     private static String percentEncode(String value) {
         var bytes = value.getBytes(StandardCharsets.UTF_8);
         var encoded = new StringBuilder(bytes.length);
@@ -285,6 +303,7 @@ public final class FileSystemSerDes implements SerDes {
         private FileSystemSerDesMode storageMode = FileSystemSerDesMode.ALWAYS;
         private FileSystemPathEncoding pathEncoding = FileSystemPathEncoding.URI;
         private SerDes delegate = new JacksonSerDes();
+        private int checkpointEnvelopeLimitBytes = DEFAULT_CHECKPOINT_ENVELOPE_LIMIT_BYTES;
         private Function<Object, Map<String, Object>> previewGenerator;
 
         private Builder(Path basePath) {
@@ -306,8 +325,24 @@ public final class FileSystemSerDes implements SerDes {
             return this;
         }
 
+        /** Sets the maximum UTF-8 size of an inline or file checkpoint envelope. */
+        public Builder checkpointEnvelopeLimitBytes(int checkpointEnvelopeLimitBytes) {
+            if (checkpointEnvelopeLimitBytes <= 0) {
+                throw new IllegalArgumentException("checkpointEnvelopeLimitBytes must be positive");
+            }
+            this.checkpointEnvelopeLimitBytes = checkpointEnvelopeLimitBytes;
+            return this;
+        }
+
         public Builder previewGenerator(Function<Object, Map<String, Object>> previewGenerator) {
             this.previewGenerator = Objects.requireNonNull(previewGenerator, "previewGenerator cannot be null");
+            return this;
+        }
+
+        /** Configures structured preview generation from the original value. */
+        public Builder previewConfig(PreviewConfig previewConfig) {
+            Objects.requireNonNull(previewConfig, "previewConfig cannot be null");
+            this.previewGenerator = value -> SerDesPreview.buildPreview(value, previewConfig);
             return this;
         }
 

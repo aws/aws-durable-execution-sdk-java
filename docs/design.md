@@ -350,6 +350,8 @@ software.amazon.lambda.durable
 │   ├── SerDes                # Interface
 │   ├── JacksonSerDes         # Jackson impl
 │   ├── FileSystemSerDes      # Shared-filesystem payload storage
+│   ├── PreviewConfig         # Structured preview selection and byte budget
+│   ├── SerDesPreview         # Structured preview builder
 │   ├── SerDesContext         # Thread-local durable payload identity
 │   ├── SerDesRunner          # Executor dispatch + invocation cache
 │   └── AwsSdkV2Module        # SDK type support
@@ -660,10 +662,10 @@ public interface SerDes {
 }
 ```
 
-SDK-managed calls go through an invocation-scoped `SerDesRunner`. The runner dispatches work to the dedicated SerDes
-executor, installs a `SerDesContext` in plain thread-local storage for the duration of the call, and caches successful
-deserializations in a bounded weak-reference LRU by SerDes identity, execution ARN, entity ID, target type, and
-serialized-data hash. The thread-local value is always restored in `finally`.
+SDK-managed calls go through an invocation-scoped `SerDesRunner`. The runner executes inline by default or dispatches
+work to the configured SerDes executor, installs a `SerDesContext` in plain thread-local storage for the duration of the
+call, and caches successful deserializations in a bounded weak-reference LRU by SerDes identity, execution ARN, entity
+ID, target type, and serialized-data hash. The thread-local value is always restored in `finally`.
 
 `FileSystemSerDes` uses that context to build collision-free paths on a shared durable filesystem. Calls made before a
 durable execution ARN exists, such as initial invocation input serialization, fall back to the delegate SerDes without

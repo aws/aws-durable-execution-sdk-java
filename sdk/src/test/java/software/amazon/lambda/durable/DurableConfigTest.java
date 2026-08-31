@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -54,8 +55,7 @@ class DurableConfigTest {
         assertInstanceOf(JacksonSerDes.class, config.getSerDes());
         assertNotNull(config.getExecutorService());
         assertInstanceOf(ExecutorService.class, config.getExecutorService());
-        assertNotNull(config.getSerDesExecutorService());
-        assertInstanceOf(ExecutorService.class, config.getSerDesExecutorService());
+        assertNull(config.getSerDesExecutorService());
     }
 
     @Test
@@ -238,13 +238,11 @@ class DurableConfigTest {
     }
 
     @Test
-    void testDefaultSerDesExecutorService_IsNotNull() {
+    void testDefaultSerDesExecutorService_IsNull() {
         var config =
                 DurableConfig.builder().withDurableExecutionClient(mockClient).build();
 
-        var executor = config.getSerDesExecutorService();
-        assertNotNull(executor);
-        assertFalse(executor.isShutdown());
+        assertNull(config.getSerDesExecutorService());
     }
 
     @Test
@@ -270,7 +268,8 @@ class DurableConfigTest {
 
         // ExecutorService should be different instances (each gets its own)
         assertSame(config1.getExecutorService(), config2.getExecutorService());
-        assertSame(config1.getSerDesExecutorService(), config2.getSerDesExecutorService());
+        assertNull(config1.getSerDesExecutorService());
+        assertNull(config2.getSerDesExecutorService());
     }
 
     @Test
@@ -282,7 +281,7 @@ class DurableConfigTest {
                 .build();
 
         assertNotNull(config.getExecutorService());
-        assertNotNull(config.getSerDesExecutorService());
+        assertNull(config.getSerDesExecutorService());
     }
 
     @Test
@@ -512,17 +511,6 @@ class DurableConfigTest {
 
         var ex = assertThrows(IllegalStateException.class, config::validateConfiguration);
         assertEquals("ExecutorService configuration failed", ex.getMessage());
-    }
-
-    @Test
-    void validateConfiguration_ThrowsWhenSerDesExecutorServiceIsNull() throws Exception {
-        var config =
-                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
-
-        setField(config, "serDesExecutorService", null);
-
-        var ex = assertThrows(IllegalStateException.class, config::validateConfiguration);
-        assertEquals("SerDes ExecutorService configuration failed", ex.getMessage());
     }
 
     @Test

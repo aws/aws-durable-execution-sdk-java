@@ -34,15 +34,16 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 | `withLambdaClientBuilder()` | Custom AWS Lambda client                | Auto-configured Lambda client |
 | `withSerDes()`              | Serializer for step results             | Jackson with default settings |
 | `withExecutorService()`     | Thread pool for user-defined operations | Cached daemon thread pool     |
-| `withSerDesExecutorService()` | Thread pool for serialization and payload I/O | Cached daemon thread pool |
+| `withSerDesExecutorService()` | Optional thread pool for serialization and payload I/O | Inline on the calling thread |
 | `withLoggerConfig()`        | Logger behavior configuration           | Suppress logs during replay   |
 | `withPollingStrategy()`     | Backend polling strategy                | Exponential backoff: 1s base, 2x rate, FULL jitter, 10s max |
 | `withCheckpointDelay()`     | How often the SDK checkpoints updates   | `Duration.ofSeconds(0)` (as soon as possible) |
 
 The `withExecutorService()` option configures the thread pool used for running user-defined operations. Internal SDK coordination (checkpoint batching, polling) runs on an SDK-managed thread pool.
 
-The SerDes executor must be different from the user-operation executor. SerDes calls are synchronous from the
-operation's perspective, so using one saturated pool for both can deadlock.
+By default, SerDes calls run inline. Configure `withSerDesExecutorService()` when a SerDes performs blocking storage or
+network I/O. The SerDes executor must be different from the user-operation executor because SerDes calls are
+synchronous from the operation's perspective and a shared saturated pool can deadlock.
 
 ### Filesystem-backed SerDes
 
@@ -53,7 +54,11 @@ inline when configured for overflow mode:
 var fileSystemSerDes = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
         .storageMode(FileSystemSerDesMode.OVERFLOW)
         .pathEncoding(FileSystemPathEncoding.HASH)
-        .previewGenerator(value -> Map.of("type", value.getClass().getSimpleName()))
+        .checkpointEnvelopeLimitBytes(512 * 1024)
+        .previewConfig(PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
+                .include(PreviewField.anywhere("id"), PreviewField.path("status"))
+                .mask(PreviewField.anywhere("email"))
+                .build())
         .build();
 
 return DurableConfig.builder()
@@ -62,8 +67,33 @@ return DurableConfig.builder()
 ```
 
 `ALWAYS` writes every SDK-managed payload to a file. `OVERFLOW` stores the payload inline until the complete checkpoint
-envelope exceeds 255 KiB. `URI` path encoding keeps identifiers readable, while `HASH` avoids filesystem name-length
-and character restrictions.
+envelope exceeds the configured limit, which defaults to 255 KiB. `URI` path encoding keeps identifiers readable,
+while `HASH` avoids filesystem name-length and character restrictions.
+
+`PreviewConfig` supports include-all/exclude-all modes, exact-path or anywhere field matching, masking, and a default
+4 KiB preview budget. A custom `previewGenerator(...)` remains available for non-standard preview logic.
+
+The filesystem wrapper and the value codec are configured independently. Use `.delegate(...)` to control how values are
+encoded inside files:
+
+```java
+var fileSystemSerDes = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
+        .delegate(new MyCustomSerDes())
+        .build();
+```
+
+Existing operation configuration controls where filesystem storage is used. For example, an invoke can send an
+ordinary JSON payload while decoding its result through filesystem storage:
+
+```java
+var config = InvokeConfig.builder()
+        .payloadSerDes(new JacksonSerDes())
+        .serDes(fileSystemSerDes)
+        .build();
+```
+
+The same pattern applies to `StepConfig.serDes(...)`, callback, child-context, map, parallel, and wait-for-condition
+configuration.
 
 The SDK supplies a `SerDesContext` through thread-local storage during managed calls:
 
@@ -71,12 +101,12 @@ The SDK supplies a `SerDesContext` through thread-local storage during managed c
 var context = SerDesContext.getCurrentContext();
 ```
 
-Custom SerDes implementations can use its durable execution ARN and entity ID for external storage. Calls run on the
-dedicated SerDes executor, and successful deserializations are cached for the current Lambda invocation.
+Custom SerDes implementations can use its durable execution ARN and entity ID for external storage. Calls use the
+configured SerDes executor when present, and successful deserializations are cached for the current Lambda invocation.
 
 Do not use Lambda's `/tmp` directory: replay can run in another execution environment. Use a shared durable mount such
-as EFS. S3 Files users must account for synchronization and crash-durability behavior. Chained invokes require both
-functions to use compatible SerDes configuration and access the same mount.
+as EFS. S3 Files users must account for synchronization and crash-durability behavior. A chained-invoke boundary only
+requires shared storage and compatible filesystem configuration when that boundary explicitly uses `FileSystemSerDes`.
 
 ### Dynamic plugin loading
 

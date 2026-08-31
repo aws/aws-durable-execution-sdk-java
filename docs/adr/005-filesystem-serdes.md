@@ -48,7 +48,7 @@ in `finally`, which supports nesting and prevents context from leaking when exec
 
 Each `ExecutionManager` creates one `SerDesRunner` for the Lambda invocation. The runner:
 
-1. dispatches the SerDes call to the configured SerDes executor;
+1. executes inline or dispatches the SerDes call to the configured SerDes executor;
 2. installs `SerDesContext` inside that executor task;
 3. invokes the unchanged SerDes method;
 4. clears or restores the thread-local context;
@@ -62,9 +62,9 @@ DurableConfig.builder()
         .build();
 ```
 
-The default is a shared cached daemon pool named `durable-serdes-*`. The SerDes executor must not be the same object as
-the user-operation executor because operation threads synchronously wait for SerDes work and a shared saturated pool
-could deadlock.
+SerDes calls execute inline by default. A dedicated executor is opt-in for implementations that perform blocking
+storage or network I/O. When configured, it must not be the same object as the user-operation executor because operation
+threads synchronously wait for SerDes work and a shared saturated pool could deadlock.
 
 ### Cache successful deserializations per invocation
 
@@ -94,7 +94,11 @@ configuration.
 var serDes = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
         .storageMode(FileSystemSerDesMode.OVERFLOW)
         .pathEncoding(FileSystemPathEncoding.HASH)
-        .previewGenerator(value -> Map.of("type", value.getClass().getSimpleName()))
+        .checkpointEnvelopeLimitBytes(512 * 1024)
+        .previewConfig(PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
+                .include(PreviewField.anywhere("id"))
+                .mask(PreviewField.anywhere("email"))
+                .build())
         .build();
 
 return DurableConfig.builder()
@@ -107,7 +111,7 @@ Storage modes:
 | Mode | Behavior |
 | --- | --- |
 | `ALWAYS` | Store every SDK-managed non-null payload in a file. |
-| `OVERFLOW` | Keep the versioned envelope inline until it exceeds 255 KiB, then store the payload in a file. |
+| `OVERFLOW` | Keep the versioned envelope inline until it exceeds the configured byte limit, then store it in a file. |
 
 Path encodings:
 
@@ -116,7 +120,15 @@ Path encodings:
 | `URI` | Percent-encode readable execution and entity path segments. |
 | `HASH` | Use fixed-length SHA-256 path segments. |
 
-The default delegate is `JacksonSerDes`; a custom delegate can be supplied through the builder.
+The default checkpoint-envelope limit is 255 KiB and can be changed with `checkpointEnvelopeLimitBytes(...)`.
+
+The default delegate is `JacksonSerDes`; `.delegate(...)` controls how values are encoded inside files. Existing
+operation-level SerDes configuration controls which boundaries use filesystem storage. For example,
+`InvokeConfig.payloadSerDes(new JacksonSerDes()).serDes(fileSystemSerDes)` sends ordinary JSON while decoding the result
+with filesystem storage.
+
+Structured previews support include-all/exclude-all modes, include/exclude/mask selectors, anywhere or exact-path
+matching, custom mask text, and a default 4 KiB preview budget. Custom preview callbacks remain available.
 
 ### Envelope and file publication
 
@@ -128,8 +140,8 @@ Java writes versioned envelopes:
 {"__durable_execution_filesystem_serdes":1,"file":"/mnt/efs/...json","sha256":"<digest>","preview":{"id":"123"}}
 ```
 
-The additional marker and digest are ignored by the JavaScript implementation, which reads the `data`, `file`, and
-`preview` fields. Java also reads the unversioned JavaScript envelopes.
+Only envelopes containing the reserved version marker are interpreted as filesystem payloads. Unmarked JSON, including
+objects with `data` or `file` fields, is passed to the delegate SerDes unchanged.
 
 File names include the entity ID and serialized-payload digest. Files are created with `CREATE_NEW`; an existing file is
 accepted only when its contents match. This prevents a later retry from overwriting data referenced by an earlier
@@ -142,8 +154,8 @@ The durable execution ARN does not exist when a caller serializes the initial La
 remains ordinary delegate JSON.
 
 After the invocation starts, the SDK routes root input deserialization, operation payloads, exceptions, and root output
-through `SerDesRunner`. Chained invokes that use filesystem SerDes require the caller and callee to use compatible
-configuration and have access to the same durable filesystem.
+through `SerDesRunner`. A chained-invoke boundary requires compatible filesystem configuration and shared storage only
+when that boundary explicitly selects `FileSystemSerDes`.
 
 ## Consequences
 
@@ -154,15 +166,15 @@ Positive:
 - Blocking SerDes work is isolated from user and SDK coordination executors.
 - Repeated deserialization and file reads are avoided within an invocation.
 - The implementation uses existing global and per-operation SerDes configuration.
-- Java and JavaScript filesystem envelopes are mutually readable.
+- Ordinary user JSON cannot be confused with a filesystem envelope.
 
 Negative:
 
 - SerDes context is implicit thread-local state.
-- Every SDK-managed SerDes call crosses an executor boundary.
+- Configuring a SerDes executor adds an executor boundary to every SDK-managed SerDes call.
 - Repeated deserialization returns the same object instance within an invocation.
 - Filesystem retention and cleanup remain the application's responsibility.
-- Chained invoke payloads and results require shared storage and compatible SerDes configuration.
+- Chained invoke payloads and results that select filesystem storage require a shared mount and compatible paths.
 
 ## Operational Requirements
 
@@ -187,7 +199,8 @@ configuration. A dedicated offloader can be reconsidered if multiple storage bac
 Rejected for the initial implementation. The filesystem implementation uses only JDK and existing Jackson APIs, so a
 new artifact would add release and documentation overhead without isolating an additional dependency.
 
-### Run SerDes inline or omit caching
+### Run blocking filesystem work on the user or internal executor, or omit caching
 
-Rejected because mounted filesystem I/O can block user progress and repeated reads can repeat externally visible work
-and cost.
+Rejected. Inline execution remains the default, but applications can isolate blocking filesystem work with the
+optional SerDes executor. The user-operation and internal coordination executors must not be used for that I/O.
+Omitting caching would repeat file reads and object reconstruction within one invocation.

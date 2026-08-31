@@ -95,6 +95,47 @@ class FileSystemSerDesTest {
     }
 
     @Test
+    void checkpointEnvelopeLimitCanBeIncreasedForLargerInlinePayloads() throws Exception {
+        var value = "x".repeat(300_000);
+        var context = new SerDesContext(realisticArn(), "1");
+        var defaultSerDes = FileSystemSerDes.builder(tempDir)
+                .storageMode(FileSystemSerDesMode.OVERFLOW)
+                .build();
+        var largerEnvelopeSerDes = FileSystemSerDes.builder(tempDir)
+                .storageMode(FileSystemSerDesMode.OVERFLOW)
+                .checkpointEnvelopeLimitBytes(512 * 1024)
+                .build();
+
+        assertTrue(
+                MAPPER.readTree(runner.serialize(defaultSerDes, value, context)).hasNonNull("file"));
+        assertTrue(MAPPER.readTree(runner.serialize(largerEnvelopeSerDes, value, context))
+                .hasNonNull("data"));
+    }
+
+    @Test
+    void checkpointEnvelopeLimitMustBePositive() {
+        var zeroFailure = assertThrows(IllegalArgumentException.class, () -> FileSystemSerDes.builder(tempDir)
+                .checkpointEnvelopeLimitBytes(0));
+        var negativeFailure = assertThrows(IllegalArgumentException.class, () -> FileSystemSerDes.builder(tempDir)
+                .checkpointEnvelopeLimitBytes(-1));
+
+        assertEquals("checkpointEnvelopeLimitBytes must be positive", zeroFailure.getMessage());
+        assertEquals("checkpointEnvelopeLimitBytes must be positive", negativeFailure.getMessage());
+    }
+
+    @Test
+    void checkpointEnvelopeLimitAlsoAppliesToFileEnvelopes() {
+        var serDes = FileSystemSerDes.builder(tempDir)
+                .checkpointEnvelopeLimitBytes(1)
+                .build();
+
+        var failure = assertThrows(
+                SerDesException.class, () -> runner.serialize(serDes, "value", new SerDesContext(realisticArn(), "1")));
+
+        assertTrue(failure.getMessage().contains("checkpoint payload limit"));
+    }
+
+    @Test
     void supportsHashPathEncodingAndPreview() throws Exception {
         var serDes = FileSystemSerDes.builder(tempDir)
                 .pathEncoding(FileSystemPathEncoding.HASH)
@@ -124,20 +165,49 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void readsJavaScriptFilesystemEnvelope() throws Exception {
-        var payloadFile = tempDir.resolve("js-payload.json");
-        Files.writeString(payloadFile, "{\"value\":\"js\"}", StandardCharsets.UTF_8);
-        var envelope = MAPPER.writeValueAsString(Map.of("file", payloadFile.toString()));
+    void structuredPreviewSelectsAndMasksFields() throws Exception {
+        var serDes = FileSystemSerDes.builder(tempDir)
+                .previewConfig(PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
+                        .include(PreviewField.anywhere("id"), PreviewField.path("customer.status"))
+                        .mask(PreviewField.anywhere("email"))
+                        .build())
+                .build();
+        var value = Map.of(
+                "id",
+                "order-1",
+                "email",
+                "root@example.com",
+                "customer",
+                Map.of("status", "ready", "email", "customer@example.com", "secret", "hidden"));
+
+        var preview = MAPPER.readTree(runner.serialize(serDes, value, new SerDesContext(realisticArn(), "1")))
+                .get("preview");
+
+        assertEquals("order-1", preview.get("id").textValue());
+        assertEquals("***", preview.get("email").textValue());
+        assertEquals("ready", preview.get("customer").get("status").textValue());
+        assertEquals("***", preview.get("customer").get("email").textValue());
+        assertFalse(preview.get("customer").has("secret"));
+    }
+
+    @Test
+    void unmarkedDataAndFileObjectsAreDelegatedNormally() {
         var serDes = FileSystemSerDes.builder(tempDir).build();
 
-        assertEquals(new Value("js"), serDes.deserialize(envelope, TypeToken.get(Value.class)));
+        assertEquals(
+                Map.of("data", "value"),
+                serDes.deserialize("{\"data\":\"value\"}", new TypeToken<Map<String, String>>() {}));
+        assertEquals(
+                Map.of("file", "value"),
+                serDes.deserialize("{\"file\":\"value\"}", new TypeToken<Map<String, String>>() {}));
     }
 
     @Test
     void rejectsFileOutsideConfiguredBasePath() throws Exception {
         var externalFile = Files.createTempFile("filesystem-serdes", ".json");
         Files.writeString(externalFile, "\"secret\"", StandardCharsets.UTF_8);
-        var envelope = MAPPER.writeValueAsString(Map.of("file", externalFile.toString()));
+        var envelope = MAPPER.writeValueAsString(Map.of(
+                "__durable_execution_filesystem_serdes", 1, "file", externalFile.toString(), "sha256", "0".repeat(64)));
         var serDes = FileSystemSerDes.builder(tempDir).build();
 
         assertThrows(SerDesException.class, () -> serDes.deserialize(envelope, TypeToken.get(String.class)));
@@ -152,6 +222,46 @@ class FileSystemSerDesTest {
                 () -> serDes.deserialize(
                         "{\"__durable_execution_filesystem_serdes\":1,\"data\":\"x\",\"file\":\"y\"}",
                         TypeToken.get(String.class)));
+    }
+
+    @Test
+    void rejectsTrailingAndDuplicateFieldsInMarkedEnvelope() {
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var validDataEnvelope = "{\"__durable_execution_filesystem_serdes\":1,\"data\":\"\\\"value\\\"\"}";
+
+        assertThrows(
+                SerDesException.class,
+                () -> serDes.deserialize(validDataEnvelope + " true", TypeToken.get(String.class)));
+        assertThrows(
+                SerDesException.class,
+                () -> serDes.deserialize(
+                        "{\"__durable_execution_filesystem_serdes\":1,"
+                                + "\"__durable_execution_filesystem_serdes\":2,\"data\":\"\\\"value\\\"\"}",
+                        TypeToken.get(String.class)));
+    }
+
+    @Test
+    void customDelegateControlsValueEncoding() throws Exception {
+        var jackson = new JacksonSerDes();
+        var delegate = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return "custom:" + jackson.serialize(value);
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return jackson.deserialize(data.substring("custom:".length()), typeToken);
+            }
+        };
+        var serDes = FileSystemSerDes.builder(tempDir).delegate(delegate).build();
+        var context = new SerDesContext(realisticArn(), "1");
+
+        var envelope = runner.serialize(serDes, new Value("custom"), context);
+        var file = Path.of(MAPPER.readTree(envelope).get("file").textValue());
+
+        assertTrue(Files.readString(file).startsWith("custom:"));
+        assertEquals(new Value("custom"), runner.deserialize(serDes, envelope, TypeToken.get(Value.class), context));
     }
 
     private static String realisticArn() {

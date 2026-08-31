@@ -53,6 +53,26 @@ class SerDesRunnerTest {
     }
 
     @Test
+    void executesInlineWhenNoExecutorIsConfigured() {
+        var inlineRunner = new SerDesRunner(null);
+        var callingThread = Thread.currentThread();
+        var observedThread = new AtomicReference<Thread>();
+        var context = new SerDesContext("arn:test", "entity");
+        var serDes = new JacksonSerDes() {
+            @Override
+            public String serialize(Object value) {
+                observedThread.set(Thread.currentThread());
+                assertEquals(context, SerDesContext.getCurrentContext());
+                return super.serialize(value);
+            }
+        };
+
+        assertEquals("\"value\"", inlineRunner.serialize(serDes, "value", context));
+        assertSame(callingThread, observedThread.get());
+        assertNull(SerDesContext.getCurrentContext());
+    }
+
+    @Test
     void cachesSuccessfulDeserializationForInvocation() {
         var calls = new AtomicInteger();
         var serDes = new JacksonSerDes() {
