@@ -30,6 +30,8 @@ import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.plugin.UserFunctionOutcome;
+import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -111,6 +113,16 @@ public abstract class BaseDurableOperation {
     /** Gets the operation name (may be null). */
     public String getName() {
         return operationIdentifier.name();
+    }
+
+    /** Returns the context used for SerDes calls belonging to this operation. */
+    protected SerDesContext getSerDesContext() {
+        return new SerDesContext(executionManager.getDurableExecutionArn(), getOperationId());
+    }
+
+    /** Returns the invocation-scoped SerDes runner. */
+    protected SerDesRunner getSerDesRunner() {
+        return executionManager.getSerDesRunner();
     }
 
     /** Gets the parent context. */

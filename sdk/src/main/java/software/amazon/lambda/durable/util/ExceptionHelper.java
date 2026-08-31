@@ -44,10 +44,21 @@ public class ExceptionHelper {
      * @return the ErrorObject
      */
     public static ErrorObject buildErrorObject(Throwable throwable, SerDes serDes) {
+        return buildErrorObject(throwable, serDes.serialize(throwable));
+    }
+
+    /**
+     * build an ErrorObject from a Throwable and pre-serialized error data
+     *
+     * @param throwable the Throwable from which to build the errorObject
+     * @param errorData the serialized Throwable payload
+     * @return the ErrorObject
+     */
+    public static ErrorObject buildErrorObject(Throwable throwable, String errorData) {
         return ErrorObject.builder()
                 .errorType(throwable.getClass().getName())
                 .errorMessage(throwable.getMessage())
-                .errorData(serDes.serialize(throwable))
+                .errorData(errorData)
                 .stackTrace(serializeStackTrace(throwable.getStackTrace()))
                 .build();
     }

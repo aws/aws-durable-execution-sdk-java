@@ -59,6 +59,7 @@ class ConcurrencyOperationTest {
     void setUp() {
         durableContext = mock(DurableContextImpl.class);
         executionManager = mock(ExecutionManager.class);
+        TestUtils.configureSerDesRunner(executionManager);
 
         var childContext = mock(DurableContextImpl.class);
         this.childContext = childContext;

@@ -65,9 +65,11 @@ public class LocalDurableTestRunner<I, O> {
                     .withDurableExecutionClient(storage)
                     .withSerDes(customerConfig.getSerDes())
                     .withExecutorService(customerConfig.getExecutorService())
+                    .withSerDesExecutorService(customerConfig.getSerDesExecutorService())
                     .withPollingStrategy(customerConfig.getPollingStrategy())
                     .withCheckpointDelay(customerConfig.getCheckpointDelay())
                     .withLoggerConfig(customerConfig.getLoggerConfig())
+                    .withDeserializeAfterSerialization(customerConfig.shouldDeserializeAfterSerialization())
                     // Temporary: remove along with the checkpointEmptyMap flag in a future major version.
                     .withCheckpointEmptyMap(customerConfig.shouldCheckpointEmptyMap())
                     .withPlugins(customerConfig.getPluginRunner().getPlugins().toArray(new DurableExecutionPlugin[0]))

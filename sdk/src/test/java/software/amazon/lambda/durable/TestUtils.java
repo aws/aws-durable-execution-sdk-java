@@ -8,11 +8,20 @@ import static org.mockito.Mockito.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 
 public class TestUtils {
+    private static final ExecutorService TEST_SERDES_EXECUTOR = Executors.newCachedThreadPool(runnable -> {
+        var thread = new Thread(runnable, "test-serdes");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     public static DurableExecutionClient createMockClient() {
         var client = mock(DurableExecutionClient.class);
@@ -68,5 +77,10 @@ public class TestUtils {
 
     public static String hashOperationId(String rawId) {
         return OperationIdGenerator.hashOperationId(rawId);
+    }
+
+    public static void configureSerDesRunner(ExecutionManager executionManager) {
+        when(executionManager.getDurableExecutionArn()).thenReturn("arn:test");
+        when(executionManager.getSerDesRunner()).thenReturn(new SerDesRunner(TEST_SERDES_EXECUTOR));
     }
 }

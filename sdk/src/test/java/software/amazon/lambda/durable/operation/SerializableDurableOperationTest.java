@@ -42,6 +42,7 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 
 class SerializableDurableOperationTest {
 
@@ -104,6 +105,8 @@ class SerializableDurableOperationTest {
         executionManager = mock(ExecutionManager.class);
         durableContext = mock(DurableContextImpl.class);
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
+        when(executionManager.getDurableExecutionArn()).thenReturn("arn:test");
+        when(executionManager.getSerDesRunner()).thenReturn(new SerDesRunner(internalExecutor));
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.CONTEXT));
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(OPERATION);
     }

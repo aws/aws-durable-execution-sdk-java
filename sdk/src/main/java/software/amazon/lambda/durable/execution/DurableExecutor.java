@@ -32,6 +32,8 @@ import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -60,6 +62,9 @@ public class DurableExecutor {
             var isFirstInvocation = !executionManager.isReplaying();
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             var executionArn = input.durableExecutionArn();
+            var serDesContext = new SerDesContext(
+                    executionArn, executionManager.getExecutionOperation().id());
+            var serDesRunner = executionManager.getSerDesRunner();
 
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
@@ -78,7 +83,11 @@ public class DurableExecutor {
                         Throwable inputFailure = null;
                         try {
                             userInput = extractUserInput(
-                                    executionManager.getExecutionOperation(), config.getSerDes(), inputType);
+                                    executionManager.getExecutionOperation(),
+                                    config.getSerDes(),
+                                    inputType,
+                                    serDesRunner,
+                                    serDesContext);
                         } catch (Throwable t) {
                             inputFailure = t;
                         }
@@ -171,11 +180,12 @@ public class DurableExecutor {
                                         cause,
                                         pluginExecutionInput.get(),
                                         null);
-                                return DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
+                                return DurableExecutionOutput.failure(
+                                        buildErrorObject(cause, config.getSerDes(), serDesRunner, serDesContext));
                             }
                             // user handler complete successfully
                             logger.debug("Execution completed");
-                            var outputPayload = config.getSerDes().serialize(result);
+                            var outputPayload = serDesRunner.serialize(config.getSerDes(), result, serDesContext);
                             var output =
                                     DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
                             fireOnInvocationEnd(
@@ -254,7 +264,8 @@ public class DurableExecutor {
         return outputPayload;
     }
 
-    private static ErrorObject buildErrorObject(Throwable e, SerDes serDes) {
+    private static ErrorObject buildErrorObject(
+            Throwable e, SerDes serDes, SerDesRunner serDesRunner, SerDesContext serDesContext) {
         // exceptions thrown from operations, e.g. Step
         if (e instanceof DurableOperationException durableOperationException) {
             return durableOperationException.getErrorObject();
@@ -263,16 +274,22 @@ public class DurableExecutor {
             return unrecoverableDurableExecutionException.getErrorObject();
         }
         // exceptions thrown from non-operation code
-        return ExceptionHelper.buildErrorObject(e, serDes);
+        var errorData = serDesRunner.serialize(serDes, e, serDesContext);
+        return ExceptionHelper.buildErrorObject(e, errorData);
     }
 
-    private static <I> I extractUserInput(Operation executionOp, SerDes serDes, TypeToken<I> inputType) {
+    private static <I> I extractUserInput(
+            Operation executionOp,
+            SerDes serDes,
+            TypeToken<I> inputType,
+            SerDesRunner serDesRunner,
+            SerDesContext serDesContext) {
         if (executionOp.executionDetails() == null) {
             throw new IllegalDurableOperationException("EXECUTION operation missing executionDetails");
         }
 
         var inputPayload = executionOp.executionDetails().inputPayload();
-        return serDes.deserialize(inputPayload, inputType);
+        return serDesRunner.deserialize(serDes, inputPayload, inputType, serDesContext);
     }
 
     /**

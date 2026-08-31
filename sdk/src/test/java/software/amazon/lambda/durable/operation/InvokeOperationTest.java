@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
@@ -39,6 +40,7 @@ class InvokeOperationTest {
     @BeforeEach
     void setUp() {
         executionManager = mock(ExecutionManager.class);
+        TestUtils.configureSerDesRunner(executionManager);
         durableContext = mock(DurableContextImpl.class);
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("root", ThreadType.CONTEXT));

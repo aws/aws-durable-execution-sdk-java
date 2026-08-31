@@ -34,11 +34,49 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 | `withLambdaClientBuilder()` | Custom AWS Lambda client                | Auto-configured Lambda client |
 | `withSerDes()`              | Serializer for step results             | Jackson with default settings |
 | `withExecutorService()`     | Thread pool for user-defined operations | Cached daemon thread pool     |
+| `withSerDesExecutorService()` | Thread pool for serialization and payload I/O | Cached daemon thread pool |
 | `withLoggerConfig()`        | Logger behavior configuration           | Suppress logs during replay   |
 | `withPollingStrategy()`     | Backend polling strategy                | Exponential backoff: 1s base, 2x rate, FULL jitter, 10s max |
 | `withCheckpointDelay()`     | How often the SDK checkpoints updates   | `Duration.ofSeconds(0)` (as soon as possible) |
 
 The `withExecutorService()` option configures the thread pool used for running user-defined operations. Internal SDK coordination (checkpoint batching, polling) runs on an SDK-managed thread pool.
+
+The SerDes executor must be different from the user-operation executor. SerDes calls are synchronous from the
+operation's perspective, so using one saturated pool for both can deadlock.
+
+### Filesystem-backed SerDes
+
+`FileSystemSerDes` stores operation and execution payloads on a shared durable filesystem while leaving small values
+inline when configured for overflow mode:
+
+```java
+var fileSystemSerDes = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
+        .storageMode(FileSystemSerDesMode.OVERFLOW)
+        .pathEncoding(FileSystemPathEncoding.HASH)
+        .previewGenerator(value -> Map.of("type", value.getClass().getSimpleName()))
+        .build();
+
+return DurableConfig.builder()
+        .withSerDes(fileSystemSerDes)
+        .build();
+```
+
+`ALWAYS` writes every SDK-managed payload to a file. `OVERFLOW` stores the payload inline until the complete checkpoint
+envelope exceeds 255 KiB. `URI` path encoding keeps identifiers readable, while `HASH` avoids filesystem name-length
+and character restrictions.
+
+The SDK supplies a `SerDesContext` through thread-local storage during managed calls:
+
+```java
+var context = SerDesContext.getCurrentContext();
+```
+
+Custom SerDes implementations can use its durable execution ARN and entity ID for external storage. Calls run on the
+dedicated SerDes executor, and successful deserializations are cached for the current Lambda invocation.
+
+Do not use Lambda's `/tmp` directory: replay can run in another execution environment. Use a shared durable mount such
+as EFS. S3 Files users must account for synchronization and crash-durability behavior. Chained invokes require both
+functions to use compatible SerDes configuration and access the same mount.
 
 ### Dynamic plugin loading
 

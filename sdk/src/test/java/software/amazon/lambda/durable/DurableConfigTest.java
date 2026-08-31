@@ -33,12 +33,14 @@ class DurableConfigTest {
     private DurableExecutionClient mockClient;
     private SerDes mockSerDes;
     private ExecutorService mockExecutor;
+    private ExecutorService mockSerDesExecutor;
 
     @BeforeEach
     void setUp() {
         mockClient = mock(DurableExecutionClient.class);
         mockSerDes = mock(SerDes.class);
         mockExecutor = mock(ExecutorService.class);
+        mockSerDesExecutor = mock(ExecutorService.class);
     }
 
     @Test
@@ -52,6 +54,8 @@ class DurableConfigTest {
         assertInstanceOf(JacksonSerDes.class, config.getSerDes());
         assertNotNull(config.getExecutorService());
         assertInstanceOf(ExecutorService.class, config.getExecutorService());
+        assertNotNull(config.getSerDesExecutorService());
+        assertInstanceOf(ExecutorService.class, config.getSerDesExecutorService());
     }
 
     @Test
@@ -85,6 +89,15 @@ class DurableConfigTest {
         assertEquals(mockExecutor, config.getExecutorService());
         assertNotNull(config.getDurableExecutionClient());
         assertNotNull(config.getSerDes());
+    }
+
+    @Test
+    void testBuilder_WithCustomSerDesExecutorService() {
+        var config = DurableConfig.builder()
+                .withSerDesExecutorService(mockSerDesExecutor)
+                .build();
+
+        assertEquals(mockSerDesExecutor, config.getSerDesExecutorService());
     }
 
     @Test
@@ -131,12 +144,14 @@ class DurableConfigTest {
                 .withDurableExecutionClient(mockClient)
                 .withSerDes(mockSerDes)
                 .withExecutorService(mockExecutor)
+                .withSerDesExecutorService(mockSerDesExecutor)
                 .build();
 
         assertNotNull(config);
         assertEquals(mockClient, config.getDurableExecutionClient());
         assertEquals(mockSerDes, config.getSerDes());
         assertEquals(mockExecutor, config.getExecutorService());
+        assertEquals(mockSerDesExecutor, config.getSerDesExecutorService());
     }
 
     @Test
@@ -169,6 +184,7 @@ class DurableConfigTest {
         assertSame(builder, builder.withDurableExecutionClient(mockClient));
         assertSame(builder, builder.withSerDes(mockSerDes));
         assertSame(builder, builder.withExecutorService(mockExecutor));
+        assertSame(builder, builder.withSerDesExecutorService(mockSerDesExecutor));
         assertSame(builder, builder.withDeserializeAfterSerialization(false));
     }
 
@@ -222,6 +238,27 @@ class DurableConfigTest {
     }
 
     @Test
+    void testDefaultSerDesExecutorService_IsNotNull() {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
+
+        var executor = config.getSerDesExecutorService();
+        assertNotNull(executor);
+        assertFalse(executor.isShutdown());
+    }
+
+    @Test
+    void testBuilder_RejectsSharedUserAndSerDesExecutor() {
+        var builder = DurableConfig.builder().withExecutorService(mockExecutor).withSerDesExecutorService(mockExecutor);
+
+        var exception = assertThrows(IllegalStateException.class, builder::build);
+
+        assertEquals(
+                "SerDes ExecutorService must be different from the user operation ExecutorService",
+                exception.getMessage());
+    }
+
+    @Test
     void testBuilder_MultipleBuilds_CreateIndependentInstances() {
         var builder = DurableConfig.builder().withDurableExecutionClient(mockClient);
 
@@ -233,6 +270,7 @@ class DurableConfigTest {
 
         // ExecutorService should be different instances (each gets its own)
         assertSame(config1.getExecutorService(), config2.getExecutorService());
+        assertSame(config1.getSerDesExecutorService(), config2.getSerDesExecutorService());
     }
 
     @Test
@@ -244,6 +282,7 @@ class DurableConfigTest {
                 .build();
 
         assertNotNull(config.getExecutorService());
+        assertNotNull(config.getSerDesExecutorService());
     }
 
     @Test
@@ -435,6 +474,7 @@ class DurableConfigTest {
                 .withDurableExecutionClient(mockClient)
                 .withSerDes(mockSerDes)
                 .withExecutorService(mockExecutor)
+                .withSerDesExecutorService(mockSerDesExecutor)
                 .build();
 
         // Should not throw — all fields are set
@@ -472,6 +512,17 @@ class DurableConfigTest {
 
         var ex = assertThrows(IllegalStateException.class, config::validateConfiguration);
         assertEquals("ExecutorService configuration failed", ex.getMessage());
+    }
+
+    @Test
+    void validateConfiguration_ThrowsWhenSerDesExecutorServiceIsNull() throws Exception {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
+
+        setField(config, "serDesExecutorService", null);
+
+        var ex = assertThrows(IllegalStateException.class, config::validateConfiguration);
+        assertEquals("SerDes ExecutorService configuration failed", ex.getMessage());
     }
 
     @Test

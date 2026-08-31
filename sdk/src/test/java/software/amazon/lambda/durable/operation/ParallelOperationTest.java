@@ -58,6 +58,7 @@ class ParallelOperationTest {
     void setUp() {
         durableContext = mock(DurableContextImpl.class);
         executionManager = mock(ExecutionManager.class);
+        TestUtils.configureSerDesRunner(executionManager);
         operationStore = new ConcurrentHashMap<>();
         parallelCheckpointLatch = new CountDownLatch(1);
 

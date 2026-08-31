@@ -30,6 +30,7 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 
 /**
  * Central manager for durable execution coordination.
@@ -65,6 +66,7 @@ public class ExecutionManager implements SafeCloseable {
     private final DurableConfig durableConfig;
     private final Set<String> updatedOperationIdsSinceLastInvocation;
     private final Set<String> initialOperationIds;
+    private final SerDesRunner serDesRunner;
 
     // ===== Thread Coordination =====
     private final Map<String, BaseDurableOperation> registeredOperations = new ConcurrentHashMap<>();
@@ -81,6 +83,7 @@ public class ExecutionManager implements SafeCloseable {
         durableConfig = config;
         this.durableExecutionArn = input.durableExecutionArn();
         this.lambdaContext = lambdaContext;
+        this.serDesRunner = new SerDesRunner(config.getSerDesExecutorService());
 
         // Store the set of operation IDs updated since the last successful invocation
         this.updatedOperationIdsSinceLastInvocation =
@@ -127,6 +130,11 @@ public class ExecutionManager implements SafeCloseable {
     /** Returns the ARN of the durable execution being managed. */
     public String getDurableExecutionArn() {
         return durableExecutionArn;
+    }
+
+    /** Returns the invocation-scoped SerDes runner. */
+    public SerDesRunner getSerDesRunner() {
+        return serDesRunner;
     }
 
     /** Returns {@code true} if the execution is currently replaying completed operations. */

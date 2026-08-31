@@ -14,6 +14,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
@@ -39,6 +40,7 @@ class StepOperationTest {
     @BeforeEach
     void setUp() {
         executionManager = mock(ExecutionManager.class);
+        TestUtils.configureSerDesRunner(executionManager);
         durableContext = mock(DurableContextImpl.class);
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("handler", ThreadType.CONTEXT));

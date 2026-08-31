@@ -86,7 +86,7 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
      */
     protected T deserializeResult(String result) {
         try {
-            return resultSerDes.deserialize(result, resultTypeToken);
+            return getSerDesRunner().deserialize(resultSerDes, result, resultTypeToken, getSerDesContext());
         } catch (SerDesException e) {
             logger.warn(
                     "Failed to deserialize {} result for operation name '{}'. Ensure the result is properly encoded.",
@@ -106,7 +106,7 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
      * @return the serialized string and the deserialized result
      */
     protected SerializedResult<T> serializeAndDeserializeResult(T result) {
-        var serialized = resultSerDes.serialize(result);
+        var serialized = getSerDesRunner().serialize(resultSerDes, result, getSerDesContext());
         var deserialized = shouldDeserializeAfterSerialization() ? deserializeResult(serialized) : result;
         return new SerializedResult<>(serialized, deserialized);
     }
@@ -119,7 +119,8 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
      */
     @SuppressWarnings("ThrowableNotThrown")
     protected ErrorObject serializeException(Throwable throwable) {
-        var error = ExceptionHelper.buildErrorObject(throwable, resultSerDes);
+        var errorData = getSerDesRunner().serialize(resultSerDes, throwable, getSerDesContext());
+        var error = ExceptionHelper.buildErrorObject(throwable, errorData);
         if (shouldDeserializeAfterSerialization()) {
             deserializeException(error);
         }
@@ -153,8 +154,12 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
 
             Class<?> exceptionClass = Class.forName(errorType);
             if (Throwable.class.isAssignableFrom(exceptionClass)) {
-                original =
-                        resultSerDes.deserialize(errorData, TypeToken.get(exceptionClass.asSubclass(Throwable.class)));
+                original = getSerDesRunner()
+                        .deserialize(
+                                resultSerDes,
+                                errorData,
+                                TypeToken.get(exceptionClass.asSubclass(Throwable.class)),
+                                getSerDesContext());
 
                 if (original != null) {
                     original.setStackTrace(ExceptionHelper.deserializeStackTrace(errorObject.stackTrace()));

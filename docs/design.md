@@ -347,9 +347,12 @@ software.amazon.lambda.durable
 │   └── WaitForConditionResult<T>    # Check function return type (value + isDone)
 │
 ├── serde/
-│   ├── SerDes              # Interface
-│   ├── JacksonSerDes       # Jackson impl
-│   └── AwsSdkV2Module      # SDK type support
+│   ├── SerDes                # Interface
+│   ├── JacksonSerDes         # Jackson impl
+│   ├── FileSystemSerDes      # Shared-filesystem payload storage
+│   ├── SerDesContext         # Thread-local durable payload identity
+│   ├── SerDesRunner          # Executor dispatch + invocation cache
+│   └── AwsSdkV2Module        # SDK type support
 │
 └── exception/
     ├── DurableExecutionException
@@ -653,10 +656,18 @@ For testing, use `DurableConfig.builder().withDurableExecutionClient(localMemory
 ```java
 public interface SerDes {
     String serialize(Object value);
-    <T> T deserialize(String data, Class<T> type);
     <T> T deserialize(String data, TypeToken<T> typeToken);
 }
 ```
+
+SDK-managed calls go through an invocation-scoped `SerDesRunner`. The runner dispatches work to the dedicated SerDes
+executor, installs a `SerDesContext` in plain thread-local storage for the duration of the call, and caches successful
+deserializations in a bounded weak-reference LRU by SerDes identity, execution ARN, entity ID, target type, and
+serialized-data hash. The thread-local value is always restored in `finally`.
+
+`FileSystemSerDes` uses that context to build collision-free paths on a shared durable filesystem. Calls made before a
+durable execution ARN exists, such as initial invocation input serialization, fall back to the delegate SerDes without
+filesystem storage.
 
 **TypeToken and Type Erasure:**
 
@@ -664,9 +675,9 @@ Java's type erasure removes generic type parameters at runtime (`List<User>` bec
 
 `TypeToken<T>` solves this by capturing generic types at compile time. Creating `new TypeToken<List<User>>() {}` produces an anonymous subclass whose superclass type parameter is preserved in bytecode and accessible via reflection (`getGenericSuperclass()`).
 
-The `SerDes` interface provides both `Class<T>` and `TypeToken<T>` overloads:
-- Use `Class<T>` for simple types: `String.class`, `User.class`
-- Use `TypeToken<T>` for parameterized types: `new TypeToken<List<User>>() {}`
+Durable operation APIs provide both `Class<T>` and `TypeToken<T>` overloads:
+- Use `Class<T>` for simple operation result types: `String.class`, `User.class`
+- Use `TypeToken<T>` for parameterized operation result types: `new TypeToken<List<User>>() {}`
 
 ---
 
