@@ -20,6 +20,7 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.SecureDirectoryStream;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributeView;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -292,6 +293,7 @@ public final class FileSystemSerDes implements SerDes {
         try {
             try (var secureDirectory = openSecureDirectory(file.getParent(), true)) {
                 var created = false;
+                rejectSymbolicLinkIfPresent(secureDirectory.directory(), file.getFileName(), "payload file");
                 try (var channel = secureDirectory
                         .directory()
                         .newByteChannel(
@@ -330,13 +332,16 @@ public final class FileSystemSerDes implements SerDes {
         }
         try {
             byte[] storedData;
-            try (var secureDirectory = openSecureDirectory(file.getParent(), false);
-                    var channel = secureDirectory
-                            .directory()
-                            .newByteChannel(
-                                    file.getFileName(), Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
-                    var input = Channels.newInputStream(channel)) {
-                storedData = input.readAllBytes();
+            try (var secureDirectory = openSecureDirectory(file.getParent(), false)) {
+                rejectSymbolicLinkIfPresent(secureDirectory.directory(), file.getFileName(), "payload file");
+                try (var channel = secureDirectory
+                                .directory()
+                                .newByteChannel(
+                                        file.getFileName(),
+                                        Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
+                        var input = Channels.newInputStream(channel)) {
+                    storedData = input.readAllBytes();
+                }
             }
             return StandardCharsets.UTF_8
                     .newDecoder()
@@ -365,6 +370,7 @@ public final class FileSystemSerDes implements SerDes {
             for (var component : root.relativize(directory)) {
                 var nextPath = currentPath.resolve(component);
                 DirectoryStream<Path> next;
+                rejectSymbolicLinkIfPresent(current, component, "directory");
                 try {
                     next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS);
                 } catch (NoSuchFileException missing) {
@@ -385,6 +391,21 @@ public final class FileSystemSerDes implements SerDes {
         } catch (IOException | RuntimeException failure) {
             closeDirectoryStreams(openedStreams, failure);
             throw failure;
+        }
+    }
+
+    private static void rejectSymbolicLinkIfPresent(
+            SecureDirectoryStream<Path> directory, Path entry, String description) throws IOException {
+        var attributes = directory.getFileAttributeView(entry, BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+        if (attributes == null) {
+            throw new SerDesException("Filesystem provider cannot inspect " + description + " without following links");
+        }
+        try {
+            if (attributes.readAttributes().isSymbolicLink()) {
+                throw new SerDesException("Filesystem SerDes " + description + " cannot be a symbolic link");
+            }
+        } catch (NoSuchFileException ignored) {
+            // Missing entries are handled by the caller as either creatable directories or retryable read failures.
         }
     }
 

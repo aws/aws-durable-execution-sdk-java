@@ -56,6 +56,18 @@ List<TestOperation> succeeded = result.getSucceededOperations();
 List<TestOperation> failed = result.getFailedOperations();
 ```
 
+When an operation uses a `serDes(...)` override, configure an operation resolver so inspection uses the same SerDes
+instead of the runner-wide default:
+
+```java
+var runner = LocalDurableTestRunner.create(Order.class, handler)
+        .withOperationSerDesResolver((operation, defaultSerDes) ->
+                "process-payment".equals(operation.name()) ? paymentSerDes : defaultSerDes);
+```
+
+`CloudDurableTestRunner` provides the same `withOperationSerDesResolver(...)` method. The resolver is also propagated
+to `AsyncExecution` history snapshots.
+
 ### Controlling Time in Tests
 
 By default, `runUntilComplete()` skips wait durations. For testing time-dependent logic, disable this:

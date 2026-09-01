@@ -444,8 +444,9 @@ class FileSystemSerDesTest {
         Files.createSymbolicLink(tempDir.resolve("test"), outside);
         var serDes = FileSystemSerDes.builder(tempDir).build();
 
-        assertThrows(
+        var failure = assertThrows(
                 SerDesException.class, () -> runner.serialize(serDes, "value", new SerDesContext(realisticArn(), "1")));
+        assertFalse(failure instanceof RetryableSerDesException);
         try (var files = Files.list(outside)) {
             assertEquals(0, files.count());
         }
@@ -462,9 +463,10 @@ class FileSystemSerDesTest {
         Files.move(executionDirectory, movedDirectory);
         Files.createSymbolicLink(executionDirectory, movedDirectory);
 
-        assertThrows(
+        var failure = assertThrows(
                 SerDesException.class,
                 () -> runner.deserialize(serDes, envelope, TypeToken.get(String.class), context));
+        assertFalse(failure instanceof RetryableSerDesException);
     }
 
     @Test
@@ -478,9 +480,19 @@ class FileSystemSerDesTest {
         Files.delete(file);
         Files.createSymbolicLink(file, outside);
 
-        assertThrows(
+        var retryDecisions = new AtomicInteger();
+        var retryingSerDes = new RetrySerDes(
+                serDes,
+                (failure, attempt) -> {
+                    retryDecisions.incrementAndGet();
+                    return RetryDecision.retry(Duration.ZERO);
+                },
+                delay -> {});
+        var failure = assertThrows(
                 SerDesException.class,
-                () -> runner.deserialize(serDes, envelope, TypeToken.get(String.class), context));
+                () -> runner.deserialize(retryingSerDes, envelope, TypeToken.get(String.class), context));
+        assertFalse(failure instanceof RetryableSerDesException);
+        assertEquals(0, retryDecisions.get());
     }
 
     @Test

@@ -23,6 +23,7 @@ import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.AsyncExecution;
 import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
+import software.amazon.lambda.durable.testing.OperationSerDesResolver;
 import software.amazon.lambda.durable.testing.TestOperation;
 import software.amazon.lambda.durable.testing.TestResult;
 
@@ -40,7 +41,7 @@ public class HistoryEventProcessor {
      * @return a TestResult containing the execution status, output, and operation details
      */
     public <O> TestResult<O> processEvents(List<Event> events, TypeToken<O> outputType, SerDes serDes) {
-        return processEvents(events, outputType, serDes, null, null);
+        return processEvents(events, outputType, serDes, null, null, OperationSerDesResolver.DEFAULT);
     }
 
     /**
@@ -55,6 +56,22 @@ public class HistoryEventProcessor {
             SerDes serDes,
             SerDesRunner serDesRunner,
             String durableExecutionArn) {
+        return processEvents(
+                events, outputType, serDes, serDesRunner, durableExecutionArn, OperationSerDesResolver.DEFAULT);
+    }
+
+    /**
+     * Processes history with operation-specific SerDes resolution for persisted result inspection.
+     *
+     * @param operationSerDesResolver resolves the effective SerDes for each operation
+     */
+    public <O> TestResult<O> processEvents(
+            List<Event> events,
+            TypeToken<O> outputType,
+            SerDes serDes,
+            SerDesRunner serDesRunner,
+            String durableExecutionArn,
+            OperationSerDesResolver operationSerDesResolver) {
         var operations = new HashMap<String, Operation>();
         var operationEvents = new HashMap<String, List<Event>>();
         var status = ExecutionStatus.PENDING;
@@ -283,7 +300,10 @@ public class HistoryEventProcessor {
         for (var entry : operations.entrySet()) {
             var opEvents = operationEvents.getOrDefault(entry.getKey(), List.of());
             var operation = withEventTimestamps(entry.getValue(), opEvents);
-            testOperations.add(new TestOperation(operation, opEvents, serDes, serDesRunner, durableExecutionArn));
+            var operationSerDes = Objects.requireNonNull(
+                    operationSerDesResolver.resolve(operation, serDes), "operationSerDesResolver returned null");
+            testOperations.add(
+                    new TestOperation(operation, opEvents, operationSerDes, serDesRunner, durableExecutionArn));
         }
 
         return new TestResult<>(

@@ -14,6 +14,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.util.ExceptionHelper;
@@ -30,6 +31,7 @@ public final class SerDesRunner {
     private static final Object NULL_VALUE = new Object();
 
     private final ExecutorService executorService;
+    private final ConcurrentHashMap<ContextKey, AtomicLong> contextGenerations = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<CacheKey, CompletableFuture<Object>> inFlightDeserializations =
             new ConcurrentHashMap<>();
     private final Map<CacheKey, WeakReference<Object>> completedDeserializations =
@@ -52,7 +54,13 @@ public final class SerDesRunner {
     /** Serializes a value with the supplied durable payload context. */
     public String serialize(SerDes serDes, Object value, SerDesContext context) {
         Objects.requireNonNull(serDes, "serDes cannot be null");
-        return join(submit(context, () -> serDes.serialize(value)));
+        Objects.requireNonNull(context, "context cannot be null");
+        var contextKey = new ContextKey(serDes, context.durableExecutionArn(), context.entityId());
+        try {
+            return join(submit(context, () -> serDes.serialize(value)));
+        } finally {
+            generation(contextKey).incrementAndGet();
+        }
     }
 
     /** Deserializes and caches a value for the current invocation using the supplied durable payload context. */
@@ -62,7 +70,8 @@ public final class SerDesRunner {
         Objects.requireNonNull(typeToken, "typeToken cannot be null");
         Objects.requireNonNull(context, "context cannot be null");
 
-        var key = new CacheKey(serDes, context.durableExecutionArn(), context.entityId(), typeToken, hash(data));
+        var contextKey = new ContextKey(serDes, context.durableExecutionArn(), context.entityId());
+        var key = new CacheKey(contextKey, generation(contextKey).get(), typeToken, hash(data));
         var cached = getCompleted(key);
         if (cached != null) {
             return cached == NULL_VALUE ? null : (T) cached;
@@ -113,6 +122,10 @@ public final class SerDesRunner {
         completedDeserializations.put(key, new WeakReference<>(value));
     }
 
+    private AtomicLong generation(ContextKey key) {
+        return contextGenerations.computeIfAbsent(key, ignored -> new AtomicLong());
+    }
+
     private <T> CompletableFuture<T> submit(SerDesContext context, Supplier<T> action) {
         Objects.requireNonNull(context, "context cannot be null");
         Objects.requireNonNull(action, "action cannot be null");
@@ -147,25 +160,22 @@ public final class SerDesRunner {
         }
     }
 
-    private record CacheKey(
-            SerDes serDes, String durableExecutionArn, String entityId, TypeToken<?> typeToken, String dataHash) {
+    private record ContextKey(SerDes serDes, String durableExecutionArn, String entityId) {
         @Override
         public boolean equals(Object other) {
-            return other instanceof CacheKey that
+            return other instanceof ContextKey that
                     && serDes == that.serDes
                     && Objects.equals(durableExecutionArn, that.durableExecutionArn)
-                    && Objects.equals(entityId, that.entityId)
-                    && Objects.equals(typeToken, that.typeToken)
-                    && Objects.equals(dataHash, that.dataHash);
+                    && Objects.equals(entityId, that.entityId);
         }
 
         @Override
         public int hashCode() {
             int result = System.identityHashCode(serDes);
             result = 31 * result + Objects.hashCode(durableExecutionArn);
-            result = 31 * result + Objects.hashCode(entityId);
-            result = 31 * result + Objects.hashCode(typeToken);
-            return 31 * result + Objects.hashCode(dataHash);
+            return 31 * result + Objects.hashCode(entityId);
         }
     }
+
+    private record CacheKey(ContextKey context, long generation, TypeToken<?> typeToken, String dataHash) {}
 }

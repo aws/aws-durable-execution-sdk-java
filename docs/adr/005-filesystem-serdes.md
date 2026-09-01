@@ -86,6 +86,10 @@ The serialized-data hash prevents stale results when the same entity is updated,
 `waitForCondition` state. Concurrent callers share one in-flight deserialization. Failed deserializations are removed
 from the cache and can be retried.
 
+Each SerDes/context pair also has an invocation-local serialization generation. The runner advances it after every
+serialization attempt, and completed/in-flight cache keys include the current generation. Reusing the same deterministic
+external reference after writing new state therefore cannot return the previous cached value.
+
 Repeated reads return the same object instance while the cached value remains reachable. A new invocation creates a new
 runner and cache.
 

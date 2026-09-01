@@ -30,6 +30,7 @@ public class AsyncExecution<O> {
     private final SerDes serDes;
     private final Duration pollInterval;
     private final Duration timeout;
+    private final OperationSerDesResolver operationSerDesResolver;
     private final HistoryEventProcessor processor;
     private List<Event> currentHistory;
     private TestResult<O> currentResult;
@@ -41,12 +42,25 @@ public class AsyncExecution<O> {
             SerDes serDes,
             Duration pollInterval,
             Duration timeout) {
+        this(executionArn, lambdaClient, outputType, serDes, pollInterval, timeout, OperationSerDesResolver.DEFAULT);
+    }
+
+    public AsyncExecution(
+            String executionArn,
+            LambdaClient lambdaClient,
+            TypeToken<O> outputType,
+            SerDes serDes,
+            Duration pollInterval,
+            Duration timeout,
+            OperationSerDesResolver operationSerDesResolver) {
         this.executionArn = executionArn;
         this.lambdaClient = lambdaClient;
         this.outputType = outputType;
         this.pollInterval = pollInterval;
         this.timeout = timeout;
         this.serDes = serDes;
+        this.operationSerDesResolver =
+                java.util.Objects.requireNonNull(operationSerDesResolver, "operationSerDesResolver cannot be null");
         this.processor = new HistoryEventProcessor();
     }
 
@@ -196,8 +210,8 @@ public class AsyncExecution<O> {
                     .build();
             var response = lambdaClient.getDurableExecutionHistory(request);
             this.currentHistory = response.events();
-            this.currentResult =
-                    processor.processEvents(currentHistory, outputType, serDes, new SerDesRunner(null), executionArn);
+            this.currentResult = processor.processEvents(
+                    currentHistory, outputType, serDes, new SerDesRunner(null), executionArn, operationSerDesResolver);
         } catch (ResourceNotFoundException e) {
             // Execution doesn't exist yet - this can happen immediately after async invoke
             // Leave currentHistory as null, pollUntil will retry

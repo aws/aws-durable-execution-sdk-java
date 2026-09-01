@@ -112,6 +112,56 @@ class HistoryEventProcessorTest {
                 observedContexts.stream().map(SerDesContext::entityId).toList());
     }
 
+    @Test
+    void resolvesOperationSpecificSerDesForCloudHistory() {
+        var startedAt = Instant.parse("2026-08-24T00:00:00Z");
+        var events = List.of(
+                Event.builder()
+                        .id("step-id")
+                        .name("custom-step")
+                        .subType("Step")
+                        .eventType(EventType.STEP_STARTED)
+                        .eventTimestamp(startedAt)
+                        .stepStartedDetails(StepStartedDetails.builder().build())
+                        .build(),
+                Event.builder()
+                        .id("step-id")
+                        .name("custom-step")
+                        .subType("Step")
+                        .eventType(EventType.STEP_SUCCEEDED)
+                        .eventTimestamp(startedAt.plusSeconds(1))
+                        .stepSucceededDetails(StepSucceededDetails.builder()
+                                .result(EventResult.builder()
+                                        .payload("custom:step-result")
+                                        .build())
+                                .build())
+                        .build());
+        var customSerDes = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return "custom:" + value;
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return (T) data.substring("custom:".length());
+            }
+        };
+
+        var result = new HistoryEventProcessor()
+                .processEvents(
+                        events,
+                        TypeToken.get(String.class),
+                        recordingStringSerDes(new ArrayList<>()),
+                        new SerDesRunner(null),
+                        EXECUTION_ARN,
+                        (operation, defaultSerDes) ->
+                                "custom-step".equals(operation.name()) ? customSerDes : defaultSerDes);
+
+        assertEquals("step-result", result.getOperation("custom-step").getStepResult(String.class));
+    }
+
     private static SerDes recordingStringSerDes(List<SerDesContext> observedContexts) {
         return new SerDes() {
             @Override

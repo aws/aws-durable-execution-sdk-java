@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -108,6 +109,37 @@ class SerDesRunnerTest {
         runner.deserialize(serDes, "{\"value\":\"one\"}", TypeToken.get(Value.class), context);
         runner.deserialize(serDes, "{\"value\":\"two\"}", TypeToken.get(Value.class), context);
 
+        assertEquals(2, calls.get());
+    }
+
+    @Test
+    void serializationInvalidatesStableExternalReferenceCache() {
+        var storage = new ConcurrentHashMap<String, String>();
+        var calls = new AtomicInteger();
+        var delegate = new JacksonSerDes();
+        var serDes = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                storage.put("stable", delegate.serialize(value));
+                return "reference:stable";
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                calls.incrementAndGet();
+                return delegate.deserialize(storage.get("stable"), typeToken);
+            }
+        };
+        var context = new SerDesContext("arn:test", "entity");
+
+        var firstReference = runner.serialize(serDes, new Value("one"), context);
+        var first = runner.deserialize(serDes, firstReference, TypeToken.get(Value.class), context);
+        var secondReference = runner.serialize(serDes, new Value("two"), context);
+        var second = runner.deserialize(serDes, secondReference, TypeToken.get(Value.class), context);
+
+        assertEquals(firstReference, secondReference);
+        assertEquals(new Value("one"), first);
+        assertEquals(new Value("two"), second);
         assertEquals(2, calls.get());
     }
 

@@ -81,17 +81,20 @@ class FileSystemSerDesIntegrationTest {
         var fileSystemSerDes = FileSystemSerDes.builder(tempDir).build();
         var config = DurableConfig.builder().withSerDes(new JacksonSerDes()).build();
         var runner = LocalDurableTestRunner.create(
-                String.class,
-                (input, context) -> context.step(
-                        "filesystem-step",
                         String.class,
-                        stepContext -> input + "-stored",
-                        StepConfig.builder().serDes(fileSystemSerDes).build()),
-                config);
+                        (input, context) -> context.step(
+                                "filesystem-step",
+                                String.class,
+                                stepContext -> input + "-stored",
+                                StepConfig.builder().serDes(fileSystemSerDes).build()),
+                        config)
+                .withOperationSerDesResolver((operation, defaultSerDes) ->
+                        "filesystem-step".equals(operation.name()) ? fileSystemSerDes : defaultSerDes);
 
         var result = runner.runUntilComplete("value");
 
         assertEquals("value-stored", result.getResult(String.class));
+        assertEquals("value-stored", result.getOperation("filesystem-step").getStepResult(String.class));
         try (var files = Files.walk(tempDir)) {
             assertEquals(1, files.filter(Files::isRegularFile).count());
         }

@@ -25,6 +25,7 @@ import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesRunner;
+import software.amazon.lambda.durable.testing.OperationSerDesResolver;
 import software.amazon.lambda.durable.testing.TestOperation;
 import software.amazon.lambda.durable.testing.TestResult;
 
@@ -143,10 +144,34 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             SerDesRunner serDesRunner,
             String durableExecutionArn,
             String executionOperationId) {
+        return toTestResult(
+                output,
+                resultType,
+                serDes,
+                serDesRunner,
+                durableExecutionArn,
+                executionOperationId,
+                OperationSerDesResolver.DEFAULT);
+    }
+
+    /** Build TestResult with operation-specific SerDes resolution. */
+    public <O> TestResult<O> toTestResult(
+            DurableExecutionOutput output,
+            TypeToken<O> resultType,
+            SerDes serDes,
+            SerDesRunner serDesRunner,
+            String durableExecutionArn,
+            String executionOperationId,
+            OperationSerDesResolver operationSerDesResolver) {
         var testOperations = existingOperations.values().stream()
                 .filter(op -> op.type() != OperationType.EXECUTION)
                 .map(op -> new TestOperation(
-                        op, eventProcessor.getEventsForOperation(op.id()), serDes, serDesRunner, durableExecutionArn))
+                        op,
+                        eventProcessor.getEventsForOperation(op.id()),
+                        java.util.Objects.requireNonNull(
+                                operationSerDesResolver.resolve(op, serDes), "operationSerDesResolver returned null"),
+                        serDesRunner,
+                        durableExecutionArn))
                 .toList();
         return new TestResult<>(
                 output.status(),

@@ -6,6 +6,7 @@ import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BiFunction;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
@@ -43,6 +44,7 @@ public class LocalDurableTestRunner<I, O> {
     private final LocalMemoryExecutionClient storage;
     private final SerDes serDes;
     private final DurableConfig customerConfig;
+    private final OperationSerDesResolver operationSerDesResolver;
     private final Instant executionStartTime = Instant.now();
     // The execution identity is fixed for the whole execution, matching the backend: the ARN and the EXECUTION
     // operation ID stay stable across reinvocations, while only per-invocation values (the checkpoint token) change.
@@ -57,10 +59,21 @@ public class LocalDurableTestRunner<I, O> {
             TypeToken<O> outputType,
             BiFunction<I, DurableContext, O> handlerFn,
             DurableConfig customerConfig) {
+        this(inputType, outputType, handlerFn, customerConfig, OperationSerDesResolver.DEFAULT);
+    }
+
+    private LocalDurableTestRunner(
+            TypeToken<I> inputType,
+            TypeToken<O> outputType,
+            BiFunction<I, DurableContext, O> handlerFn,
+            DurableConfig customerConfig,
+            OperationSerDesResolver operationSerDesResolver) {
         this.inputType = inputType;
         this.outputType = outputType;
         this.handler = handlerFn;
         this.storage = new LocalMemoryExecutionClient();
+        this.operationSerDesResolver =
+                Objects.requireNonNull(operationSerDesResolver, "operationSerDesResolver cannot be null");
 
         // Create config that uses customer's configuration but overrides the client with in-memory storage
         if (customerConfig != null) {
@@ -199,17 +212,24 @@ public class LocalDurableTestRunner<I, O> {
      * a new runner instance.
      */
     public LocalDurableTestRunner<I, O> withDurableConfig(DurableConfig config) {
-        return new LocalDurableTestRunner<>(inputType, outputType, handler, config);
+        return new LocalDurableTestRunner<>(inputType, outputType, handler, config, operationSerDesResolver);
     }
 
     /** Overrides the output type for this test runner. */
     public LocalDurableTestRunner<I, O> withOutputType(TypeToken<O> outputType) {
-        return new LocalDurableTestRunner<>(inputType, outputType, handler, customerConfig);
+        return new LocalDurableTestRunner<>(inputType, outputType, handler, customerConfig, operationSerDesResolver);
     }
 
     /** Overrides the output type for this test runner. */
     public LocalDurableTestRunner<I, O> withOutputType(Class<O> outputType) {
-        return new LocalDurableTestRunner<>(inputType, TypeToken.get(outputType), handler, customerConfig);
+        return new LocalDurableTestRunner<>(
+                inputType, TypeToken.get(outputType), handler, customerConfig, operationSerDesResolver);
+    }
+
+    /** Resolves operation-specific SerDes overrides when inspecting persisted operation results. */
+    public LocalDurableTestRunner<I, O> withOperationSerDesResolver(OperationSerDesResolver resolver) {
+        return new LocalDurableTestRunner<>(
+                inputType, outputType, handler, customerConfig, Objects.requireNonNull(resolver));
     }
 
     /**
@@ -255,7 +275,8 @@ public class LocalDurableTestRunner<I, O> {
 
         var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, customerConfig);
 
-        return storage.toTestResult(output, outputType, serDes, serDesRunner, executionArn, executionOperationId);
+        return storage.toTestResult(
+                output, outputType, serDes, serDesRunner, executionArn, executionOperationId, operationSerDesResolver);
     }
 
     /**
@@ -298,10 +319,15 @@ public class LocalDurableTestRunner<I, O> {
                 ? new TestOperation(
                         op,
                         List.of(),
-                        serDes,
+                        resolveOperationSerDes(op),
                         new SerDesRunner(customerConfig.getSerDesExecutorService()),
                         executionArn)
                 : null;
+    }
+
+    private SerDes resolveOperationSerDes(Operation operation) {
+        return Objects.requireNonNull(
+                operationSerDesResolver.resolve(operation, serDes), "operationSerDesResolver returned null");
     }
 
     /** Get callback ID for a named callback operation. */

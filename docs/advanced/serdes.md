@@ -81,7 +81,9 @@ can deadlock.
 
 Each Lambda invocation owns a `SerDesRunner`. It shares concurrent reads and keeps up to 256 successful
 deserializations in a weak-reference LRU cache. Cache identity includes the SerDes instance, execution ARN, entity ID,
-target type, and serialized payload hash.
+target type, serialized payload hash, and the entity's serialization generation. Every serialization advances that
+generation after the SerDes call finishes, so a deterministic external reference that is reused for new state cannot
+return an older cached object.
 
 Local and cloud testing utilities propagate the same contexts and caching behavior through `TestResult`,
 `TestOperation`, history processing, and asynchronous execution snapshots.
@@ -183,7 +185,8 @@ var retryingSerDes = new RetrySerDes(
 ```
 
 Only `RetryableSerDesException` is retried. Permanent `SerDesException` failures—malformed envelopes, invalid digests,
-or incompatible data—fail immediately. Retry delays block the calling thread or the configured SerDes executor thread.
+incompatible data, or symbolic-link violations—fail immediately. Retry delays block the calling thread or the
+configured SerDes executor thread.
 
 ## Testing
 
