@@ -115,9 +115,9 @@ public abstract class BaseDurableOperation {
         return operationIdentifier.name();
     }
 
-    /** Returns the context used for SerDes calls belonging to this operation. */
-    protected SerDesContext getSerDesContext() {
-        return new SerDesContext(executionManager.getDurableExecutionArn(), getOperationId());
+    /** Returns the context used for one durable payload belonging to this operation. */
+    protected SerDesContext getSerDesContext(String payloadKind) {
+        return new SerDesContext(executionManager.getDurableExecutionArn(), getOperationId() + "/" + payloadKind);
     }
 
     /** Returns the invocation-scoped SerDes runner. */

@@ -74,6 +74,14 @@ Malformed UTF-8 file content and filesystem read failures are `RetryableSerDesEx
 
 All paths are rooted under the configured absolute base path.
 
+The entity ID used for path construction identifies both the durable owner and payload kind:
+
+- root input, output, and exceptions use `<execution-operation-id>/input`, `/output`, and `/exception`;
+- invoke requests use `<operation-id>/invoke-payload`;
+- operation results/state and exceptions use `<operation-id>/result` and `/exception`.
+
+These suffixes prevent different payloads belonging to one operation from colliding in deterministic external storage.
+
 ### URI encoding
 
 For a durable execution ARN matching:

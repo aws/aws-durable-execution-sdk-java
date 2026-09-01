@@ -49,6 +49,6 @@ class TestOperationTest {
 
         assertEquals("step-result", testOperation.getStepResult(String.class));
         assertEquals(EXECUTION_ARN, observedContext.get().durableExecutionArn());
-        assertEquals("step-id", observedContext.get().entityId());
+        assertEquals("step-id/result", observedContext.get().entityId());
     }
 }

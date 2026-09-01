@@ -84,6 +84,47 @@ class SerDesPreviewTest {
     }
 
     @Test
+    void selectedObjectIncludesDescendantsWhileApplyingNestedRules() {
+        var value = Map.of(
+                "customer",
+                Map.of(
+                        "name", "Alice",
+                        "email", "alice@example.com",
+                        "secret", "hidden"),
+                "ignored",
+                "value");
+        var config = PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
+                .include(PreviewField.path("customer"))
+                .exclude(PreviewField.path("customer.secret"))
+                .mask(PreviewField.path("customer.email"))
+                .build();
+
+        var preview = SerDesPreview.buildPreview(value, config);
+
+        assertEquals(Map.of("name", "Alice", "email", "***"), nested(preview, "customer"));
+        assertFalse(preview.containsKey("ignored"));
+    }
+
+    @Test
+    void selectedObjectArrayIncludesFlattenedDescendants() {
+        var value = Map.of(
+                "items",
+                List.of(Map.of("id", "first", "secret", "hidden"), Map.of("email", "second@example.com")),
+                "ignored",
+                "value");
+        var config = PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
+                .include(PreviewField.path("items"))
+                .exclude(PreviewField.path("items.secret"))
+                .mask(PreviewField.path("items.email"))
+                .build();
+
+        var preview = SerDesPreview.buildPreview(value, config);
+
+        assertEquals(Map.of("id", "first", "email", "***"), nested(preview, "items"));
+        assertFalse(preview.containsKey("ignored"));
+    }
+
+    @Test
     void arraysMergeFieldsAtTheirContainingPath() {
         var value = Map.of("items", List.of(Map.of("id", "first"), Map.of("email", "second@example.com")));
         var config = PreviewConfig.builder(PreviewMode.INCLUDE_ALL).build();

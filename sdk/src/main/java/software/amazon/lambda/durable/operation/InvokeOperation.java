@@ -70,7 +70,7 @@ public class InvokeOperation<T, I> extends SerializableDurableOperation<T> {
                         .functionName(functionName)
                         .tenantId(invokeConfig.tenantId())
                         .build())
-                .payload(getSerDesRunner().serialize(payloadSerDes, this.payload, getSerDesContext()));
+                .payload(getSerDesRunner().serialize(payloadSerDes, this.payload, getSerDesContext("invoke-payload")));
 
         sendOperationUpdate(update);
     }

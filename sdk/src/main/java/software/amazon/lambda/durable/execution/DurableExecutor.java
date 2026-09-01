@@ -62,8 +62,10 @@ public class DurableExecutor {
             var isFirstInvocation = !executionManager.isReplaying();
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             var executionArn = input.durableExecutionArn();
-            var serDesContext = new SerDesContext(
-                    executionArn, executionManager.getExecutionOperation().id());
+            var executionOperationId = executionManager.getExecutionOperation().id();
+            var inputSerDesContext = new SerDesContext(executionArn, executionOperationId + "/input");
+            var outputSerDesContext = new SerDesContext(executionArn, executionOperationId + "/output");
+            var exceptionSerDesContext = new SerDesContext(executionArn, executionOperationId + "/exception");
             var serDesRunner = executionManager.getSerDesRunner();
 
             executionManager.registerActiveThread(null);
@@ -87,7 +89,7 @@ public class DurableExecutor {
                                     config.getSerDes(),
                                     inputType,
                                     serDesRunner,
-                                    serDesContext);
+                                    inputSerDesContext);
                         } catch (Throwable t) {
                             inputFailure = t;
                         }
@@ -180,12 +182,12 @@ public class DurableExecutor {
                                         cause,
                                         pluginExecutionInput.get(),
                                         null);
-                                return DurableExecutionOutput.failure(
-                                        buildErrorObject(cause, config.getSerDes(), serDesRunner, serDesContext));
+                                return DurableExecutionOutput.failure(buildErrorObject(
+                                        cause, config.getSerDes(), serDesRunner, exceptionSerDesContext));
                             }
                             // user handler complete successfully
                             logger.debug("Execution completed");
-                            var outputPayload = serDesRunner.serialize(config.getSerDes(), result, serDesContext);
+                            var outputPayload = serDesRunner.serialize(config.getSerDes(), result, outputSerDesContext);
                             var output =
                                     DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
                             fireOnInvocationEnd(

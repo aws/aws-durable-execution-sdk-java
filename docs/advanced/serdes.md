@@ -50,6 +50,20 @@ if (context != null) {
 The context is installed only while the SDK invokes `serialize` or `deserialize` and is restored in `finally`.
 Direct customer calls return `null`.
 
+Entity IDs distinguish every persisted payload owned by the same execution or operation:
+
+| Payload | Entity ID |
+| --- | --- |
+| Root input | `<execution-operation-id>/input` |
+| Root output | `<execution-operation-id>/output` |
+| Root exception | `<execution-operation-id>/exception` |
+| Invoke request | `<operation-id>/invoke-payload` |
+| Operation result or state | `<operation-id>/result` |
+| Operation exception | `<operation-id>/exception` |
+
+Custom external-storage SerDes implementations can therefore use `entityId` as part of a deterministic key without a
+result or exception overwriting an invoke request or prior operation state.
+
 ## Execution and caching
 
 SerDes calls execute inline by default. Configure a dedicated executor when serialization performs blocking filesystem

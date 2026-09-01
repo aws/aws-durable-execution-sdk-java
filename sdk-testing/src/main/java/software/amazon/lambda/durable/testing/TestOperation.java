@@ -137,7 +137,10 @@ public class TestOperation {
         return serDesRunner == null
                 ? serDes.deserialize(details.result(), type)
                 : serDesRunner.deserialize(
-                        serDes, details.result(), type, new SerDesContext(durableExecutionArn, operation.id()));
+                        serDes,
+                        details.result(),
+                        type,
+                        new SerDesContext(durableExecutionArn, operation.id() + "/result"));
     }
 
     /** Returns the step error, or null if the step succeeded or this is not a step operation. */

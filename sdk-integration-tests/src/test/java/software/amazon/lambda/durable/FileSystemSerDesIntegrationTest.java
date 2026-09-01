@@ -13,6 +13,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 import org.junit.jupiter.api.Test;
@@ -364,6 +366,47 @@ class FileSystemSerDesIntegrationTest {
         assertEnvelopePointsToFile(operationError.errorData());
     }
 
+    @Test
+    void payloadKindEntityIdsPreserveDeterministicExternalStateAcrossReplay() {
+        var attempts = new AtomicInteger();
+        var serDes = new DeterministicExternalSerDes();
+        var config = DurableConfig.builder().withSerDes(serDes).build();
+        var runner = LocalDurableTestRunner.create(
+                        String.class,
+                        (input, context) -> context.waitForCondition(
+                                "poll",
+                                String.class,
+                                (state, stepContext) -> {
+                                    if (attempts.incrementAndGet() == 1) {
+                                        return WaitForConditionResult.continuePolling("checkpoint-state");
+                                    }
+                                    throw new IllegalStateException("poll failed");
+                                },
+                                WaitForConditionConfig.<String>builder()
+                                        .waitStrategy(WaitStrategies.exponentialBackoff(
+                                                3,
+                                                Duration.ofSeconds(1),
+                                                Duration.ofSeconds(10),
+                                                1,
+                                                JitterStrategy.NONE))
+                                        .build()),
+                        config)
+                .withOutputType(String.class);
+
+        var pending = runner.run("input");
+        var stateReference = pending.getOperation("poll").getStepDetails().result();
+
+        assertEquals(ExecutionStatus.PENDING, pending.getStatus());
+        runner.advanceTime();
+
+        var failed = runner.run("input");
+
+        assertEquals(ExecutionStatus.FAILED, failed.getStatus());
+        assertEquals("checkpoint-state", serDes.deserialize(stateReference, TypeToken.get(String.class)));
+        assertTrue(serDes.keys().stream().anyMatch(key -> key.endsWith("/result")));
+        assertTrue(serDes.keys().stream().anyMatch(key -> key.endsWith("/exception")));
+    }
+
     private void assertEnvelopePointsToFile(String envelope) throws Exception {
         var file = Path.of(MAPPER.readTree(envelope).get("file").textValue());
         assertTrue(Files.exists(file));
@@ -401,6 +444,40 @@ class FileSystemSerDesIntegrationTest {
     record CrossInvokeRequest(String value) {}
 
     record CrossInvokeResponse(String value) {}
+
+    private static final class DeterministicExternalSerDes implements SerDes {
+        private static final String REFERENCE_PREFIX = "external:";
+        private final JacksonSerDes delegate = new JacksonSerDes();
+        private final ConcurrentHashMap<String, String> storage = new ConcurrentHashMap<>();
+
+        @Override
+        public String serialize(Object value) {
+            var context = SerDesContext.getCurrentContext();
+            if (context == null) {
+                return delegate.serialize(value);
+            }
+            var key = context.durableExecutionArn() + "#" + context.entityId();
+            storage.put(key, delegate.serialize(value));
+            return REFERENCE_PREFIX + key;
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            var serialized = data;
+            if (data != null && data.startsWith(REFERENCE_PREFIX)) {
+                var key = data.substring(REFERENCE_PREFIX.length());
+                serialized = storage.get(key);
+                if (serialized == null) {
+                    throw new IllegalStateException("Missing external value: " + key);
+                }
+            }
+            return delegate.deserialize(serialized, typeToken);
+        }
+
+        Set<String> keys() {
+            return Set.copyOf(storage.keySet());
+        }
+    }
 
     public static class CustomFailure extends RuntimeException {
         public CustomFailure() {}

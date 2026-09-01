@@ -65,7 +65,7 @@ public final class SerDesPreview {
         }
 
         var pairs = new ArrayList<PreviewEntry>();
-        collect(root, "", config, pairs);
+        collect(root, "", config, pairs, false);
         if (pairs.isEmpty()) {
             return null;
         }
@@ -82,13 +82,18 @@ public final class SerDesPreview {
         return result.isEmpty() ? null : result;
     }
 
-    private static void collect(JsonNode node, String pathPrefix, PreviewConfig config, List<PreviewEntry> pairs) {
+    private static void collect(
+            JsonNode node,
+            String pathPrefix,
+            PreviewConfig config,
+            List<PreviewEntry> pairs,
+            boolean inheritedInclusion) {
         if (node == null || node.isNull()) {
             return;
         }
         if (node.isArray()) {
             for (var item : node) {
-                collect(item, pathPrefix, config, pairs);
+                collect(item, pathPrefix, config, pairs, inheritedInclusion);
             }
             return;
         }
@@ -104,12 +109,12 @@ public final class SerDesPreview {
             var path = pathPrefix.isEmpty() ? name : pathPrefix + "." + name;
             var masked = isMatched(path, config.mask());
             var excluded = isMatched(path, config.exclude());
-            var visible = !excluded
-                    && (masked || config.mode() == PreviewMode.INCLUDE_ALL || isMatched(path, config.include()));
+            var included = inheritedInclusion || isMatched(path, config.include());
+            var visible = !excluded && (masked || config.mode() == PreviewMode.INCLUDE_ALL || included);
 
             if (!visible) {
                 if (!excluded) {
-                    collect(field.getValue(), path, config, pairs);
+                    collect(field.getValue(), path, config, pairs, false);
                 }
                 continue;
             }
@@ -118,7 +123,7 @@ public final class SerDesPreview {
             } else if (isScalarArray(field.getValue())) {
                 pairs.add(new PreviewEntry(path, MAPPER.convertValue(field.getValue(), Object.class)));
             } else if (field.getValue().isContainerNode()) {
-                collect(field.getValue(), path, config, pairs);
+                collect(field.getValue(), path, config, pairs, included);
             } else {
                 pairs.add(new PreviewEntry(path, MAPPER.convertValue(field.getValue(), Object.class)));
             }

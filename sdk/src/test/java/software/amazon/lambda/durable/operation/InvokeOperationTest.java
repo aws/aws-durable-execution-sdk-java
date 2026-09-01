@@ -4,9 +4,13 @@ package software.amazon.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
@@ -27,6 +31,7 @@ import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
 
 class InvokeOperationTest {
     private static final String OPERATION_ID = "2";
@@ -69,6 +74,49 @@ class InvokeOperationTest {
 
         var result = operation.get();
         assertEquals("cached-result", result);
+    }
+
+    @Test
+    void invokePayloadAndResultUseDistinctPayloadEntityIds() {
+        var contexts = new CopyOnWriteArrayList<SerDesContext>();
+        var serDes = new JacksonSerDes() {
+            @Override
+            public String serialize(Object value) {
+                contexts.add(SerDesContext.getCurrentContext());
+                return super.serialize(value);
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                contexts.add(SerDesContext.getCurrentContext());
+                return super.deserialize(data, typeToken);
+            }
+        };
+        var completed = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .status(OperationStatus.SUCCEEDED)
+                .chainedInvokeDetails(ChainedInvokeDetails.builder()
+                        .result("\"cached-result\"")
+                        .build())
+                .build();
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(completed);
+        when(executionManager.sendOperationUpdate(any())).thenReturn(CompletableFuture.completedFuture(null));
+        var operation = new InvokeOperation<>(
+                OPERATION_IDENTIFIER,
+                "test-function",
+                "payload",
+                TypeToken.get(String.class),
+                InvokeConfig.builder().serDes(serDes).build(),
+                durableContext);
+
+        operation.start();
+        operation.onCheckpointComplete(completed);
+
+        assertEquals("cached-result", operation.get());
+        assertEquals(
+                List.of("2/invoke-payload", "2/result"),
+                contexts.stream().map(SerDesContext::entityId).toList());
     }
 
     @Test

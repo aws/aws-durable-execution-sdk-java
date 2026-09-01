@@ -15,6 +15,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -42,6 +44,7 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesRunner;
 
 class SerializableDurableOperationTest {
@@ -550,6 +553,45 @@ class SerializableDurableOperationTest {
                 };
 
         op.get();
+    }
+
+    @Test
+    void resultAndExceptionUseDistinctPayloadEntityIds() {
+        var contexts = new CopyOnWriteArrayList<SerDesContext>();
+        var serDes = new JacksonSerDes() {
+            @Override
+            public String serialize(Object value) {
+                contexts.add(SerDesContext.getCurrentContext());
+                return super.serialize(value);
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                contexts.add(SerDesContext.getCurrentContext());
+                return super.deserialize(data, typeToken);
+            }
+        };
+        SerializableDurableOperation<String> op =
+                new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, serDes, durableContext) {
+                    @Override
+                    protected void start() {}
+
+                    @Override
+                    protected void replay(Operation existing) {}
+
+                    @Override
+                    public String get() {
+                        serializeAndDeserializeResult("result");
+                        serializeException(new RuntimeException("failure"));
+                        return RESULT;
+                    }
+                };
+
+        op.get();
+
+        assertEquals(
+                List.of("1/result", "1/result", "1/exception", "1/exception"),
+                contexts.stream().map(SerDesContext::entityId).toList());
     }
 
     @Test

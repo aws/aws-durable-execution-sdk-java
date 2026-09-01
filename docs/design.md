@@ -669,6 +669,10 @@ work to the configured SerDes executor, installs a `SerDesContext` in plain thre
 call, and caches successful deserializations in a bounded weak-reference LRU by SerDes identity, execution ARN, entity
 ID, target type, and serialized-data hash. The thread-local value is always restored in `finally`.
 
+The entity ID combines the execution or operation ID with a payload-kind suffix: `/input`, `/output`, or `/exception`
+for root execution payloads, and `/invoke-payload`, `/result`, or `/exception` for operation payloads. Distinct durable
+payloads therefore remain distinct even for a custom SerDes that uses deterministic external-storage keys.
+
 `FileSystemSerDes` uses that context to build collision-free paths on a shared durable filesystem. Calls made before a
 durable execution ARN exists, such as initial invocation input serialization, fall back to the delegate SerDes without
 filesystem storage.

@@ -108,7 +108,7 @@ class HistoryEventProcessorTest {
                 "invoke-result",
                 result.getOperation("invoke").getChainedInvokeDetails().result());
         assertEquals(
-                List.of("invocation-id", "step-id"),
+                List.of("invocation-id/output", "step-id/result"),
                 observedContexts.stream().map(SerDesContext::entityId).toList());
     }
 

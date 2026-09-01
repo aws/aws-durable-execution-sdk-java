@@ -44,6 +44,11 @@ there is no public setter.
 The implementation uses a plain `ThreadLocal`, not an `InheritableThreadLocal`. Every call restores the previous value
 in `finally`, which supports nesting and prevents context from leaking when executor threads are reused.
 
+Entity IDs include a stable payload-kind suffix. Root input, output, and exceptions use `/input`, `/output`, and
+`/exception`; operation invoke payloads, results/state, and exceptions use `/invoke-payload`, `/result`, and
+`/exception`. This prevents deterministic external-storage keys for different payloads on the same operation from
+colliding.
+
 ### Use an invocation-scoped SerDesRunner
 
 Each `ExecutionManager` creates one `SerDesRunner` for the Lambda invocation. The runner:

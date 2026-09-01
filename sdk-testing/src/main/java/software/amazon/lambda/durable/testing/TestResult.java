@@ -70,7 +70,8 @@ public class TestResult<O> {
         this.serDes = serDes;
         this.resultType = resultType;
         this.serDesRunner = serDesRunner;
-        this.outputContext = serDesRunner == null ? null : new SerDesContext(durableExecutionArn, executionOperationId);
+        this.outputContext =
+                serDesRunner == null ? null : new SerDesContext(durableExecutionArn, executionOperationId + "/output");
     }
 
     /** Returns the execution status (SUCCEEDED, FAILED, or PENDING). */

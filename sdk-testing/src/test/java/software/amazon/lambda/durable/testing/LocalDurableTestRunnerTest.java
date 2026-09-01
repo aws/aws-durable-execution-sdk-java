@@ -144,7 +144,10 @@ class LocalDurableTestRunnerTest {
         result.getOperation("step").getStepResult(String.class);
 
         assertTrue(contexts.stream().allMatch(context -> context.durableExecutionArn() != null));
-        assertTrue(contexts.stream().map(SerDesContext::entityId).distinct().count() >= 2);
+        var entityIds = contexts.stream().map(SerDesContext::entityId).toList();
+        assertTrue(entityIds.stream().anyMatch(entityId -> entityId.endsWith("/input")));
+        assertTrue(entityIds.stream().anyMatch(entityId -> entityId.endsWith("/output")));
+        assertTrue(entityIds.stream().anyMatch(entityId -> entityId.endsWith("/result")));
     }
 
     @Test
