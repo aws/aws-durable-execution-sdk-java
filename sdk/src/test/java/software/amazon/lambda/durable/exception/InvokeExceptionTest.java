@@ -73,4 +73,25 @@ class InvokeExceptionTest {
                 new StackTraceElement("class2", "method2", "file2", 20),
                 exception.getStackTrace()[1]);
     }
+
+    @Test
+    void testConstructorOmitsForeignStackTraceFrames() {
+        var errorObject = ErrorObject.builder()
+                .errorMessage("external failure")
+                .stackTrace(List.of("at handler (/var/task/index.js:12:3)", "module.exports (/var/task/index.js:20:5)"))
+                .build();
+        var operation = Operation.builder()
+                .chainedInvokeDetails(
+                        ChainedInvokeDetails.builder().error(errorObject).build())
+                .type(OperationType.CHAINED_INVOKE)
+                .id("10")
+                .status(OperationStatus.FAILED)
+                .build();
+
+        var exception = new InvokeFailedException(operation);
+
+        assertEquals(errorObject, exception.getErrorObject());
+        assertEquals("external failure", exception.getMessage());
+        assertEquals(0, exception.getStackTrace().length);
+    }
 }

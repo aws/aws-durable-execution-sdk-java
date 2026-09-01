@@ -75,6 +75,20 @@ class DurableExecutionExceptionTest {
     }
 
     @Test
+    void testDeserializeStackTraceOmitsForeignAndMalformedFrames() {
+        var serialized = List.of(
+                "com.example.MyClass|myMethod|MyClass.java|123",
+                "at handler (/var/task/index.js:12:3)",
+                "module.py:42 in handle",
+                "class|method|file|not-a-number");
+
+        var stackTrace = ExceptionHelper.deserializeStackTrace(serialized);
+
+        assertEquals(1, stackTrace.length);
+        assertEquals(new StackTraceElement("com.example.MyClass", "myMethod", "MyClass.java", 123), stackTrace[0]);
+    }
+
+    @Test
     void testSerializeDeserializeRoundTrip() {
         var original =
                 new StackTraceElement[] {new StackTraceElement("TestClass", "testMethod", "TestClass.java", 100)};

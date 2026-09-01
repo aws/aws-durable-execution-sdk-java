@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.util;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletionException;
@@ -77,11 +78,31 @@ public class ExceptionHelper {
      * @return array of reconstructed StackTraceElements
      */
     public static StackTraceElement[] deserializeStackTrace(List<String> stackTrace) {
-        return stackTrace.stream()
-                .map((s) -> {
-                    String[] tokens = s.split("\\|");
-                    return new StackTraceElement(tokens[0], tokens[1], tokens[2], Integer.parseInt(tokens[3]));
-                })
-                .toArray(StackTraceElement[]::new);
+        if (stackTrace == null) {
+            return new StackTraceElement[0];
+        }
+        var frames = new ArrayList<StackTraceElement>();
+        for (var serializedFrame : stackTrace) {
+            var frame = deserializeStackTraceElement(serializedFrame);
+            if (frame != null) {
+                frames.add(frame);
+            }
+        }
+        return frames.toArray(StackTraceElement[]::new);
+    }
+
+    private static StackTraceElement deserializeStackTraceElement(String serializedFrame) {
+        if (serializedFrame == null) {
+            return null;
+        }
+        var tokens = serializedFrame.split("\\|", -1);
+        if (tokens.length != 4 || tokens[0].isEmpty() || tokens[1].isEmpty()) {
+            return null;
+        }
+        try {
+            return new StackTraceElement(tokens[0], tokens[1], tokens[2], Integer.parseInt(tokens[3]));
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

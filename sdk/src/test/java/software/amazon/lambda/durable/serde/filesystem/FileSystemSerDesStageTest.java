@@ -806,6 +806,22 @@ class FileSystemSerDesStageTest {
     }
 
     @Test
+    void rejectsRelativeFileReferences() throws Exception {
+        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
+        var runner = new SerDesRunner(null);
+        var envelope = (ObjectNode) MAPPER.readTree(runner.serialize(serDes, "payload", context()));
+        var file = Path.of(envelope.get("file").textValue());
+        var relativeFile = Path.of("").toAbsolutePath().relativize(file);
+        envelope.put("file", relativeFile.toString());
+
+        var failure = assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(serDes, envelope.toString(), TypeToken.get(String.class), context()));
+
+        assertCauseMessage(failure, "file path must be absolute");
+    }
+
+    @Test
     void doesNotCreateMissingBasePathComponents() {
         var missingRoot = basePath.resolve("missing");
         var serDes = stringCodec()

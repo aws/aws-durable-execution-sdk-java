@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.exception;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -46,5 +47,26 @@ class CallbackExceptionTest {
         assertEquals(OPERATION, exception.getOperation());
         assertEquals(ERROR_OBJECT, exception.getErrorObject());
         assertEquals("myErrorMessage", exception.getMessage());
+    }
+
+    @Test
+    void testCallbackFailedExceptionOmitsForeignStackTraceFrames() {
+        var errorObject = ErrorObject.builder()
+                .errorType("ExternalError")
+                .errorMessage("external failure")
+                .stackTrace(List.of("Traceback (most recent call last):", "  File \"handler.py\", line 12"))
+                .build();
+        var operation = Operation.builder()
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId(CALLBACK_ID)
+                        .error(errorObject)
+                        .build())
+                .build();
+
+        var exception = new CallbackFailedException(operation);
+
+        assertEquals(errorObject, exception.getErrorObject());
+        assertEquals("ExternalError: external failure", exception.getMessage());
+        assertEquals(0, exception.getStackTrace().length);
     }
 }

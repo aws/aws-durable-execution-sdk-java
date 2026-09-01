@@ -239,7 +239,11 @@ public final class FileSystemSerDesStage implements SerDesStage {
             String payloadDigest,
             PayloadOwner owner,
             SerDesContext context) {
-        var file = basePath.getFileSystem().getPath(fileValue).toAbsolutePath().normalize();
+        var file = basePath.getFileSystem().getPath(fileValue);
+        if (!file.isAbsolute()) {
+            throw new SerDesException("Filesystem SerDes file path must be absolute");
+        }
+        file = file.normalize();
         validatePayloadPath(file);
         var expectedFileName = payloadFileName(payloadDigest, owner.durableExecutionArn(), owner.entityId());
         if (!matchesPublishedPayloadFileName(file.getFileName().toString(), expectedFileName)) {
