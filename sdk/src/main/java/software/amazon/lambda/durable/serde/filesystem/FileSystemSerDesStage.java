@@ -667,7 +667,6 @@ public final class FileSystemSerDesStage implements SerDesStage {
     private record SerializedPayload(PayloadType type, byte[] data) {
         private SerializedPayload {
             Objects.requireNonNull(type, "type cannot be null");
-            data = data == null ? null : data.clone();
         }
 
         private static SerializedPayload fromString(String value) {
@@ -676,11 +675,6 @@ public final class FileSystemSerDesStage implements SerDesStage {
 
         private static SerializedPayload fromInlineValue(PayloadType type, String value) {
             return fromString(value);
-        }
-
-        @Override
-        public byte[] data() {
-            return data == null ? null : data.clone();
         }
 
         private boolean hasData() {

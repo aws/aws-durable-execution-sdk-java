@@ -5,12 +5,15 @@ package software.amazon.lambda.durable.operation;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -20,6 +23,8 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
@@ -32,6 +37,7 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.filesystem.FileSystemSerDesStage;
 
 /** Unit tests for ChildContextOperation. */
 class ChildContextOperationTest {
@@ -63,8 +69,39 @@ class ChildContextOperationTest {
 
     private static final JacksonSerDes SERDES = new JacksonSerDes();
 
+    private final class CompletedConcurrencyOperation extends ConcurrencyOperation<Void> {
+        private CompletedConcurrencyOperation() {
+            super(
+                    OperationIdentifier.of("parent", "parent", OperationSubType.PARALLEL),
+                    TypeToken.get(Void.class),
+                    SERDES,
+                    durableContext,
+                    1,
+                    status -> null,
+                    NestingType.NESTED);
+            completionFuture.complete(this);
+        }
+
+        @Override
+        protected void handleCompletion(CompletionConfig.CompletionDecision completionDecision) {}
+
+        @Override
+        protected void start() {}
+
+        @Override
+        protected void replay(Operation existing) {}
+
+        @Override
+        public Void get() {
+            return null;
+        }
+    }
+
     private DurableContextImpl durableContext;
     private ExecutionManager executionManager;
+
+    @TempDir
+    Path basePath;
 
     @BeforeEach
     void setUp() {
@@ -117,11 +154,16 @@ class ChildContextOperationTest {
 
     private ChildContextOperation<String> createOperationWithParent(
             Function<DurableContext, String> func, ConcurrencyOperation<?> parent) {
+        return createOperationWithParent(func, parent, SERDES);
+    }
+
+    private ChildContextOperation<String> createOperationWithParent(
+            Function<DurableContext, String> func, ConcurrencyOperation<?> parent, SerDes serDes) {
         return new ChildContextOperation<>(
                 OPERATION_IDENTIFIER,
                 func,
                 TypeToken.get(String.class),
-                RunInChildContextConfig.builder().serDes(SERDES).build(),
+                RunInChildContextConfig.builder().serDes(serDes).build(),
                 durableContext,
                 parent);
     }
@@ -348,16 +390,35 @@ class ChildContextOperationTest {
     void childSkipsSuccessCheckpointWhenParentAlreadyCompleted() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
 
-        var parent = mock(ConcurrencyOperation.class);
-        when(parent.isOperationCompleted()).thenReturn(true);
+        var parent = new CompletedConcurrencyOperation();
 
-        var operation = createOperationWithParent(ctx -> "result", parent);
+        var serDes =
+                new JacksonSerDes().then(FileSystemSerDesStage.builder(basePath).build());
+        var operation = createOperationWithParent(ctx -> "result", parent, serDes);
         operation.execute();
         Thread.sleep(200);
 
+        try (var files = Files.list(basePath)) {
+            assertEquals(0, files.count());
+        }
         // sendOperationUpdate should only be called once for START, not for SUCCEED
         verify(executionManager, never())
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
+    }
+
+    @Test
+    void virtualChildDoesNotPublishComposableStages() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
+        var serDes =
+                new JacksonSerDes().then(FileSystemSerDesStage.builder(basePath).build());
+        var operation = createVirtualOperation(ctx -> "result", serDes);
+
+        operation.execute();
+
+        assertEquals("result", operation.get());
+        try (var files = Files.list(basePath)) {
+            assertEquals(0, files.count());
+        }
     }
 
     /** Virtual child still validates result round-trip before skipping a success checkpoint. */
@@ -399,8 +460,7 @@ class ChildContextOperationTest {
     void childSkipsFailureCheckpointWhenParentAlreadyCompleted() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
 
-        var parent = mock(ConcurrencyOperation.class);
-        when(parent.isOperationCompleted()).thenReturn(true);
+        var parent = new CompletedConcurrencyOperation();
 
         var operation = createOperationWithParent(
                 ctx -> {

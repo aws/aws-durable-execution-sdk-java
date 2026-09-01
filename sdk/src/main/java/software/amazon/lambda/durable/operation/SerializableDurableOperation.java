@@ -12,6 +12,7 @@ import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.serde.ComposableSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.serde.SerDesPayloadKind;
@@ -128,6 +129,23 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
                 ? getSerDesRunner().deserialize(resultSerDes, serialized, resultTypeToken, context)
                 : result;
         return new SerializedResult<>(serialized, deserialized);
+    }
+
+    /**
+     * Normalizes a result that will not be checkpointed without invoking composable persistence stages.
+     *
+     * <p>Virtual operations and children that finish after their parent completes still preserve value-codec round-trip
+     * behavior, but must not publish external payloads whose envelopes will be discarded.
+     */
+    protected T normalizeUnpersistedResult(T result) {
+        if (!shouldDeserializeAfterSerialization()) {
+            return result;
+        }
+        var normalizationSerDes =
+                resultSerDes instanceof ComposableSerDes composable ? composable.getValueCodec() : resultSerDes;
+        var context = createSerDesContext(SerDesPayloadKind.RESULT, null);
+        var serialized = getSerDesRunner().serialize(normalizationSerDes, result, context);
+        return getSerDesRunner().deserialize(normalizationSerDes, serialized, resultTypeToken, context);
     }
 
     /**

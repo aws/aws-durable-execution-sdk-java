@@ -151,23 +151,37 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private void handleChildContextSuccess(T result) {
-        var serializedResult = serializeAndDeserializeResult(result);
-
-        if (replayChildren.get() || isVirtual || parentOperation != null && parentOperation.isOperationCompleted()) {
+        if (shouldSkipSuccessCheckpoint()) {
             // Skip checkpointing if
             // - parent ConcurrencyOperation has already completed, preventing race conditions where a child finishes
             // after the parent has already completed.
             // - replaying a SUCCEEDED child with replayChildren=true — skip checkpointing.
             // - nestingType is FLAT
+            // Run only the root value codec for normalization because no serialized envelope will be retained.
             // Mark the completableFuture completed so get() doesn't block waiting for a checkpoint response.
-            cachedOperationResult.set(DeserializedOperationResult.succeeded(serializedResult.deserialized()));
-            if (isVirtual) {
-                fireOnOperationEnd(null, null, false);
-            }
-            markAlreadyCompleted();
+            completeWithoutSuccessCheckpoint(normalizeUnpersistedResult(result));
+            return;
+        }
+
+        var serializedResult = serializeAndDeserializeResult(result);
+        if (shouldSkipSuccessCheckpoint()) {
+            // The parent may have completed while serialization was in progress.
+            completeWithoutSuccessCheckpoint(serializedResult.deserialized());
         } else {
             checkpointSuccess(serializedResult.deserialized(), serializedResult.serialized());
         }
+    }
+
+    private boolean shouldSkipSuccessCheckpoint() {
+        return replayChildren.get() || isVirtual || parentOperation != null && parentOperation.isOperationCompleted();
+    }
+
+    private void completeWithoutSuccessCheckpoint(T result) {
+        cachedOperationResult.set(DeserializedOperationResult.succeeded(result));
+        if (isVirtual) {
+            fireOnOperationEnd(null, null, false);
+        }
+        markAlreadyCompleted();
     }
 
     private void checkpointSuccess(T result, String serialized) {

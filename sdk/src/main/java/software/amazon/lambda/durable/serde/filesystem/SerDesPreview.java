@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -68,36 +67,25 @@ public final class SerDesPreview {
             return null;
         }
 
-        var pairs = new ArrayList<PreviewEntry>();
-        collect(root, "", config, pairs);
-        if (pairs.isEmpty()) {
-            return null;
-        }
-
         Map<String, Object> result = new LinkedHashMap<>();
-        for (var pair : pairs) {
-            var candidate = copy(result);
-            insert(candidate, pair.path(), pair.value());
-            if (serializedSize(candidate) > config.maxPreviewBytes()) {
-                break;
-            }
-            result = candidate;
-        }
+        collect(root, "", config, result);
         return result.isEmpty() ? null : result;
     }
 
-    private static void collect(JsonNode node, String pathPrefix, PreviewConfig config, List<PreviewEntry> pairs) {
+    private static boolean collect(JsonNode node, String pathPrefix, PreviewConfig config, Map<String, Object> result) {
         if (node == null || node.isNull()) {
-            return;
+            return true;
         }
         if (node.isArray()) {
             for (var item : node) {
-                collect(item, pathPrefix, config, pairs);
+                if (!collect(item, pathPrefix, config, result)) {
+                    return false;
+                }
             }
-            return;
+            return true;
         }
         if (!node.isObject()) {
-            return;
+            return true;
         }
 
         for (var field : node.properties()) {
@@ -112,21 +100,41 @@ public final class SerDesPreview {
                     && (masked || config.mode() == PreviewMode.INCLUDE_ALL || isMatched(path, config.include()));
 
             if (!visible) {
-                if (!excluded) {
-                    collect(field.getValue(), path, config, pairs);
+                if (!excluded && !collect(field.getValue(), path, config, result)) {
+                    return false;
                 }
                 continue;
             }
             if (masked) {
-                pairs.add(new PreviewEntry(path, config.maskString()));
+                if (!tryInsert(result, path, config.maskString(), config.maxPreviewBytes())) {
+                    return false;
+                }
             } else if (isScalarArray(field.getValue())) {
-                pairs.add(new PreviewEntry(path, MAPPER.convertValue(field.getValue(), Object.class)));
+                if (!tryInsert(result, path, field.getValue(), config.maxPreviewBytes())) {
+                    return false;
+                }
             } else if (field.getValue().isContainerNode()) {
-                collect(field.getValue(), path, config, pairs);
+                if (!collect(field.getValue(), path, config, result)) {
+                    return false;
+                }
             } else {
-                pairs.add(new PreviewEntry(path, MAPPER.convertValue(field.getValue(), Object.class)));
+                if (!tryInsert(result, path, field.getValue(), config.maxPreviewBytes())) {
+                    return false;
+                }
             }
         }
+        return true;
+    }
+
+    private static boolean tryInsert(Map<String, Object> result, String path, Object value, int maxPreviewBytes) {
+        var candidate = copy(result);
+        insert(candidate, path, value);
+        if (serializedSize(candidate) > maxPreviewBytes) {
+            return false;
+        }
+        var converted = value instanceof JsonNode node ? MAPPER.convertValue(node, Object.class) : value;
+        insert(result, path, converted);
+        return true;
     }
 
     private static boolean isScalarArray(JsonNode node) {
@@ -190,6 +198,4 @@ public final class SerDesPreview {
         }
         current.put(parts[parts.length - 1], value);
     }
-
-    private record PreviewEntry(String path, Object value) {}
 }
