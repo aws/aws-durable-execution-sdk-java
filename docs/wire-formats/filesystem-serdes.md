@@ -133,7 +133,8 @@ The implementation fails closed when:
 - the file is missing or unreadable.
 
 Security failures represented by invalid envelope or path metadata are permanent. Filesystem I/O failures are
-retryable.
+retryable unless they identify a structural or permission failure such as a symbolic link, non-directory component, or
+access denial.
 
 ## Cross-execution references
 

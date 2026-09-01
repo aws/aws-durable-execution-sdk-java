@@ -145,6 +145,9 @@ Filesystem `IOException`s are surfaced as `RetryableSerDesException`. `RetrySerD
 an existing `RetryStrategy` only to retryable failures. Permanent `SerDesException` failures propagate immediately.
 Retry delays run inline or on the configured SerDes executor.
 
+Known structural and permission failures, including symbolic links, non-directory path components, filesystem loops,
+and access denial, are permanent rather than retryable.
+
 ### Envelope and file publication
 
 Java writes versioned envelopes:

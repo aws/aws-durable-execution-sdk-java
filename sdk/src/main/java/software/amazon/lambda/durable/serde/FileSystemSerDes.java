@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.serde;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,11 +13,14 @@ import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.FileSystemLoopException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.NotDirectoryException;
 import java.nio.file.Path;
 import java.nio.file.SecureDirectoryStream;
 import java.nio.file.StandardOpenOption;
@@ -202,63 +206,29 @@ public final class FileSystemSerDes implements SerDes {
     }
 
     private static boolean containsFilesystemMarkerField(String data) {
-        var index = 0;
-        while (index < data.length() && Character.isWhitespace(data.charAt(index))) {
-            index++;
-        }
-        if (index == data.length() || data.charAt(index) != '{') {
-            return false;
-        }
-
-        var containerDepth = 1;
-        for (index++; index < data.length() && containerDepth > 0; index++) {
-            var current = data.charAt(index);
-            if (current == '{' || current == '[') {
-                containerDepth++;
-            } else if (current == '}' || current == ']') {
-                containerDepth--;
-            } else if (current == '"') {
-                var literalStart = index;
-                var valueStart = ++index;
-                var escaped = false;
-                while (index < data.length()) {
-                    var literal = data.charAt(index);
-                    if (escaped) {
-                        escaped = false;
-                    } else if (literal == '\\') {
-                        escaped = true;
-                    } else if (literal == '"') {
-                        break;
-                    }
-                    index++;
+        try (var parser = ENVELOPE_MAPPER.createParser(data)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                return false;
+            }
+            var depth = 1;
+            while (parser.nextToken() != null) {
+                var token = parser.currentToken();
+                if (token == JsonToken.FIELD_NAME && depth == 1 && ENVELOPE_MARKER.equals(parser.currentName())) {
+                    return true;
                 }
-                if (containerDepth == 1
-                        && index < data.length()
-                        && isFilesystemMarkerLiteral(data, literalStart, valueStart, index)) {
-                    var next = index + 1;
-                    while (next < data.length() && Character.isWhitespace(data.charAt(next))) {
-                        next++;
-                    }
-                    if (next < data.length() && data.charAt(next) == ':') {
-                        return true;
+                if (token == JsonToken.START_OBJECT || token == JsonToken.START_ARRAY) {
+                    depth++;
+                } else if (token == JsonToken.END_OBJECT || token == JsonToken.END_ARRAY) {
+                    depth--;
+                    if (depth == 0) {
+                        return false;
                     }
                 }
             }
+        } catch (IOException ignored) {
+            // The caller delegates malformed input unless a top-level marker field was observed before the failure.
         }
         return false;
-    }
-
-    private static boolean isFilesystemMarkerLiteral(String data, int literalStart, int valueStart, int literalEnd) {
-        if (literalEnd - valueStart == ENVELOPE_MARKER.length()
-                && data.regionMatches(valueStart, ENVELOPE_MARKER, 0, ENVELOPE_MARKER.length())) {
-            return true;
-        }
-        try {
-            return ENVELOPE_MARKER.equals(
-                    ENVELOPE_MAPPER.readValue(data.substring(literalStart, literalEnd + 1), String.class));
-        } catch (JsonProcessingException ignored) {
-            return false;
-        }
     }
 
     private static void verifyDigest(String serialized, String expected) {
@@ -321,7 +291,7 @@ public final class FileSystemSerDes implements SerDes {
                 }
             }
         } catch (IOException e) {
-            throw new RetryableSerDesException("Failed to store filesystem SerDes payload", e);
+            throw classifyFileSystemFailure("store", e);
         }
     }
 
@@ -350,8 +320,18 @@ public final class FileSystemSerDes implements SerDes {
                     .decode(ByteBuffer.wrap(storedData))
                     .toString();
         } catch (IOException e) {
-            throw new RetryableSerDesException("Failed to load filesystem SerDes payload", e);
+            throw classifyFileSystemFailure("load", e);
         }
+    }
+
+    private static SerDesException classifyFileSystemFailure(String action, IOException failure) {
+        var message = "Failed to " + action + " filesystem SerDes payload";
+        if (failure instanceof AccessDeniedException
+                || failure instanceof NotDirectoryException
+                || failure instanceof FileSystemLoopException) {
+            return new SerDesException(message, failure);
+        }
+        return new RetryableSerDesException(message, failure);
     }
 
     private SecureDirectoryHandle openSecureDirectory(Path directory, boolean createMissing) throws IOException {

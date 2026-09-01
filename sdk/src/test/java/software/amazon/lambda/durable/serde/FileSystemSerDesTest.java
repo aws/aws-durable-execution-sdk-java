@@ -337,7 +337,9 @@ class FileSystemSerDesTest {
 
     @Test
     void markerTextInsideStringDoesNotClaimMalformedJson() {
-        var value = "{\"message\":\"__durable_execution_filesystem_serdes\"} trailing";
+        var values = List.of(
+                "{\"message\":\"__durable_execution_filesystem_serdes\"} trailing",
+                "{\"message\":\"__durable_execution_filesystem_serdes\":1}");
         var delegate = new SerDes() {
             @Override
             public String serialize(Object input) {
@@ -351,12 +353,10 @@ class FileSystemSerDesTest {
             }
         };
 
-        assertEquals(
-                value,
-                FileSystemSerDes.builder(tempDir)
-                        .delegate(delegate)
-                        .build()
-                        .deserialize(value, TypeToken.get(String.class)));
+        var serDes = FileSystemSerDes.builder(tempDir).delegate(delegate).build();
+        for (var value : values) {
+            assertEquals(value, serDes.deserialize(value, TypeToken.get(String.class)));
+        }
     }
 
     @Test
@@ -420,6 +420,29 @@ class FileSystemSerDesTest {
         var serDes = FileSystemSerDes.builder(tempDir).build();
 
         assertThrows(RetryableSerDesException.class, () -> serDes.deserialize(envelope, TypeToken.get(String.class)));
+    }
+
+    @Test
+    void nonDirectoryBasePathIsPermanentAndNotRetried() throws Exception {
+        var baseFile = tempDir.resolve("base-file");
+        Files.writeString(baseFile, "not a directory");
+        var fileSystemSerDes =
+                FileSystemSerDes.builder(baseFile.resolve("payloads")).build();
+        var retryDecisions = new AtomicInteger();
+        var serDes = new RetrySerDes(
+                fileSystemSerDes,
+                (failure, attempt) -> {
+                    retryDecisions.incrementAndGet();
+                    return RetryDecision.retry(Duration.ZERO);
+                },
+                delay -> {});
+
+        var failure = assertThrows(
+                SerDesException.class, () -> runner.serialize(serDes, "value", new SerDesContext(realisticArn(), "1")));
+
+        assertFalse(failure instanceof RetryableSerDesException);
+        assertTrue(failure.getCause() instanceof java.nio.file.NotDirectoryException);
+        assertEquals(0, retryDecisions.get());
     }
 
     @Test

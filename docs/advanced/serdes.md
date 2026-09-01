@@ -185,8 +185,8 @@ var retryingSerDes = new RetrySerDes(
 ```
 
 Only `RetryableSerDesException` is retried. Permanent `SerDesException` failures—malformed envelopes, invalid digests,
-incompatible data, or symbolic-link violations—fail immediately. Retry delays block the calling thread or the
-configured SerDes executor thread.
+incompatible data, symbolic-link violations, non-directory path components, or access-denied failures—fail
+immediately. Retry delays block the calling thread or the configured SerDes executor thread.
 
 ## Testing
 
