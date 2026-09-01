@@ -127,10 +127,8 @@ class LocalDurableTestRunnerTest {
         var contexts = new CopyOnWriteArrayList<SerDesContext>();
         var serDes = new JacksonSerDes() {
             @Override
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                if (SerDesContext.getCurrentContext() != null) {
-                    contexts.add(SerDesContext.getCurrentContext());
-                }
+            public <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
+                contexts.add(context);
                 return super.deserialize(data, typeToken);
             }
         };

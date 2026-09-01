@@ -95,10 +95,13 @@ var config = InvokeConfig.builder()
 The same pattern applies to `StepConfig.serDes(...)`, callback, child-context, map, parallel, and wait-for-condition
 configuration.
 
-The SDK supplies a `SerDesContext` through thread-local storage during managed calls:
+The SDK supplies a `SerDesContext` explicitly through new default methods during managed calls:
 
 ```java
-var context = SerDesContext.getCurrentContext();
+@Override
+public String serialize(Object value, SerDesContext context) {
+    return store(value, context.durableExecutionArn(), context.entityId());
+}
 ```
 
 Custom SerDes implementations can use its durable execution ARN and entity ID for external storage. Calls use the

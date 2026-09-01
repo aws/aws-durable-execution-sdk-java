@@ -345,11 +345,21 @@ class FileSystemSerDesIntegrationTest {
             }
 
             @Override
+            public String serialize(Object value, SerDesContext context) {
+                return fileSystemSerDes.serialize(value, context);
+            }
+
+            @Override
             public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                if (typeToken.equals(TypeToken.get(Payload.class)) && SerDesContext.getCurrentContext() != null) {
+                return fileSystemSerDes.deserialize(data, typeToken);
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
+                if (typeToken.equals(TypeToken.get(Payload.class))) {
                     resultDeserializations.incrementAndGet();
                 }
-                return fileSystemSerDes.deserialize(data, typeToken);
+                return fileSystemSerDes.deserialize(data, typeToken, context);
             }
         };
         var config = DurableConfig.builder().withSerDes(countingSerDes).build();
@@ -481,12 +491,13 @@ class FileSystemSerDesIntegrationTest {
 
         @Override
         public String serialize(Object value) {
-            var context = SerDesContext.getCurrentContext();
-            if (context == null) {
-                return delegate.serialize(value);
-            }
+            return delegate.serialize(value);
+        }
+
+        @Override
+        public String serialize(Object value, SerDesContext context) {
             var key = context.durableExecutionArn() + "#" + context.entityId();
-            storage.put(key, delegate.serialize(value));
+            storage.put(key, delegate.serialize(value, context));
             return REFERENCE_PREFIX + key;
         }
 
@@ -501,6 +512,19 @@ class FileSystemSerDesIntegrationTest {
                 }
             }
             return delegate.deserialize(serialized, typeToken);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
+            var serialized = data;
+            if (data != null && data.startsWith(REFERENCE_PREFIX)) {
+                var key = data.substring(REFERENCE_PREFIX.length());
+                serialized = storage.get(key);
+                if (serialized == null) {
+                    throw new IllegalStateException("Missing external value: " + key);
+                }
+            }
+            return delegate.deserialize(serialized, typeToken, context);
         }
 
         Set<String> keys() {

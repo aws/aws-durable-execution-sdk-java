@@ -38,7 +38,17 @@ public final class RetrySerDes implements SerDes {
     }
 
     @Override
+    public String serialize(Object value, SerDesContext context) {
+        return retryExecutor.execute("serialization", () -> delegate.serialize(value, context));
+    }
+
+    @Override
     public <T> T deserialize(String data, TypeToken<T> typeToken) {
         return retryExecutor.execute("deserialization", () -> delegate.deserialize(data, typeToken));
+    }
+
+    @Override
+    public <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
+        return retryExecutor.execute("deserialization", () -> delegate.deserialize(data, typeToken, context));
     }
 }

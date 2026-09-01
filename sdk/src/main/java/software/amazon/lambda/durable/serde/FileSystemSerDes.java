@@ -88,12 +88,16 @@ public final class FileSystemSerDes implements SerDes {
 
     @Override
     public String serialize(Object value) {
-        var serialized = delegate.serialize(value);
+        return delegate.serialize(value);
+    }
+
+    @Override
+    public String serialize(Object value, SerDesContext context) {
+        var serialized = context == null ? delegate.serialize(value) : delegate.serialize(value, context);
         if (serialized == null) {
             return null;
         }
 
-        var context = SerDesContext.getCurrentContext();
         if (context == null) {
             return serialized;
         }
@@ -110,23 +114,32 @@ public final class FileSystemSerDes implements SerDes {
 
     @Override
     public <T> T deserialize(String data, TypeToken<T> typeToken) {
+        return deserialize(data, typeToken, null);
+    }
+
+    @Override
+    public <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
         if (data == null) {
             return null;
         }
 
         var envelope = parseEnvelope(data);
         if (envelope == null) {
-            return delegate.deserialize(data, typeToken);
+            return deserializeDelegate(data, typeToken, context);
         }
         if (envelope.hasNonNull("data")) {
             var serialized = envelope.get("data").textValue();
             verifyDigest(serialized, envelope.get("sha256").textValue());
-            return delegate.deserialize(serialized, typeToken);
+            return deserializeDelegate(serialized, typeToken, context);
         }
 
         var serialized = readPayload(envelope.get("file").textValue());
         verifyDigest(serialized, envelope.get("sha256").textValue());
-        return delegate.deserialize(serialized, typeToken);
+        return deserializeDelegate(serialized, typeToken, context);
+    }
+
+    private <T> T deserializeDelegate(String data, TypeToken<T> typeToken, SerDesContext context) {
+        return context == null ? delegate.deserialize(data, typeToken) : delegate.deserialize(data, typeToken, context);
     }
 
     private String inlineEnvelope(String serialized) {

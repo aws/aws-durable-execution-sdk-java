@@ -560,14 +560,14 @@ class SerializableDurableOperationTest {
         var contexts = new CopyOnWriteArrayList<SerDesContext>();
         var serDes = new JacksonSerDes() {
             @Override
-            public String serialize(Object value) {
-                contexts.add(SerDesContext.getCurrentContext());
+            public String serialize(Object value, SerDesContext context) {
+                contexts.add(context);
                 return super.serialize(value);
             }
 
             @Override
-            public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                contexts.add(SerDesContext.getCurrentContext());
+            public <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
+                contexts.add(context);
                 return super.deserialize(data, typeToken);
             }
         };

@@ -172,7 +172,13 @@ class HistoryEventProcessorTest {
             @Override
             @SuppressWarnings("unchecked")
             public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                observedContexts.add(SerDesContext.getCurrentContext());
+                return (T) data;
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
+                observedContexts.add(context);
                 return (T) data;
             }
         };

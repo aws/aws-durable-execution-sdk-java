@@ -32,7 +32,13 @@ class TestOperationTest {
             @Override
             @SuppressWarnings("unchecked")
             public <T> T deserialize(String data, TypeToken<T> typeToken) {
-                observedContext.set(SerDesContext.getCurrentContext());
+                return (T) data;
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
+                observedContext.set(context);
                 return (T) data;
             }
         };

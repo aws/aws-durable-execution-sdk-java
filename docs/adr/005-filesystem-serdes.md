@@ -1,4 +1,4 @@
-# ADR-005: Filesystem SerDes with Thread-Local Context
+# ADR-005: Filesystem SerDes with Explicit Context Methods
 
 **Status:** Accepted
 **Date:** 2026-08-31
@@ -22,27 +22,36 @@ public interface SerDes {
 }
 ```
 
-Changing those methods would break existing implementations. Filesystem I/O must also avoid blocking the user-operation
-executor or the SDK coordination executor, and repeated `DurableFuture.get()` calls must not repeatedly read and decode
-the same file.
+Replacing those methods would break existing implementations. Adding default context-aware overloads preserves source
+and binary compatibility while allowing filesystem storage to receive durable identity explicitly. Filesystem I/O must
+also avoid blocking the user-operation executor or the SDK coordination executor, and repeated `DurableFuture.get()`
+calls must not repeatedly read and decode the same file.
 
 ## Decision
 
-### Preserve the SerDes interface
+### Add context-aware default methods
 
-The existing `SerDes` interface remains unchanged. The SDK exposes the active payload identity through:
+The original methods remain abstract and unchanged. New default methods accept `SerDesContext` and delegate to the
+original methods, so existing implementations require no changes:
 
 ```java
-public record SerDesContext(String durableExecutionArn, String entityId) {
-    public static SerDesContext getCurrentContext();
+public interface SerDes {
+    String serialize(Object value);
+
+    default String serialize(Object value, SerDesContext context) {
+        return serialize(value);
+    }
+
+    <T> T deserialize(String data, TypeToken<T> typeToken);
+
+    default <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
+        return deserialize(data, typeToken);
+    }
 }
 ```
 
-`getCurrentContext()` returns `null` outside an SDK-managed SerDes call. The SDK owns setting and clearing the context;
-there is no public setter.
-
-The implementation uses a plain `ThreadLocal`, not an `InheritableThreadLocal`. Every call restores the previous value
-in `finally`, which supports nesting and prevents context from leaking when executor threads are reused.
+Context-aware implementations override the new methods. The SDK passes a non-null `SerDesContext` to every managed
+call; direct customer calls to the original methods remain context-free.
 
 Entity IDs include a stable payload-kind suffix. Root input, output, and exceptions use `/input`, `/output`, and
 `/exception`; operation invoke payloads, results/state, and exceptions use `/invoke-payload`, `/result`, and
@@ -54,10 +63,8 @@ storage implementations must still publish immutable or versioned references for
 Each `ExecutionManager` creates one `SerDesRunner` for the Lambda invocation. The runner:
 
 1. executes inline or dispatches the SerDes call to the configured SerDes executor;
-2. installs `SerDesContext` inside that executor task;
-3. invokes the unchanged SerDes method;
-4. clears or restores the thread-local context;
-5. returns the result or rethrows the original failure.
+2. invokes the context-aware default method with `SerDesContext`;
+3. returns the result or rethrows the original failure.
 
 The configured executor is available through:
 
@@ -175,9 +182,10 @@ directory streams fail closed. The SDK does not create missing directory compone
 
 ### Initial invocation input
 
-The durable execution ARN does not exist when a caller serializes the initial Lambda input. Therefore,
-`FileSystemSerDes.serialize()` delegates directly when `SerDesContext.getCurrentContext()` is `null`. The initial input
-remains ordinary delegate JSON.
+The durable execution ARN does not exist when a caller serializes the initial Lambda input. Therefore, the original
+context-free `FileSystemSerDes.serialize()` delegates directly and the initial input remains ordinary delegate JSON.
+After invocation starts, `DurableExecutor` deserializes that input through the context-aware overload with the root
+input identity.
 
 After the invocation starts, the SDK routes root input deserialization, operation payloads, exceptions, and root output
 through `SerDesRunner`. A chained-invoke boundary requires compatible filesystem configuration and shared storage only
@@ -200,7 +208,7 @@ Positive:
 
 Negative:
 
-- SerDes context is implicit thread-local state.
+- The public interface has two additional default overloads that implementations may choose to override.
 - Configuring a SerDes executor adds an executor boundary to every SDK-managed SerDes call.
 - Repeated deserialization returns the same object instance within an invocation.
 - Filesystem retention and cleanup remain the application's responsibility.
@@ -217,9 +225,10 @@ Negative:
 
 ## Alternatives Rejected
 
-### Change the SerDes method signatures
+### Replace the original SerDes method signatures
 
-Rejected because adding context parameters would break every existing implementation.
+Rejected because replacing the existing methods would break every implementation. Backward-compatible default
+overloads are the accepted approach.
 
 ### Add a PayloadOffloader abstraction
 

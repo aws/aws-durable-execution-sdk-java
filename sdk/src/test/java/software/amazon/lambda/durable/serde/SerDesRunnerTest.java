@@ -36,14 +36,14 @@ class SerDesRunnerTest {
     }
 
     @Test
-    void executesOnConfiguredExecutorWithThreadLocalContext() {
+    void executesOnConfiguredExecutorWithExplicitContext() {
         var observedThread = new AtomicReference<String>();
         var observedContext = new AtomicReference<SerDesContext>();
         var serDes = new JacksonSerDes() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(Object value, SerDesContext context) {
                 observedThread.set(Thread.currentThread().getName());
-                observedContext.set(SerDesContext.getCurrentContext());
+                observedContext.set(context);
                 return super.serialize(value);
             }
         };
@@ -52,7 +52,6 @@ class SerDesRunnerTest {
         assertEquals("\"value\"", runner.serialize(serDes, "value", context));
         assertEquals("test-serdes", observedThread.get());
         assertEquals(context, observedContext.get());
-        assertNull(SerDesContext.getCurrentContext());
     }
 
     @Test
@@ -63,16 +62,15 @@ class SerDesRunnerTest {
         var context = new SerDesContext("arn:test", "entity");
         var serDes = new JacksonSerDes() {
             @Override
-            public String serialize(Object value) {
+            public String serialize(Object value, SerDesContext suppliedContext) {
                 observedThread.set(Thread.currentThread());
-                assertEquals(context, SerDesContext.getCurrentContext());
+                assertEquals(context, suppliedContext);
                 return super.serialize(value);
             }
         };
 
         assertEquals("\"value\"", inlineRunner.serialize(serDes, "value", context));
         assertSame(callingThread, observedThread.get());
-        assertNull(SerDesContext.getCurrentContext());
     }
 
     @Test
@@ -154,8 +152,13 @@ class SerDesRunnerTest {
 
             @Override
             public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                throw new AssertionError("context-aware overload should be used");
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
                 calls.incrementAndGet();
-                assertEquals(new SerDesContext("arn:test", "entity"), SerDesContext.getCurrentContext());
+                assertEquals(new SerDesContext("arn:test", "entity"), context);
                 throw new IllegalStateException("failed");
             }
         };
@@ -169,7 +172,6 @@ class SerDesRunnerTest {
                 () -> runner.deserialize(serDes, "\"value\"", TypeToken.get(String.class), context));
 
         assertEquals(2, calls.get());
-        assertNull(executor.submit(SerDesContext::getCurrentContext).get());
         assertTrue(executor.submit(() -> Thread.currentThread().getName().startsWith("test-serdes"))
                 .get());
     }

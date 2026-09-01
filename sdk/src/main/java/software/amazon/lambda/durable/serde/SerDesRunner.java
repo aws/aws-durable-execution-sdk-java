@@ -20,8 +20,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
- * Executes SDK-managed SerDes calls on a dedicated executor with {@link SerDesContext} installed in thread-local
- * storage.
+ * Executes SDK-managed SerDes calls inline or on a dedicated executor and passes {@link SerDesContext} explicitly.
  *
  * <p>Each runner is scoped to one Lambda invocation. Successful deserializations are cached for that invocation so
  * repeated reads of the same checkpoint payload do not repeat filesystem or other external I/O.
@@ -57,7 +56,7 @@ public final class SerDesRunner {
         Objects.requireNonNull(context, "context cannot be null");
         var contextKey = new ContextKey(serDes, context.durableExecutionArn(), context.entityId());
         try {
-            return join(submit(context, () -> serDes.serialize(value)));
+            return join(submit(() -> serDes.serialize(value, context)));
         } finally {
             generation(contextKey).incrementAndGet();
         }
@@ -91,7 +90,7 @@ public final class SerDesRunner {
                 return cached == NULL_VALUE ? null : (T) cached;
             }
 
-            var value = join(submit(context, () -> serDes.deserialize(data, typeToken)));
+            var value = join(submit(() -> serDes.deserialize(data, typeToken, context)));
             var cacheValue = value == null ? NULL_VALUE : value;
             putCompleted(key, cacheValue);
             pending.complete(cacheValue);
@@ -126,17 +125,16 @@ public final class SerDesRunner {
         return contextGenerations.computeIfAbsent(key, ignored -> new AtomicLong());
     }
 
-    private <T> CompletableFuture<T> submit(SerDesContext context, Supplier<T> action) {
-        Objects.requireNonNull(context, "context cannot be null");
+    private <T> CompletableFuture<T> submit(Supplier<T> action) {
         Objects.requireNonNull(action, "action cannot be null");
         if (executorService == null) {
             try {
-                return CompletableFuture.completedFuture(SerDesContext.callWithContext(context, action));
+                return CompletableFuture.completedFuture(action.get());
             } catch (Throwable failure) {
                 return CompletableFuture.failedFuture(failure);
             }
         }
-        return CompletableFuture.supplyAsync(() -> SerDesContext.callWithContext(context, action), executorService);
+        return CompletableFuture.supplyAsync(action, executorService);
     }
 
     private static <T> T join(CompletableFuture<T> future) {

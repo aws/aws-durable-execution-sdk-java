@@ -37,18 +37,27 @@ selection model applies to steps, callbacks, child contexts, map, parallel, and 
 
 ## SerDesContext
 
-SDK-managed calls expose durable identity through thread-local storage without changing the `SerDes` interface:
+SDK-managed calls pass durable identity explicitly through backward-compatible default methods:
 
 ```java
-var context = SerDesContext.getCurrentContext();
-if (context != null) {
-    var executionArn = context.durableExecutionArn();
-    var entityId = context.entityId();
+public interface SerDes {
+    String serialize(Object value);
+
+    default String serialize(Object value, SerDesContext context) {
+        return serialize(value);
+    }
+
+    <T> T deserialize(String data, TypeToken<T> typeToken);
+
+    default <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
+        return deserialize(data, typeToken);
+    }
 }
 ```
 
-The context is installed only while the SDK invokes `serialize` or `deserialize` and is restored in `finally`.
-Direct customer calls return `null`.
+Existing implementations continue to implement only the original methods. Context-aware implementations override the
+new overloads. The SDK supplies a non-null context for managed calls; direct calls to the original methods are
+context-free.
 
 Entity IDs distinguish every persisted payload owned by the same execution or operation:
 
@@ -158,9 +167,9 @@ skipped because they are ambiguous with path selectors. Use `previewGenerator(..
 
 ### Initial input
 
-The durable execution ARN does not exist before the initial Lambda invocation starts. A direct
-`FileSystemSerDes.serialize()` call therefore delegates normally when no `SerDesContext` exists. Root input is ordinary
-delegate JSON; SDK-managed output and operation payloads can use filesystem storage after the invocation begins.
+The durable execution ARN does not exist while the caller serializes the initial Lambda input. A direct call to the
+original `FileSystemSerDes.serialize()` method therefore delegates normally. After invocation begins, root input
+deserialization and all persisted output/operation payloads use the context-aware methods.
 
 ### Operational requirements
 

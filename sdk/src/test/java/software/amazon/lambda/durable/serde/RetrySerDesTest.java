@@ -82,13 +82,13 @@ class RetrySerDesTest {
     }
 
     @Test
-    void retriesKeepTheSameThreadLocalContext() {
+    void retriesKeepTheSameExplicitContext() {
         var attempts = new AtomicInteger();
         var observed = new AtomicReference<SerDesContext>();
         var delegate = new JacksonSerDes() {
             @Override
-            public String serialize(Object value) {
-                observed.set(SerDesContext.getCurrentContext());
+            public String serialize(Object value, SerDesContext context) {
+                observed.set(context);
                 if (attempts.incrementAndGet() == 1) {
                     throw new RetryableSerDesException("temporary");
                 }

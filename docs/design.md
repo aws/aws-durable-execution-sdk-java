@@ -353,7 +353,7 @@ software.amazon.lambda.durable
 │   ├── PreviewConfig         # Structured preview selection and byte budget
 │   ├── RetrySerDes           # RetryableSerDesException decorator
 │   ├── SerDesPreview         # Structured preview builder
-│   ├── SerDesContext         # Thread-local durable payload identity
+│   ├── SerDesContext         # Explicit durable payload identity
 │   ├── SerDesRunner          # Executor dispatch + invocation cache
 │   └── AwsSdkV2Module        # SDK type support
 │
@@ -665,9 +665,9 @@ public interface SerDes {
 ```
 
 SDK-managed calls go through an invocation-scoped `SerDesRunner`. The runner executes inline by default or dispatches
-work to the configured SerDes executor, installs a `SerDesContext` in plain thread-local storage for the duration of the
-call, and caches successful deserializations in a bounded weak-reference LRU by SerDes identity, execution ARN, entity
-ID, target type, and serialized-data hash. The thread-local value is always restored in `finally`.
+work to the configured SerDes executor, invokes the context-aware default method with an explicit `SerDesContext`, and
+caches successful deserializations in a bounded weak-reference LRU by SerDes identity, execution ARN, entity ID, target
+type, and serialized-data hash.
 
 The entity ID combines the execution or operation ID with a payload-kind suffix: `/input`, `/output`, or `/exception`
 for root execution payloads, and `/invoke-payload`, `/result`, or `/exception` for operation payloads. Distinct durable
