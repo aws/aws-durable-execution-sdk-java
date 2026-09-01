@@ -440,26 +440,8 @@ class ChildContextOperationTest {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
         var serializationStarted = new CountDownLatch(1);
         var allowSerialization = new CountDownLatch(1);
-        var blockingStage = new SerDesStage() {
-            @Override
-            public String serialize(String value, SerDesContext context) {
-                serializationStarted.countDown();
-                try {
-                    assertTrue(allowSerialization.await(5, TimeUnit.SECONDS));
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new AssertionError(e);
-                }
-                return value;
-            }
-
-            @Override
-            public String deserialize(String data, SerDesContext context) {
-                return data;
-            }
-        };
         var serDes = new JacksonSerDes()
-                .then(blockingStage)
+                .then(blockingStage(serializationStarted, allowSerialization))
                 .then(FileSystemSerDesStage.builder(basePath).build());
         var parent = new TestConcurrencyOperation(false);
         var operation = createOperationWithParent(ctx -> "result", parent, serDes);
@@ -473,6 +455,37 @@ class ChildContextOperationTest {
         allowSerialization.countDown();
         verify(executionManager, timeout(5000))
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
+        stopFuture.join();
+        try (var files = Files.list(basePath)) {
+            assertEquals(1, files.count());
+        }
+    }
+
+    @Test
+    void parentCompletionWaitsForReservedChildFailurePublication() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
+        var serializationStarted = new CountDownLatch(1);
+        var allowSerialization = new CountDownLatch(1);
+        var serDes = new JacksonSerDes()
+                .then(blockingStage(serializationStarted, allowSerialization))
+                .then(FileSystemSerDesStage.builder(basePath).build());
+        var parent = new TestConcurrencyOperation(false);
+        var operation = createOperationWithParent(
+                ctx -> {
+                    throw new IllegalArgumentException("failure");
+                },
+                parent,
+                serDes);
+
+        operation.execute();
+        assertTrue(serializationStarted.await(5, TimeUnit.SECONDS));
+        var stopFuture = CompletableFuture.runAsync(parent::stopAcceptingChildCheckpointsForTest);
+        Thread.sleep(100);
+        assertFalse(stopFuture.isDone());
+
+        allowSerialization.countDown();
+        verify(executionManager, timeout(5000))
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
         stopFuture.join();
         try (var files = Files.list(basePath)) {
             assertEquals(1, files.count());
@@ -519,17 +532,63 @@ class ChildContextOperationTest {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
 
         var parent = new TestConcurrencyOperation(true);
-
+        var serDes =
+                new JacksonSerDes().then(FileSystemSerDesStage.builder(basePath).build());
         var operation = createOperationWithParent(
                 ctx -> {
                     throw new RuntimeException("branch failed");
                 },
-                parent);
+                parent,
+                serDes);
         operation.execute();
         Thread.sleep(200);
 
+        try (var files = Files.list(basePath)) {
+            assertEquals(0, files.count());
+        }
         // sendOperationUpdate should not be called with FAIL action
         verify(executionManager, never())
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
+    }
+
+    @Test
+    void virtualChildFailureDoesNotPublishComposableStages() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
+        var serDes =
+                new JacksonSerDes().then(FileSystemSerDesStage.builder(basePath).build());
+        var operation = createVirtualOperation(
+                ctx -> {
+                    throw new IllegalArgumentException("failure");
+                },
+                serDes);
+
+        operation.execute();
+
+        var failure = assertThrows(IllegalArgumentException.class, operation::get);
+        assertEquals("failure", failure.getMessage());
+        try (var files = Files.list(basePath)) {
+            assertEquals(0, files.count());
+        }
+    }
+
+    private static SerDesStage blockingStage(CountDownLatch started, CountDownLatch proceed) {
+        return new SerDesStage() {
+            @Override
+            public String serialize(String value, SerDesContext context) {
+                started.countDown();
+                try {
+                    assertTrue(proceed.await(5, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+                return value;
+            }
+
+            @Override
+            public String deserialize(String data, SerDesContext context) {
+                return data;
+            }
+        };
     }
 }

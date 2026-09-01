@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.file.DirectoryStream;
@@ -112,23 +113,28 @@ public final class FileSystemSerDesStage implements SerDesStage {
         var payload = SerializedPayload.fromString(value);
         var payloadDigest = sha256(payload.data());
         if (storageMode == FileSystemStorageMode.OVERFLOW) {
-            var inlineEnvelope = encodeEnvelope(payload, payloadDigest, null, null, context);
-            if (fitsCheckpoint(inlineEnvelope)) {
-                return inlineEnvelope;
+            var inlineEnvelope = createEnvelope(payload.type(), payloadDigest, context);
+            inlineEnvelope.put("data", value);
+            if (fitsCheckpoint(inlineEnvelope, context)) {
+                return encodeEnvelope(inlineEnvelope, context);
             }
         }
 
         var file = resolvePayloadPath(payloadDigest, context);
         var preview = generatePreview(value, context);
-        var fileEnvelope = encodeEnvelope(payload.withoutData(), payloadDigest, file, preview, context);
-        if (!fitsCheckpoint(fileEnvelope)) {
+        var fileEnvelope = createEnvelope(payload.type(), payloadDigest, context);
+        fileEnvelope.put("file", file.toString());
+        if (preview != null) {
+            fileEnvelope.put("preview", preview);
+        }
+        if (!fitsCheckpoint(fileEnvelope, context)) {
             throw new SerDesException("Filesystem SerDes envelope exceeds the checkpoint payload limit for entity '"
                     + context.entityId()
                     + "'");
         }
         try {
             writePayload(payload, file);
-            return fileEnvelope;
+            return encodeEnvelope(fileEnvelope, context);
         } catch (IOException e) {
             throw new RetryableSerDesException(
                     "Failed to store filesystem payload for entity '" + context.entityId() + "'", e);
@@ -448,26 +454,18 @@ public final class FileSystemSerDesStage implements SerDesStage {
                 + "'");
     }
 
-    private String encodeEnvelope(
-            SerializedPayload payload,
-            String payloadDigest,
-            Path file,
-            Map<String, Object> preview,
-            SerDesContext context) {
+    private LinkedHashMap<String, Object> createEnvelope(
+            PayloadType payloadType, String payloadDigest, SerDesContext context) {
         var envelope = new LinkedHashMap<String, Object>();
         envelope.put(ENVELOPE_MARKER, ENVELOPE_VERSION);
         envelope.put("ownerDurableExecutionArn", context.durableExecutionArn());
         envelope.put("ownerEntityId", context.entityId());
-        envelope.put(PAYLOAD_TYPE_FIELD, payload.type().name());
+        envelope.put(PAYLOAD_TYPE_FIELD, payloadType.name());
         envelope.put(PAYLOAD_DIGEST_FIELD, payloadDigest);
-        if (payload.hasData()) {
-            envelope.put("data", payload.inlineValue());
-        } else {
-            envelope.put("file", file.toString());
-            if (preview != null) {
-                envelope.put("preview", preview);
-            }
-        }
+        return envelope;
+    }
+
+    private String encodeEnvelope(Map<String, Object> envelope, SerDesContext context) {
         try {
             return ENVELOPE_MAPPER.writeValueAsString(envelope);
         } catch (JsonProcessingException e) {
@@ -490,8 +488,15 @@ public final class FileSystemSerDesStage implements SerDesStage {
         }
     }
 
-    private boolean fitsCheckpoint(String envelope) {
-        return Utf8StringBinaryCodec.INSTANCE.toBytes(envelope).length <= checkpointEnvelopeLimitBytes;
+    private boolean fitsCheckpoint(Map<String, Object> envelope, SerDesContext context) {
+        var counter = new CappedCountingOutputStream(checkpointEnvelopeLimitBytes);
+        try {
+            ENVELOPE_MAPPER.writeValue(counter, envelope);
+            return !counter.exceeded();
+        } catch (IOException e) {
+            throw new SerDesException(
+                    "Failed to measure filesystem payload envelope for entity '" + context.entityId() + "'", e);
+        }
     }
 
     private SerDesContext requireContext(SerDesContext context) {
@@ -715,26 +720,38 @@ public final class FileSystemSerDesStage implements SerDesStage {
             return fromString(value);
         }
 
-        private boolean hasData() {
-            return data != null;
-        }
-
-        private SerializedPayload withoutData() {
-            return new SerializedPayload(type, null);
-        }
-
-        private String inlineValue() {
-            if (data == null) {
-                throw new IllegalStateException("Serialized payload does not contain inline data");
-            }
-            return Utf8StringBinaryCodec.INSTANCE.fromBytes(data);
-        }
-
         private String value() {
             if (data == null) {
                 throw new IllegalStateException("Serialized payload does not contain data");
             }
             return Utf8StringBinaryCodec.INSTANCE.fromBytes(data);
+        }
+    }
+
+    private static final class CappedCountingOutputStream extends OutputStream {
+        private final long limit;
+        private long count;
+
+        private CappedCountingOutputStream(long limit) {
+            this.limit = limit;
+        }
+
+        @Override
+        public void write(int value) {
+            add(1);
+        }
+
+        @Override
+        public void write(byte[] value, int offset, int length) {
+            add(length);
+        }
+
+        private void add(long length) {
+            count = Math.min(limit + 1, count + length);
+        }
+
+        private boolean exceeded() {
+            return count > limit;
         }
     }
 

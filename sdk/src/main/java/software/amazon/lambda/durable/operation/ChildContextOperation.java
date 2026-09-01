@@ -211,30 +211,54 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             throw terminateExecution(unrecoverableDurableExecutionException);
         }
 
-        final ErrorObject errorObject;
-        if (exception instanceof DurableOperationException opEx) {
-            errorObject = rebindForwardedException(opEx);
-        } else {
-            errorObject = serializeException(exception);
+        if (isVirtual) {
+            completeWithoutFailureCheckpoint(exception);
+            return;
         }
-
-        var op = createVirtualOperation(errorObject);
-        cachedOperationResult.set(DeserializedOperationResult.failed(translateException(op, errorObject)));
-
-        // Skip checkpointing if
-        // - parent ConcurrencyOperation has already completed, preventing race conditions where a child finishes after
-        // the parent has already succeeded.
-        // - this child is not a direct child of a parent context (i.e. nestingType == FLAT), such as a parallel branch.
-        if ((parentOperation != null && parentOperation.isOperationCompleted()) || isVirtual) {
-            if (isVirtual) {
-                fireOnOperationEnd(null, exception, false);
+        if (parentOperation instanceof ConcurrencyOperation<?> concurrencyParent) {
+            var failure = exception;
+            var checkpointed = concurrencyParent.withChildCheckpointReservation(() -> checkpointFailure(failure));
+            if (!checkpointed) {
+                completeWithoutFailureCheckpoint(exception);
             }
-            markAlreadyCompleted();
             return;
         }
 
+        checkpointFailure(exception);
+    }
+
+    private void checkpointFailure(Throwable exception) {
+        var errorObject = serializeFailure(exception, true);
+        cacheFailure(errorObject);
         sendOperationUpdate(
                 OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject));
+    }
+
+    private void completeWithoutFailureCheckpoint(Throwable exception) {
+        var errorObject = serializeFailure(exception, false);
+        cacheFailure(errorObject);
+        if (isVirtual) {
+            fireOnOperationEnd(null, exception, false);
+        }
+        markAlreadyCompleted();
+    }
+
+    private ErrorObject serializeFailure(Throwable exception, boolean persisted) {
+        final ErrorObject errorObject;
+        if (exception instanceof DurableOperationException opEx) {
+            var original = opEx.deserializedError();
+            errorObject = persisted
+                    ? rebindForwardedException(opEx)
+                    : original != null ? serializeUnpersistedException(original) : opEx.getErrorObject();
+        } else {
+            errorObject = persisted ? serializeException(exception) : serializeUnpersistedException(exception);
+        }
+        return errorObject;
+    }
+
+    private void cacheFailure(ErrorObject errorObject) {
+        var op = createVirtualOperation(errorObject);
+        cachedOperationResult.set(DeserializedOperationResult.failed(translateException(op, errorObject)));
     }
 
     @Override

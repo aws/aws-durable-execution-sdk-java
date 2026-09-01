@@ -151,6 +151,19 @@ class FileSystemSerDesStageTest {
     }
 
     @Test
+    void overflowModeSizesLargePayloadWithoutMaterializingAnInlineEnvelope() throws Exception {
+        var stage = FileSystemSerDesStage.builder(basePath)
+                .storageMode(FileSystemStorageMode.OVERFLOW)
+                .build();
+        var value = "x".repeat(4 * 1024 * 1024);
+
+        var envelope = new SerDesRunner(null).serialize(stringCodec().then(stage), value, context());
+
+        assertTrue(MAPPER.readTree(envelope).has("file"));
+        assertEquals(value, Files.readString(payloadFile(envelope)));
+    }
+
+    @Test
     void checkpointEnvelopeLimitCanBeIncreasedForLargerInlinePayloads() throws Exception {
         var value = "x".repeat(300 * 1024);
         var runner = new SerDesRunner(null);

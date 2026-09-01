@@ -11,11 +11,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.io.IOException;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 import software.amazon.lambda.durable.exception.SerDesException;
 
 /** Utilities for building compact structured previews for externally stored SerDes payloads. */
@@ -39,13 +42,46 @@ public final class SerDesPreview {
      */
     public static Map<String, Object> buildPreview(Object value, PreviewConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
-        final JsonNode root;
+        var producerFailure = new AtomicReference<Throwable>();
+        var input = new PipedInputStream(8 * 1024);
         try {
-            root = MAPPER.valueToTree(value);
-        } catch (IllegalArgumentException e) {
-            throw new SerDesException("Failed to convert value for preview generation", e);
+            var output = new PipedOutputStream(input);
+            var producer = new Thread(
+                    () -> {
+                        try (output) {
+                            MAPPER.writeValue(output, value);
+                        } catch (Throwable failure) {
+                            producerFailure.set(failure);
+                        }
+                    },
+                    "durable-serdes-preview");
+            producer.setDaemon(true);
+            producer.start();
+
+            StreamingPreview preview;
+            Throwable consumerFailure = null;
+            try (input;
+                    var parser = MAPPER.createParser(input)) {
+                preview = collectStreamingPreview(parser, config);
+            } catch (Throwable failure) {
+                preview = null;
+                consumerFailure = failure;
+            } finally {
+                joinProducer(producer);
+            }
+
+            var serializationFailure = producerFailure.get();
+            if (consumerFailure != null) {
+                throw new SerDesException("Failed to convert value for preview generation", consumerFailure);
+            }
+            if (serializationFailure != null
+                    && (preview.fullyConsumed() || !isClosedPipeFailure(serializationFailure))) {
+                throw new SerDesException("Failed to convert value for preview generation", serializationFailure);
+            }
+            return preview.result();
+        } catch (IOException e) {
+            throw new SerDesException("Failed to stream value for preview generation", e);
         }
-        return buildPreview(root, config);
     }
 
     /**
@@ -60,15 +96,49 @@ public final class SerDesPreview {
         Objects.requireNonNull(value, "value cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
         try (var parser = MAPPER.createParser(value)) {
-            if (parser.nextToken() != JsonToken.START_OBJECT) {
-                return null;
-            }
-            Map<String, Object> result = new LinkedHashMap<>();
-            collectObject(parser, "", config, result);
-            return result.isEmpty() ? null : result;
+            return collectStreamingPreview(parser, config).result();
         } catch (IOException e) {
             throw new SerDesException("Built-in preview generation requires a JSON stage value", e);
         }
+    }
+
+    private static StreamingPreview collectStreamingPreview(JsonParser parser, PreviewConfig config)
+            throws IOException {
+        if (parser.nextToken() != JsonToken.START_OBJECT) {
+            return new StreamingPreview(null, false);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        var fullyConsumed = collectObject(parser, "", config, result);
+        return new StreamingPreview(result.isEmpty() ? null : result, fullyConsumed);
+    }
+
+    private static void joinProducer(Thread producer) {
+        var interrupted = false;
+        while (producer.isAlive()) {
+            try {
+                producer.join();
+            } catch (InterruptedException e) {
+                interrupted = true;
+                producer.interrupt();
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static boolean isClosedPipeFailure(Throwable failure) {
+        for (var current = failure; current != null; current = current.getCause()) {
+            var message = current.getMessage();
+            if (current instanceof IOException
+                    && message != null
+                    && (message.contains("Pipe closed")
+                            || message.contains("Pipe broken")
+                            || message.contains("Read end dead"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Map<String, Object> buildPreview(JsonNode root, PreviewConfig config) {
@@ -217,7 +287,8 @@ public final class SerDesPreview {
     private static Object scalarValue(JsonParser parser, JsonToken token) throws IOException {
         return switch (token) {
             case VALUE_STRING -> parser.getText();
-            case VALUE_NUMBER_INT, VALUE_NUMBER_FLOAT -> parser.getNumberValue();
+            case VALUE_NUMBER_INT -> parser.getNumberValue();
+            case VALUE_NUMBER_FLOAT -> parser.getDecimalValue();
             case VALUE_TRUE -> true;
             case VALUE_FALSE -> false;
             case VALUE_NULL -> null;
@@ -294,6 +365,8 @@ public final class SerDesPreview {
         insert(candidate, path, value);
         return serializedSize(candidate) <= maxPreviewBytes;
     }
+
+    private record StreamingPreview(Map<String, Object> result, boolean fullyConsumed) {}
 
     private static boolean isScalarArray(JsonNode node) {
         if (!node.isArray()) {

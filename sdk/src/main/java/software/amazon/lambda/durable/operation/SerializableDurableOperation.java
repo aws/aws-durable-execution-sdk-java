@@ -141,11 +141,25 @@ public abstract class SerializableDurableOperation<T> extends BaseDurableOperati
         if (!shouldDeserializeAfterSerialization()) {
             return result;
         }
-        var normalizationSerDes =
-                resultSerDes instanceof ComposableSerDes composable ? composable.getValueCodec() : resultSerDes;
+        var normalizationSerDes = unpersistedSerDes();
         var context = createSerDesContext(SerDesPayloadKind.RESULT, null);
         var serialized = getSerDesRunner().serialize(normalizationSerDes, result, context);
         return getSerDesRunner().deserialize(normalizationSerDes, serialized, resultTypeToken, context);
+    }
+
+    /** Serializes an exception without invoking composable persistence stages. */
+    protected ErrorObject serializeUnpersistedException(Throwable throwable) {
+        var context = createSerDesContext(SerDesPayloadKind.EXCEPTION, null);
+        return ErrorObject.builder()
+                .errorType(throwable.getClass().getName())
+                .errorMessage(throwable.getMessage())
+                .errorData(getSerDesRunner().serialize(unpersistedSerDes(), throwable, context))
+                .stackTrace(ExceptionHelper.serializeStackTrace(throwable.getStackTrace()))
+                .build();
+    }
+
+    private SerDes unpersistedSerDes() {
+        return resultSerDes instanceof ComposableSerDes composable ? composable.getValueCodec() : resultSerDes;
     }
 
     /**

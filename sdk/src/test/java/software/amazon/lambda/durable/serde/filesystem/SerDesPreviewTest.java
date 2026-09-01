@@ -168,6 +168,22 @@ class SerDesPreviewTest {
     }
 
     @Test
+    void streamingObjectPreviewStopsBeforeMaterializingAnOversizedField() {
+        var value = new LinkedHashMap<String, Object>();
+        value.put("first", "one");
+        value.put("oversized", "x".repeat(4 * 1024 * 1024));
+        value.put("later", "three");
+
+        var preview = SerDesPreview.buildPreview(
+                value,
+                PreviewConfig.builder(PreviewMode.INCLUDE_ALL)
+                        .maxPreviewBytes(15)
+                        .build());
+
+        assertEquals(Map.of("first", "one"), preview);
+    }
+
+    @Test
     void returnsNullWhenNoFieldsAreVisibleOrValueIsNotAnObject() {
         var config = PreviewConfig.builder(PreviewMode.EXCLUDE_ALL).build();
 
