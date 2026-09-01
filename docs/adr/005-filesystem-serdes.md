@@ -112,7 +112,7 @@ configuration.
 var serDes = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
         .storageMode(FileSystemSerDesMode.OVERFLOW)
         .pathEncoding(FileSystemPathEncoding.HASH)
-        .checkpointEnvelopeLimitBytes(512 * 1024)
+        .checkpointEnvelopeLimitBytes(256 * 1024 - 1024)
         .previewConfig(PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
                 .include(PreviewField.anywhere("id"))
                 .mask(PreviewField.anywhere("email"))
@@ -138,7 +138,8 @@ Path encodings:
 | `URI` | Percent-encode readable execution and entity path segments. |
 | `HASH` | Use fixed-length SHA-256 path segments. |
 
-The default checkpoint-envelope limit is 255 KiB and can be changed with `checkpointEnvelopeLimitBytes(...)`.
+The checkpoint-envelope limit defaults to 255 KiB, can be lowered, and cannot be configured above that safe checkpoint
+ceiling.
 
 The default delegate is `JacksonSerDes`; `.delegate(...)` controls how values are encoded inside files. Existing
 operation-level SerDes configuration controls which boundaries use filesystem storage. For example,

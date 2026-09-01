@@ -124,8 +124,8 @@ var fileSystemSerDes = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloa
 | `ALWAYS` | Writes every SDK-managed non-null payload to a file. |
 | `OVERFLOW` | Keeps the complete envelope inline until it exceeds the configured limit. |
 
-The default checkpoint-envelope limit is 255 KiB and can be changed with
-`checkpointEnvelopeLimitBytes(...)`.
+The checkpoint-envelope limit defaults to 255 KiB, can be lowered with `checkpointEnvelopeLimitBytes(...)`, and cannot
+be increased above that safe checkpoint ceiling.
 
 ### Path encoding
 

@@ -58,7 +58,7 @@ Text containing the marker inside a JSON string is not recognized as an envelope
 ```
 
 Exactly one of `data` or `file` is required. `preview` is valid only with `file`. The complete encoded envelope must fit
-the configured `checkpointEnvelopeLimitBytes`.
+the configured `checkpointEnvelopeLimitBytes`, which cannot exceed the safe 255 KiB checkpoint ceiling.
 
 ## Payload and digest
 

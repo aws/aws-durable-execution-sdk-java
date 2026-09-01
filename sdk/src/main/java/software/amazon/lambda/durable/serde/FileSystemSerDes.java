@@ -18,6 +18,7 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.FileSystemLoopException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.NotDirectoryException;
@@ -125,7 +126,7 @@ public final class FileSystemSerDes implements SerDes {
 
         var envelope = parseEnvelope(data);
         if (envelope == null) {
-            return deserializeDelegate(data, typeToken, context);
+            return delegate.deserialize(data, typeToken);
         }
         if (envelope.hasNonNull("data")) {
             var serialized = envelope.get("data").textValue();
@@ -300,7 +301,16 @@ public final class FileSystemSerDes implements SerDes {
     }
 
     private String readPayload(String fileValue) {
-        var file = basePath.getFileSystem().getPath(fileValue).toAbsolutePath().normalize();
+        final Path file;
+        try {
+            var candidate = basePath.getFileSystem().getPath(fileValue);
+            if (!candidate.isAbsolute()) {
+                throw new SerDesException("Filesystem SerDes file path must be absolute");
+            }
+            file = candidate.normalize();
+        } catch (InvalidPathException | SecurityException failure) {
+            throw new SerDesException("Filesystem SerDes file path is invalid", failure);
+        }
         if (!file.startsWith(basePath)) {
             throw new SerDesException("Filesystem SerDes file is outside the configured base path");
         }
@@ -506,6 +516,10 @@ public final class FileSystemSerDes implements SerDes {
         public Builder checkpointEnvelopeLimitBytes(int checkpointEnvelopeLimitBytes) {
             if (checkpointEnvelopeLimitBytes <= 0) {
                 throw new IllegalArgumentException("checkpointEnvelopeLimitBytes must be positive");
+            }
+            if (checkpointEnvelopeLimitBytes > DEFAULT_CHECKPOINT_ENVELOPE_LIMIT_BYTES) {
+                throw new IllegalArgumentException(
+                        "checkpointEnvelopeLimitBytes cannot exceed " + DEFAULT_CHECKPOINT_ENVELOPE_LIMIT_BYTES);
             }
             this.checkpointEnvelopeLimitBytes = checkpointEnvelopeLimitBytes;
             return this;

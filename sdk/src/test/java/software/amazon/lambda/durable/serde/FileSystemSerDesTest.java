@@ -104,21 +104,11 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void checkpointEnvelopeLimitCanBeIncreasedForLargerInlinePayloads() throws Exception {
-        var value = "x".repeat(300_000);
-        var context = new SerDesContext(realisticArn(), "1");
-        var defaultSerDes = FileSystemSerDes.builder(tempDir)
-                .storageMode(FileSystemSerDesMode.OVERFLOW)
-                .build();
-        var largerEnvelopeSerDes = FileSystemSerDes.builder(tempDir)
-                .storageMode(FileSystemSerDesMode.OVERFLOW)
-                .checkpointEnvelopeLimitBytes(512 * 1024)
-                .build();
+    void checkpointEnvelopeLimitCannotExceedSafeCheckpointCeiling() {
+        var failure = assertThrows(IllegalArgumentException.class, () -> FileSystemSerDes.builder(tempDir)
+                .checkpointEnvelopeLimitBytes(256 * 1024 - 1024 + 1));
 
-        assertTrue(
-                MAPPER.readTree(runner.serialize(defaultSerDes, value, context)).hasNonNull("file"));
-        assertTrue(MAPPER.readTree(runner.serialize(largerEnvelopeSerDes, value, context))
-                .hasNonNull("data"));
+        assertEquals("checkpointEnvelopeLimitBytes cannot exceed 261120", failure.getMessage());
     }
 
     @Test
@@ -301,6 +291,45 @@ class FileSystemSerDesTest {
     }
 
     @Test
+    void unmarkedPayloadUsesContextFreeDelegateAndEnvelopeUsesContextualDelegate() {
+        var delegate = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return "raw:" + value;
+            }
+
+            @Override
+            public String serialize(Object value, SerDesContext context) {
+                return "context:" + value;
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                if (!data.startsWith("raw:")) {
+                    throw new SerDesException("Expected raw encoding");
+                }
+                return (T) data.substring("raw:".length());
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
+                if (!data.startsWith("context:")) {
+                    throw new SerDesException("Expected contextual encoding");
+                }
+                return (T) data.substring("context:".length());
+            }
+        };
+        var serDes = FileSystemSerDes.builder(tempDir).delegate(delegate).build();
+        var context = new SerDesContext(realisticArn(), "1");
+
+        assertEquals("value", runner.deserialize(serDes, "raw:value", TypeToken.get(String.class), context));
+        var envelope = runner.serialize(serDes, "value", context);
+        assertEquals("value", runner.deserialize(serDes, envelope, TypeToken.get(String.class), context));
+    }
+
+    @Test
     void rejectsFileOutsideConfiguredBasePath() throws Exception {
         var externalFile = Files.createTempFile("filesystem-serdes", ".json");
         Files.writeString(externalFile, "\"secret\"", StandardCharsets.UTF_8);
@@ -309,6 +338,23 @@ class FileSystemSerDesTest {
         var serDes = FileSystemSerDes.builder(tempDir).build();
 
         assertThrows(SerDesException.class, () -> serDes.deserialize(envelope, TypeToken.get(String.class)));
+    }
+
+    @Test
+    void rejectsRelativeAndInvalidEnvelopePathsAsPermanentFailures() throws Exception {
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var relativeEnvelope = MAPPER.writeValueAsString(
+                Map.of("__durable_execution_filesystem_serdes", 1, "file", "relative.json", "sha256", "0".repeat(64)));
+        var invalidEnvelope = MAPPER.writeValueAsString(Map.of(
+                "__durable_execution_filesystem_serdes", 1, "file", "invalid\u0000path", "sha256", "0".repeat(64)));
+
+        var relativeFailure = assertThrows(
+                SerDesException.class, () -> serDes.deserialize(relativeEnvelope, TypeToken.get(String.class)));
+        var invalidFailure = assertThrows(
+                SerDesException.class, () -> serDes.deserialize(invalidEnvelope, TypeToken.get(String.class)));
+
+        assertTrue(relativeFailure.getMessage().contains("must be absolute"));
+        assertTrue(invalidFailure.getCause() instanceof java.nio.file.InvalidPathException);
     }
 
     @Test

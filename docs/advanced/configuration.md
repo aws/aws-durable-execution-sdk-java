@@ -54,7 +54,7 @@ inline when configured for overflow mode:
 var fileSystemSerDes = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
         .storageMode(FileSystemSerDesMode.OVERFLOW)
         .pathEncoding(FileSystemPathEncoding.HASH)
-        .checkpointEnvelopeLimitBytes(512 * 1024)
+        .checkpointEnvelopeLimitBytes(256 * 1024 - 1024)
         .previewConfig(PreviewConfig.builder(PreviewMode.EXCLUDE_ALL)
                 .include(PreviewField.anywhere("id"), PreviewField.path("status"))
                 .mask(PreviewField.anywhere("email"))
@@ -67,8 +67,8 @@ return DurableConfig.builder()
 ```
 
 `ALWAYS` writes every SDK-managed payload to a file. `OVERFLOW` stores the payload inline until the complete checkpoint
-envelope exceeds the configured limit, which defaults to 255 KiB. `URI` path encoding keeps identifiers readable,
-while `HASH` avoids filesystem name-length and character restrictions.
+envelope exceeds the configured limit, which defaults to and cannot exceed 255 KiB. `URI` path encoding keeps
+identifiers readable, while `HASH` avoids filesystem name-length and character restrictions.
 
 `PreviewConfig` supports include-all/exclude-all modes, exact-path or anywhere field matching, masking, and a default
 4 KiB preview budget. A custom `previewGenerator(...)` remains available for non-standard preview logic.
