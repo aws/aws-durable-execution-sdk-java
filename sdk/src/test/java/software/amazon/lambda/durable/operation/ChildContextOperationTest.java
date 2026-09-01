@@ -436,7 +436,7 @@ class ChildContextOperationTest {
     }
 
     @Test
-    void parentCompletionWaitsForReservedChildCheckpointPublication() throws Exception {
+    void parentCompletionDoesNotWaitForReservedChildCheckpointPublication() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
         var serializationStarted = new CountDownLatch(1);
         var allowSerialization = new CountDownLatch(1);
@@ -449,20 +449,20 @@ class ChildContextOperationTest {
         operation.execute();
         assertTrue(serializationStarted.await(5, TimeUnit.SECONDS));
         var stopFuture = CompletableFuture.runAsync(parent::stopAcceptingChildCheckpointsForTest);
-        Thread.sleep(100);
-        assertFalse(stopFuture.isDone());
+        stopFuture.get(1, TimeUnit.SECONDS);
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
 
         allowSerialization.countDown();
         verify(executionManager, timeout(5000))
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
-        stopFuture.join();
         try (var files = Files.list(basePath)) {
             assertEquals(1, files.count());
         }
     }
 
     @Test
-    void parentCompletionWaitsForReservedChildFailurePublication() throws Exception {
+    void parentCompletionDoesNotWaitForReservedChildFailurePublication() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
         var serializationStarted = new CountDownLatch(1);
         var allowSerialization = new CountDownLatch(1);
@@ -480,13 +480,13 @@ class ChildContextOperationTest {
         operation.execute();
         assertTrue(serializationStarted.await(5, TimeUnit.SECONDS));
         var stopFuture = CompletableFuture.runAsync(parent::stopAcceptingChildCheckpointsForTest);
-        Thread.sleep(100);
-        assertFalse(stopFuture.isDone());
+        stopFuture.get(1, TimeUnit.SECONDS);
+        verify(executionManager, never())
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
 
         allowSerialization.countDown();
         verify(executionManager, timeout(5000))
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
-        stopFuture.join();
         try (var files = Files.list(basePath)) {
             assertEquals(1, files.count());
         }

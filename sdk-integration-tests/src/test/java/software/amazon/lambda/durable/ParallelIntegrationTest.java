@@ -7,7 +7,10 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -15,6 +18,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.NestingType;
+import software.amazon.lambda.durable.config.ParallelBranchConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
@@ -22,6 +26,9 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.ParallelResult;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.retry.WaitStrategies;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesStage;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 import software.amazon.lambda.durable.testing.TestOperation;
 
@@ -1347,6 +1354,72 @@ class ParallelIntegrationTest {
             // might 4 if only 1 branch completed and at most 8 if all branches completed
             assertTrue(4 <= result.getHistoryEvents().size());
             assertTrue(result.getHistoryEvents().size() <= events);
+        }
+    }
+
+    @Test
+    void firstSuccessfulReturnsBeforeLosingBranchSerializationCompletes() {
+        var losingSerializationStarted = new CountDownLatch(1);
+        var releaseLosingSerialization = new CountDownLatch(1);
+        var handlerPassedGet = new AtomicBoolean();
+        var losingSerDes = new JacksonSerDes().then(new SerDesStage() {
+            @Override
+            public String serialize(String value, SerDesContext context) {
+                losingSerializationStarted.countDown();
+                try {
+                    if (!releaseLosingSerialization.await(10, TimeUnit.SECONDS)) {
+                        throw new AssertionError("Timed out waiting to release losing branch serialization");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+                return value;
+            }
+
+            @Override
+            public String deserialize(String data, SerDesContext context) {
+                return data;
+            }
+        });
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var parallel = context.parallel(
+                    "first-successful",
+                    ParallelConfig.builder()
+                            .completionConfig(CompletionConfig.firstSuccessful())
+                            .nestingType(NestingType.NESTED)
+                            .build());
+            parallel.branch(
+                    "loser",
+                    String.class,
+                    ctx -> "loser",
+                    ParallelBranchConfig.builder().serDes(losingSerDes).build());
+            parallel.branch("winner", String.class, ctx -> {
+                try {
+                    if (!losingSerializationStarted.await(5, TimeUnit.SECONDS)) {
+                        throw new AssertionError("Losing branch did not begin serialization");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+                return "winner";
+            });
+
+            var result = parallel.get();
+            handlerPassedGet.set(true);
+            releaseLosingSerialization.countDown();
+            assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionStatus());
+            return "done";
+        });
+
+        try {
+            var result = assertTimeoutPreemptively(Duration.ofSeconds(8), () -> runner.runUntilComplete("test"));
+            assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+            assertEquals("done", result.getResult(String.class));
+            assertTrue(handlerPassedGet.get());
+        } finally {
+            releaseLosingSerialization.countDown();
         }
     }
 }

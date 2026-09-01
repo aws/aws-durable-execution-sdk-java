@@ -13,7 +13,6 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,8 +89,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
 
     // workers publish events; only the coordinator consumes them and mutates scheduling state
     private final BlockingQueue<CoordinatorEvent> coordinatorEvents = new LinkedBlockingQueue<>();
-    private final ReentrantReadWriteLock childCheckpointLock = new ReentrantReadWriteLock();
-    private boolean acceptsChildCheckpoints = true;
+    private final AtomicBoolean acceptsChildCheckpoints = new AtomicBoolean(true);
 
     // guarded by completionFuture
     private boolean stateChangedQueued;
@@ -369,32 +367,19 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
     /**
      * Runs child serialization and checkpointing only while this parent still accepts child checkpoints.
      *
-     * <p>Multiple children may hold shared reservations concurrently. Parent completion takes the exclusive lock, waits
-     * for in-flight publications to finish, and prevents later children from publishing envelopes that would be
-     * discarded.
+     * <p>The acceptance check is the reservation's linearization point. A child admitted before parent completion may
+     * finish publishing without blocking the parent; children arriving after admission closes skip persistence.
      */
     boolean withChildCheckpointReservation(Runnable checkpointAction) {
-        var lock = childCheckpointLock.readLock();
-        lock.lock();
-        try {
-            if (!acceptsChildCheckpoints || isOperationCompleted()) {
-                return false;
-            }
-            checkpointAction.run();
-            return true;
-        } finally {
-            lock.unlock();
+        if (!acceptsChildCheckpoints.get() || isOperationCompleted()) {
+            return false;
         }
+        checkpointAction.run();
+        return true;
     }
 
-    /** Stops accepting child checkpoints after all in-flight child publications finish. */
+    /** Stops admitting new child checkpoint publications without waiting for already-admitted children. */
     protected final void stopAcceptingChildCheckpoints() {
-        var lock = childCheckpointLock.writeLock();
-        lock.lock();
-        try {
-            acceptsChildCheckpoints = false;
-        } finally {
-            lock.unlock();
-        }
+        acceptsChildCheckpoints.set(false);
     }
 }
