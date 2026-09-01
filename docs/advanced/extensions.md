@@ -74,8 +74,26 @@ New code can use context-free static operations from `software.amazon.lambda.dur
 | `DurableWaitForCallbackOperation` | `waitForCallback`, `waitForCallbackAsync` |
 | `DurableWaitForConditionOperation` | `waitForCondition`, `waitForConditionAsync` |
 | `DurableWithRetryOperation` | `withRetry`, `withRetryAsync` |
+| `DurableReplaySafeValueOperation` | `uuid`, `now`, `random` and asynchronous variants |
 
 The existing `DurableContext` instance methods and callback signatures remain supported for backward compatibility.
+
+### Replay-safe values
+
+`DurableReplaySafeValueOperation` provides common nondeterministic values through extension-backed STEP operations:
+
+```java
+import static software.amazon.lambda.durable.operation.DurableReplaySafeValueOperation.now;
+import static software.amazon.lambda.durable.operation.DurableReplaySafeValueOperation.random;
+import static software.amazon.lambda.durable.operation.DurableReplaySafeValueOperation.uuid;
+
+var requestId = uuid("request-id");
+var createdAt = now("created-at");
+var sample = random("sample");
+```
+
+Each value is generated once and checkpointed. Replays return the stored `UUID`, `Instant`, or `double` without
+regenerating it. The no-argument overloads use the operation names `uuid`, `now`, and `random`.
 
 Each static operation owns its configuration type. For example:
 

@@ -71,6 +71,7 @@ class DurableOperationFacadeTest {
         assertFacadeRenamed("DurableWaitForCallbackOperation", "DurableWaitForCallbackOperations");
         assertFacadeRenamed("DurableWaitForConditionOperation", "DurableWaitForConditionOperations");
         assertFacadeRenamed("DurableWithRetryOperation", "DurableWithRetryOperations");
+        assertFacadeRenamed("DurableReplaySafeValueOperation", "DurableReplaySafeValueOperations");
     }
 
     @Test
