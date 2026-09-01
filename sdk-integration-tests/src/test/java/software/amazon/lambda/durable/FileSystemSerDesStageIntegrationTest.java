@@ -466,7 +466,7 @@ class FileSystemSerDesStageIntegrationTest {
     }
 
     @Test
-    void nestedCallbackFailurePreservesProducerContextAcrossReplay() throws Exception {
+    void nestedCallbackFailurePreservesOpaqueExternalErrorAcrossReplay() {
         var childExecutions = new AtomicInteger();
         var serDes = filesystemPipeline();
         var config = DurableConfig.builder().withSerDes(serDes).build();
@@ -487,18 +487,25 @@ class FileSystemSerDesStageIntegrationTest {
                 .withOutputType(String.class);
 
         assertEquals(ExecutionStatus.PENDING, runner.run("input").getStatus());
+        var externalErrorData = new JacksonSerDes().serialize(new CustomFailure("callback-boom"));
         runner.failCallback(
                 runner.getCallbackId("nested-callback"),
                 ErrorObject.builder()
                         .errorType(CustomFailure.class.getName())
                         .errorMessage("callback-boom")
-                        .errorData(new JacksonSerDes().serialize(new CustomFailure("callback-boom")))
+                        .errorData(externalErrorData)
                         .build());
 
         var completed = runner.runUntilComplete("input");
         assertEquals(ExecutionStatus.SUCCEEDED, completed.getStatus());
         assertEquals("caught:callback-boom", completed.getResult());
-        assertForwardedErrorOwnedByChild(completed, "callback-child");
+        assertEquals(
+                externalErrorData,
+                completed
+                        .getOperation("callback-child")
+                        .getContextDetails()
+                        .error()
+                        .errorData());
         var executionsAfterCompletion = childExecutions.get();
 
         var replay = runner.run("input");

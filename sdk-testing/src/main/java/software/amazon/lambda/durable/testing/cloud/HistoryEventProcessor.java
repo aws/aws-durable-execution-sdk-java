@@ -272,9 +272,11 @@ public class HistoryEventProcessor {
                         CHAINED_INVOKE_STOPPED -> {
                     if (operationId != null) {
                         if (eventType == EventType.CHAINED_INVOKE_STARTED) {
-                            operations.putIfAbsent(operationId, createInvokeOperation(operationId, event));
+                            operations.putIfAbsent(operationId, createInvokeOperation(operationId, event, null));
                         } else {
-                            operations.put(operationId, createInvokeOperation(operationId, event));
+                            operations.compute(
+                                    operationId,
+                                    (id, existingOperation) -> createInvokeOperation(id, event, existingOperation));
                         }
                     }
                 }
@@ -411,8 +413,10 @@ public class HistoryEventProcessor {
                 .build();
     }
 
-    private Operation createInvokeOperation(String id, Event event) {
-        var builder = ChainedInvokeDetails.builder();
+    private Operation createInvokeOperation(String id, Event event, Operation existingOperation) {
+        var detailsBuilder = existingOperation != null && existingOperation.chainedInvokeDetails() != null
+                ? existingOperation.chainedInvokeDetails().toBuilder()
+                : ChainedInvokeDetails.builder();
 
         OperationStatus status =
                 switch (event.eventType()) {
@@ -422,7 +426,7 @@ public class HistoryEventProcessor {
                         if (details != null
                                 && details.result() != null
                                 && details.result().payload() != null) {
-                            builder.result(details.result().payload());
+                            detailsBuilder.result(details.result().payload());
                         }
                         yield OperationStatus.SUCCEEDED;
                     }
@@ -431,7 +435,7 @@ public class HistoryEventProcessor {
                         if (details != null
                                 && details.error() != null
                                 && details.error().payload() != null) {
-                            builder.error(details.error().payload());
+                            detailsBuilder.error(details.error().payload());
                         }
                         yield OperationStatus.FAILED;
                     }
@@ -440,7 +444,7 @@ public class HistoryEventProcessor {
                         if (details != null
                                 && details.error() != null
                                 && details.error().payload() != null) {
-                            builder.error(details.error().payload());
+                            detailsBuilder.error(details.error().payload());
                         }
 
                         yield OperationStatus.STOPPED;
@@ -450,7 +454,7 @@ public class HistoryEventProcessor {
                         if (details != null
                                 && details.error() != null
                                 && details.error().payload() != null) {
-                            builder.error(details.error().payload());
+                            detailsBuilder.error(details.error().payload());
                         }
                         yield OperationStatus.TIMED_OUT;
                     }
@@ -459,14 +463,22 @@ public class HistoryEventProcessor {
                                 "Unknown chained invocation operation: " + event.eventType());
                 };
 
-        return Operation.builder()
-                .id(id)
-                .name(event.name())
-                .parentId(event.parentId())
+        var operationBuilder = existingOperation != null
+                ? existingOperation.toBuilder()
+                : Operation.builder().id(id);
+        if (event.name() != null) {
+            operationBuilder.name(event.name());
+        }
+        if (event.parentId() != null) {
+            operationBuilder.parentId(event.parentId());
+        }
+        if (event.subType() != null) {
+            operationBuilder.subType(event.subType());
+        }
+        return operationBuilder
                 .status(status)
                 .type(OperationType.CHAINED_INVOKE)
-                .subType(event.subType())
-                .chainedInvokeDetails(builder.build())
+                .chainedInvokeDetails(detailsBuilder.build())
                 .build();
     }
 

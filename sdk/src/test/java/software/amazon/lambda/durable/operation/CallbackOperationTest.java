@@ -40,8 +40,15 @@ class CallbackOperationTest {
     private static final String EXECUTION_OP_ID = "123";
     private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
             + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
+    private static final AtomicInteger EXTERNALLY_SELECTED_EXCEPTION_INITIALIZATIONS = new AtomicInteger();
 
     private DurableContextImpl durableContext;
+
+    static final class ExternallySelectedException extends RuntimeException {
+        static {
+            EXTERNALLY_SELECTED_EXCEPTION_INITIALIZATIONS.incrementAndGet();
+        }
+    }
 
     @BeforeEach
     void setUp() {
@@ -253,6 +260,41 @@ class CallbackOperationTest {
         assertEquals("untyped callback failure", exception.getMessage());
         assertNull(exception.getErrorObject().errorType());
         assertNull(exception.deserializedError());
+    }
+
+    @Test
+    void callbackFailureDoesNotLoadOrDeserializeExternallySelectedType() {
+        var serDes = new TrackingSerDes();
+        var existingCallback = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.CALLBACK)
+                .subType(OperationSubType.CALLBACK.getValue())
+                .status(OperationStatus.FAILED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("callback-id")
+                        .error(ErrorObject.builder()
+                                .errorType(CallbackOperationTest.class.getName() + "$ExternallySelectedException")
+                                .errorMessage("external failure")
+                                .errorData("{}")
+                                .build())
+                        .build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+
+        var operation = new CallbackOperation<>(
+                OPERATION_IDENTIFIER,
+                TypeToken.get(String.class),
+                CallbackConfig.builder().serDes(serDes).build(),
+                durableContext);
+        operation.execute();
+
+        var exception = assertThrows(CallbackFailedException.class, operation::get);
+        assertNull(exception.deserializedError());
+        assertNull(exception.getCause());
+        assertEquals(0, EXTERNALLY_SELECTED_EXCEPTION_INITIALIZATIONS.get());
+        assertEquals(0, serDes.getDeserializeCount());
     }
 
     @Test

@@ -588,10 +588,15 @@ class SerializableDurableOperationTest {
     }
 
     @Test
-    void rebindForwardedExceptionUsesProducingOperationSerDesBeforeParentSerDes() {
+    void rebindForwardedCallbackFailureKeepsExternalErrorOpaque() {
         var producerSerDes = new PrefixedSerDes("producer:");
         var parentSerDes = new PrefixedSerDes("parent:");
         var original = new IllegalStateException("callback failed");
+        var externalError = ErrorObject.builder()
+                .errorType(original.getClass().getName())
+                .errorMessage(original.getMessage())
+                .errorData(producerSerDes.serialize(original))
+                .build();
         var producerOperation = Operation.builder()
                 .id("callback-1")
                 .name("callback")
@@ -600,11 +605,7 @@ class SerializableDurableOperationTest {
                 .status(OperationStatus.FAILED)
                 .callbackDetails(CallbackDetails.builder()
                         .callbackId("callback-id")
-                        .error(ErrorObject.builder()
-                                .errorType(original.getClass().getName())
-                                .errorMessage(original.getMessage())
-                                .errorData(producerSerDes.serialize(original))
-                                .build())
+                        .error(externalError)
                         .build())
                 .build();
         when(executionManager.getOperationAndUpdateReplayState("callback-1")).thenReturn(producerOperation);
@@ -616,7 +617,7 @@ class SerializableDurableOperationTest {
                 durableContext);
         producer.onCheckpointComplete(producerOperation);
         var forwarded = assertThrows(CallbackFailedException.class, producer::get);
-        assertInstanceOf(IllegalStateException.class, forwarded.deserializedError());
+        assertNull(forwarded.deserializedError());
 
         var rebound = new AtomicReference<ErrorObject>();
         SerializableDurableOperation<String> parent =
@@ -636,9 +637,8 @@ class SerializableDurableOperationTest {
 
         parent.get();
 
-        assertTrue(rebound.get().errorData().startsWith("parent:"));
-        var decoded = parentSerDes.deserialize(rebound.get().errorData(), TypeToken.get(IllegalStateException.class));
-        assertEquals("callback failed", decoded.getMessage());
+        assertEquals(externalError, rebound.get());
+        assertTrue(rebound.get().errorData().startsWith("producer:"));
     }
 
     @Test

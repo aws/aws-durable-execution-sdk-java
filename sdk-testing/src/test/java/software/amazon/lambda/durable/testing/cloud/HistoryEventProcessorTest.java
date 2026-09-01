@@ -72,10 +72,13 @@ class HistoryEventProcessorTest {
                 Event.builder()
                         .id("invoke-id")
                         .name("invoke")
+                        .parentId("parent-id")
+                        .subType("Invoke")
                         .eventType(EventType.CHAINED_INVOKE_STARTED)
                         .eventTimestamp(startedAt.plusSeconds(4))
                         .chainedInvokeStartedDetails(ChainedInvokeStartedDetails.builder()
                                 .functionName("target")
+                                .tenantId("tenant")
                                 .build())
                         .build(),
                 Event.builder()
@@ -111,6 +114,11 @@ class HistoryEventProcessorTest {
         assertEquals(
                 "invoke-result",
                 result.getOperation("invoke").getChainedInvokeDetails().result());
+        assertEquals("Invoke", result.getOperation("invoke").getSubtype());
+        var invokeStartedDetails =
+                result.getOperation("invoke").getEvents().get(0).chainedInvokeStartedDetails();
+        assertEquals("target", invokeStartedDetails.functionName());
+        assertEquals("tenant", invokeStartedDetails.tenantId());
         assertEquals(2, observedContexts.size());
 
         var outputContext = observedContexts.get(0);
