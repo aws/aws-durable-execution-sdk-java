@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.serde.filesystem;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -143,6 +144,19 @@ public final class FileSystemSerDesStage implements SerDesStage {
     }
 
     private String resolveSerializedPayload(String data, SerDesContext context) {
+        final boolean hasMarker;
+        try {
+            hasMarker = hasTopLevelFilesystemMarker(data);
+        } catch (IOException e) {
+            if (containsFilesystemMarkerField(data)) {
+                throw malformedEnvelope(requireContext(context), e);
+            }
+            return data;
+        }
+        if (!hasMarker) {
+            return data;
+        }
+
         final JsonNode envelope;
         try {
             envelope = ENVELOPE_READER.readTree(data);
@@ -185,6 +199,30 @@ public final class FileSystemSerDesStage implements SerDesStage {
         }
         return readPayload(envelope.get("file").textValue(), payloadType, payloadDigest, owner, context)
                 .value();
+    }
+
+    private static boolean hasTopLevelFilesystemMarker(String data) throws IOException {
+        try (var parser = ENVELOPE_MAPPER.createParser(data)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                return false;
+            }
+            JsonToken token;
+            while ((token = parser.nextToken()) != null && token != JsonToken.END_OBJECT) {
+                if (token != JsonToken.FIELD_NAME) {
+                    parser.skipChildren();
+                    continue;
+                }
+                var fieldName = parser.currentName();
+                var valueToken = parser.nextToken();
+                if (ENVELOPE_MARKER.equals(fieldName)) {
+                    return true;
+                }
+                if (valueToken != null) {
+                    parser.skipChildren();
+                }
+            }
+            return false;
+        }
     }
 
     private SerializedPayload readPayload(

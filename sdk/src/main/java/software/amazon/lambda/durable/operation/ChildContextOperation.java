@@ -151,10 +151,8 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private void handleChildContextSuccess(T result) {
-        if (shouldSkipSuccessCheckpoint()) {
+        if (replayChildren.get() || isVirtual) {
             // Skip checkpointing if
-            // - parent ConcurrencyOperation has already completed, preventing race conditions where a child finishes
-            // after the parent has already completed.
             // - replaying a SUCCEEDED child with replayChildren=true — skip checkpointing.
             // - nestingType is FLAT
             // Run only the root value codec for normalization because no serialized envelope will be retained.
@@ -163,17 +161,19 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             return;
         }
 
-        var serializedResult = serializeAndDeserializeResult(result);
-        if (shouldSkipSuccessCheckpoint()) {
-            // The parent may have completed while serialization was in progress.
-            completeWithoutSuccessCheckpoint(serializedResult.deserialized());
-        } else {
-            checkpointSuccess(serializedResult.deserialized(), serializedResult.serialized());
+        if (parentOperation instanceof ConcurrencyOperation<?> concurrencyParent) {
+            var checkpointed = concurrencyParent.withChildCheckpointReservation(() -> {
+                var serializedResult = serializeAndDeserializeResult(result);
+                checkpointSuccess(serializedResult.deserialized(), serializedResult.serialized());
+            });
+            if (!checkpointed) {
+                completeWithoutSuccessCheckpoint(normalizeUnpersistedResult(result));
+            }
+            return;
         }
-    }
 
-    private boolean shouldSkipSuccessCheckpoint() {
-        return replayChildren.get() || isVirtual || parentOperation != null && parentOperation.isOperationCompleted();
+        var serializedResult = serializeAndDeserializeResult(result);
+        checkpointSuccess(serializedResult.deserialized(), serializedResult.serialized());
     }
 
     private void completeWithoutSuccessCheckpoint(T result) {

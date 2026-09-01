@@ -8,7 +8,10 @@ import static org.mockito.Mockito.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +40,8 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesStage;
 import software.amazon.lambda.durable.serde.filesystem.FileSystemSerDesStage;
 
 /** Unit tests for ChildContextOperation. */
@@ -69,8 +74,8 @@ class ChildContextOperationTest {
 
     private static final JacksonSerDes SERDES = new JacksonSerDes();
 
-    private final class CompletedConcurrencyOperation extends ConcurrencyOperation<Void> {
-        private CompletedConcurrencyOperation() {
+    private final class TestConcurrencyOperation extends ConcurrencyOperation<Void> {
+        private TestConcurrencyOperation(boolean completed) {
             super(
                     OperationIdentifier.of("parent", "parent", OperationSubType.PARALLEL),
                     TypeToken.get(Void.class),
@@ -79,7 +84,9 @@ class ChildContextOperationTest {
                     1,
                     status -> null,
                     NestingType.NESTED);
-            completionFuture.complete(this);
+            if (completed) {
+                completionFuture.complete(this);
+            }
         }
 
         @Override
@@ -95,6 +102,10 @@ class ChildContextOperationTest {
         public Void get() {
             return null;
         }
+
+        private void stopAcceptingChildCheckpointsForTest() {
+            stopAcceptingChildCheckpoints();
+        }
     }
 
     private DurableContextImpl durableContext;
@@ -109,6 +120,9 @@ class ChildContextOperationTest {
         executionManager = mock(ExecutionManager.class);
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
+        when(executionManager.getDurableExecutionArn())
+                .thenReturn("arn:aws:lambda:us-east-1:123456789012:function:test:1/durable-execution/test/invocation");
+        when(executionManager.sendOperationUpdate(any())).thenReturn(CompletableFuture.completedFuture(null));
         when(durableContext.getDurableConfig()).thenReturn(createConfig());
     }
 
@@ -390,7 +404,7 @@ class ChildContextOperationTest {
     void childSkipsSuccessCheckpointWhenParentAlreadyCompleted() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
 
-        var parent = new CompletedConcurrencyOperation();
+        var parent = new TestConcurrencyOperation(true);
 
         var serDes =
                 new JacksonSerDes().then(FileSystemSerDesStage.builder(basePath).build());
@@ -418,6 +432,50 @@ class ChildContextOperationTest {
         assertEquals("result", operation.get());
         try (var files = Files.list(basePath)) {
             assertEquals(0, files.count());
+        }
+    }
+
+    @Test
+    void parentCompletionWaitsForReservedChildCheckpointPublication() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
+        var serializationStarted = new CountDownLatch(1);
+        var allowSerialization = new CountDownLatch(1);
+        var blockingStage = new SerDesStage() {
+            @Override
+            public String serialize(String value, SerDesContext context) {
+                serializationStarted.countDown();
+                try {
+                    assertTrue(allowSerialization.await(5, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+                return value;
+            }
+
+            @Override
+            public String deserialize(String data, SerDesContext context) {
+                return data;
+            }
+        };
+        var serDes = new JacksonSerDes()
+                .then(blockingStage)
+                .then(FileSystemSerDesStage.builder(basePath).build());
+        var parent = new TestConcurrencyOperation(false);
+        var operation = createOperationWithParent(ctx -> "result", parent, serDes);
+
+        operation.execute();
+        assertTrue(serializationStarted.await(5, TimeUnit.SECONDS));
+        var stopFuture = CompletableFuture.runAsync(parent::stopAcceptingChildCheckpointsForTest);
+        Thread.sleep(100);
+        assertFalse(stopFuture.isDone());
+
+        allowSerialization.countDown();
+        verify(executionManager, timeout(5000))
+                .sendOperationUpdate(argThat(update -> update.action() == OperationAction.SUCCEED));
+        stopFuture.join();
+        try (var files = Files.list(basePath)) {
+            assertEquals(1, files.count());
         }
     }
 
@@ -460,7 +518,7 @@ class ChildContextOperationTest {
     void childSkipsFailureCheckpointWhenParentAlreadyCompleted() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
 
-        var parent = new CompletedConcurrencyOperation();
+        var parent = new TestConcurrencyOperation(true);
 
         var operation = createOperationWithParent(
                 ctx -> {

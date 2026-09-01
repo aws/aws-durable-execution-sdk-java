@@ -563,6 +563,14 @@ class FileSystemSerDesStageTest {
     }
 
     @Test
+    void largeUnmarkedPayloadPassesThroughWithoutBuildingAnEnvelopeTree() {
+        var stage = FileSystemSerDesStage.builder(basePath).build();
+        var value = "{\"payload\":\"" + "x".repeat(4 * 1024 * 1024) + "\"}";
+
+        assertSame(value, stage.deserialize(value, null));
+    }
+
+    @Test
     void recognizesMalformedFilesystemMarkerRegardlessOfWhitespaceOrFieldOrder() {
         var stage = FileSystemSerDesStage.builder(basePath).build();
         var malformedEnvelopes = List.of(

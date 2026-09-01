@@ -155,13 +155,10 @@ class SerDesPreviewTest {
     }
 
     @Test
-    void stopsTraversalWhenTheNextFieldExceedsTheBudget() {
-        var value = new LinkedHashMap<String, Object>();
-        value.put("first", "one");
-        value.put("oversized", "x".repeat(1024 * 1024));
-        value.put("later", "three");
+    void streamingJsonPreviewStopsBeforeMaterializingAnOversizedField() {
+        var value = "{\"first\":\"one\",\"oversized\":\"" + "x".repeat(4 * 1024 * 1024) + "\",\"later\":\"three\"}";
 
-        var preview = SerDesPreview.buildPreview(
+        var preview = SerDesPreview.buildPreviewFromJson(
                 value,
                 PreviewConfig.builder(PreviewMode.INCLUDE_ALL)
                         .maxPreviewBytes(15)

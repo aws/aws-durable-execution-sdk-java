@@ -2,12 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.serde.filesystem;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,9 +59,14 @@ public final class SerDesPreview {
     public static Map<String, Object> buildPreviewFromJson(String value, PreviewConfig config) {
         Objects.requireNonNull(value, "value cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
-        try {
-            return buildPreview(MAPPER.readTree(value), config);
-        } catch (JsonProcessingException e) {
+        try (var parser = MAPPER.createParser(value)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                return null;
+            }
+            Map<String, Object> result = new LinkedHashMap<>();
+            collectObject(parser, "", config, result);
+            return result.isEmpty() ? null : result;
+        } catch (IOException e) {
             throw new SerDesException("Built-in preview generation requires a JSON stage value", e);
         }
     }
@@ -68,17 +77,162 @@ public final class SerDesPreview {
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
-        collect(root, "", config, result);
+        collectTree(root, "", config, result);
         return result.isEmpty() ? null : result;
     }
 
-    private static boolean collect(JsonNode node, String pathPrefix, PreviewConfig config, Map<String, Object> result) {
+    private static boolean collectObject(
+            JsonParser parser, String pathPrefix, PreviewConfig config, Map<String, Object> result) throws IOException {
+        JsonToken token;
+        while ((token = parser.nextToken()) != null && token != JsonToken.END_OBJECT) {
+            if (token != JsonToken.FIELD_NAME) {
+                throw new IOException("Expected a JSON object field");
+            }
+            var name = parser.currentName();
+            var valueToken = parser.nextToken();
+            if (valueToken == null) {
+                throw new IOException("Unexpected end of JSON object");
+            }
+            if (name.contains(".")) {
+                parser.skipChildren();
+                continue;
+            }
+
+            var path = pathPrefix.isEmpty() ? name : pathPrefix + "." + name;
+            var masked = isMatched(path, config.mask());
+            var excluded = isMatched(path, config.exclude());
+            var visible = !excluded
+                    && (masked || config.mode() == PreviewMode.INCLUDE_ALL || isMatched(path, config.include()));
+
+            if (excluded) {
+                parser.skipChildren();
+                continue;
+            }
+            if (masked) {
+                parser.skipChildren();
+                if (!tryInsert(result, path, config.maskString(), config.maxPreviewBytes())) {
+                    return false;
+                }
+                continue;
+            }
+            if (!visible) {
+                if (!collectDescendants(parser, valueToken, path, config, result)) {
+                    return false;
+                }
+                continue;
+            }
+
+            if (!collectVisibleValue(parser, valueToken, path, config, result)) {
+                return false;
+            }
+        }
+        if (token == null) {
+            throw new IOException("Unexpected end of JSON object");
+        }
+        return true;
+    }
+
+    private static boolean collectVisibleValue(
+            JsonParser parser, JsonToken token, String path, PreviewConfig config, Map<String, Object> result)
+            throws IOException {
+        if (token == JsonToken.START_OBJECT) {
+            return collectObject(parser, path, config, result);
+        }
+        if (token == JsonToken.START_ARRAY) {
+            return collectVisibleArray(parser, path, config, result);
+        }
+        if (token == JsonToken.VALUE_STRING && parser.getTextLength() > config.maxPreviewBytes()) {
+            return false;
+        }
+        return tryInsert(result, path, scalarValue(parser, token), config.maxPreviewBytes());
+    }
+
+    private static boolean collectVisibleArray(
+            JsonParser parser, String path, PreviewConfig config, Map<String, Object> result) throws IOException {
+        var scalarValues = new ArrayList<Object>();
+        var containsContainer = false;
+        JsonToken token;
+        while ((token = parser.nextToken()) != null && token != JsonToken.END_ARRAY) {
+            if (token == JsonToken.START_OBJECT) {
+                containsContainer = true;
+                scalarValues.clear();
+                if (!collectObject(parser, path, config, result)) {
+                    return false;
+                }
+            } else if (token == JsonToken.START_ARRAY) {
+                containsContainer = true;
+                scalarValues.clear();
+                if (!collectDescendantArray(parser, path, config, result)) {
+                    return false;
+                }
+            } else if (!containsContainer) {
+                if (token == JsonToken.VALUE_STRING && parser.getTextLength() > config.maxPreviewBytes()) {
+                    return false;
+                }
+                scalarValues.add(scalarValue(parser, token));
+                if (!fitsCandidate(result, path, scalarValues, config.maxPreviewBytes())) {
+                    return false;
+                }
+            }
+        }
+        if (token == null) {
+            throw new IOException("Unexpected end of JSON array");
+        }
+        if (!containsContainer) {
+            insert(result, path, new ArrayList<>(scalarValues));
+        }
+        return true;
+    }
+
+    private static boolean collectDescendants(
+            JsonParser parser, JsonToken token, String path, PreviewConfig config, Map<String, Object> result)
+            throws IOException {
+        if (token == JsonToken.START_OBJECT) {
+            return collectObject(parser, path, config, result);
+        }
+        if (token == JsonToken.START_ARRAY) {
+            return collectDescendantArray(parser, path, config, result);
+        }
+        return true;
+    }
+
+    private static boolean collectDescendantArray(
+            JsonParser parser, String path, PreviewConfig config, Map<String, Object> result) throws IOException {
+        JsonToken token;
+        while ((token = parser.nextToken()) != null && token != JsonToken.END_ARRAY) {
+            if (token == JsonToken.START_OBJECT) {
+                if (!collectObject(parser, path, config, result)) {
+                    return false;
+                }
+            } else if (token == JsonToken.START_ARRAY && !collectDescendantArray(parser, path, config, result)) {
+                return false;
+            }
+        }
+        if (token == null) {
+            throw new IOException("Unexpected end of JSON array");
+        }
+        return true;
+    }
+
+    private static Object scalarValue(JsonParser parser, JsonToken token) throws IOException {
+        return switch (token) {
+            case VALUE_STRING -> parser.getText();
+            case VALUE_NUMBER_INT, VALUE_NUMBER_FLOAT -> parser.getNumberValue();
+            case VALUE_TRUE -> true;
+            case VALUE_FALSE -> false;
+            case VALUE_NULL -> null;
+            default -> throw new IOException("Unsupported JSON scalar token: " + token);
+        };
+    }
+
+    private static boolean collectTree(
+            JsonNode node, String pathPrefix, PreviewConfig config, Map<String, Object> result) {
         if (node == null || node.isNull()) {
             return true;
         }
         if (node.isArray()) {
             for (var item : node) {
-                if (!collect(item, pathPrefix, config, result)) {
+                if (!collectTree(item, pathPrefix, config, result)) {
                     return false;
                 }
             }
@@ -100,7 +254,7 @@ public final class SerDesPreview {
                     && (masked || config.mode() == PreviewMode.INCLUDE_ALL || isMatched(path, config.include()));
 
             if (!visible) {
-                if (!excluded && !collect(field.getValue(), path, config, result)) {
+                if (!excluded && !collectTree(field.getValue(), path, config, result)) {
                     return false;
                 }
                 continue;
@@ -114,7 +268,7 @@ public final class SerDesPreview {
                     return false;
                 }
             } else if (field.getValue().isContainerNode()) {
-                if (!collect(field.getValue(), path, config, result)) {
+                if (!collectTree(field.getValue(), path, config, result)) {
                     return false;
                 }
             } else {
@@ -127,14 +281,18 @@ public final class SerDesPreview {
     }
 
     private static boolean tryInsert(Map<String, Object> result, String path, Object value, int maxPreviewBytes) {
-        var candidate = copy(result);
-        insert(candidate, path, value);
-        if (serializedSize(candidate) > maxPreviewBytes) {
+        if (!fitsCandidate(result, path, value, maxPreviewBytes)) {
             return false;
         }
         var converted = value instanceof JsonNode node ? MAPPER.convertValue(node, Object.class) : value;
         insert(result, path, converted);
         return true;
+    }
+
+    private static boolean fitsCandidate(Map<String, Object> result, String path, Object value, int maxPreviewBytes) {
+        var candidate = copy(result);
+        insert(candidate, path, value);
+        return serializedSize(candidate) <= maxPreviewBytes;
     }
 
     private static boolean isScalarArray(JsonNode node) {
