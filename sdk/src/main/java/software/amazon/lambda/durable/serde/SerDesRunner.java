@@ -3,7 +3,6 @@
 package software.amazon.lambda.durable.serde;
 
 import java.lang.ref.WeakReference;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collections;
@@ -183,8 +182,13 @@ public final class SerDesRunner {
             return "null";
         }
         try {
-            var digest = MessageDigest.getInstance("SHA-256").digest(data.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest);
+            var digest = MessageDigest.getInstance("SHA-256");
+            for (int index = 0; index < data.length(); index++) {
+                var codeUnit = data.charAt(index);
+                digest.update((byte) (codeUnit >>> 8));
+                digest.update((byte) codeUnit);
+            }
+            return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is unavailable", e);
         }

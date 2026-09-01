@@ -8,13 +8,17 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.exception.SerDesException;
 
@@ -184,6 +188,27 @@ class SerDesPreviewTest {
     }
 
     @Test
+    void streamingPreviewStopsAtOversizedNamesAndNumbers() {
+        var config = PreviewConfig.builder(PreviewMode.INCLUDE_ALL)
+                .maxPreviewBytes(15)
+                .build();
+
+        var oversizedName = SerDesPreview.buildPreviewFromJson(
+                "{\"first\":\"one\",\"" + "n".repeat(1024 * 1024) + "\":\"value\"}", config);
+        var oversizedNumber = SerDesPreview.buildPreviewFromJson(
+                "{\"first\":\"one\",\"number\":" + "9".repeat(1024 * 1024) + "}", config);
+
+        assertEquals(Map.of("first", "one"), oversizedName);
+        assertEquals(Map.of("first", "one"), oversizedNumber);
+    }
+
+    @Test
+    void oversizedStringTokenRemainsBoundedUnderConstrainedHeap() throws Exception {
+        runHeapProbe("json");
+        runHeapProbe("object");
+    }
+
+    @Test
     void returnsNullWhenNoFieldsAreVisibleOrValueIsNotAnObject() {
         var config = PreviewConfig.builder(PreviewMode.EXCLUDE_ALL).build();
 
@@ -234,6 +259,23 @@ class SerDesPreviewTest {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> nested(Map<String, Object> value, String field) {
         return (Map<String, Object>) value.get(field);
+    }
+
+    private static void runHeapProbe(String mode) throws IOException, InterruptedException {
+        var java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        var classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
+        var process = new ProcessBuilder(
+                        java, "-Xmx32m", "-cp", classpath, SerDesPreviewHeapProbe.class.getName(), mode)
+                .redirectErrorStream(true)
+                .start();
+        var finished = process.waitFor(30, TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+        }
+        var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
+        assertTrue(finished, output);
+        assertEquals(0, process.exitValue(), output);
     }
 
     private record TemporalPayload(Instant instant, Duration duration, LocalDateTime localDateTime) {}

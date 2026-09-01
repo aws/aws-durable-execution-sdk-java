@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.serde.filesystem;
 
+import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.core.StreamReadConstraints;
+import com.fasterxml.jackson.core.exc.StreamConstraintsException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,6 +45,9 @@ public final class SerDesPreview {
      */
     public static Map<String, Object> buildPreview(Object value, PreviewConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
+        if (config.maxPreviewBytes() == 0) {
+            return null;
+        }
         var producerFailure = new AtomicReference<Throwable>();
         var input = new PipedInputStream(8 * 1024);
         try {
@@ -61,7 +67,7 @@ public final class SerDesPreview {
             StreamingPreview preview;
             Throwable consumerFailure = null;
             try (input;
-                    var parser = MAPPER.createParser(input)) {
+                    var parser = previewJsonFactory(config).createParser(input)) {
                 preview = collectStreamingPreview(parser, config);
             } catch (Throwable failure) {
                 preview = null;
@@ -95,7 +101,10 @@ public final class SerDesPreview {
     public static Map<String, Object> buildPreviewFromJson(String value, PreviewConfig config) {
         Objects.requireNonNull(value, "value cannot be null");
         Objects.requireNonNull(config, "config cannot be null");
-        try (var parser = MAPPER.createParser(value)) {
+        if (config.maxPreviewBytes() == 0) {
+            return null;
+        }
+        try (var parser = previewJsonFactory(config).createParser(value)) {
             return collectStreamingPreview(parser, config).result();
         } catch (IOException e) {
             throw new SerDesException("Built-in preview generation requires a JSON stage value", e);
@@ -104,12 +113,26 @@ public final class SerDesPreview {
 
     private static StreamingPreview collectStreamingPreview(JsonParser parser, PreviewConfig config)
             throws IOException {
-        if (parser.nextToken() != JsonToken.START_OBJECT) {
-            return new StreamingPreview(null, false);
-        }
         Map<String, Object> result = new LinkedHashMap<>();
-        var fullyConsumed = collectObject(parser, "", config, result);
-        return new StreamingPreview(result.isEmpty() ? null : result, fullyConsumed);
+        try {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                return new StreamingPreview(null, false);
+            }
+            var fullyConsumed = collectObject(parser, "", config, result);
+            return new StreamingPreview(result.isEmpty() ? null : result, fullyConsumed);
+        } catch (StreamConstraintsException e) {
+            return new StreamingPreview(result.isEmpty() ? null : result, false);
+        }
+    }
+
+    private static JsonFactory previewJsonFactory(PreviewConfig config) {
+        var maxTokenLength = config.maxPreviewBytes();
+        var constraints = StreamReadConstraints.builder()
+                .maxStringLength(maxTokenLength)
+                .maxNameLength(maxTokenLength)
+                .maxNumberLength(maxTokenLength)
+                .build();
+        return JsonFactory.builder().streamReadConstraints(constraints).build();
     }
 
     private static void joinProducer(Thread producer) {
@@ -211,9 +234,6 @@ public final class SerDesPreview {
         if (token == JsonToken.START_ARRAY) {
             return collectVisibleArray(parser, path, config, result);
         }
-        if (token == JsonToken.VALUE_STRING && parser.getTextLength() > config.maxPreviewBytes()) {
-            return false;
-        }
         return tryInsert(result, path, scalarValue(parser, token), config.maxPreviewBytes());
     }
 
@@ -236,9 +256,6 @@ public final class SerDesPreview {
                     return false;
                 }
             } else if (!containsContainer) {
-                if (token == JsonToken.VALUE_STRING && parser.getTextLength() > config.maxPreviewBytes()) {
-                    return false;
-                }
                 scalarValues.add(scalarValue(parser, token));
                 if (!fitsCandidate(result, path, scalarValues, config.maxPreviewBytes())) {
                     return false;

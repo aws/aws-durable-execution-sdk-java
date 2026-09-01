@@ -133,6 +133,30 @@ class SerDesRunnerTest {
     }
 
     @Test
+    void cacheKeyDistinguishesUnpairedUtf16Surrogates() {
+        var calls = new AtomicInteger();
+        var serDes = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return value.toString();
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                calls.incrementAndGet();
+                return (T) data;
+            }
+        };
+        var runner = new SerDesRunner(null);
+        var context = context("operation/1/result");
+
+        assertEquals("\uD800", runner.deserialize(serDes, "\uD800", TypeToken.get(String.class), context));
+        assertEquals("\uD801", runner.deserialize(serDes, "\uD801", TypeToken.get(String.class), context));
+        assertEquals(2, calls.get());
+    }
+
+    @Test
     void completedCacheEvictsOldestEntries() {
         var calls = new AtomicInteger();
         var serDes = new SerDes() {
