@@ -122,6 +122,19 @@ class SerDesPreviewTest {
     }
 
     @Test
+    void emptyScalarArraysRespectTheByteBudget() {
+        var value = new LinkedHashMap<String, Object>();
+        value.put("a", List.of());
+        value.put("b", List.of());
+        var config = PreviewConfig.builder(PreviewMode.INCLUDE_ALL)
+                .maxPreviewBytes(8)
+                .build();
+
+        assertEquals(Map.of("a", List.of()), SerDesPreview.buildPreview(value, config));
+        assertEquals(Map.of("a", List.of()), SerDesPreview.buildPreviewFromJson("{\"a\":[],\"b\":[]}", config));
+    }
+
+    @Test
     void customMaskStringAndByteBudgetAreApplied() {
         var value = new LinkedHashMap<String, Object>();
         value.put("first", "one");

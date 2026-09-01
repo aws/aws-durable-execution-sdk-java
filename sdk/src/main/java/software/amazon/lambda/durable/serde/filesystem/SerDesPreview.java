@@ -277,7 +277,9 @@ public final class SerDesPreview {
             throw new IOException("Unexpected end of JSON array");
         }
         if (!containsContainer) {
-            insert(result, path, new ArrayList<>(scalarValues));
+            if (!tryInsert(result, path, new ArrayList<>(scalarValues), config.maxPreviewBytes())) {
+                return false;
+            }
         }
         return true;
     }
