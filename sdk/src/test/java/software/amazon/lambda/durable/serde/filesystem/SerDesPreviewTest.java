@@ -239,6 +239,10 @@ class SerDesPreviewTest {
         assertThrows(
                 SerDesException.class,
                 () -> SerDesPreview.buildPreviewFromJson("{\"id\":\"1\"}{\"secret\":\"value\"}", config));
+        assertThrows(SerDesException.class, () -> SerDesPreview.buildPreviewFromJson("[] {}", config));
+        assertThrows(SerDesException.class, () -> SerDesPreview.buildPreviewFromJson("\"value\" {}", config));
+        assertNull(SerDesPreview.buildPreviewFromJson("[]", config));
+        assertNull(SerDesPreview.buildPreviewFromJson("\"value\"", config));
         assertEquals(
                 Map.of("safe", "value"),
                 SerDesPreview.buildPreviewFromJson("{\"safe\":\"value\",\"not.addressable\":\"secret\"}", config));

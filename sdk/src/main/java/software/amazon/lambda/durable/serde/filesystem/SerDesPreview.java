@@ -115,12 +115,20 @@ public final class SerDesPreview {
             throws IOException {
         Map<String, Object> result = new LinkedHashMap<>();
         try {
-            if (parser.nextToken() != JsonToken.START_OBJECT) {
-                return new StreamingPreview(null, false);
+            var rootToken = parser.nextToken();
+            if (rootToken == null) {
+                throw new IOException("Expected a JSON value");
+            }
+            if (rootToken != JsonToken.START_OBJECT) {
+                parser.skipChildren();
+                if (parser.nextToken() != null) {
+                    throw new IOException("Unexpected trailing content after preview JSON value");
+                }
+                return new StreamingPreview(null, true);
             }
             var fullyConsumed = collectObject(parser, "", config, result);
             if (fullyConsumed && parser.nextToken() != null) {
-                throw new IOException("Unexpected trailing content after preview JSON object");
+                throw new IOException("Unexpected trailing content after preview JSON value");
             }
             return new StreamingPreview(result.isEmpty() ? null : result, fullyConsumed);
         } catch (StreamConstraintsException e) {
