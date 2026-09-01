@@ -12,11 +12,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.config.CompletionConfig;
+import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
@@ -1033,6 +1038,71 @@ class PluginIntegrationTest {
         assertFalse(
                 userFnNames.contains("proc"),
                 "the parallel consumer is orchestration and must not emit a user-function hook");
+    }
+
+    @Test
+    void plugin_operationHooksStayPairedForDiscardedEarlyCompletionBranch() {
+        var plugin = new RecordingPlugin();
+        var losingBranchStarted = new CountDownLatch(1);
+        var releaseLosingBranch = new CountDownLatch(1);
+        var handlerPassedGet = new AtomicBoolean();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    var parallel = context.parallel(
+                            "first-successful",
+                            ParallelConfig.builder()
+                                    .completionConfig(CompletionConfig.firstSuccessful())
+                                    .nestingType(NestingType.NESTED)
+                                    .build());
+                    parallel.branch("loser", String.class, ctx -> {
+                        losingBranchStarted.countDown();
+                        try {
+                            if (!releaseLosingBranch.await(10, TimeUnit.SECONDS)) {
+                                throw new AssertionError("Timed out waiting to release losing branch");
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(e);
+                        }
+                        return "loser";
+                    });
+                    parallel.branch("winner", String.class, ctx -> {
+                        try {
+                            if (!losingBranchStarted.await(5, TimeUnit.SECONDS)) {
+                                throw new AssertionError("Losing branch did not start");
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(e);
+                        }
+                        return "winner";
+                    });
+
+                    parallel.get();
+                    handlerPassedGet.set(true);
+                    releaseLosingBranch.countDown();
+                    return "done";
+                },
+                config);
+
+        try {
+            var result = assertTimeoutPreemptively(Duration.ofSeconds(8), () -> runner.runUntilComplete("input"));
+            assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+            assertTrue(handlerPassedGet.get());
+        } finally {
+            releaseLosingBranch.countDown();
+        }
+
+        var loserStarts = plugin.operationStarts.stream()
+                .filter(info -> "loser".equals(info.name()))
+                .count();
+        var loserEnds = plugin.operationEnds.stream()
+                .filter(info -> "loser".equals(info.name()))
+                .count();
+        assertEquals(1, loserStarts);
+        assertEquals(1, loserEnds);
     }
 
     // ─── Test helper classes ─────────────────────────────────────────────

@@ -178,7 +178,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
     private void completeWithoutSuccessCheckpoint(T result) {
         cachedOperationResult.set(DeserializedOperationResult.succeeded(result));
-        if (isVirtual) {
+        if (!replayCompletedOperation.get()) {
             fireOnOperationEnd(null, null, false);
         }
         markAlreadyCompleted();
@@ -237,7 +237,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     private void completeWithoutFailureCheckpoint(Throwable exception) {
         var errorObject = serializeFailure(exception, false);
         cacheFailure(errorObject);
-        if (isVirtual) {
+        if (!replayCompletedOperation.get()) {
             fireOnOperationEnd(null, exception, false);
         }
         markAlreadyCompleted();

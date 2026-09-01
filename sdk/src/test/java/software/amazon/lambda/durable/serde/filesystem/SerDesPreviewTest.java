@@ -236,6 +236,9 @@ class SerDesPreviewTest {
         var config = PreviewConfig.builder(PreviewMode.INCLUDE_ALL).build();
 
         assertThrows(SerDesException.class, () -> SerDesPreview.buildPreviewFromJson("not-json", config));
+        assertThrows(
+                SerDesException.class,
+                () -> SerDesPreview.buildPreviewFromJson("{\"id\":\"1\"}{\"secret\":\"value\"}", config));
         assertEquals(
                 Map.of("safe", "value"),
                 SerDesPreview.buildPreviewFromJson("{\"safe\":\"value\",\"not.addressable\":\"secret\"}", config));

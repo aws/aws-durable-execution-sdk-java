@@ -119,6 +119,9 @@ public final class SerDesPreview {
                 return new StreamingPreview(null, false);
             }
             var fullyConsumed = collectObject(parser, "", config, result);
+            if (fullyConsumed && parser.nextToken() != null) {
+                throw new IOException("Unexpected trailing content after preview JSON object");
+            }
             return new StreamingPreview(result.isEmpty() ? null : result, fullyConsumed);
         } catch (StreamConstraintsException e) {
             return new StreamingPreview(result.isEmpty() ? null : result, false);
