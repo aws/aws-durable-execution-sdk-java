@@ -10,12 +10,15 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
 
 class LocalDurableTestRunnerTest {
 
@@ -113,5 +116,30 @@ class LocalDurableTestRunnerTest {
         assertEquals(2, executionStartTimes.size());
         assertNotNull(executionStartTimes.get(0));
         assertEquals(executionStartTimes.get(0), executionStartTimes.get(1));
+    }
+
+    @Test
+    void resultAndOperationInspectionUseDurableSerDesContext() {
+        var contexts = new CopyOnWriteArrayList<SerDesContext>();
+        var serDes = new JacksonSerDes() {
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                if (SerDesContext.getCurrentContext() != null) {
+                    contexts.add(SerDesContext.getCurrentContext());
+                }
+                return super.deserialize(data, typeToken);
+            }
+        };
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step("step", String.class, stepContext -> input),
+                DurableConfig.builder().withSerDes(serDes).build());
+
+        var result = runner.run("value");
+        result.getResult(String.class);
+        result.getOperation("step").getStepResult(String.class);
+
+        assertTrue(contexts.stream().allMatch(context -> context.durableExecutionArn() != null));
+        assertTrue(contexts.stream().map(SerDesContext::entityId).distinct().count() >= 2);
     }
 }

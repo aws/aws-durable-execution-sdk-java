@@ -108,6 +108,9 @@ Do not use Lambda's `/tmp` directory: replay can run in another execution enviro
 as EFS. S3 Files users must account for synchronization and crash-durability behavior. A chained-invoke boundary only
 requires shared storage and compatible filesystem configuration when that boundary explicitly uses `FileSystemSerDes`.
 
+See [Serialization and Filesystem Storage](serdes.md) for envelope details, structured previews, retry configuration,
+testing behavior, and operational guidance.
+
 ### Dynamic plugin loading
 
 Dynamic plugin loading is an opt-in alternative to registering plugins in application code. Put provider JARs on the application class path, then set `DURABLE_EXECUTION_PLUGINS` to an ordered, comma-separated list of provider names:

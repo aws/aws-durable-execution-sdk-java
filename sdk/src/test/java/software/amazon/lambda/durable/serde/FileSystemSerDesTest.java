@@ -19,6 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 
 class FileSystemSerDesTest {
@@ -147,8 +148,25 @@ class FileSystemSerDesTest {
         var file = Path.of(node.get("file").textValue());
 
         assertEquals(64, tempDir.relativize(file).getName(0).toString().length());
-        assertTrue(file.getFileName().toString().matches("[0-9a-f]{64}-[0-9a-f]{64}\\.json"));
+        assertTrue(file.getFileName().toString().matches("[0-9a-f]{64}-[0-9a-f]{64}-[0-9a-f-]{36}\\.json"));
         assertEquals("preview", node.get("preview").get("summary").textValue());
+    }
+
+    @Test
+    void repeatedPayloadsUseDistinctImmutableFiles() throws Exception {
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var context = new SerDesContext(realisticArn(), "1");
+
+        var first = Path.of(MAPPER.readTree(runner.serialize(serDes, "value", context))
+                .get("file")
+                .textValue());
+        var second = Path.of(MAPPER.readTree(runner.serialize(serDes, "value", context))
+                .get("file")
+                .textValue());
+
+        assertFalse(first.equals(second));
+        assertEquals("\"value\"", Files.readString(first));
+        assertEquals("\"value\"", Files.readString(second));
     }
 
     @Test
@@ -222,6 +240,16 @@ class FileSystemSerDesTest {
                 () -> serDes.deserialize(
                         "{\"__durable_execution_filesystem_serdes\":1,\"data\":\"x\",\"file\":\"y\"}",
                         TypeToken.get(String.class)));
+    }
+
+    @Test
+    void missingPayloadFileIsRetryable() throws Exception {
+        var missing = tempDir.resolve("missing.json");
+        var envelope = MAPPER.writeValueAsString(Map.of(
+                "__durable_execution_filesystem_serdes", 1, "file", missing.toString(), "sha256", "0".repeat(64)));
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+
+        assertThrows(RetryableSerDesException.class, () -> serDes.deserialize(envelope, TypeToken.get(String.class)));
     }
 
     @Test

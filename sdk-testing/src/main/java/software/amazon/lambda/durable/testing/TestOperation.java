@@ -19,21 +19,36 @@ import software.amazon.awssdk.services.lambda.model.WaitDetails;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 
 /** Wrapper for AWS SDK Operation providing convenient access methods. */
 public class TestOperation {
     private final Operation operation;
     private final List<Event> events;
     private final SerDes serDes;
+    private final SerDesRunner serDesRunner;
+    private final String durableExecutionArn;
 
     public TestOperation(Operation operation, SerDes serDes) {
         this(operation, List.of(), serDes);
     }
 
     public TestOperation(Operation operation, List<Event> events, SerDes serDes) {
+        this(operation, events, serDes, null, null);
+    }
+
+    public TestOperation(
+            Operation operation,
+            List<Event> events,
+            SerDes serDes,
+            SerDesRunner serDesRunner,
+            String durableExecutionArn) {
         this.operation = operation;
         this.events = events;
         this.serDes = serDes;
+        this.serDesRunner = serDesRunner;
+        this.durableExecutionArn = durableExecutionArn;
     }
 
     /** Returns the raw history events associated with this operation. */
@@ -119,7 +134,10 @@ public class TestOperation {
         if (details == null || details.result() == null) {
             return null;
         }
-        return serDes.deserialize(details.result(), type);
+        return serDesRunner == null
+                ? serDes.deserialize(details.result(), type)
+                : serDesRunner.deserialize(
+                        serDes, details.result(), type, new SerDesContext(durableExecutionArn, operation.id()));
     }
 
     /** Returns the step error, or null if the step succeeded or this is not a step operation. */

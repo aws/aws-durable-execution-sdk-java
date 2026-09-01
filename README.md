@@ -111,6 +111,7 @@ See [Deploy Lambda durable functions with Infrastructure as Code](https://docs.a
 **Advanced Topics**
 
 - [<u>Configuration</u>](docs/advanced/configuration.md) - Customize SDK behaviour
+- [<u>Serialization</u>](docs/advanced/serdes.md) - Custom SerDes, filesystem storage, previews, retries, and caching
 - [<u>Error Handling</u>](docs/advanced/error-handling.md) - SDK exceptions for handling failures
 - [<u>Logging</u>](docs/advanced/logging.md) - How to use DurableLogger
 - [<u>Migrating from 1.x to 2.x</u>](docs/migration-1.x-to-2.x.md) - Upgrade guide for breaking changes since `v1.2.1`

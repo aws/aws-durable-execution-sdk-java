@@ -23,6 +23,7 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 import software.amazon.lambda.durable.testing.local.OperationResult;
 
@@ -47,6 +48,9 @@ public class LocalDurableTestRunner<I, O> {
     // operation ID stay stable across reinvocations, while only per-invocation values (the checkpoint token) change.
     private final String executionName = UUID.randomUUID().toString();
     private final String executionOperationId = UUID.randomUUID().toString();
+    private final String executionArn = String.format(
+            "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/%s/%s",
+            executionName, executionOperationId);
 
     private LocalDurableTestRunner(
             TypeToken<I> inputType,
@@ -246,11 +250,12 @@ public class LocalDurableTestRunner<I, O> {
 
     /** Run a single invocation (may return PENDING if waiting/retrying). */
     public TestResult<O> run(I input) {
+        var serDesRunner = new SerDesRunner(customerConfig.getSerDesExecutorService());
         var durableInput = createDurableInput(input);
 
         var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, customerConfig);
 
-        return storage.toTestResult(output, outputType, serDes);
+        return storage.toTestResult(output, outputType, serDes, serDesRunner, executionArn, executionOperationId);
     }
 
     /**
@@ -289,7 +294,14 @@ public class LocalDurableTestRunner<I, O> {
     /** Returns the {@link TestOperation} for the given operation name, or null if not found. */
     public TestOperation getOperation(String name) {
         var op = storage.getOperationByName(name);
-        return op != null ? new TestOperation(op, serDes) : null;
+        return op != null
+                ? new TestOperation(
+                        op,
+                        List.of(),
+                        serDes,
+                        new SerDesRunner(customerConfig.getSerDesExecutorService()),
+                        executionArn)
+                : null;
     }
 
     /** Get callback ID for a named callback operation. */
@@ -340,9 +352,6 @@ public class LocalDurableTestRunner<I, O> {
     private DurableExecutionInput createDurableInput(I input) {
         // The last ARN segment must equal the EXECUTION operation ID (ExecutionManager parses the ARN to find it), and
         // both are stable across reinvocations so the execution keeps one identity — and one derived trace ID.
-        var executionArn = String.format(
-                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/%s/%s",
-                executionName, executionOperationId);
         var inputJson = serDes.serialize(input);
 
         // The list must contain exactly one EXECUTION operation, matching the backend, which keeps a single EXECUTION

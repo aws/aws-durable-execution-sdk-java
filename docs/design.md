@@ -351,6 +351,7 @@ software.amazon.lambda.durable
 │   ├── JacksonSerDes         # Jackson impl
 │   ├── FileSystemSerDes      # Shared-filesystem payload storage
 │   ├── PreviewConfig         # Structured preview selection and byte budget
+│   ├── RetrySerDes           # RetryableSerDesException decorator
 │   ├── SerDesPreview         # Structured preview builder
 │   ├── SerDesContext         # Thread-local durable payload identity
 │   ├── SerDesRunner          # Executor dispatch + invocation cache
@@ -377,7 +378,8 @@ software.amazon.lambda.durable
     ├── ChildContextFailedException
     ├── MapIterationFailedException
     ├── ParallelBranchFailedException
-    └── SerDesException
+    ├── SerDesException
+    └── RetryableSerDesException
 ```
 
 ---

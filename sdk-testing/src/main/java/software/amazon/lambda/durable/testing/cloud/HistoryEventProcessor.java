@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.testing.cloud;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
@@ -16,8 +17,10 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.AsyncExecution;
 import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
 import software.amazon.lambda.durable.testing.TestOperation;
@@ -37,11 +40,27 @@ public class HistoryEventProcessor {
      * @return a TestResult containing the execution status, output, and operation details
      */
     public <O> TestResult<O> processEvents(List<Event> events, TypeToken<O> outputType, SerDes serDes) {
+        return processEvents(events, outputType, serDes, null, null);
+    }
+
+    /**
+     * Processes history with SDK-managed SerDes context for result and operation inspection.
+     *
+     * @param serDesRunner runner used for deserialization, or {@code null} for direct SerDes calls
+     * @param durableExecutionArn ARN for the execution, required when {@code serDesRunner} is provided
+     */
+    public <O> TestResult<O> processEvents(
+            List<Event> events,
+            TypeToken<O> outputType,
+            SerDes serDes,
+            SerDesRunner serDesRunner,
+            String durableExecutionArn) {
         var operations = new HashMap<String, Operation>();
         var operationEvents = new HashMap<String, List<Event>>();
         var status = ExecutionStatus.PENDING;
         String result = null;
         ErrorObject error = null;
+        String executionOperationId = executionOperationId(durableExecutionArn);
 
         for (var event : events) {
             var eventType = event.eventType();
@@ -56,7 +75,9 @@ public class HistoryEventProcessor {
 
             switch (eventType) {
                 case EXECUTION_STARTED -> {
-                    // Execution started - no action needed, just track the event
+                    if (operationId != null) {
+                        executionOperationId = operationId;
+                    }
                 }
                 case INVOCATION_COMPLETED -> {
                     var details = event.invocationCompletedDetails();
@@ -111,7 +132,14 @@ public class HistoryEventProcessor {
                     if (operationId != null) {
                         operations.putIfAbsent(
                                 operationId,
-                                createStepOperation(operationId, event.name(), null, OperationStatus.STARTED, 1));
+                                createStepOperation(
+                                        operationId,
+                                        event.name(),
+                                        event.parentId(),
+                                        event.subType(),
+                                        null,
+                                        OperationStatus.STARTED,
+                                        1));
                     }
                 }
                 case STEP_SUCCEEDED -> {
@@ -126,7 +154,13 @@ public class HistoryEventProcessor {
                         operations.put(
                                 operationId,
                                 createStepOperation(
-                                        operationId, event.name(), stepResult, OperationStatus.SUCCEEDED, attempt));
+                                        operationId,
+                                        event.name(),
+                                        event.parentId(),
+                                        event.subType(),
+                                        stepResult,
+                                        OperationStatus.SUCCEEDED,
+                                        attempt));
                     }
                 }
                 case STEP_FAILED -> {
@@ -137,7 +171,14 @@ public class HistoryEventProcessor {
                                 : 1;
                         operations.put(
                                 operationId,
-                                createStepOperation(operationId, event.name(), null, OperationStatus.FAILED, attempt));
+                                createStepOperation(
+                                        operationId,
+                                        event.name(),
+                                        event.parentId(),
+                                        event.subType(),
+                                        null,
+                                        OperationStatus.FAILED,
+                                        attempt));
                     }
                 }
 
@@ -224,7 +265,12 @@ public class HistoryEventProcessor {
                         CHAINED_INVOKE_TIMED_OUT,
                         CHAINED_INVOKE_STOPPED -> {
                     if (operationId != null) {
-                        operations.putIfAbsent(operationId, createInvokeOperation(operationId, event));
+                        if (eventType
+                                == software.amazon.awssdk.services.lambda.model.EventType.CHAINED_INVOKE_STARTED) {
+                            operations.putIfAbsent(operationId, createInvokeOperation(operationId, event));
+                        } else {
+                            operations.put(operationId, createInvokeOperation(operationId, event));
+                        }
                     }
                 }
 
@@ -236,14 +282,58 @@ public class HistoryEventProcessor {
         var testOperations = new ArrayList<TestOperation>();
         for (var entry : operations.entrySet()) {
             var opEvents = operationEvents.getOrDefault(entry.getKey(), List.of());
-            testOperations.add(new TestOperation(entry.getValue(), opEvents, serDes));
+            var operation = withEventTimestamps(entry.getValue(), opEvents);
+            testOperations.add(new TestOperation(operation, opEvents, serDes, serDesRunner, durableExecutionArn));
         }
 
-        return new TestResult<>(status, result, error, testOperations, events, outputType, serDes);
+        return new TestResult<>(
+                status,
+                result,
+                error,
+                testOperations,
+                events,
+                outputType,
+                serDes,
+                serDesRunner,
+                durableExecutionArn,
+                executionOperationId);
+    }
+
+    private Operation withEventTimestamps(Operation operation, List<Event> events) {
+        var startTimestamp = events.stream()
+                .map(Event::eventTimestamp)
+                .filter(Objects::nonNull)
+                .min(java.time.Instant::compareTo)
+                .orElse(operation.startTimestamp());
+        var endTimestamp = ExecutionManager.isTerminalStatus(operation.status())
+                ? events.stream()
+                        .map(Event::eventTimestamp)
+                        .filter(Objects::nonNull)
+                        .max(java.time.Instant::compareTo)
+                        .orElse(operation.endTimestamp())
+                : operation.endTimestamp();
+        return operation.toBuilder()
+                .startTimestamp(startTimestamp)
+                .endTimestamp(endTimestamp)
+                .build();
+    }
+
+    private static String executionOperationId(String durableExecutionArn) {
+        if (durableExecutionArn == null) {
+            return null;
+        }
+        var separator = durableExecutionArn.lastIndexOf('/');
+        return separator >= 0 ? durableExecutionArn.substring(separator + 1) : durableExecutionArn;
     }
 
     private Operation createStepOperation(
-            String id, String name, String stepResult, OperationStatus status, Integer attempt) {
+            String id,
+            String name,
+            String parentId,
+            String subType,
+            String stepResult,
+            OperationStatus status,
+            Integer attempt) {
         var stepDetails = StepDetails.builder()
                 .result(stepResult)
                 .attempt(attempt != null ? attempt : 1)
@@ -252,8 +342,10 @@ public class HistoryEventProcessor {
         return Operation.builder()
                 .id(id)
                 .name(name)
+                .parentId(parentId)
                 .status(status)
                 .type(OperationType.STEP)
+                .subType(subType)
                 .stepDetails(stepDetails)
                 .build();
     }
@@ -267,8 +359,10 @@ public class HistoryEventProcessor {
         return Operation.builder()
                 .id(id)
                 .name(name)
+                .parentId(event.parentId())
                 .status(status)
                 .type(OperationType.WAIT)
+                .subType(event.subType())
                 .waitDetails(builder.build())
                 .build();
     }
@@ -302,8 +396,10 @@ public class HistoryEventProcessor {
         return Operation.builder()
                 .id(id)
                 .name(name)
+                .parentId(event.parentId())
                 .status(status)
                 .type(OperationType.CALLBACK)
+                .subType(event.subType())
                 .callbackDetails(builder.build())
                 .build();
     }
@@ -315,7 +411,7 @@ public class HistoryEventProcessor {
                 switch (event.eventType()) {
                     case CHAINED_INVOKE_STARTED -> OperationStatus.STARTED;
                     case CHAINED_INVOKE_SUCCEEDED -> {
-                        var details = event.callbackSucceededDetails();
+                        var details = event.chainedInvokeSucceededDetails();
                         if (details != null
                                 && details.result() != null
                                 && details.result().payload() != null) {
@@ -324,7 +420,7 @@ public class HistoryEventProcessor {
                         yield OperationStatus.SUCCEEDED;
                     }
                     case CHAINED_INVOKE_FAILED -> {
-                        var details = event.callbackFailedDetails();
+                        var details = event.chainedInvokeFailedDetails();
                         if (details != null
                                 && details.error() != null
                                 && details.error().payload() != null) {
@@ -359,8 +455,10 @@ public class HistoryEventProcessor {
         return Operation.builder()
                 .id(id)
                 .name(event.name())
+                .parentId(event.parentId())
                 .status(status)
                 .type(OperationType.CHAINED_INVOKE)
+                .subType(event.subType())
                 .chainedInvokeDetails(builder.build())
                 .build();
     }
@@ -383,6 +481,7 @@ public class HistoryEventProcessor {
         return Operation.builder()
                 .id(id)
                 .name(name)
+                .parentId(event.parentId())
                 .status(status)
                 .type(OperationType.CONTEXT)
                 .subType(event.subType())

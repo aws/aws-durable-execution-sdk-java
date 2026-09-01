@@ -130,6 +130,12 @@ with filesystem storage.
 Structured previews support include-all/exclude-all modes, include/exclude/mask selectors, anywhere or exact-path
 matching, custom mask text, and a default 4 KiB preview budget. Custom preview callbacks remain available.
 
+### Retry transient failures
+
+Filesystem `IOException`s are surfaced as `RetryableSerDesException`. `RetrySerDes` decorates any `SerDes` and applies
+an existing `RetryStrategy` only to retryable failures. Permanent `SerDesException` failures propagate immediately.
+Retry delays run inline or on the configured SerDes executor.
+
 ### Envelope and file publication
 
 Java writes versioned envelopes:
@@ -143,9 +149,10 @@ Java writes versioned envelopes:
 Only envelopes containing the reserved version marker are interpreted as filesystem payloads. Unmarked JSON, including
 objects with `data` or `file` fields, is passed to the delegate SerDes unchanged.
 
-File names include the entity ID and serialized-payload digest. Files are created with `CREATE_NEW`; an existing file is
-accepted only when its contents match. This prevents a later retry from overwriting data referenced by an earlier
-checkpoint. Deserialization rejects paths outside the configured base directory and verifies the digest when present.
+File names include the entity ID, serialized-payload digest, and a unique suffix. Files are created with `CREATE_NEW`,
+and failed writes are removed before the retryable failure is propagated. This prevents a later serialization from
+overwriting data referenced by an earlier checkpoint. Deserialization rejects paths outside the configured base
+directory and verifies the digest.
 
 ### Initial invocation input
 
@@ -156,6 +163,10 @@ remains ordinary delegate JSON.
 After the invocation starts, the SDK routes root input deserialization, operation payloads, exceptions, and root output
 through `SerDesRunner`. A chained-invoke boundary requires compatible filesystem configuration and shared storage only
 when that boundary explicitly selects `FileSystemSerDes`.
+
+Local and cloud test utilities propagate `SerDesRunner` and durable payload contexts through result deserialization,
+operation inspection, history processing, and asynchronous snapshots. Local runner invocations and cloud history
+snapshots receive separate caches.
 
 ## Consequences
 

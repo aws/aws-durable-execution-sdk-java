@@ -8,8 +8,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -18,9 +18,12 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
 
 /**
@@ -187,7 +190,7 @@ public final class FileSystemSerDes implements SerDes {
 
     private Path payloadPath(SerDesContext context, String digest) {
         var directory = executionDirectory(context.durableExecutionArn());
-        var fileName = encode(context.entityId()) + "-" + digest + ".json";
+        var fileName = encode(context.entityId()) + "-" + digest + "-" + UUID.randomUUID() + ".json";
         var file = directory.resolve(fileName).toAbsolutePath().normalize();
         if (!file.startsWith(basePath)) {
             throw new SerDesException("Filesystem SerDes path escapes the configured base path");
@@ -215,21 +218,26 @@ public final class FileSystemSerDes implements SerDes {
             if (!realParent.startsWith(realBase)) {
                 throw new SerDesException("Filesystem SerDes path resolves outside the configured base path");
             }
-            try {
-                Files.writeString(
-                        file,
-                        serialized,
-                        StandardCharsets.UTF_8,
-                        StandardOpenOption.CREATE_NEW,
-                        StandardOpenOption.WRITE);
-            } catch (FileAlreadyExistsException e) {
-                var existing = readPayload(file.toString());
-                if (!existing.equals(serialized)) {
-                    throw new SerDesException("Filesystem SerDes payload file already exists with different content");
+            var created = false;
+            try (var channel =
+                    Files.newByteChannel(file, Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE))) {
+                created = true;
+                var buffer = ByteBuffer.wrap(serialized.getBytes(StandardCharsets.UTF_8));
+                while (buffer.hasRemaining()) {
+                    channel.write(buffer);
                 }
+            } catch (IOException failure) {
+                if (created) {
+                    try {
+                        Files.deleteIfExists(file);
+                    } catch (IOException cleanupFailure) {
+                        failure.addSuppressed(cleanupFailure);
+                    }
+                }
+                throw failure;
             }
         } catch (IOException e) {
-            throw new SerDesException("Failed to store filesystem SerDes payload", e);
+            throw new RetryableSerDesException("Failed to store filesystem SerDes payload", e);
         }
     }
 
@@ -246,7 +254,7 @@ public final class FileSystemSerDes implements SerDes {
             }
             return Files.readString(realFile, StandardCharsets.UTF_8);
         } catch (IOException e) {
-            throw new SerDesException("Failed to load filesystem SerDes payload", e);
+            throw new RetryableSerDesException("Failed to load filesystem SerDes payload", e);
         }
     }
 

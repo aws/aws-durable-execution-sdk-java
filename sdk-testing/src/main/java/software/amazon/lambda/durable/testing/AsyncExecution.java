@@ -16,6 +16,7 @@ import software.amazon.awssdk.services.lambda.model.ResourceNotFoundException;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.cloud.HistoryEventProcessor;
 
 /**
@@ -195,7 +196,8 @@ public class AsyncExecution<O> {
                     .build();
             var response = lambdaClient.getDurableExecutionHistory(request);
             this.currentHistory = response.events();
-            this.currentResult = processor.processEvents(currentHistory, outputType, serDes);
+            this.currentResult =
+                    processor.processEvents(currentHistory, outputType, serDes, new SerDesRunner(null), executionArn);
         } catch (ResourceNotFoundException e) {
             // Execution doesn't exist yet - this can happen immediately after async invoke
             // Leave currentHistory as null, pollUntil will retry

@@ -12,6 +12,7 @@ import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesRunner;
 import software.amazon.lambda.durable.testing.cloud.HistoryEventProcessor;
 import software.amazon.lambda.durable.testing.cloud.HistoryPoller;
 
@@ -161,7 +162,7 @@ public class CloudDurableTestRunner<I, O> {
 
             // Process events into TestResult
             var processor = new HistoryEventProcessor();
-            var result = processor.processEvents(events, outputType, serDes);
+            var result = processor.processEvents(events, outputType, serDes, new SerDesRunner(null), executionArn);
             this.lastResult = result;
             return result;
         } catch (Exception e) {
