@@ -367,6 +367,38 @@ class WaitForConditionOperationTest {
         assertEquals(42, receivedState.get(), "Should use initialState when checkpoint data is null");
     }
 
+    // ===== start() SerDes round-trip =====
+
+    @Test
+    void startNormalizesInitialStateThroughSerDes() throws Exception {
+        var mockSerDes = mock(software.amazon.lambda.durable.serde.SerDes.class);
+        when(mockSerDes.serialize(42)).thenReturn("42-normalized");
+        when(mockSerDes.deserialize(eq("42-normalized"), any())).thenReturn(99);
+
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
+
+        var receivedState = new java.util.concurrent.atomic.AtomicInteger(-1);
+        var config = WaitForConditionConfig.<Integer>builder()
+                .serDes(mockSerDes)
+                .initialState(42)
+                .build();
+        var operation = createOperation(
+                (state, ctx) -> {
+                    receivedState.set(state);
+                    return WaitForConditionResult.stopPolling(state);
+                },
+                config);
+
+        operation.execute();
+
+        Thread.sleep(200);
+        assertEquals(
+                99,
+                receivedState.get(),
+                "start() should round-trip initialState through SerDes before the first check, "
+                        + "the same way resumeCheckLoop deserializes state from a checkpoint");
+    }
+
     // ===== resumeCheckLoop checkpoint deserialize exception =====
 
     @Test
