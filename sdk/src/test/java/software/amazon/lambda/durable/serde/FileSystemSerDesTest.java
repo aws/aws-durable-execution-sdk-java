@@ -8,7 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -250,6 +252,90 @@ class FileSystemSerDesTest {
         var serDes = FileSystemSerDes.builder(tempDir).build();
 
         assertThrows(RetryableSerDesException.class, () -> serDes.deserialize(envelope, TypeToken.get(String.class)));
+    }
+
+    @Test
+    void failsClosedWhenProviderLacksSecureDirectoryStreams() throws Exception {
+        var archive = tempDir.resolve("payloads.zip");
+        try (var fileSystem =
+                FileSystems.newFileSystem(URI.create("jar:" + archive.toUri()), Map.of("create", "true"))) {
+            var serDes =
+                    FileSystemSerDes.builder(fileSystem.getPath("/payloads")).build();
+
+            var failure = assertThrows(
+                    SerDesException.class,
+                    () -> runner.serialize(serDes, "value", new SerDesContext(realisticArn(), "1")));
+
+            assertTrue(failure.getMessage().contains("SecureDirectoryStream support"));
+        }
+    }
+
+    @Test
+    void rejectsSymbolicLinkDirectoryWhenWriting() throws Exception {
+        var outside = Files.createTempDirectory(tempDir.getParent(), "outside-payloads-");
+        Files.createSymbolicLink(tempDir.resolve("test"), outside);
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+
+        assertThrows(
+                SerDesException.class, () -> runner.serialize(serDes, "value", new SerDesContext(realisticArn(), "1")));
+        try (var files = Files.list(outside)) {
+            assertEquals(0, files.count());
+        }
+    }
+
+    @Test
+    void rejectsSymbolicLinkDirectoryWhenReading() throws Exception {
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var context = new SerDesContext(realisticArn(), "1");
+        var envelope = runner.serialize(serDes, "value", context);
+        var executionDirectory = tempDir.resolve("test");
+        var outside = Files.createTempDirectory(tempDir.getParent(), "outside-payloads-");
+        var movedDirectory = outside.resolve("test");
+        Files.move(executionDirectory, movedDirectory);
+        Files.createSymbolicLink(executionDirectory, movedDirectory);
+
+        assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(serDes, envelope, TypeToken.get(String.class), context));
+    }
+
+    @Test
+    void rejectsSymbolicLinkPayloadFile() throws Exception {
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var context = new SerDesContext(realisticArn(), "1");
+        var envelope = runner.serialize(serDes, "value", context);
+        var file = Path.of(MAPPER.readTree(envelope).get("file").textValue());
+        var outside = Files.createTempFile(tempDir.getParent(), "outside-payload-", ".json");
+        Files.writeString(outside, "\"value\"");
+        Files.delete(file);
+        Files.createSymbolicLink(file, outside);
+
+        assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(serDes, envelope, TypeToken.get(String.class), context));
+    }
+
+    @Test
+    void rejectsSymbolicLinkConfiguredBasePathAndAncestors() throws Exception {
+        var outsideRoot = Files.createTempDirectory(tempDir.getParent(), "outside-root-");
+        var linkedRoot = tempDir.resolve("linked-root");
+        Files.createSymbolicLink(linkedRoot, outsideRoot);
+        var rootSerDes = FileSystemSerDes.builder(linkedRoot).build();
+
+        assertThrows(
+                SerDesException.class,
+                () -> runner.serialize(rootSerDes, "value", new SerDesContext(realisticArn(), "1")));
+
+        var outsideAncestor = Files.createTempDirectory(tempDir.getParent(), "outside-ancestor-");
+        var linkedAncestor = tempDir.resolve("linked-ancestor");
+        Files.createSymbolicLink(linkedAncestor, outsideAncestor);
+        var nestedSerDes =
+                FileSystemSerDes.builder(linkedAncestor.resolve("payloads")).build();
+
+        assertThrows(
+                SerDesException.class,
+                () -> runner.serialize(nestedSerDes, "value", new SerDesContext(realisticArn(), "1")));
+        assertFalse(Files.exists(outsideAncestor.resolve("payloads")));
     }
 
     @Test

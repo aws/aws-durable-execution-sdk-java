@@ -154,6 +154,10 @@ and failed writes are removed before the retryable failure is propagated. This p
 overwriting data referenced by an earlier checkpoint. Deserialization rejects paths outside the configured base
 directory and verifies the digest.
 
+The filesystem provider must support `SecureDirectoryStream`. Directory components are opened relative to held parent
+handles with symbolic-link following disabled, and file reads/writes use `NOFOLLOW_LINKS`. Providers without secure
+directory streams fail closed.
+
 ### Initial invocation input
 
 The durable execution ARN does not exist when a caller serializes the initial Lambda input. Therefore,
@@ -192,6 +196,7 @@ Negative:
 - Do not use Lambda's ephemeral `/tmp` directory. Replay may run in another execution environment.
 - Use a shared durable mount such as EFS.
 - S3 Files users must accept its synchronization and crash-durability characteristics.
+- Verify that the mounted Java filesystem provider supports `SecureDirectoryStream`.
 - Configure lifecycle cleanup separately; the SDK does not delete persisted payload files.
 
 ## Alternatives Rejected

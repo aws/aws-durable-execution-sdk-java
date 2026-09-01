@@ -9,13 +9,22 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.SecureDirectoryStream;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -32,6 +41,9 @@ import software.amazon.lambda.durable.exception.SerDesException;
  * <p>Do not use Lambda's ephemeral {@code /tmp} storage. The base path must be available to every execution environment
  * that can serialize or deserialize the payload, such as an EFS mount or an S3 Files mount whose synchronization
  * tradeoffs are acceptable for the workload.
+ *
+ * <p>The filesystem provider must support {@link SecureDirectoryStream}. Directory components are traversed relative to
+ * held parent handles with symbolic-link following disabled, and file I/O uses {@link LinkOption#NOFOLLOW_LINKS}.
  *
  * <p>Initial invocation input is serialized normally when no {@link SerDesContext} is available, because the durable
  * execution ARN does not exist until after invocation starts. SDK-managed operation and output payloads are processed
@@ -212,29 +224,33 @@ public final class FileSystemSerDes implements SerDes {
 
     private void writePayload(Path file, String serialized) {
         try {
-            Files.createDirectories(file.getParent());
-            var realBase = basePath.toRealPath();
-            var realParent = file.getParent().toRealPath();
-            if (!realParent.startsWith(realBase)) {
-                throw new SerDesException("Filesystem SerDes path resolves outside the configured base path");
-            }
-            var created = false;
-            try (var channel =
-                    Files.newByteChannel(file, Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE))) {
-                created = true;
-                var buffer = ByteBuffer.wrap(serialized.getBytes(StandardCharsets.UTF_8));
-                while (buffer.hasRemaining()) {
-                    channel.write(buffer);
-                }
-            } catch (IOException failure) {
-                if (created) {
-                    try {
-                        Files.deleteIfExists(file);
-                    } catch (IOException cleanupFailure) {
-                        failure.addSuppressed(cleanupFailure);
+            try (var secureDirectory = openSecureDirectory(file.getParent(), true)) {
+                var created = false;
+                try (var channel = secureDirectory
+                        .directory()
+                        .newByteChannel(
+                                file.getFileName(),
+                                Set.of(
+                                        StandardOpenOption.CREATE_NEW,
+                                        StandardOpenOption.WRITE,
+                                        LinkOption.NOFOLLOW_LINKS))) {
+                    created = true;
+                    var buffer = ByteBuffer.wrap(serialized.getBytes(StandardCharsets.UTF_8));
+                    while (buffer.hasRemaining()) {
+                        channel.write(buffer);
                     }
+                } catch (FileAlreadyExistsException failure) {
+                    throw failure;
+                } catch (IOException failure) {
+                    if (created) {
+                        try {
+                            secureDirectory.directory().deleteFile(file.getFileName());
+                        } catch (IOException cleanupFailure) {
+                            failure.addSuppressed(cleanupFailure);
+                        }
+                    }
+                    throw failure;
                 }
-                throw failure;
             }
         } catch (IOException e) {
             throw new RetryableSerDesException("Failed to store filesystem SerDes payload", e);
@@ -242,19 +258,87 @@ public final class FileSystemSerDes implements SerDes {
     }
 
     private String readPayload(String fileValue) {
-        var file = Path.of(fileValue).toAbsolutePath().normalize();
+        var file = basePath.getFileSystem().getPath(fileValue).toAbsolutePath().normalize();
         if (!file.startsWith(basePath)) {
             throw new SerDesException("Filesystem SerDes file is outside the configured base path");
         }
         try {
-            var realBase = basePath.toRealPath();
-            var realFile = file.toRealPath();
-            if (!realFile.startsWith(realBase)) {
-                throw new SerDesException("Filesystem SerDes file resolves outside the configured base path");
+            byte[] storedData;
+            try (var secureDirectory = openSecureDirectory(file.getParent(), false);
+                    var channel = secureDirectory
+                            .directory()
+                            .newByteChannel(
+                                    file.getFileName(), Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
+                    var input = Channels.newInputStream(channel)) {
+                storedData = input.readAllBytes();
             }
-            return Files.readString(realFile, StandardCharsets.UTF_8);
+            return StandardCharsets.UTF_8
+                    .newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(storedData))
+                    .toString();
         } catch (IOException e) {
             throw new RetryableSerDesException("Failed to load filesystem SerDes payload", e);
+        }
+    }
+
+    private SecureDirectoryHandle openSecureDirectory(Path directory, boolean createMissing) throws IOException {
+        if (directory == null || !directory.startsWith(basePath)) {
+            throw new SerDesException("Filesystem SerDes directory is outside the configured base path");
+        }
+        var root = basePath.getRoot();
+        if (root == null) {
+            throw new SerDesException("Filesystem SerDes base path must be absolute");
+        }
+
+        var openedStreams = new ArrayList<DirectoryStream<Path>>();
+        try {
+            var current = requireSecureDirectoryStream(Files.newDirectoryStream(root), openedStreams);
+            var currentPath = root;
+            for (var component : root.relativize(directory)) {
+                var nextPath = currentPath.resolve(component);
+                DirectoryStream<Path> next;
+                try {
+                    next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS);
+                } catch (NoSuchFileException missing) {
+                    if (!createMissing) {
+                        throw missing;
+                    }
+                    try {
+                        Files.createDirectory(nextPath);
+                    } catch (FileAlreadyExistsException ignored) {
+                        // Validate and open the entry relative to the held parent directory below.
+                    }
+                    next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS);
+                }
+                current = requireSecureDirectoryStream(next, openedStreams);
+                currentPath = nextPath;
+            }
+            return new SecureDirectoryHandle(current, openedStreams);
+        } catch (IOException | RuntimeException failure) {
+            closeDirectoryStreams(openedStreams, failure);
+            throw failure;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static SecureDirectoryStream<Path> requireSecureDirectoryStream(
+            DirectoryStream<Path> stream, List<DirectoryStream<Path>> openedStreams) {
+        openedStreams.add(stream);
+        if (stream instanceof SecureDirectoryStream<?> secureStream) {
+            return (SecureDirectoryStream<Path>) secureStream;
+        }
+        throw new SerDesException("FileSystemSerDes requires a filesystem provider with SecureDirectoryStream support");
+    }
+
+    private static void closeDirectoryStreams(List<DirectoryStream<Path>> streams, Throwable failure) {
+        for (int index = streams.size() - 1; index >= 0; index--) {
+            try {
+                streams.get(index).close();
+            } catch (IOException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
         }
     }
 
@@ -302,6 +386,40 @@ public final class FileSystemSerDes implements SerDes {
             return ENVELOPE_MAPPER.writeValueAsString(envelope);
         } catch (IOException e) {
             throw new SerDesException("Failed to create filesystem SerDes envelope", e);
+        }
+    }
+
+    private static final class SecureDirectoryHandle implements AutoCloseable {
+        private final SecureDirectoryStream<Path> directory;
+        private final List<DirectoryStream<Path>> openedStreams;
+
+        private SecureDirectoryHandle(
+                SecureDirectoryStream<Path> directory, List<DirectoryStream<Path>> openedStreams) {
+            this.directory = directory;
+            this.openedStreams = List.copyOf(openedStreams);
+        }
+
+        private SecureDirectoryStream<Path> directory() {
+            return directory;
+        }
+
+        @Override
+        public void close() throws IOException {
+            IOException failure = null;
+            for (int index = openedStreams.size() - 1; index >= 0; index--) {
+                try {
+                    openedStreams.get(index).close();
+                } catch (IOException closeFailure) {
+                    if (failure == null) {
+                        failure = closeFailure;
+                    } else {
+                        failure.addSuppressed(closeFailure);
+                    }
+                }
+            }
+            if (failure != null) {
+                throw failure;
+            }
         }
     }
 

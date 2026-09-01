@@ -107,6 +107,7 @@ configured SerDes executor when present, and successful deserializations are cac
 Do not use Lambda's `/tmp` directory: replay can run in another execution environment. Use a shared durable mount such
 as EFS. S3 Files users must account for synchronization and crash-durability behavior. A chained-invoke boundary only
 requires shared storage and compatible filesystem configuration when that boundary explicitly uses `FileSystemSerDes`.
+The mounted Java filesystem provider must support `SecureDirectoryStream`; unsupported providers fail closed.
 
 See [Serialization and Filesystem Storage](serdes.md) for envelope details, structured previews, retry configuration,
 testing behavior, and operational guidance.

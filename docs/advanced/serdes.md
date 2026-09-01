@@ -109,6 +109,10 @@ The default checkpoint-envelope limit is 255 KiB and can be changed with
 Files include the serialized-payload digest and a unique suffix. They are published with `CREATE_NEW`; failed writes are
 cleaned up. Each envelope includes a SHA-256 digest that is verified when the file is loaded.
 
+The mounted filesystem provider must support `SecureDirectoryStream`. The SDK traverses every directory relative to an
+already-open parent with symlink following disabled and performs file I/O with `NOFOLLOW_LINKS`. Providers without this
+capability fail closed.
+
 Only objects containing the reserved version marker are treated as filesystem envelopes. Ordinary JSON with `data` or
 `file` fields is passed to the configured delegate.
 
@@ -141,6 +145,7 @@ delegate JSON; SDK-managed output and operation payloads can use filesystem stor
 - Do not use Lambda `/tmp`; replay may run in another execution environment.
 - Use a shared durable mount such as EFS.
 - If using S3 Files, account for its synchronization and crash-durability behavior.
+- Verify that the Java filesystem provider for the mount supports `SecureDirectoryStream`.
 - Configure retention and cleanup separately; the SDK does not delete completed payload files.
 - Chained-invoke boundaries that use filesystem storage require compatible mount paths on both sides.
 
