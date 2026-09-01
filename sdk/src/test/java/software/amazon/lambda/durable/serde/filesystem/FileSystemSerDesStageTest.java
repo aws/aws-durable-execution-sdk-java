@@ -26,6 +26,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -416,6 +417,23 @@ class FileSystemSerDesStageTest {
         assertEquals("small", json.get("preview").get("summary").textValue());
         assertTrue(envelope.getBytes(StandardCharsets.UTF_8).length <= 2048);
         assertEquals("value", Files.readString(Path.of(json.get("file").textValue())));
+    }
+
+    @Test
+    void oversizedCustomPreviewRemainsBoundedUnderConstrainedHeap() throws Exception {
+        var java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        var classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
+        var process = new ProcessBuilder(java, "-Xmx32m", "-cp", classpath, FileSystemEnvelopeHeapProbe.class.getName())
+                .redirectErrorStream(true)
+                .start();
+        var finished = process.waitFor(30, TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+        }
+        var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
+        assertTrue(finished, output);
+        assertEquals(0, process.exitValue(), output);
     }
 
     @Test

@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
@@ -116,8 +117,9 @@ public final class FileSystemSerDesStage implements SerDesStage {
         if (storageMode == FileSystemStorageMode.OVERFLOW) {
             var inlineEnvelope = createEnvelope(payload.type(), payloadDigest, context);
             inlineEnvelope.put("data", value);
-            if (fitsCheckpoint(inlineEnvelope, context)) {
-                return encodeEnvelope(inlineEnvelope, context);
+            var encodedInlineEnvelope = encodeEnvelopeWithinCheckpointLimit(inlineEnvelope, context);
+            if (encodedInlineEnvelope != null) {
+                return encodedInlineEnvelope;
             }
         }
 
@@ -128,8 +130,8 @@ public final class FileSystemSerDesStage implements SerDesStage {
         if (preview != null) {
             fileEnvelope.put("preview", preview);
         }
-        var encodedFileEnvelope = encodeEnvelope(fileEnvelope, context);
-        if (!fitsCheckpoint(encodedFileEnvelope)) {
+        var encodedFileEnvelope = encodeEnvelopeWithinCheckpointLimit(fileEnvelope, context);
+        if (encodedFileEnvelope == null) {
             throw new SerDesException("Filesystem SerDes envelope exceeds the checkpoint payload limit for entity '"
                     + context.entityId()
                     + "'");
@@ -471,13 +473,27 @@ public final class FileSystemSerDesStage implements SerDesStage {
         return envelope;
     }
 
-    private String encodeEnvelope(Map<String, Object> envelope, SerDesContext context) {
+    private String encodeEnvelopeWithinCheckpointLimit(Map<String, Object> envelope, SerDesContext context) {
+        var output = new CappedCollectingOutputStream(checkpointEnvelopeLimitBytes);
         try {
-            return ENVELOPE_MAPPER.writeValueAsString(envelope);
-        } catch (JsonProcessingException e) {
+            ENVELOPE_MAPPER.writeValue(output, envelope);
+            return output.encodedValue();
+        } catch (IOException e) {
+            if (causedByCheckpointEnvelopeLimit(e)) {
+                return null;
+            }
             throw new SerDesException(
                     "Failed to encode filesystem payload envelope for entity '" + context.entityId() + "'", e);
         }
+    }
+
+    private static boolean causedByCheckpointEnvelopeLimit(Throwable failure) {
+        for (var current = failure; current != null; current = current.getCause()) {
+            if (current instanceof CheckpointEnvelopeLimitExceededException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Map<String, Object> generatePreview(String value, SerDesContext context) {
@@ -492,21 +508,6 @@ public final class FileSystemSerDesStage implements SerDesStage {
             throw new SerDesException(
                     "Failed to generate filesystem payload preview for entity '" + context.entityId() + "'", e);
         }
-    }
-
-    private boolean fitsCheckpoint(Map<String, Object> envelope, SerDesContext context) {
-        var counter = new CappedCountingOutputStream(checkpointEnvelopeLimitBytes);
-        try {
-            ENVELOPE_MAPPER.writeValue(counter, envelope);
-            return !counter.exceeded();
-        } catch (IOException e) {
-            throw new SerDesException(
-                    "Failed to measure filesystem payload envelope for entity '" + context.entityId() + "'", e);
-        }
-    }
-
-    private boolean fitsCheckpoint(String encodedEnvelope) {
-        return encodedEnvelope.getBytes(StandardCharsets.UTF_8).length <= checkpointEnvelopeLimitBytes;
     }
 
     private SerDesContext requireContext(SerDesContext context) {
@@ -738,32 +739,41 @@ public final class FileSystemSerDesStage implements SerDesStage {
         }
     }
 
-    private static final class CappedCountingOutputStream extends OutputStream {
-        private final long limit;
-        private long count;
+    private static final class CappedCollectingOutputStream extends OutputStream {
+        private static final int INITIAL_CAPACITY = 8 * 1024;
 
-        private CappedCountingOutputStream(long limit) {
+        private final int limit;
+        private final ByteArrayOutputStream output;
+
+        private CappedCollectingOutputStream(int limit) {
             this.limit = limit;
+            output = new ByteArrayOutputStream(Math.min(limit, INITIAL_CAPACITY));
         }
 
         @Override
-        public void write(int value) {
-            add(1);
+        public void write(int value) throws IOException {
+            ensureCapacity(1);
+            output.write(value);
         }
 
         @Override
-        public void write(byte[] value, int offset, int length) {
-            add(length);
+        public void write(byte[] value, int offset, int length) throws IOException {
+            ensureCapacity(length);
+            output.write(value, offset, length);
         }
 
-        private void add(long length) {
-            count = Math.min(limit + 1, count + length);
+        private void ensureCapacity(int length) throws CheckpointEnvelopeLimitExceededException {
+            if (length > limit - output.size()) {
+                throw new CheckpointEnvelopeLimitExceededException();
+            }
         }
 
-        private boolean exceeded() {
-            return count > limit;
+        private String encodedValue() {
+            return output.toString(StandardCharsets.UTF_8);
         }
     }
+
+    private static final class CheckpointEnvelopeLimitExceededException extends IOException {}
 
     /** Builder for {@link FileSystemSerDesStage}. */
     public static final class Builder {
