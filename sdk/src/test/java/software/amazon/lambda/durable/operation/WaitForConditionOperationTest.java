@@ -7,7 +7,9 @@ import static org.mockito.Mockito.*;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,6 +33,7 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 
 class WaitForConditionOperationTest {
 
@@ -371,13 +374,14 @@ class WaitForConditionOperationTest {
 
     @Test
     void startNormalizesInitialStateThroughSerDes() throws Exception {
-        var mockSerDes = mock(software.amazon.lambda.durable.serde.SerDes.class);
+        var mockSerDes = mock(SerDes.class);
         when(mockSerDes.serialize(42)).thenReturn("42-normalized");
         when(mockSerDes.deserialize(eq("42-normalized"), any())).thenReturn(99);
 
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
 
         var receivedState = new java.util.concurrent.atomic.AtomicInteger(-1);
+        var checkRan = new CountDownLatch(1);
         var config = WaitForConditionConfig.<Integer>builder()
                 .serDes(mockSerDes)
                 .initialState(42)
@@ -385,18 +389,61 @@ class WaitForConditionOperationTest {
         var operation = createOperation(
                 (state, ctx) -> {
                     receivedState.set(state);
+                    checkRan.countDown();
                     return WaitForConditionResult.stopPolling(state);
                 },
                 config);
 
         operation.execute();
 
-        Thread.sleep(200);
+        assertTrue(checkRan.await(2, TimeUnit.SECONDS), "check function should have run");
         assertEquals(
                 99,
                 receivedState.get(),
                 "start() should round-trip initialState through SerDes before the first check, "
                         + "the same way resumeCheckLoop deserializes state from a checkpoint");
+    }
+
+    @Test
+    void startSerializesInitialStateButSkipsDeserializeWhenDisabled() throws Exception {
+        var mockSerDes = mock(SerDes.class);
+        when(mockSerDes.serialize(42)).thenReturn("42-normalized");
+        when(mockSerDes.deserialize(eq("42-normalized"), any())).thenReturn(99);
+
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
+        when(durableContext.getDurableConfig())
+                .thenReturn(DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .withDeserializeAfterSerialization(false)
+                        .build());
+
+        var receivedState = new java.util.concurrent.atomic.AtomicInteger(-1);
+        var checkRan = new CountDownLatch(1);
+        var config = WaitForConditionConfig.<Integer>builder()
+                .serDes(mockSerDes)
+                .initialState(42)
+                .build();
+        var operation = createOperation(
+                (state, ctx) -> {
+                    receivedState.set(state);
+                    checkRan.countDown();
+                    return WaitForConditionResult.stopPolling(state);
+                },
+                config);
+
+        operation.execute();
+
+        assertTrue(checkRan.await(2, TimeUnit.SECONDS), "check function should have run");
+        // serialize(42) runs at least once for the initial state; it also runs again for the check
+        // result, since the check echoes the received state back via stopPolling(state).
+        verify(mockSerDes, atLeastOnce()).serialize(42);
+        verify(mockSerDes, never()).deserialize(any(), any());
+        assertEquals(
+                42,
+                receivedState.get(),
+                "with deserializeAfterSerialization disabled, the check should receive the raw "
+                        + "initialState even though it was still serialized (e.g. to fail fast on a "
+                        + "non-serializable value)");
     }
 
     // ===== resumeCheckLoop checkpoint deserialize exception =====
