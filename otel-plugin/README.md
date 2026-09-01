@@ -9,7 +9,7 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **Scoped ID Generation**: Unrelated instrumentation scopes retain their provider's normal root trace ID generation
 - **Span-per-Operation**: Each durable operation (step, wait, map, etc.) gets its own span with accurate timing
 - **Attempt Spans**: Each user function execution (step attempt, child context run) gets a span, including retries
-- **Log Correlation**: Injects `trace_id`, `span_id`, and `traceSampled` into SLF4J MDC for end-to-end observability
+- **Log Correlation**: Injects `traceId`, `spanId`, and `otelTraceSampled` into SLF4J MDC for end-to-end observability
 - **ADOT Java Agent Integration**: `new InvocationOtelPlugin()` late-binds the ADOT Java agent's global provider with no handler-side OpenTelemetry initialization
 - **Lambda Layer Discovery**: `DURABLE_EXECUTION_PLUGINS` loads either OTel plugin from a JAR under a layer's `java/lib` directory
 
@@ -31,12 +31,12 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 <dependency>
     <groupId>io.opentelemetry</groupId>
     <artifactId>opentelemetry-sdk</artifactId>
-    <version>1.64.0</version>
+    <version>1.65.0</version>
 </dependency>
 <dependency>
     <groupId>io.opentelemetry</groupId>
     <artifactId>opentelemetry-exporter-logging</artifactId>
-    <version>1.64.0</version>
+    <version>1.65.0</version>
 </dependency>
 ```
 
@@ -237,11 +237,11 @@ When `enableMdc` is true (default), the plugin injects these fields into SLF4J M
 
 | MDC Key | Description |
 |---------|-------------|
-| `trace_id` | W3C trace ID (32 hex chars) |
-| `span_id` | Current span ID (16 hex chars) |
-| `traceSampled` | Whether the trace is sampled (true/false) |
+| `traceId` | W3C trace ID (32 hex chars) |
+| `spanId` | Current span ID (16 hex chars) |
+| `otelTraceSampled` | Whether the trace is sampled (true/false) |
 
-The `trace_id` is also injected at invocation start so handler-level logs (between steps) include it.
+The `traceId` is also injected at invocation start so handler-level logs (between steps) include it.
 
 Configure your logging framework (e.g., Log4j2) to include MDC fields in the output. For example, using `JsonLayout`:
 
@@ -306,7 +306,7 @@ new ExecutionOtelPlugin(
 | Builder method | Description | Default |
 |-----------|-------------|---------|
 | `contextExtractor(...)` | Extracts parent trace context from the Lambda environment | `new XRayContextExtractor()` |
-| `enableMdc(...)` | If true, injects `trace_id`/`span_id`/`traceSampled` into SLF4J MDC | `true` |
+| `enableMdc(...)` | If true, injects `traceId`/`spanId`/`otelTraceSampled` into SLF4J MDC | `true` |
 | `workflowSpanName(...)` | Name for the Workflow span | `"Workflow"` |
 | `instrumentationName(...)` | Instrumentation scope name registered with the tracer | `"aws-durable-execution-sdk-java"` |
 
@@ -366,7 +366,7 @@ var otelPlugin = new InvocationOtelPlugin(
 
 - Java 17+
 - AWS Durable Execution SDK for Java 2.0.0+
-- OpenTelemetry SDK 1.64.0+ (only for custom TracerProvider path)
+- OpenTelemetry SDK 1.65.0+ (only for custom TracerProvider path)
 - ADOT Lambda Layer `AWSOpenTelemetryDistroJava` (for the no-arg constructor path)
 
 ## License
