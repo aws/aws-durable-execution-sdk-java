@@ -8,6 +8,10 @@ import software.amazon.lambda.durable.TypeToken;
  * Interface for serialization and deserialization of objects.
  *
  * <p>Implementations must support both simple types via {@link Class} and complex generic types via {@link TypeToken}.
+ *
+ * <p>An implementation that publishes payloads to external storage must return an immutable or versioned reference for
+ * every serialized value. It must not overwrite content reachable through a string that may already be stored in a
+ * durable checkpoint, because replay can occur after a later serialization attempt fails to checkpoint.
  */
 public interface SerDes {
     /**

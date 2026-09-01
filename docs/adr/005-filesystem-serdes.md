@@ -46,8 +46,8 @@ in `finally`, which supports nesting and prevents context from leaking when exec
 
 Entity IDs include a stable payload-kind suffix. Root input, output, and exceptions use `/input`, `/output`, and
 `/exception`; operation invoke payloads, results/state, and exceptions use `/invoke-payload`, `/result`, and
-`/exception`. This prevents deterministic external-storage keys for different payloads on the same operation from
-colliding.
+`/exception`. This prevents different payload kinds on the same operation from sharing an identity, but external
+storage implementations must still publish immutable or versioned references for every serialized value.
 
 ### Use an invocation-scoped SerDesRunner
 
@@ -88,7 +88,9 @@ from the cache and can be retried.
 
 Each SerDes/context pair also has an invocation-local serialization generation. The runner advances it after every
 serialization attempt, and completed/in-flight cache keys include the current generation. Reusing the same deterministic
-external reference after writing new state therefore cannot return the previous cached value.
+external reference after writing new state therefore cannot return the previous cached value in that invocation. This
+does not make a mutable reference replay-safe: a reference already persisted in a checkpoint must continue to resolve
+the same immutable content after later serialization and checkpoint failures.
 
 Repeated reads return the same object instance while the cached value remains reachable. A new invocation creates a new
 runner and cache.
@@ -161,14 +163,15 @@ Java writes versioned envelopes:
 Only envelopes containing the reserved version marker are interpreted as filesystem payloads. Unmarked JSON, including
 objects with `data` or `file` fields, is passed to the delegate SerDes unchanged.
 
-File names include the entity ID, serialized-payload digest, and a unique suffix. Files are created with `CREATE_NEW`,
+File names include an owner digest derived from the execution ARN and entity ID, the serialized-payload digest, and a
+unique suffix. Files are direct children of the pre-provisioned base directory and are created with `CREATE_NEW`,
 and failed writes are removed before the retryable failure is propagated. This prevents a later serialization from
 overwriting data referenced by an earlier checkpoint. Deserialization rejects paths outside the configured base
 directory and verifies the digest.
 
 The filesystem provider must support `SecureDirectoryStream`. Directory components are opened relative to held parent
 handles with symbolic-link following disabled, and file reads/writes use `NOFOLLOW_LINKS`. Providers without secure
-directory streams fail closed.
+directory streams fail closed. The SDK does not create missing directory components.
 
 ### Initial invocation input
 
@@ -207,6 +210,7 @@ Negative:
 
 - Do not use Lambda's ephemeral `/tmp` directory. Replay may run in another execution environment.
 - Use a shared durable mount such as EFS.
+- Pre-provision the configured base directory.
 - S3 Files users must accept its synchronization and crash-durability characteristics.
 - Verify that the mounted Java filesystem provider supports `SecureDirectoryStream`.
 - Configure lifecycle cleanup separately; the SDK does not delete persisted payload files.

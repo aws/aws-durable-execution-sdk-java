@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -74,6 +75,31 @@ class FileSystemSerDesIntegrationTest {
         try (var files = Files.walk(tempDir)) {
             assertTrue(files.filter(Files::isRegularFile).count() >= 2);
         }
+    }
+
+    @Test
+    void checkpointFailureReplayPreservesPriorFilesystemReference() throws Exception {
+        var stepRuns = new AtomicInteger();
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var config = DurableConfig.builder().withSerDes(serDes).build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step(
+                        "persist-version", String.class, stepContext -> "value-" + stepRuns.incrementAndGet()),
+                config);
+
+        var first = runner.run("input");
+        var firstReference =
+                first.getOperation("persist-version").getStepDetails().result();
+        runner.resetCheckpointToStarted("persist-version");
+        var replayed = runner.run("input");
+        var replayedReference =
+                replayed.getOperation("persist-version").getStepDetails().result();
+
+        assertEquals(2, stepRuns.get());
+        assertFalse(firstReference.equals(replayedReference));
+        assertEquals("value-1", serDes.deserialize(firstReference, TypeToken.get(String.class)));
+        assertEquals("value-2", serDes.deserialize(replayedReference, TypeToken.get(String.class)));
     }
 
     @Test

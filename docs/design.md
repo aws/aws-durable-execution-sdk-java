@@ -671,7 +671,9 @@ ID, target type, and serialized-data hash. The thread-local value is always rest
 
 The entity ID combines the execution or operation ID with a payload-kind suffix: `/input`, `/output`, or `/exception`
 for root execution payloads, and `/invoke-payload`, `/result`, or `/exception` for operation payloads. Distinct durable
-payloads therefore remain distinct even for a custom SerDes that uses deterministic external-storage keys.
+payload kinds therefore remain distinct. A custom external-storage SerDes must additionally return an immutable or
+versioned reference for each serialization; invocation-local cache invalidation cannot make overwritten references
+safe across replay.
 
 `FileSystemSerDes` uses that context to build collision-free paths on a shared durable filesystem. Calls made before a
 durable execution ARN exists, such as initial invocation input serialization, fall back to the delegate SerDes without

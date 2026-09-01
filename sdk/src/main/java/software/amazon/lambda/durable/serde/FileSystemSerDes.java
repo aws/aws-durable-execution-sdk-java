@@ -63,8 +63,6 @@ public final class FileSystemSerDes implements SerDes {
             .reader()
             .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
             .with(DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY);
-    private static final Pattern DURABLE_EXECUTION_ARN_PATTERN = Pattern.compile(
-            "^arn:[^:]*:lambda:[^:]*:[^:]*:function:([^:/]+):[^:/]+/durable-execution/([^/]+)/([^/]+)$");
     private static final Pattern SHA_256_DIGEST_PATTERN = Pattern.compile("[0-9a-f]{64}");
 
     private final Path basePath;
@@ -238,30 +236,23 @@ public final class FileSystemSerDes implements SerDes {
     }
 
     private Path payloadPath(SerDesContext context, String digest) {
-        var directory = executionDirectory(context.durableExecutionArn());
-        var fileName = encode(context.entityId()) + "-" + digest + "-" + UUID.randomUUID() + ".json";
-        var file = directory.resolve(fileName).toAbsolutePath().normalize();
+        var ownerDigest = sha256(context.durableExecutionArn() + "\0" + context.entityId());
+        var ownerPrefix = ownerDigest;
+        if (pathEncoding == FileSystemPathEncoding.URI) {
+            var encodedEntity = percentEncode(context.entityId());
+            ownerPrefix = encodedEntity.substring(0, Math.min(32, encodedEntity.length())) + "-" + ownerDigest;
+        }
+        var fileName = ownerPrefix + "-" + digest + "-" + UUID.randomUUID() + ".json";
+        var file = basePath.resolve(fileName).toAbsolutePath().normalize();
         if (!file.startsWith(basePath)) {
             throw new SerDesException("Filesystem SerDes path escapes the configured base path");
         }
         return file;
     }
 
-    private Path executionDirectory(String durableExecutionArn) {
-        if (pathEncoding == FileSystemPathEncoding.URI) {
-            var match = DURABLE_EXECUTION_ARN_PATTERN.matcher(durableExecutionArn);
-            if (match.matches()) {
-                return basePath.resolve(encode(match.group(1)))
-                        .resolve(encode(match.group(2)))
-                        .resolve(encode(match.group(3)));
-            }
-        }
-        return basePath.resolve(encode(durableExecutionArn));
-    }
-
     private void writePayload(Path file, String serialized) {
         try {
-            try (var secureDirectory = openSecureDirectory(file.getParent(), true)) {
+            try (var secureDirectory = openSecureDirectory(file.getParent())) {
                 var created = false;
                 rejectSymbolicLinkIfPresent(secureDirectory.directory(), file.getFileName(), "payload file");
                 try (var channel = secureDirectory
@@ -302,7 +293,7 @@ public final class FileSystemSerDes implements SerDes {
         }
         try {
             byte[] storedData;
-            try (var secureDirectory = openSecureDirectory(file.getParent(), false)) {
+            try (var secureDirectory = openSecureDirectory(file.getParent())) {
                 rejectSymbolicLinkIfPresent(secureDirectory.directory(), file.getFileName(), "payload file");
                 try (var channel = secureDirectory
                                 .directory()
@@ -334,7 +325,7 @@ public final class FileSystemSerDes implements SerDes {
         return new RetryableSerDesException(message, failure);
     }
 
-    private SecureDirectoryHandle openSecureDirectory(Path directory, boolean createMissing) throws IOException {
+    private SecureDirectoryHandle openSecureDirectory(Path directory) throws IOException {
         if (directory == null || !directory.startsWith(basePath)) {
             throw new SerDesException("Filesystem SerDes directory is outside the configured base path");
         }
@@ -346,26 +337,10 @@ public final class FileSystemSerDes implements SerDes {
         var openedStreams = new ArrayList<DirectoryStream<Path>>();
         try {
             var current = requireSecureDirectoryStream(Files.newDirectoryStream(root), openedStreams);
-            var currentPath = root;
             for (var component : root.relativize(directory)) {
-                var nextPath = currentPath.resolve(component);
-                DirectoryStream<Path> next;
                 rejectSymbolicLinkIfPresent(current, component, "directory");
-                try {
-                    next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS);
-                } catch (NoSuchFileException missing) {
-                    if (!createMissing) {
-                        throw missing;
-                    }
-                    try {
-                        Files.createDirectory(nextPath);
-                    } catch (FileAlreadyExistsException ignored) {
-                        // Validate and open the entry relative to the held parent directory below.
-                    }
-                    next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS);
-                }
+                var next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS);
                 current = requireSecureDirectoryStream(next, openedStreams);
-                currentPath = nextPath;
             }
             return new SecureDirectoryHandle(current, openedStreams);
         } catch (IOException | RuntimeException failure) {
@@ -407,10 +382,6 @@ public final class FileSystemSerDes implements SerDes {
                 failure.addSuppressed(closeFailure);
             }
         }
-    }
-
-    private String encode(String value) {
-        return pathEncoding == FileSystemPathEncoding.HASH ? sha256(value) : percentEncode(value);
     }
 
     private boolean fitsCheckpoint(String envelope) {

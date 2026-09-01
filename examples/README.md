@@ -125,11 +125,12 @@ For a deployed function, mount EFS or another compatible shared filesystem at th
 environment:
 
 ```text
-FILESYSTEM_SERDES_PATH=/mnt/efs/durable-payloads
+FILESYSTEM_SERDES_PATH=/mnt/efs
 ```
 
 The mounted Java filesystem provider must support `SecureDirectoryStream`. The example uses structured previews,
 filesystem I/O retries, a durable wait that forces replay, and checksum verification after the payload is loaded again.
+The configured path must already exist; the SDK does not create directory components.
 
 ## Cleanup
 

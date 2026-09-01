@@ -155,7 +155,7 @@ class FileSystemSerDesTest {
         var node = MAPPER.readTree(runner.serialize(serDes, new Value("preview"), context));
         var file = Path.of(node.get("file").textValue());
 
-        assertEquals(64, tempDir.relativize(file).getName(0).toString().length());
+        assertEquals(tempDir, file.getParent());
         assertTrue(file.getFileName().toString().matches("[0-9a-f]{64}-[0-9a-f]{64}-[0-9a-f-]{36}\\.json"));
         assertEquals("preview", node.get("preview").get("summary").textValue());
     }
@@ -386,7 +386,7 @@ class FileSystemSerDesTest {
     }
 
     @Test
-    void uriEncodingUsesReadableExecutionPathAndFlatUnsafeEntity() throws Exception {
+    void uriEncodingUsesFlatUnsafeEntityPrefixBoundToExecution() throws Exception {
         var serDes = FileSystemSerDes.builder(tempDir).build();
         var context = new SerDesContext(realisticArn(), "../unsafe/entity");
 
@@ -394,22 +394,14 @@ class FileSystemSerDesTest {
                 .get("file")
                 .textValue());
 
-        assertEquals(tempDir.resolve("test").resolve("execution-name").resolve("invocation-id"), file.getParent());
+        assertEquals(tempDir, file.getParent());
         assertFalse(file.getFileName().toString().contains("/"));
         assertTrue(file.getFileName().toString().startsWith("..%2Funsafe%2Fentity-"));
-    }
-
-    @Test
-    void malformedExecutionArnFallsBackToOneEncodedDirectory() throws Exception {
-        var serDes = FileSystemSerDes.builder(tempDir).build();
-        var arn = "local/test:execution";
-
-        var file = Path.of(MAPPER.readTree(runner.serialize(serDes, "value", new SerDesContext(arn, "1")))
+        var otherExecutionFile = Path.of(MAPPER.readTree(runner.serialize(
+                        serDes, "value", new SerDesContext("local/test:execution", "../unsafe/entity")))
                 .get("file")
                 .textValue());
-
-        assertEquals(1, tempDir.relativize(file.getParent()).getNameCount());
-        assertEquals("local%2Ftest%3Aexecution", file.getParent().getFileName().toString());
+        assertFalse(file.getFileName().equals(otherExecutionFile.getFileName()));
     }
 
     @Test
@@ -464,8 +456,9 @@ class FileSystemSerDesTest {
     @Test
     void rejectsSymbolicLinkDirectoryWhenWriting() throws Exception {
         var outside = Files.createTempDirectory(tempDir.getParent(), "outside-payloads-");
-        Files.createSymbolicLink(tempDir.resolve("test"), outside);
-        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var linkedBase = tempDir.resolve("linked-base");
+        Files.createSymbolicLink(linkedBase, outside);
+        var serDes = FileSystemSerDes.builder(linkedBase).build();
 
         var failure = assertThrows(
                 SerDesException.class, () -> runner.serialize(serDes, "value", new SerDesContext(realisticArn(), "1")));
@@ -477,14 +470,14 @@ class FileSystemSerDesTest {
 
     @Test
     void rejectsSymbolicLinkDirectoryWhenReading() throws Exception {
-        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var basePath = Files.createDirectory(tempDir.resolve("base"));
+        var serDes = FileSystemSerDes.builder(basePath).build();
         var context = new SerDesContext(realisticArn(), "1");
         var envelope = runner.serialize(serDes, "value", context);
-        var executionDirectory = tempDir.resolve("test");
         var outside = Files.createTempDirectory(tempDir.getParent(), "outside-payloads-");
-        var movedDirectory = outside.resolve("test");
-        Files.move(executionDirectory, movedDirectory);
-        Files.createSymbolicLink(executionDirectory, movedDirectory);
+        var movedDirectory = outside.resolve("base");
+        Files.move(basePath, movedDirectory);
+        Files.createSymbolicLink(basePath, movedDirectory);
 
         var failure = assertThrows(
                 SerDesException.class,
@@ -520,15 +513,6 @@ class FileSystemSerDesTest {
 
     @Test
     void rejectsSymbolicLinkConfiguredBasePathAndAncestors() throws Exception {
-        var outsideRoot = Files.createTempDirectory(tempDir.getParent(), "outside-root-");
-        var linkedRoot = tempDir.resolve("linked-root");
-        Files.createSymbolicLink(linkedRoot, outsideRoot);
-        var rootSerDes = FileSystemSerDes.builder(linkedRoot).build();
-
-        assertThrows(
-                SerDesException.class,
-                () -> runner.serialize(rootSerDes, "value", new SerDesContext(realisticArn(), "1")));
-
         var outsideAncestor = Files.createTempDirectory(tempDir.getParent(), "outside-ancestor-");
         var linkedAncestor = tempDir.resolve("linked-ancestor");
         Files.createSymbolicLink(linkedAncestor, outsideAncestor);
@@ -539,6 +523,18 @@ class FileSystemSerDesTest {
                 SerDesException.class,
                 () -> runner.serialize(nestedSerDes, "value", new SerDesContext(realisticArn(), "1")));
         assertFalse(Files.exists(outsideAncestor.resolve("payloads")));
+    }
+
+    @Test
+    void doesNotCreateMissingBasePathComponents() {
+        var basePath = tempDir.resolve("missing").resolve("payloads");
+        var serDes = FileSystemSerDes.builder(basePath).build();
+
+        assertThrows(
+                RetryableSerDesException.class,
+                () -> runner.serialize(serDes, "value", new SerDesContext(realisticArn(), "1")));
+
+        assertFalse(Files.exists(tempDir.resolve("missing")));
     }
 
     @Test

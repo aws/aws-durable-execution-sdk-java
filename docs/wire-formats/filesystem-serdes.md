@@ -72,7 +72,8 @@ Malformed UTF-8 file content and filesystem read failures are `RetryableSerDesEx
 
 ## Path construction
 
-All paths are rooted under the configured absolute base path.
+All paths are rooted under the configured absolute base path. The base directory and every ancestor must be
+pre-provisioned; the SDK does not create directory components.
 
 The entity ID used for path construction identifies both the durable owner and payload kind:
 
@@ -80,36 +81,21 @@ The entity ID used for path construction identifies both the durable owner and p
 - invoke requests use `<operation-id>/invoke-payload`;
 - operation results/state and exceptions use `<operation-id>/result` and `/exception`.
 
-These suffixes prevent different payloads belonging to one operation from colliding in deterministic external storage.
+These suffixes distinguish different payload kinds belonging to one operation. External storage references must also
+remain immutable or versioned so an older checkpoint always resolves the same content.
 
-### URI encoding
+The owner digest is the lowercase SHA-256 digest of the execution ARN, one zero byte, and the entity ID.
 
-For a durable execution ARN matching:
-
-```text
-arn:<partition>:lambda:<region>:<account>:function:<function>:<qualifier>/durable-execution/<execution>/<invocation>
-```
-
-the execution directory is:
-
-```text
-<base>/<encoded-function>/<encoded-execution>/<encoded-invocation>
-```
-
-Other ARNs are encoded into one directory segment.
-
-The file name is:
-
-```text
-<encoded-entity-id>-<payload-digest>-<uuid>.json
-```
+- `HASH` uses the 64-character owner digest as the filename prefix.
+- `URI` uses the first 32 characters of the percent-encoded entity ID, followed by `-` and the owner digest.
 
 URI encoding preserves ASCII letters, digits, `-`, `_`, `.`, and `~`; all other UTF-8 bytes are percent encoded.
 
-### Hash encoding
+Every payload is a direct child of the base directory:
 
-`HASH` replaces the execution ARN and entity ID with lowercase SHA-256 hexadecimal strings. The payload digest and
-unique UUID suffix remain in the file name.
+```text
+<base>/<owner-prefix>-<payload-digest>-<uuid>.json
+```
 
 ## Publication
 
@@ -128,7 +114,8 @@ directory with `NOFOLLOW_LINKS`. File reads and writes also use `NOFOLLOW_LINKS`
 The implementation fails closed when:
 
 - the provider lacks `SecureDirectoryStream`;
-- the base path, an ancestor, execution directory, or payload file is a symbolic link;
+- the base path, an ancestor, or payload file is a symbolic link;
+- the base directory is missing or is not a directory;
 - a path is outside the configured base path;
 - the file is missing or unreadable.
 

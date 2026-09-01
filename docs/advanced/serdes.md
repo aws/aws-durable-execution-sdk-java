@@ -61,8 +61,10 @@ Entity IDs distinguish every persisted payload owned by the same execution or op
 | Operation result or state | `<operation-id>/result` |
 | Operation exception | `<operation-id>/exception` |
 
-Custom external-storage SerDes implementations can therefore use `entityId` as part of a deterministic key without a
-result or exception overwriting an invoke request or prior operation state.
+Custom external-storage SerDes implementations can use `entityId` as part of a key namespace. Every serialization must
+still publish immutable content and return a unique or versioned reference. Never overwrite content reachable through
+an older reference: an invocation can stop after publishing new content but before its checkpoint update commits, and
+replay must continue to resolve the older checkpoint.
 
 ## Execution and caching
 
@@ -83,7 +85,8 @@ Each Lambda invocation owns a `SerDesRunner`. It shares concurrent reads and kee
 deserializations in a weak-reference LRU cache. Cache identity includes the SerDes instance, execution ARN, entity ID,
 target type, serialized payload hash, and the entity's serialization generation. Every serialization advances that
 generation after the SerDes call finishes, so a deterministic external reference that is reused for new state cannot
-return an older cached object.
+return an older cached object during the same invocation. This cache rule does not make mutable references replay-safe;
+external references must remain immutable across invocations and checkpoint failures.
 
 Local and cloud testing utilities propagate the same contexts and caching behavior through `TestResult`,
 `TestOperation`, history processing, and asynchronous execution snapshots.
@@ -127,7 +130,7 @@ cleaned up. Each envelope includes a SHA-256 digest that is verified when the fi
 
 The mounted filesystem provider must support `SecureDirectoryStream`. The SDK traverses every directory relative to an
 already-open parent with symlink following disabled and performs file I/O with `NOFOLLOW_LINKS`. Providers without this
-capability fail closed.
+capability fail closed. The configured base directory must already exist; the SDK never creates path components.
 
 Only objects containing the reserved version marker are treated as filesystem envelopes. Ordinary JSON with `data` or
 `file` fields is passed to the configured delegate.
@@ -163,6 +166,7 @@ delegate JSON; SDK-managed output and operation payloads can use filesystem stor
 
 - Do not use Lambda `/tmp`; replay may run in another execution environment.
 - Use a shared durable mount such as EFS.
+- Pre-provision the configured base directory.
 - If using S3 Files, account for its synchronization and crash-durability behavior.
 - Verify that the Java filesystem provider for the mount supports `SecureDirectoryStream`.
 - Configure retention and cleanup separately; the SDK does not delete completed payload files.

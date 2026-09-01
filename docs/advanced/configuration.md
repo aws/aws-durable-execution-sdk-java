@@ -104,12 +104,14 @@ var context = SerDesContext.getCurrentContext();
 Custom SerDes implementations can use its durable execution ARN and entity ID for external storage. Calls use the
 configured SerDes executor when present, and successful deserializations are cached for the current Lambda invocation.
 Root input, output, and exception IDs end in `/input`, `/output`, and `/exception`; operation payload IDs end in
-`/invoke-payload`, `/result`, or `/exception`.
+`/invoke-payload`, `/result`, or `/exception`. External-storage implementations must return immutable or versioned
+references rather than overwriting content reachable through an earlier checkpoint.
 
 Do not use Lambda's `/tmp` directory: replay can run in another execution environment. Use a shared durable mount such
 as EFS. S3 Files users must account for synchronization and crash-durability behavior. A chained-invoke boundary only
 requires shared storage and compatible filesystem configuration when that boundary explicitly uses `FileSystemSerDes`.
-The mounted Java filesystem provider must support `SecureDirectoryStream`; unsupported providers fail closed.
+The mounted Java filesystem provider must support `SecureDirectoryStream`; unsupported providers fail closed. The
+configured base directory must already exist.
 
 See [Serialization and Filesystem Storage](serdes.md) for envelope details, structured previews, retry configuration,
 testing behavior, and operational guidance.
