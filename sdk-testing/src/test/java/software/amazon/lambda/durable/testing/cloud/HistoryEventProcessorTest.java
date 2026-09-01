@@ -115,8 +115,7 @@ class HistoryEventProcessorTest {
                 "invoke-result",
                 result.getOperation("invoke").getChainedInvokeDetails().result());
         assertEquals("Invoke", result.getOperation("invoke").getSubtype());
-        var invokeStartedDetails =
-                result.getOperation("invoke").getEvents().get(0).chainedInvokeStartedDetails();
+        var invokeStartedDetails = result.getOperation("invoke").getChainedInvokeStartedDetails();
         assertEquals("target", invokeStartedDetails.functionName());
         assertEquals("tenant", invokeStartedDetails.tenantId());
         assertEquals(2, observedContexts.size());

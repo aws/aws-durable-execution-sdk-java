@@ -380,6 +380,9 @@ public final class SerDesPreview {
     }
 
     private static boolean tryInsert(Map<String, Object> result, String path, Object value, int maxPreviewBytes) {
+        if (value instanceof String stringValue && utf8LengthExceeds(stringValue, maxPreviewBytes)) {
+            return false;
+        }
         if (!fitsCandidate(result, path, value, maxPreviewBytes)) {
             return false;
         }
@@ -392,6 +395,33 @@ public final class SerDesPreview {
         var candidate = copy(result);
         insert(candidate, path, value);
         return serializedSize(candidate) <= maxPreviewBytes;
+    }
+
+    private static boolean utf8LengthExceeds(String value, int limit) {
+        var length = 0;
+        for (var index = 0; index < value.length(); index++) {
+            var character = value.charAt(index);
+            final int bytes;
+            if (character <= 0x7F) {
+                bytes = 1;
+            } else if (character <= 0x7FF) {
+                bytes = 2;
+            } else if (Character.isHighSurrogate(character)
+                    && index + 1 < value.length()
+                    && Character.isLowSurrogate(value.charAt(index + 1))) {
+                bytes = 4;
+                index++;
+            } else if (Character.isSurrogate(character)) {
+                bytes = 1;
+            } else {
+                bytes = 3;
+            }
+            if (bytes > limit - length) {
+                return true;
+            }
+            length += bytes;
+        }
+        return false;
     }
 
     private record StreamingPreview(Map<String, Object> result, boolean fullyConsumed) {}

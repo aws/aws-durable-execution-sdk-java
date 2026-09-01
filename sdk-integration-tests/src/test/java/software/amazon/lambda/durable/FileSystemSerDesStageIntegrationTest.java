@@ -49,7 +49,6 @@ import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
 import software.amazon.lambda.durable.serde.filesystem.FileSystemSerDesStage;
 import software.amazon.lambda.durable.serde.internal.ChainedInvokePayloadFrame;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
-import software.amazon.lambda.durable.testing.TestResult;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 import software.amazon.lambda.durable.testing.local.OperationResult;
 
@@ -417,7 +416,7 @@ class FileSystemSerDesStageIntegrationTest {
     }
 
     @Test
-    void nestedInvokeFailurePreservesProducerContextAcrossReplay() throws Exception {
+    void nestedInvokeFailurePreservesOpaqueRemoteErrorAcrossReplay() {
         var childExecutions = new AtomicInteger();
         var serDes = filesystemPipeline();
         var config = DurableConfig.builder().withSerDes(serDes).build();
@@ -454,14 +453,18 @@ class FileSystemSerDesStageIntegrationTest {
                         .build());
 
         var completed = runner.runUntilComplete("input");
-        assertEquals(ExecutionStatus.SUCCEEDED, completed.getStatus());
-        assertEquals("caught:invoke-boom", completed.getResult());
-        assertForwardedErrorOwnedByChild(completed, "invoke-child");
+        assertEquals(ExecutionStatus.FAILED, completed.getStatus());
+        assertEquals(
+                errorData,
+                completed
+                        .getOperation("invoke-child")
+                        .getContextDetails()
+                        .error()
+                        .errorData());
         var executionsAfterCompletion = childExecutions.get();
 
         var replay = runner.run("input");
-        assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
-        assertEquals("caught:invoke-boom", replay.getResult());
+        assertEquals(ExecutionStatus.FAILED, replay.getStatus());
         assertEquals(executionsAfterCompletion, childExecutions.get());
     }
 
@@ -570,15 +573,6 @@ class FileSystemSerDesStageIntegrationTest {
         var file = Path.of(MAPPER.readTree(envelope).get("file").textValue());
         assertTrue(Files.exists(file));
         assertTrue(file.startsWith(basePath));
-    }
-
-    private void assertForwardedErrorOwnedByChild(TestResult<String> result, String childName) throws Exception {
-        var child = result.getOperation(childName);
-        var errorData = child.getContextDetails().error().errorData();
-        assertEnvelopePointsToFile(errorData);
-        assertEquals(
-                "operation/" + child.getId() + "/exception",
-                MAPPER.readTree(errorData).get("ownerEntityId").textValue());
     }
 
     @FunctionalInterface

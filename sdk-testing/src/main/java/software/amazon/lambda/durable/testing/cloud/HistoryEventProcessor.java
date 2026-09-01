@@ -414,6 +414,8 @@ public class HistoryEventProcessor {
     }
 
     private Operation createInvokeOperation(String id, Event event, Operation existingOperation) {
+        // ChainedInvokeDetails only models result/error. Start-only target metadata remains on the retained history
+        // event and is exposed by TestOperation.getChainedInvokeStartedDetails().
         var detailsBuilder = existingOperation != null && existingOperation.chainedInvokeDetails() != null
                 ? existingOperation.chainedInvokeDetails().toBuilder()
                 : ChainedInvokeDetails.builder();

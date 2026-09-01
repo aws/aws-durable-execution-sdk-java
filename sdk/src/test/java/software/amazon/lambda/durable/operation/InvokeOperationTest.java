@@ -3,13 +3,13 @@
 package software.amazon.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -44,9 +44,26 @@ class InvokeOperationTest {
     private static final String OPERATION_NAME = "test-invoke";
     private static final OperationIdentifier OPERATION_IDENTIFIER =
             OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.CHAINED_INVOKE);
+    private static final AtomicInteger EXTERNALLY_SELECTED_EXCEPTION_INITIALIZATIONS = new AtomicInteger();
 
     private ExecutionManager executionManager;
     private DurableContextImpl durableContext;
+
+    static final class ExternallySelectedException extends RuntimeException {
+        static {
+            EXTERNALLY_SELECTED_EXCEPTION_INITIALIZATIONS.incrementAndGet();
+        }
+    }
+
+    private static final class TrackingSerDes extends JacksonSerDes {
+        private final AtomicInteger deserializeCount = new AtomicInteger();
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            deserializeCount.incrementAndGet();
+            return super.deserialize(data, typeToken);
+        }
+    }
 
     @TempDir
     Path basePath;
@@ -85,17 +102,17 @@ class InvokeOperationTest {
     }
 
     @Test
-    void getInvokeFailedExceptionWhenInvocationFailed() {
-        var serDes = new JacksonSerDes();
-        var original = new IllegalStateException("errorMessage");
-        var errorData = serDes.serialize(original);
+    void getInvokeFailedExceptionKeepsRemoteErrorOpaque() {
+        var serDes = new TrackingSerDes();
+        var errorType = InvokeOperationTest.class.getName() + "$ExternallySelectedException";
+        var errorData = "{}";
         var op = Operation.builder()
                 .id(OPERATION_ID)
                 .name(OPERATION_NAME)
                 .status(OperationStatus.FAILED)
                 .chainedInvokeDetails(ChainedInvokeDetails.builder()
                         .error(ErrorObject.builder()
-                                .errorType(original.getClass().getName())
+                                .errorType(errorType)
                                 .errorMessage("errorMessage")
                                 .errorData(errorData)
                                 .build())
@@ -114,10 +131,12 @@ class InvokeOperationTest {
 
         InvokeFailedException ex = assertThrows(InvokeFailedException.class, () -> operation.get());
         assertEquals(errorData, ex.getErrorObject().errorData());
-        assertEquals(original.getClass().getName(), ex.getErrorObject().errorType());
+        assertEquals(errorType, ex.getErrorObject().errorType());
         assertEquals("errorMessage", ex.getMessage());
-        assertInstanceOf(IllegalStateException.class, ex.deserializedError());
-        assertEquals("errorMessage", ex.deserializedError().getMessage());
+        assertNull(ex.deserializedError());
+        assertNull(ex.getCause());
+        assertEquals(0, EXTERNALLY_SELECTED_EXCEPTION_INITIALIZATIONS.get());
+        assertEquals(0, serDes.deserializeCount.get());
     }
 
     @Test
@@ -239,10 +258,8 @@ class InvokeOperationTest {
     @EnumSource(
             value = OperationStatus.class,
             names = {"TIMED_OUT", "STOPPED"})
-    void nestedTerminalInvokeRebindsFilesystemErrorForReplay(OperationStatus status) {
-        var callerArn = "arn:aws:lambda:us-east-1:123456789012:function:caller/durable-execution/caller/invocation";
+    void nestedTerminalInvokeKeepsRemoteFilesystemErrorOpaque(OperationStatus status) {
         var calleeArn = "arn:aws:lambda:us-east-1:123456789012:function:callee/durable-execution/callee/invocation";
-        when(executionManager.getDurableExecutionArn()).thenReturn(callerArn);
 
         var serDes =
                 new JacksonSerDes().then(FileSystemSerDesStage.builder(basePath).build());
@@ -253,17 +270,17 @@ class InvokeOperationTest {
                         original,
                         SerDesContext.forExecution(
                                 calleeArn, "callee-invocation", "callee-execution", SerDesPayloadKind.EXCEPTION));
+        var remoteError = ErrorObject.builder()
+                .errorType(original.getClass().getName())
+                .errorMessage(original.getMessage())
+                .errorData(errorData)
+                .build();
         var op = Operation.builder()
                 .id(OPERATION_ID)
                 .name(OPERATION_NAME)
                 .status(status)
-                .chainedInvokeDetails(ChainedInvokeDetails.builder()
-                        .error(ErrorObject.builder()
-                                .errorType(original.getClass().getName())
-                                .errorMessage(original.getMessage())
-                                .errorData(errorData)
-                                .build())
-                        .build())
+                .chainedInvokeDetails(
+                        ChainedInvokeDetails.builder().error(remoteError).build())
                 .build();
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(op);
 
@@ -279,14 +296,11 @@ class InvokeOperationTest {
         DurableOperationException forwarded = status == OperationStatus.TIMED_OUT
                 ? assertThrows(InvokeTimedOutException.class, invoke::get)
                 : assertThrows(InvokeStoppedException.class, invoke::get);
-        assertInstanceOf(IllegalStateException.class, forwarded.deserializedError());
+        assertNull(forwarded.deserializedError());
 
         var child = new ChildContextRebindingOperation(serDes, durableContext);
         var rebound = child.rebind(forwarded);
-        var replayed = child.deserialize(rebound);
-
-        assertInstanceOf(IllegalStateException.class, replayed);
-        assertEquals("callee failed", replayed.getMessage());
+        assertEquals(remoteError, rebound);
     }
 
     @Test
@@ -328,10 +342,6 @@ class InvokeOperationTest {
 
         private ErrorObject rebind(DurableOperationException exception) {
             return rebindForwardedException(exception);
-        }
-
-        private Throwable deserialize(ErrorObject error) {
-            return deserializeException(error);
         }
 
         @Override

@@ -203,9 +203,10 @@ class SerDesPreviewTest {
     }
 
     @Test
-    void oversizedStringTokenRemainsBoundedUnderConstrainedHeap() throws Exception {
+    void oversizedPreviewValuesRemainBoundedUnderConstrainedHeap() throws Exception {
         runHeapProbe("json");
         runHeapProbe("object");
+        runHeapProbe("mask");
     }
 
     @Test

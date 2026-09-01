@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.List;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
+import software.amazon.awssdk.services.lambda.model.ChainedInvokeStartedDetails;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Event;
@@ -113,6 +114,21 @@ public class TestOperation {
     /** Returns the chained invoke details, or null if this is not a chained invoke operation. */
     public ChainedInvokeDetails getChainedInvokeDetails() {
         return operation.chainedInvokeDetails();
+    }
+
+    /**
+     * Returns start-only chained invoke target metadata, or {@code null} when the start event is unavailable.
+     *
+     * <p>The service {@link ChainedInvokeDetails} model contains only terminal result/error data. Function name and
+     * tenant ID are retained on {@code CHAINED_INVOKE_STARTED} history events instead.
+     */
+    public ChainedInvokeStartedDetails getChainedInvokeStartedDetails() {
+        for (var event : events) {
+            if (event.chainedInvokeStartedDetails() != null) {
+                return event.chainedInvokeStartedDetails();
+            }
+        }
+        return null;
     }
 
     /** Returns the context details, or null if this operation is not a context. */
