@@ -21,3 +21,16 @@ var result = ctx.invoke("invoke-function",
 		);
 				
 ```
+
+Payload and result serialization are selected independently. For example, a standard JSON payload can be sent while a
+filesystem-backed result is decoded:
+
+```java
+var config = InvokeConfig.builder()
+        .payloadSerDes(new JacksonSerDes())
+        .serDes(fileSystemSerDes)
+        .build();
+```
+
+If either boundary uses `FileSystemSerDes`, both functions must be able to access the referenced shared mount path.
+See [Serialization and Filesystem Storage](../advanced/serdes.md).

@@ -8,14 +8,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +27,7 @@ import org.junit.jupiter.api.io.TempDir;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.RetryableSerDesException;
 import software.amazon.lambda.durable.exception.SerDesException;
+import software.amazon.lambda.durable.retry.RetryDecision;
 
 class FileSystemSerDesTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -81,6 +86,7 @@ class FileSystemSerDesTest {
         var node = MAPPER.readTree(envelope);
 
         assertTrue(node.hasNonNull("data"));
+        assertTrue(node.get("sha256").textValue().matches("[0-9a-f]{64}"));
         assertFalse(node.has("file"));
         assertEquals("small", runner.deserialize(serDes, envelope, TypeToken.get(String.class), context));
     }
@@ -172,6 +178,58 @@ class FileSystemSerDesTest {
     }
 
     @Test
+    void verifiesInlineAndFilePayloadDigests() throws Exception {
+        var context = new SerDesContext(realisticArn(), "1");
+        var inlineSerDes = FileSystemSerDes.builder(tempDir)
+                .storageMode(FileSystemSerDesMode.OVERFLOW)
+                .build();
+        var inline = (ObjectNode) MAPPER.readTree(runner.serialize(inlineSerDes, "value", context));
+        inline.put("data", "\"tampered\"");
+
+        assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(inlineSerDes, inline.toString(), TypeToken.get(String.class), context));
+
+        var fileSerDes = FileSystemSerDes.builder(tempDir).build();
+        var fileEnvelope = runner.serialize(fileSerDes, "expected", context);
+        var fileNode = MAPPER.readTree(fileEnvelope);
+        var file = Path.of(fileNode.get("file").textValue());
+        Files.writeString(file, "\"tampered\"");
+
+        assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(fileSerDes, fileEnvelope, TypeToken.get(String.class), context));
+    }
+
+    @Test
+    void filePathContainsTheEnvelopeDigest() throws Exception {
+        var envelope = MAPPER.readTree(runner.serialize(
+                FileSystemSerDes.builder(tempDir).build(), "value", new SerDesContext(realisticArn(), "1")));
+
+        assertTrue(
+                envelope.get("file").textValue().contains(envelope.get("sha256").textValue()));
+    }
+
+    @Test
+    void rejectsMissingAndMalformedPayloadDigest() throws Exception {
+        var serDes = FileSystemSerDes.builder(tempDir)
+                .storageMode(FileSystemSerDesMode.OVERFLOW)
+                .build();
+        var context = new SerDesContext(realisticArn(), "1");
+        var envelope = (ObjectNode) MAPPER.readTree(runner.serialize(serDes, "value", context));
+
+        envelope.remove("sha256");
+        assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(serDes, envelope.toString(), TypeToken.get(String.class), context));
+
+        envelope.put("sha256", "not-a-digest");
+        assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(serDes, envelope.toString(), TypeToken.get(String.class), context));
+    }
+
+    @Test
     void rejectsPreviewThatMakesFileEnvelopeTooLarge() throws Exception {
         var serDes = FileSystemSerDes.builder(tempDir)
                 .previewGenerator(value -> Map.of("large", "x".repeat(300_000)))
@@ -182,6 +240,26 @@ class FileSystemSerDesTest {
         try (var files = Files.walk(tempDir)) {
             assertEquals(0, files.filter(Files::isRegularFile).count());
         }
+    }
+
+    @Test
+    void retryablePreviewFailureCanBeRetried() throws Exception {
+        var attempts = new AtomicInteger();
+        var fileSystemSerDes = FileSystemSerDes.builder(tempDir)
+                .previewGenerator(value -> {
+                    if (attempts.incrementAndGet() == 1) {
+                        throw new RetryableSerDesException("preview unavailable");
+                    }
+                    return Map.of("summary", "value");
+                })
+                .build();
+        var serDes = new RetrySerDes(
+                fileSystemSerDes, (failure, attempt) -> RetryDecision.retry(Duration.ZERO), delay -> {});
+
+        var envelope = MAPPER.readTree(runner.serialize(serDes, "value", new SerDesContext(realisticArn(), "1")));
+
+        assertEquals(2, attempts.get());
+        assertEquals("value", envelope.get("preview").get("summary").textValue());
     }
 
     @Test
@@ -242,6 +320,96 @@ class FileSystemSerDesTest {
                 () -> serDes.deserialize(
                         "{\"__durable_execution_filesystem_serdes\":1,\"data\":\"x\",\"file\":\"y\"}",
                         TypeToken.get(String.class)));
+    }
+
+    @Test
+    void recognizesMalformedMarkerRegardlessOfWhitespaceOrFieldOrder() {
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var malformed = List.of(
+                "{ \n  \"__durable_execution_filesystem_serdes\" : 1",
+                "{\"precedingField\":true,\n  \"__durable_execution_filesystem_serdes\" : 1",
+                "{\"\\u005f_durable_execution_filesystem_serdes\" : 1");
+
+        for (var envelope : malformed) {
+            assertThrows(SerDesException.class, () -> serDes.deserialize(envelope, TypeToken.get(String.class)));
+        }
+    }
+
+    @Test
+    void markerTextInsideStringDoesNotClaimMalformedJson() {
+        var value = "{\"message\":\"__durable_execution_filesystem_serdes\"} trailing";
+        var delegate = new SerDes() {
+            @Override
+            public String serialize(Object input) {
+                return input.toString();
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return (T) data;
+            }
+        };
+
+        assertEquals(
+                value,
+                FileSystemSerDes.builder(tempDir)
+                        .delegate(delegate)
+                        .build()
+                        .deserialize(value, TypeToken.get(String.class)));
+    }
+
+    @Test
+    void rejectsUnsupportedAndOutOfRangeEnvelopeVersions() {
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+        for (var version : List.of("2", "4294967297")) {
+            var envelope = "{\"__durable_execution_filesystem_serdes\":"
+                    + version
+                    + ",\"data\":\"\\\"value\\\"\",\"sha256\":\""
+                    + "0".repeat(64)
+                    + "\"}";
+            assertThrows(SerDesException.class, () -> serDes.deserialize(envelope, TypeToken.get(String.class)));
+        }
+    }
+
+    @Test
+    void rejectsMalformedUtf8FilePayload() throws Exception {
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var context = new SerDesContext(realisticArn(), "1");
+        var envelope = runner.serialize(serDes, "value", context);
+        var file = Path.of(MAPPER.readTree(envelope).get("file").textValue());
+        Files.write(file, new byte[] {(byte) 0xC3, (byte) 0x28});
+
+        assertThrows(
+                RetryableSerDesException.class,
+                () -> runner.deserialize(serDes, envelope, TypeToken.get(String.class), context));
+    }
+
+    @Test
+    void uriEncodingUsesReadableExecutionPathAndFlatUnsafeEntity() throws Exception {
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var context = new SerDesContext(realisticArn(), "../unsafe/entity");
+
+        var file = Path.of(MAPPER.readTree(runner.serialize(serDes, "value", context))
+                .get("file")
+                .textValue());
+
+        assertEquals(tempDir.resolve("test").resolve("execution-name").resolve("invocation-id"), file.getParent());
+        assertFalse(file.getFileName().toString().contains("/"));
+        assertTrue(file.getFileName().toString().startsWith("..%2Funsafe%2Fentity-"));
+    }
+
+    @Test
+    void malformedExecutionArnFallsBackToOneEncodedDirectory() throws Exception {
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var arn = "local/test:execution";
+
+        var file = Path.of(MAPPER.readTree(runner.serialize(serDes, "value", new SerDesContext(arn, "1")))
+                .get("file")
+                .textValue());
+
+        assertEquals(1, tempDir.relativize(file.getParent()).getNameCount());
+        assertEquals("local%2Ftest%3Aexecution", file.getParent().getFileName().toString());
     }
 
     @Test

@@ -77,6 +77,25 @@ mvn test -Dtest=CloudBasedIntegrationTest \
   -Dtest.aws.region=us-east-1
 ```
 
+For manually run cloud tests, the filesystem SerDes test is disabled by default because it requires VPC and EFS
+infrastructure. Create the persistent infrastructure stack once:
+
+```bash
+python3 generate-template.py \
+  --file-system-infrastructure-only \
+  --output filesystem-infrastructure-template.yaml
+aws cloudformation deploy \
+  --template-file filesystem-infrastructure-template.yaml \
+  --stack-name JavaSDKFileSystemSerDesE2EInfrastructureStack
+```
+
+Then generate, build, and deploy the filesystem Lambda stack with
+`FileSystemInfrastructureStackName=JavaSDKFileSystemSerDesE2EInfrastructureStack`, and include
+`-Dtest.filesystem.enabled=true` when running `CloudBasedIntegrationTest`.
+
+GitHub Actions maintains one persistent infrastructure stack shared by every Java version and one persistent
+filesystem Lambda stack per Java version. Each E2E matrix job updates its Lambda stack in place and runs the test.
+
 ## Examples
 
 | Example | Description |
@@ -87,6 +106,7 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 | [ErrorHandlingExample](src/main/java/software/amazon/lambda/durable/examples/general/ErrorHandlingExample.java) | Handling `StepFailedException` and `StepInterruptedException` |
 | [GenericTypesExample](src/main/java/software/amazon/lambda/durable/examples/general/GenericTypesExample.java) | Working with `List<T>` and `Map<K,V>` |
 | [CustomConfigExample](src/main/java/software/amazon/lambda/durable/examples/general/CustomConfigExample.java) | Custom Lambda client and SerDes |
+| [FileSystemSerDesExample](src/main/java/software/amazon/lambda/durable/examples/general/FileSystemSerDesExample.java) | Durable filesystem payload storage, previews, retries, and replay |
 | [WaitAtLeastExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitAtLeastExample.java) | Concurrent `stepAsync()` with `wait()` |
 | [WaitAsyncExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitAsyncExample.java) | Non-blocking `waitAsync()` with concurrent step |
 | [RetryInProcessExample](src/main/java/software/amazon/lambda/durable/examples/step/RetryInProcessExample.java) | In-process retry with concurrent operations |
@@ -95,6 +115,21 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 | [SimpleMapExample](src/main/java/software/amazon/lambda/durable/examples/map/SimpleMapExample.java) | Concurrent map over a collection with durable steps |
 | [CustomShouldCompleteMapExample](src/main/java/software/amazon/lambda/durable/examples/map/CustomShouldCompleteMapExample.java) | Custom map completion with `shouldComplete` decisions |
 | [WaitForConditionExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitForConditionExample.java) | Poll a condition until met with `waitForCondition()` |
+
+### Filesystem SerDes example
+
+The filesystem example requires a shared durable mount and the `FILESYSTEM_SERDES_PATH` environment variable. Do not
+use Lambda `/tmp`.
+
+For a deployed function, mount EFS or another compatible shared filesystem at the same path in every execution
+environment:
+
+```text
+FILESYSTEM_SERDES_PATH=/mnt/efs/durable-payloads
+```
+
+The mounted Java filesystem provider must support `SecureDirectoryStream`. The example uses structured previews,
+filesystem I/O retries, a durable wait that forces replay, and checksum verification after the payload is loaded again.
 
 ## Cleanup
 

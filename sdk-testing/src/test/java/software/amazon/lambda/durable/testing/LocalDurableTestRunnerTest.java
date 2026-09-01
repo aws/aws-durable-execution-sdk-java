@@ -5,18 +5,22 @@ package software.amazon.lambda.durable.testing;
 import static org.junit.jupiter.api.Assertions.*;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.serde.FileSystemSerDes;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 
@@ -141,5 +145,42 @@ class LocalDurableTestRunnerTest {
 
         assertTrue(contexts.stream().allMatch(context -> context.durableExecutionArn() != null));
         assertTrue(contexts.stream().map(SerDesContext::entityId).distinct().count() >= 2);
+    }
+
+    @Test
+    void checkpointedLargeOutputReplaysWithoutDuplicateExecutionOperation() {
+        var stepExecutions = new AtomicInteger();
+        var largeResult = "x".repeat(7 * 1024 * 1024);
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+                    context.step("once", Void.class, step -> {
+                        stepExecutions.incrementAndGet();
+                        return null;
+                    });
+                    return largeResult;
+                })
+                .withOutputType(String.class);
+
+        var firstResult = runner.run("test");
+        var replayResult = runner.run("test");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, firstResult.getStatus());
+        assertEquals(largeResult, firstResult.getResult());
+        assertEquals(ExecutionStatus.SUCCEEDED, replayResult.getStatus());
+        assertEquals(largeResult, replayResult.getResult());
+        assertEquals(1, stepExecutions.get());
+    }
+
+    @Test
+    void filesystemSerDesUsesRawDelegateEncodingForInitialInput(@TempDir Path basePath) {
+        var config = DurableConfig.builder()
+                .withSerDes(FileSystemSerDes.builder(basePath).build())
+                .build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> input, config)
+                .withOutputType(String.class);
+
+        var result = runner.run("value");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("value", result.getResult());
     }
 }

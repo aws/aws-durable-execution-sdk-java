@@ -117,9 +117,12 @@ Only objects containing the reserved version marker are treated as filesystem en
 `file` fields is passed to the configured delegate.
 
 ```json
-{"__durable_execution_filesystem_serdes":1,"data":"<delegate payload>"}
+{"__durable_execution_filesystem_serdes":1,"data":"<delegate payload>","sha256":"<digest>"}
 {"__durable_execution_filesystem_serdes":1,"file":"/mnt/efs/...json","sha256":"<digest>"}
 ```
+
+See [Filesystem SerDes wire format](../wire-formats/filesystem-serdes.md) for exact schemas, member validation, path
+construction, security requirements, and versioning.
 
 ### Structured previews
 
@@ -177,3 +180,7 @@ the invocation cache.
 `CloudDurableTestRunner` and `AsyncExecution` reconstruct the execution and operation contexts from history events.
 Each asynchronous history snapshot receives its own cache so updated payloads cannot reuse values from an earlier
 snapshot.
+
+See the runnable
+[FileSystemSerDesExample](../../examples/src/main/java/software/amazon/lambda/durable/examples/general/FileSystemSerDesExample.java)
+for filesystem configuration, structured previews, retries, replay, and checksum verification.

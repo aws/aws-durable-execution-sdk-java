@@ -116,14 +116,13 @@ public final class FileSystemSerDes implements SerDes {
             return delegate.deserialize(data, typeToken);
         }
         if (envelope.hasNonNull("data")) {
-            return delegate.deserialize(envelope.get("data").textValue(), typeToken);
+            var serialized = envelope.get("data").textValue();
+            verifyDigest(serialized, envelope.get("sha256").textValue());
+            return delegate.deserialize(serialized, typeToken);
         }
 
         var serialized = readPayload(envelope.get("file").textValue());
-        var expected = envelope.get("sha256").textValue();
-        if (!expected.equals(sha256(serialized))) {
-            throw new SerDesException("Filesystem SerDes payload digest does not match stored content");
-        }
+        verifyDigest(serialized, envelope.get("sha256").textValue());
         return delegate.deserialize(serialized, typeToken);
     }
 
@@ -131,6 +130,7 @@ public final class FileSystemSerDes implements SerDes {
         var envelope = ENVELOPE_MAPPER.createObjectNode();
         envelope.put(ENVELOPE_MARKER, ENVELOPE_VERSION);
         envelope.put("data", serialized);
+        envelope.put("sha256", sha256(serialized));
         return writeEnvelope(envelope);
     }
 
@@ -162,7 +162,7 @@ public final class FileSystemSerDes implements SerDes {
         try {
             node = ENVELOPE_READER.readTree(data);
         } catch (JsonProcessingException e) {
-            if (data.contains(ENVELOPE_MARKER)) {
+            if (containsFilesystemMarkerField(data)) {
                 throw new SerDesException("Malformed filesystem SerDes envelope", e);
             }
             return null;
@@ -186,9 +186,6 @@ public final class FileSystemSerDes implements SerDes {
         if (hasData == hasFile) {
             return false;
         }
-        if (hasData) {
-            return node.size() == 2;
-        }
         if (!node.has("sha256")
                 || !node.get("sha256").isTextual()
                 || !SHA_256_DIGEST_PATTERN
@@ -196,8 +193,77 @@ public final class FileSystemSerDes implements SerDes {
                         .matches()) {
             return false;
         }
+        if (hasData) {
+            return node.size() == 3;
+        }
         var hasPreview = node.has("preview");
         return (!hasPreview || node.get("preview").isObject()) && node.size() == (hasPreview ? 4 : 3);
+    }
+
+    private static boolean containsFilesystemMarkerField(String data) {
+        var index = 0;
+        while (index < data.length() && Character.isWhitespace(data.charAt(index))) {
+            index++;
+        }
+        if (index == data.length() || data.charAt(index) != '{') {
+            return false;
+        }
+
+        var containerDepth = 1;
+        for (index++; index < data.length() && containerDepth > 0; index++) {
+            var current = data.charAt(index);
+            if (current == '{' || current == '[') {
+                containerDepth++;
+            } else if (current == '}' || current == ']') {
+                containerDepth--;
+            } else if (current == '"') {
+                var literalStart = index;
+                var valueStart = ++index;
+                var escaped = false;
+                while (index < data.length()) {
+                    var literal = data.charAt(index);
+                    if (escaped) {
+                        escaped = false;
+                    } else if (literal == '\\') {
+                        escaped = true;
+                    } else if (literal == '"') {
+                        break;
+                    }
+                    index++;
+                }
+                if (containerDepth == 1
+                        && index < data.length()
+                        && isFilesystemMarkerLiteral(data, literalStart, valueStart, index)) {
+                    var next = index + 1;
+                    while (next < data.length() && Character.isWhitespace(data.charAt(next))) {
+                        next++;
+                    }
+                    if (next < data.length() && data.charAt(next) == ':') {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean isFilesystemMarkerLiteral(String data, int literalStart, int valueStart, int literalEnd) {
+        if (literalEnd - valueStart == ENVELOPE_MARKER.length()
+                && data.regionMatches(valueStart, ENVELOPE_MARKER, 0, ENVELOPE_MARKER.length())) {
+            return true;
+        }
+        try {
+            return ENVELOPE_MARKER.equals(
+                    ENVELOPE_MAPPER.readValue(data.substring(literalStart, literalEnd + 1), String.class));
+        } catch (JsonProcessingException ignored) {
+            return false;
+        }
+    }
+
+    private static void verifyDigest(String serialized, String expected) {
+        if (!expected.equals(sha256(serialized))) {
+            throw new SerDesException("Filesystem SerDes payload digest does not match stored content");
+        }
     }
 
     private Path payloadPath(SerDesContext context, String digest) {

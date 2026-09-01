@@ -10,13 +10,24 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
+import software.amazon.lambda.durable.execution.DurableExecutor;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.retry.JitterStrategy;
@@ -27,6 +38,8 @@ import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
+import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
+import software.amazon.lambda.durable.testing.local.OperationResult;
 
 class FileSystemSerDesIntegrationTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -80,6 +93,134 @@ class FileSystemSerDesIntegrationTest {
         try (var files = Files.walk(tempDir)) {
             assertEquals(1, files.filter(Files::isRegularFile).count());
         }
+    }
+
+    @Test
+    void durableExecutorAcceptsRawServiceInputBeforeFilesystemEnvelopeExists() {
+        var executionArn =
+                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/execution/raw-input";
+        var executionOperation =
+                executionOperation("raw-input", "execution", "\"service-input\"", OperationStatus.STARTED);
+        var client = new LocalMemoryExecutionClient();
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(client)
+                .withSerDes(serDes)
+                .build();
+
+        var output = DurableExecutor.execute(
+                durableInput(executionArn, executionOperation, List.of(), List.of()),
+                null,
+                TypeToken.get(String.class),
+                (value, context) -> value + "-output",
+                config);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertEquals("service-input-output", serDes.deserialize(output.result(), TypeToken.get(String.class)));
+    }
+
+    @Test
+    void callerAndCalleeExchangeOffloadedInvokePayloadAndResult() throws Exception {
+        var callerArn =
+                "arn:aws:lambda:us-east-1:123456789012:function:caller:1/durable-execution/caller-execution/caller-invocation";
+        var calleeArn =
+                "arn:aws:lambda:us-east-1:123456789012:function:callee:1/durable-execution/callee-execution/callee-invocation";
+        var serDes = FileSystemSerDes.builder(tempDir).build();
+        var callerClient = new LocalMemoryExecutionClient();
+        var callerConfig = DurableConfig.builder()
+                .withDurableExecutionClient(callerClient)
+                .withSerDes(serDes)
+                .build();
+        BiFunction<String, DurableContext, CrossInvokeResponse> callerHandler = (input, context) ->
+                context.invoke("call-callee", "callee", new CrossInvokeRequest(input), CrossInvokeResponse.class);
+        var callerExecution =
+                executionOperation("caller-invocation", "caller-execution", "\"request\"", OperationStatus.STARTED);
+
+        var pending = DurableExecutor.execute(
+                durableInput(callerArn, callerExecution, List.of(), List.of()),
+                null,
+                TypeToken.get(String.class),
+                callerHandler,
+                callerConfig);
+
+        assertEquals(ExecutionStatus.PENDING, pending.status());
+        var invokePayload = callerClient.getOperationUpdates().stream()
+                .filter(update ->
+                        update.type() == OperationType.CHAINED_INVOKE && update.action() == OperationAction.START)
+                .findFirst()
+                .orElseThrow()
+                .payload();
+        assertEnvelopePointsToFile(invokePayload);
+
+        var calleeClient = new LocalMemoryExecutionClient();
+        var calleeConfig = DurableConfig.builder()
+                .withDurableExecutionClient(calleeClient)
+                .withSerDes(serDes)
+                .build();
+        var calleeExecution =
+                executionOperation("callee-invocation", "callee-execution", invokePayload, OperationStatus.STARTED);
+        var calleeOutput = DurableExecutor.execute(
+                durableInput(calleeArn, calleeExecution, List.of(), List.of()),
+                null,
+                TypeToken.get(CrossInvokeRequest.class),
+                (request, context) -> new CrossInvokeResponse("reply:" + request.value()),
+                calleeConfig);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, calleeOutput.status());
+        assertEnvelopePointsToFile(calleeOutput.result());
+
+        callerClient.completeChainedInvoke("call-callee", OperationResult.succeeded(calleeOutput.result()));
+        var resumed = DurableExecutor.execute(
+                durableInput(
+                        callerArn,
+                        callerExecution,
+                        callerClient.getAllOperations(),
+                        callerClient.getUpdatedOperationIdsSinceLastInvocation()),
+                null,
+                TypeToken.get(String.class),
+                callerHandler,
+                callerConfig);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, resumed.status());
+        assertEquals(
+                new CrossInvokeResponse("reply:request"),
+                serDes.deserialize(resumed.result(), TypeToken.get(CrossInvokeResponse.class)));
+    }
+
+    @Test
+    void invokePayloadOverridePreservesStandardJsonWireContract() {
+        var callerArn =
+                "arn:aws:lambda:us-east-1:123456789012:function:caller:1/durable-execution/caller-execution/caller-invocation";
+        var callerClient = new LocalMemoryExecutionClient();
+        var fileSystemSerDes = FileSystemSerDes.builder(tempDir).build();
+        var callerConfig = DurableConfig.builder()
+                .withDurableExecutionClient(callerClient)
+                .withSerDes(fileSystemSerDes)
+                .build();
+        BiFunction<String, DurableContext, String> handler = (input, context) -> context.invoke(
+                "call-standard",
+                "standard",
+                new CrossInvokeRequest(input),
+                String.class,
+                InvokeConfig.builder().payloadSerDes(new JacksonSerDes()).build());
+        var execution =
+                executionOperation("caller-invocation", "caller-execution", "\"request\"", OperationStatus.STARTED);
+
+        var pending = DurableExecutor.execute(
+                durableInput(callerArn, execution, List.of(), List.of()),
+                null,
+                TypeToken.get(String.class),
+                handler,
+                callerConfig);
+
+        assertEquals(ExecutionStatus.PENDING, pending.status());
+        var invokePayload = callerClient.getOperationUpdates().stream()
+                .filter(update ->
+                        update.type() == OperationType.CHAINED_INVOKE && update.action() == OperationAction.START)
+                .findFirst()
+                .orElseThrow()
+                .payload();
+        assertEquals("{\"value\":\"request\"}", invokePayload);
     }
 
     @Test
@@ -229,7 +370,37 @@ class FileSystemSerDesIntegrationTest {
         assertTrue(file.startsWith(tempDir));
     }
 
+    private static DurableExecutionInput durableInput(
+            String executionArn, Operation executionOperation, List<Operation> operations, List<String> updatedIds) {
+        var allOperations = new ArrayList<Operation>();
+        allOperations.add(executionOperation);
+        allOperations.addAll(operations);
+        return new DurableExecutionInput(
+                executionArn,
+                "checkpoint-token",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(allOperations)
+                        .build(),
+                updatedIds);
+    }
+
+    private static Operation executionOperation(String id, String name, String inputPayload, OperationStatus status) {
+        return Operation.builder()
+                .id(id)
+                .name(name)
+                .type(OperationType.EXECUTION)
+                .status(status)
+                .startTimestamp(Instant.now())
+                .executionDetails(
+                        ExecutionDetails.builder().inputPayload(inputPayload).build())
+                .build();
+    }
+
     record Payload(String value) {}
+
+    record CrossInvokeRequest(String value) {}
+
+    record CrossInvokeResponse(String value) {}
 
     public static class CustomFailure extends RuntimeException {
         public CustomFailure() {}

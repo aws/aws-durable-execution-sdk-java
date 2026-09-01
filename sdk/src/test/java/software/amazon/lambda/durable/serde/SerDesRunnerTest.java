@@ -8,8 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -138,6 +140,129 @@ class SerDesRunnerTest {
         assertNull(executor.submit(SerDesContext::getCurrentContext).get());
         assertTrue(executor.submit(() -> Thread.currentThread().getName().startsWith("test-serdes"))
                 .get());
+    }
+
+    @Test
+    void cacheKeyIncludesSerDesIdentity() {
+        var calls = new AtomicInteger();
+        var first = countingSerDes(calls);
+        var second = countingSerDes(calls);
+        var context = new SerDesContext("arn:test", "entity");
+
+        runner.deserialize(first, "{\"value\":\"same\"}", TypeToken.get(Value.class), context);
+        runner.deserialize(second, "{\"value\":\"same\"}", TypeToken.get(Value.class), context);
+
+        assertEquals(2, calls.get());
+    }
+
+    @Test
+    void completedCacheEvictsLeastRecentlyUsedEntries() {
+        var calls = new AtomicInteger();
+        var serDes = countingSerDes(calls);
+        var values = new java.util.ArrayList<Value>();
+        for (int index = 0; index <= SerDesRunner.MAX_COMPLETED_DESERIALIZATIONS; index++) {
+            values.add(runner.deserialize(
+                    serDes,
+                    "{\"value\":\"" + index + "\"}",
+                    TypeToken.get(Value.class),
+                    new SerDesContext("arn:test", "entity-" + index)));
+        }
+
+        runner.deserialize(
+                serDes, "{\"value\":\"0\"}", TypeToken.get(Value.class), new SerDesContext("arn:test", "entity-0"));
+
+        assertEquals(SerDesRunner.MAX_COMPLETED_DESERIALIZATIONS + 2, calls.get());
+        assertEquals(SerDesRunner.MAX_COMPLETED_DESERIALIZATIONS + 1, values.size());
+    }
+
+    @Test
+    void concurrentCacheMissesDeserializeOnlyOnce() throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var calls = new AtomicInteger();
+        var serDes = new JacksonSerDes() {
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                calls.incrementAndGet();
+                entered.countDown();
+                try {
+                    release.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+                return super.deserialize(data, typeToken);
+            }
+        };
+        var context = new SerDesContext("arn:test", "entity");
+        var callers = Executors.newFixedThreadPool(2);
+        try {
+            var first = callers.submit(
+                    () -> runner.deserialize(serDes, "{\"value\":\"x\"}", TypeToken.get(Value.class), context));
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            var second = callers.submit(
+                    () -> runner.deserialize(serDes, "{\"value\":\"x\"}", TypeToken.get(Value.class), context));
+            release.countDown();
+
+            assertSame(first.get(5, TimeUnit.SECONDS), second.get(5, TimeUnit.SECONDS));
+            assertEquals(1, calls.get());
+        } finally {
+            release.countDown();
+            callers.shutdownNow();
+        }
+    }
+
+    @Test
+    void cachesNullDeserializationResults() {
+        var calls = new AtomicInteger();
+        var serDes = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return null;
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                calls.incrementAndGet();
+                return null;
+            }
+        };
+        var context = new SerDesContext("arn:test", "entity");
+
+        assertNull(runner.deserialize(serDes, null, TypeToken.get(String.class), context));
+        assertNull(runner.deserialize(serDes, null, TypeToken.get(String.class), context));
+        assertEquals(1, calls.get());
+    }
+
+    @Test
+    void preservesFatalErrorsWithAndWithoutExecutor() {
+        var fatal = new AssertionError("fatal");
+        var serDes = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                throw fatal;
+            }
+
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                throw fatal;
+            }
+        };
+        var context = new SerDesContext("arn:test", "entity");
+
+        assertSame(fatal, assertThrows(AssertionError.class, () -> runner.serialize(serDes, "value", context)));
+        assertSame(fatal, assertThrows(AssertionError.class, () -> new SerDesRunner(null)
+                .deserialize(serDes, "\"value\"", TypeToken.get(String.class), context)));
+    }
+
+    private static SerDes countingSerDes(AtomicInteger calls) {
+        return new JacksonSerDes() {
+            @Override
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                calls.incrementAndGet();
+                return super.deserialize(data, typeToken);
+            }
+        };
     }
 
     record Value(String value) {}

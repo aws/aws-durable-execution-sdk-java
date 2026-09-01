@@ -141,7 +141,7 @@ Retry delays run inline or on the configured SerDes executor.
 Java writes versioned envelopes:
 
 ```json
-{"__durable_execution_filesystem_serdes":1,"data":"<delegate payload>"}
+{"__durable_execution_filesystem_serdes":1,"data":"<delegate payload>","sha256":"<digest>"}
 {"__durable_execution_filesystem_serdes":1,"file":"/mnt/efs/...json","sha256":"<digest>"}
 {"__durable_execution_filesystem_serdes":1,"file":"/mnt/efs/...json","sha256":"<digest>","preview":{"id":"123"}}
 ```

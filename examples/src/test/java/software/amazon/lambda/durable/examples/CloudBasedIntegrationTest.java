@@ -5,8 +5,14 @@ package software.amazon.lambda.durable.examples;
 import static org.junit.jupiter.api.Assertions.*;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -14,6 +20,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledForJreRange;
 import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.condition.JRE;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -21,9 +28,11 @@ import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.examples.general.FileSystemSerDesExample;
 import software.amazon.lambda.durable.examples.general.GenericTypesExample;
 import software.amazon.lambda.durable.examples.types.ApprovalRequest;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
@@ -38,6 +47,8 @@ import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
 @EnabledIf("isEnabled")
 class CloudBasedIntegrationTest {
     private static final int PERFORMANCE_TEST_REPEAT = 3;
+    private static final String FILE_SYSTEM_ENVELOPE_MARKER = "__durable_execution_filesystem_serdes";
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static String account;
     private static String region;
@@ -299,6 +310,44 @@ class CloudBasedIntegrationTest {
         assertNotNull(runner.getOperation("fetch-items"));
         assertNotNull(runner.getOperation("count-by-category"));
         assertNotNull(runner.getOperation("fetch-categories"));
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "test.filesystem.enabled", matches = "true")
+    void testFileSystemSerDesExample() throws Exception {
+        var value = "filesystem-e2e-".repeat(24 * 1024);
+        var input = new FileSystemSerDesExample.Input("payload-1", "user@example.com", value);
+        var expectedChecksum = sha256(value);
+        var runner = CloudDurableTestRunner.create(
+                arn("file-system-ser-des-example"),
+                FileSystemSerDesExample.Input.class,
+                FileSystemSerDesExample.Output.class,
+                lambdaClient);
+
+        var result = runner.run(input);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertTrue(result.getHistoryEvents().stream()
+                        .filter(event -> event.eventType() == EventType.INVOCATION_COMPLETED)
+                        .count()
+                >= 2);
+        assertNotNull(result.getOperation("force-filesystem-replay"));
+
+        var storedEnvelope = assertFileSystemEnvelope(
+                result.getOperation("store-payload").getStepDetails().result());
+        assertPreview(storedEnvelope, input.id(), value.length(), null, "***");
+
+        var verifiedEnvelope = assertFileSystemEnvelope(
+                result.getOperation("verify-payload").getStepDetails().result());
+        assertPreview(verifiedEnvelope, input.id(), value.length(), expectedChecksum, null);
+
+        var outputPayload = result.getHistoryEvents().stream()
+                .filter(event -> event.eventType() == EventType.EXECUTION_SUCCEEDED)
+                .map(event -> event.executionSucceededDetails().result().payload())
+                .findFirst()
+                .orElseThrow();
+        var outputEnvelope = assertFileSystemEnvelope(outputPayload);
+        assertPreview(outputEnvelope, input.id(), value.length(), expectedChecksum, null);
     }
 
     @Test
@@ -852,5 +901,34 @@ class CloudBasedIntegrationTest {
         // Verify operations were tracked
         assertNotNull(runner.getOperation("create-greeting"));
         assertNotNull(runner.getOperation("transform"));
+    }
+
+    private static JsonNode assertFileSystemEnvelope(String value) throws Exception {
+        var envelope = MAPPER.readTree(value);
+        assertEquals(1, envelope.get(FILE_SYSTEM_ENVELOPE_MARKER).intValue());
+        assertTrue(envelope.get("sha256").textValue().matches("[0-9a-f]{64}"));
+        assertTrue(envelope.get("file").textValue().startsWith("/mnt/efs/durable-payloads/"));
+        return envelope;
+    }
+
+    private static void assertPreview(JsonNode envelope, String id, int length, String checksum, String maskedEmail) {
+        var preview = envelope.get("preview");
+        assertEquals(id, preview.get("id").textValue());
+        assertEquals(length, preview.get("length").intValue());
+        if (checksum != null) {
+            assertEquals(checksum, preview.get("checksum").textValue());
+        }
+        if (maskedEmail != null) {
+            assertEquals(maskedEmail, preview.get("email").textValue());
+        }
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of()
+                    .formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
     }
 }
