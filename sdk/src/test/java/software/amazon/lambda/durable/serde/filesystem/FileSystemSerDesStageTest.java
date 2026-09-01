@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URI;
@@ -397,6 +398,24 @@ class FileSystemSerDesStageTest {
         var oversizedPreview = stringCodec().then(oversizedPreviewStage);
         var failure = assertThrows(SerDesException.class, () -> runner.serialize(oversizedPreview, "value", context()));
         assertCauseMessage(failure, "checkpoint payload limit");
+    }
+
+    @Test
+    void validatesAndReturnsTheSameEncodedFileEnvelope() throws Exception {
+        var previewSerializations = new AtomicInteger();
+        var stage = FileSystemSerDesStage.builder(basePath)
+                .checkpointEnvelopeLimitBytes(2048)
+                .previewGenerator(
+                        (value, context) -> Map.of("summary", new ChangingPreviewValue(previewSerializations)))
+                .build();
+
+        var envelope = new SerDesRunner(null).serialize(stringCodec().then(stage), "value", context());
+        var json = MAPPER.readTree(envelope);
+
+        assertEquals(1, previewSerializations.get());
+        assertEquals("small", json.get("preview").get("summary").textValue());
+        assertTrue(envelope.getBytes(StandardCharsets.UTF_8).length <= 2048);
+        assertEquals("value", Files.readString(Path.of(json.get("file").textValue())));
     }
 
     @Test
@@ -992,5 +1011,18 @@ class FileSystemSerDesStageTest {
                 return data.substring(1, data.length() - 1);
             }
         };
+    }
+
+    private static final class ChangingPreviewValue {
+        private final AtomicInteger serializations;
+
+        private ChangingPreviewValue(AtomicInteger serializations) {
+            this.serializations = serializations;
+        }
+
+        @JsonValue
+        public String value() {
+            return serializations.incrementAndGet() == 1 ? "small" : "x".repeat(4096);
+        }
     }
 }

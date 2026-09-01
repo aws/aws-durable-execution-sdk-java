@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
@@ -127,14 +128,15 @@ public final class FileSystemSerDesStage implements SerDesStage {
         if (preview != null) {
             fileEnvelope.put("preview", preview);
         }
-        if (!fitsCheckpoint(fileEnvelope, context)) {
+        var encodedFileEnvelope = encodeEnvelope(fileEnvelope, context);
+        if (!fitsCheckpoint(encodedFileEnvelope)) {
             throw new SerDesException("Filesystem SerDes envelope exceeds the checkpoint payload limit for entity '"
                     + context.entityId()
                     + "'");
         }
         try {
             writePayload(payload, file);
-            return encodeEnvelope(fileEnvelope, context);
+            return encodedFileEnvelope;
         } catch (IOException e) {
             throw new RetryableSerDesException(
                     "Failed to store filesystem payload for entity '" + context.entityId() + "'", e);
@@ -497,6 +499,10 @@ public final class FileSystemSerDesStage implements SerDesStage {
             throw new SerDesException(
                     "Failed to measure filesystem payload envelope for entity '" + context.entityId() + "'", e);
         }
+    }
+
+    private boolean fitsCheckpoint(String encodedEnvelope) {
+        return encodedEnvelope.getBytes(StandardCharsets.UTF_8).length <= checkpointEnvelopeLimitBytes;
     }
 
     private SerDesContext requireContext(SerDesContext context) {
