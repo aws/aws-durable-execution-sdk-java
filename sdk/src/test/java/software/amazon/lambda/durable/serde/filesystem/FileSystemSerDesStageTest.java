@@ -72,7 +72,8 @@ class FileSystemSerDesStageTest {
         assertEquals(
                 sha256("{\"id\":42}".getBytes(StandardCharsets.UTF_8)),
                 json.get("payloadDigest").textValue());
-        assertTrue(file.startsWith(basePath.resolve("orders/execution-1/invocation-1")));
+        assertEquals(basePath, file.getParent());
+        assertTrue(file.getFileName().toString().startsWith("operation%2F1%2Fresult"));
         assertEquals("{\"id\":42}", Files.readString(file));
         assertEquals(
                 Map.of("id", 42),
@@ -258,7 +259,7 @@ class FileSystemSerDesStageTest {
         var failure = assertThrows(
                 SerDesException.class,
                 () -> runner.deserialize(serDes, json.toString(), TypeToken.get(String.class), context()));
-        assertCauseMessage(failure, "file path does not match its payload digest");
+        assertCauseMessage(failure, "declared owner and payload digest");
     }
 
     @Test
@@ -346,7 +347,7 @@ class FileSystemSerDesStageTest {
         var envelope = new SerDesRunner(null).serialize(serDes, "value", context());
         var file = Path.of(MAPPER.readTree(envelope).get("file").textValue());
 
-        assertEquals(64, file.getParent().getFileName().toString().length());
+        assertEquals(basePath, file.getParent());
         assertEquals(174, file.getFileName().toString().length());
         assertTrue(file.getFileName().toString().matches("[0-9a-f]{64}-[0-9a-f]{64}-[0-9a-f-]{36}\\.payload"));
         assertFalse(file.toString().contains("operation"));
@@ -695,6 +696,29 @@ class FileSystemSerDesStageTest {
     }
 
     @Test
+    void fileNameBindsDeclaredOwnerAtCrossExecutionBoundaries() throws Exception {
+        var serDes =
+                new JacksonSerDes().then(FileSystemSerDesStage.builder(basePath).build());
+        var runner = new SerDesRunner(null);
+        var envelope = (ObjectNode) MAPPER.readTree(runner.serialize(serDes, Map.of("id", 42), context()));
+        envelope.put(
+                "ownerDurableExecutionArn",
+                "arn:aws:lambda:us-east-1:123456789012:function:other:1/durable-execution/other/other");
+        var externalInput = SerDesContext.forExecution(
+                "arn:aws:lambda:us-east-1:123456789012:function:callee:1/durable-execution/callee/callee",
+                "callee",
+                "callee",
+                SerDesPayloadKind.INPUT);
+
+        var failure = assertThrows(
+                SerDesException.class,
+                () -> runner.deserialize(
+                        serDes, envelope.toString(), new TypeToken<Map<String, Integer>>() {}, externalInput));
+
+        assertCauseMessage(failure, "declared owner and payload digest");
+    }
+
+    @Test
     void rejectsCallsWithoutContextAndMalformedOrUnsafeEnvelopes() throws Exception {
         var stage = FileSystemSerDesStage.builder(basePath).build();
         var serDes = stringCodec().then(stage);
@@ -742,27 +766,29 @@ class FileSystemSerDesStageTest {
     }
 
     @Test
-    void rejectsSymbolicLinkDirectoriesWhenWriting() throws Exception {
-        var outside = Files.createTempDirectory(basePath.getParent(), "outside-payloads-");
-        Files.createSymbolicLink(basePath.resolve("orders"), outside);
-        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
+    void doesNotCreateMissingBasePathComponents() {
+        var missingRoot = basePath.resolve("missing");
+        var serDes = stringCodec()
+                .then(FileSystemSerDesStage.builder(missingRoot.resolve("payloads"))
+                        .build());
 
-        assertThrows(SerDesException.class, () -> new SerDesRunner(null).serialize(serDes, "payload", context()));
-        try (var files = Files.list(outside)) {
-            assertEquals(0, files.count());
-        }
+        var failure = assertThrows(
+                SerDesException.class, () -> new SerDesRunner(null).serialize(serDes, "payload", context()));
+
+        assertCauseMessage(failure, "base path and all ancestors must already exist");
+        assertFalse(Files.exists(missingRoot));
     }
 
     @Test
-    void rejectsSymbolicLinkDirectoriesWhenReading() throws Exception {
-        var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
+    void rejectsConfiguredBasePathReplacedWithSymbolicLinkWhenReading() throws Exception {
+        var configuredBasePath = Files.createDirectory(basePath.resolve("payloads"));
+        var serDes = stringCodec()
+                .then(FileSystemSerDesStage.builder(configuredBasePath).build());
         var runner = new SerDesRunner(null);
         var envelope = runner.serialize(serDes, "payload", context());
-        var orders = basePath.resolve("orders");
-        var outside = Files.createTempDirectory(basePath.getParent(), "outside-payloads-");
-        var outsideOrders = outside.resolve("orders");
-        Files.move(orders, outsideOrders);
-        Files.createSymbolicLink(orders, outsideOrders);
+        var movedBasePath = basePath.resolve("moved-payloads");
+        Files.move(configuredBasePath, movedBasePath);
+        Files.createSymbolicLink(configuredBasePath, movedBasePath);
 
         assertThrows(
                 SerDesException.class,
@@ -791,7 +817,7 @@ class FileSystemSerDesStageTest {
     }
 
     @Test
-    void rejectsExecutionPathsOutsideConfiguredBasePath() {
+    void ownerIdentifiersCannotEscapeConfiguredBasePath() throws Exception {
         var serDes = stringCodec().then(FileSystemSerDesStage.builder(basePath).build());
         var unsafeContext = SerDesContext.forOperation(
                 "arn:aws:lambda:us-east-1:123456789012:function:..:1/durable-execution/../..",
@@ -803,7 +829,9 @@ class FileSystemSerDesStageTest {
                 SerDesPayloadKind.RESULT,
                 1);
 
-        assertThrows(SerDesException.class, () -> new SerDesRunner(null).serialize(serDes, "value", unsafeContext));
+        var envelope = new SerDesRunner(null).serialize(serDes, "value", unsafeContext);
+
+        assertEquals(basePath, payloadFile(envelope).getParent());
     }
 
     private static SerDes stringCodec() {

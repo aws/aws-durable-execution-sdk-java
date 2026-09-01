@@ -48,9 +48,12 @@ import software.amazon.lambda.durable.serde.Utf8StringBinaryCodec;
  * <p>Payload files are immutable and created with a single {@code CREATE_NEW} write. Publication does not require hard
  * links or renames, so the write path is compatible with S3 Files.
  *
- * <p>The mounted filesystem provider must support {@link SecureDirectoryStream}. The stage traverses relative directory
- * handles with symbolic-link following disabled and keeps those handles open through file I/O, preventing a checked
- * path from being redirected between validation and access.
+ * <p>The configured base path and all of its ancestors must already exist. Payload files are direct children of that
+ * base path, so the stage never creates directories by pathname after opening a secure directory handle.
+ *
+ * <p>The mounted filesystem provider must support {@link SecureDirectoryStream}. The stage traverses to the
+ * pre-provisioned base path with symbolic-link following disabled and keeps that handle open through file I/O,
+ * preventing a checked path from being redirected between validation and access.
  *
  * <p>Every filesystem envelope includes a SHA-256 payload digest. Deserialization verifies inline values and file
  * contents against that digest, and file paths must contain the same digest.
@@ -65,13 +68,12 @@ public final class FileSystemSerDesStage implements SerDesStage {
     private static final String PAYLOAD_TYPE_FIELD = "payloadType";
     private static final int ENVELOPE_VERSION = 1;
     private static final int DEFAULT_CHECKPOINT_ENVELOPE_LIMIT_BYTES = 256 * 1024 - 1024;
+    private static final int MAX_URI_OWNER_PREFIX_LENGTH = 32;
     private static final ObjectMapper ENVELOPE_MAPPER = new ObjectMapper();
     private static final ObjectReader ENVELOPE_READER = ENVELOPE_MAPPER
             .reader()
             .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
             .with(DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY);
-    private static final Pattern DURABLE_EXECUTION_ARN_PATTERN = Pattern.compile(
-            "^arn:[^:]*:lambda:[^:]*:[^:]*:function:([^:/]+):[^:/]+/durable-execution/([^/]+)/([^/]+)$");
     private static final Pattern SHA_256_DIGEST_PATTERN = Pattern.compile("[0-9a-f]{64}");
 
     private final Path basePath;
@@ -192,14 +194,15 @@ public final class FileSystemSerDesStage implements SerDesStage {
             PayloadOwner owner,
             SerDesContext context) {
         var file = basePath.getFileSystem().getPath(fileValue).toAbsolutePath().normalize();
-        validatePayloadPath(file, owner);
-        var expectedFileName = payloadFileName(payloadDigest, owner.entityId());
+        validatePayloadPath(file);
+        var expectedFileName = payloadFileName(payloadDigest, owner.durableExecutionArn(), owner.entityId());
         if (!matchesPublishedPayloadFileName(file.getFileName().toString(), expectedFileName)) {
-            throw new SerDesException("Filesystem SerDes file path does not match its payload digest");
+            throw new SerDesException(
+                    "Filesystem SerDes file path does not match its declared owner and payload digest");
         }
         try {
             byte[] storedData;
-            try (var directory = openSecureDirectory(file.getParent(), false);
+            try (var directory = openSecureDirectory(file.getParent());
                     var channel = directory
                             .directory()
                             .newByteChannel(
@@ -216,15 +219,9 @@ public final class FileSystemSerDesStage implements SerDesStage {
         }
     }
 
-    private void validatePayloadPath(Path file, PayloadOwner owner) {
-        var expectedDirectory = resolveExecutionDirectory(owner.durableExecutionArn());
+    private void validatePayloadPath(Path file) {
         var fileName = file.getFileName();
-        if (fileName == null
-                || file.getParent() == null
-                || !file.getParent().equals(expectedDirectory)
-                || !fileName.toString()
-                        .matches(Pattern.quote(encode(owner.entityId()))
-                                + "-[0-9a-f]{64}(?:-[A-Za-z0-9_-]+)?\\.payload")) {
+        if (fileName == null || file.getParent() == null || !file.getParent().equals(basePath)) {
             throw new SerDesException("Filesystem SerDes file is not valid for its declared durable entity");
         }
     }
@@ -472,27 +469,26 @@ public final class FileSystemSerDesStage implements SerDesStage {
     }
 
     private Path resolvePayloadPath(String payloadDigest, SerDesContext context) {
-        var directory = resolveExecutionDirectory(context.durableExecutionArn());
-        var deterministicName = payloadFileName(payloadDigest, context.entityId());
+        var deterministicName = payloadFileName(payloadDigest, context.durableExecutionArn(), context.entityId());
         var suffix = ".payload";
         var fileName = deterministicName.substring(0, deterministicName.length() - suffix.length())
                 + "-"
                 + UUID.randomUUID()
                 + suffix;
-        var file = directory.resolve(fileName).normalize();
-        if (!file.startsWith(directory)) {
-            throw new SerDesException("Resolved filesystem payload path is outside the execution directory");
+        var file = basePath.resolve(fileName).normalize();
+        if (!basePath.equals(file.getParent())) {
+            throw new SerDesException("Resolved filesystem payload path is outside the configured base path");
         }
         return file;
     }
 
-    private String payloadFileName(String payloadDigest, String entityId) {
-        return encode(entityId) + "-" + payloadDigest + ".payload";
+    private String payloadFileName(String payloadDigest, String durableExecutionArn, String entityId) {
+        return payloadOwnerPrefix(durableExecutionArn, entityId) + "-" + payloadDigest + ".payload";
     }
 
     private void writePayload(SerializedPayload payload, Path file) throws IOException {
         var directory = file.getParent();
-        try (var secureDirectory = openSecureDirectory(directory, true)) {
+        try (var secureDirectory = openSecureDirectory(directory)) {
             var created = false;
             try (var channel = secureDirectory
                     .directory()
@@ -522,7 +518,7 @@ public final class FileSystemSerDesStage implements SerDesStage {
         }
     }
 
-    private SecureDirectoryHandle openSecureDirectory(Path directory, boolean createMissing) throws IOException {
+    private SecureDirectoryHandle openSecureDirectory(Path directory) throws IOException {
         if (directory == null || !directory.startsWith(basePath)) {
             throw new SerDesException("Filesystem SerDes directory is outside the configured base path");
         }
@@ -534,25 +530,14 @@ public final class FileSystemSerDesStage implements SerDesStage {
         var openedStreams = new ArrayList<DirectoryStream<Path>>();
         try {
             var current = requireSecureDirectoryStream(Files.newDirectoryStream(root), openedStreams);
-            var currentPath = root;
             for (var component : root.relativize(directory)) {
-                var nextPath = currentPath.resolve(component);
-                DirectoryStream<Path> next;
                 try {
-                    next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS);
+                    current = requireSecureDirectoryStream(
+                            current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS), openedStreams);
                 } catch (NoSuchFileException missing) {
-                    if (!createMissing) {
-                        throw missing;
-                    }
-                    try {
-                        Files.createDirectory(nextPath);
-                    } catch (FileAlreadyExistsException ignored) {
-                        // Validate and open the entry relative to the held parent directory below.
-                    }
-                    next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS);
+                    throw new SerDesException(
+                            "Filesystem SerDes base path and all ancestors must already exist", missing);
                 }
-                current = requireSecureDirectoryStream(next, openedStreams);
-                currentPath = nextPath;
             }
             return new SecureDirectoryHandle(current, openedStreams);
         } catch (IOException | RuntimeException failure) {
@@ -591,26 +576,15 @@ public final class FileSystemSerDesStage implements SerDesStage {
         return actualFileName.startsWith(expectedPrefix + "-") && actualFileName.endsWith(suffix);
     }
 
-    private Path resolveExecutionDirectory(String durableExecutionArn) {
-        Path directory;
-        if (pathEncoding == FileSystemPathEncoding.URI) {
-            var matcher = DURABLE_EXECUTION_ARN_PATTERN.matcher(durableExecutionArn);
-            if (matcher.matches()) {
-                directory = basePath.resolve(encode(matcher.group(1)))
-                        .resolve(encode(matcher.group(2)))
-                        .resolve(encode(matcher.group(3)))
-                        .normalize();
-                if (!directory.startsWith(basePath)) {
-                    throw new SerDesException("Resolved filesystem execution path is outside the configured base path");
-                }
-                return directory;
-            }
+    private String payloadOwnerPrefix(String durableExecutionArn, String entityId) {
+        var ownerDigest = sha256(durableExecutionArn + "\0" + entityId);
+        if (pathEncoding == FileSystemPathEncoding.HASH) {
+            return ownerDigest;
         }
-        directory = basePath.resolve(encode(durableExecutionArn)).normalize();
-        if (!directory.startsWith(basePath)) {
-            throw new SerDesException("Resolved filesystem execution path is outside the configured base path");
-        }
-        return directory;
+        var readableEntity = encode(entityId);
+        var readablePrefix =
+                readableEntity.substring(0, Math.min(readableEntity.length(), MAX_URI_OWNER_PREFIX_LENGTH));
+        return readablePrefix + "-" + ownerDigest;
     }
 
     private String encode(String value) {

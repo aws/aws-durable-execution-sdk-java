@@ -396,8 +396,8 @@ Path encodings:
 
 | Encoding | Behavior |
 |----------|----------|
-| `URI` | Use readable, escaped path segments derived from durable execution ARN and entity ID. |
-| `HASH` | Use SHA-256 names for fixed-length, filesystem-safe paths. |
+| `URI` | Prefix each filename with a bounded, escaped entity label plus a SHA-256 owner digest. |
+| `HASH` | Prefix each filename with only the fixed-length SHA-256 owner digest. |
 
 Envelope format:
 
@@ -469,10 +469,12 @@ the marked envelope contains `data`, it restores the inline text; if it contains
 `ComposableSerDes` then passes that value to the preceding string stage. Raw external input, callback results, and
 standard invoke results pass unchanged through every stage whose marker is absent until they reach the value codec.
 
-Filesystem path validation and access are atomic with respect to path replacement. The implementation traverses from
-the filesystem root through relative `SecureDirectoryStream` handles with `NOFOLLOW_LINKS`, retains those handles
-through the payload read or `CREATE_NEW` write, and performs failed-write cleanup relative to the same held directory.
-It fails closed when the mounted provider does not support `SecureDirectoryStream`.
+Filesystem path validation and access are atomic with respect to path replacement. The configured base path and all
+ancestors must already exist, and payload files are direct children of that base path. The implementation traverses
+from the filesystem root through relative `SecureDirectoryStream` handles with `NOFOLLOW_LINKS`, retains the base
+directory handle through the payload read or `CREATE_NEW` write, and performs failed-write cleanup relative to the
+same held handle. It never creates directories and fails closed when a path component is missing or the mounted
+provider does not support `SecureDirectoryStream`.
 
 ### Threading
 

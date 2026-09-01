@@ -233,36 +233,40 @@ identity when resolving the file.
 ### Version 1 path construction
 
 Both producer and consumer MUST be configured with access to the same durable shared filesystem at the same absolute
-base path. Lambda ephemeral storage is not compatible with this protocol.
+base path. Lambda ephemeral storage is not compatible with this protocol. The base path and all of its ancestors MUST
+be pre-provisioned directories. A producer MUST NOT create missing path components while publishing a payload.
 
-The producing execution directory is derived from `ownerDurableExecutionArn`:
+Payload files are direct children of the configured base path. The owner digest is the lowercase SHA-256 hex digest of
+the UTF-8 bytes of `ownerDurableExecutionArn`, followed by a single zero byte, followed by `ownerEntityId`.
 
-- In `URI` mode, a standard durable execution ARN uses three path segments: function name, execution name, and
-  invocation ID. If the ARN cannot be parsed, the complete ARN is encoded as one segment.
-- In `HASH` mode, the directory is the lowercase SHA-256 hex digest of the UTF-8 ARN.
+The filename owner prefix is:
 
-URI path segments use RFC 3986 unreserved characters (`A-Z`, `a-z`, `0-9`, `-`, `_`, `.`, and `~`) unchanged. Every
+- In `HASH` mode, the 64-character owner digest.
+- In `URI` mode, the first 32 characters of the percent-encoded `ownerEntityId`, followed by `-` and the owner digest.
+
+URI encoding leaves RFC 3986 unreserved characters (`A-Z`, `a-z`, `0-9`, `-`, `_`, `.`, and `~`) unchanged. Every
 other UTF-8 byte is percent-encoded with uppercase hexadecimal digits.
 
 The version 1 Java producer creates file names using:
 
 ```text
-<encoded-owner-entity-id>-<payload-digest>-<unique-suffix>.payload
+<owner-prefix>-<payload-digest>-<unique-suffix>.payload
 ```
 
-In `HASH` mode, `<encoded-owner-entity-id>` is the lowercase SHA-256 hex digest of the UTF-8 entity ID. The unique
-suffix does not carry payload semantics.
+The unique suffix does not carry payload semantics.
 
 A consumer:
 
 - MUST normalize the referenced path and ensure it remains beneath the configured base path;
-- MUST require the parent directory to equal the directory derived from the declared owner ARN;
-- MUST require the file name to contain the encoded owner entity ID and declared payload digest;
+- MUST require the parent directory to equal the configured base path;
+- MUST recompute the owner prefix from the declared owner ARN and entity ID;
+- MUST require the file name to contain that owner prefix and the declared payload digest;
 - MUST prevent symbolic-link traversal and time-of-check/time-of-use path substitution; and
 - MUST read the file without following symbolic links.
 
-Producers MUST publish a new immutable file without replacing an existing payload. Consumers MUST treat the file
-reference as a capability and protect it with the same controls as the payload.
+Producers MUST publish a new immutable file relative to a held handle for the pre-provisioned base directory without
+replacing an existing payload. Consumers MUST treat the file reference as a capability and protect it with the same
+controls as the payload.
 
 ### Chained-invoke example
 

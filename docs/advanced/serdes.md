@@ -273,8 +273,8 @@ The storage modes are:
 
 The path encodings are:
 
-- `URI`: use readable escaped path segments.
-- `HASH`: use fixed-length SHA-256 path segments.
+- `URI`: prefix each filename with a bounded, escaped entity label plus a SHA-256 owner digest.
+- `HASH`: prefix each filename with only the fixed-length SHA-256 owner digest.
 
 `checkpointEnvelopeLimitBytes(...)` controls the maximum UTF-8 size accepted for both inline and file envelopes. It
 defaults to 255 KiB and can be increased when the durable execution service supports a larger payload limit.
@@ -315,16 +315,18 @@ Filesystem envelopes contain a reserved version marker. The stage passes strings
 unchanged. A string containing the marker must be a valid, supported filesystem envelope; malformed marked envelopes
 and unsupported versions fail rather than falling back to pass-through behavior.
 
-Payload files are content-hashed and immutable. Each serialization publishes a unique filename with a single
-`CREATE_NEW` write. Existing files are never overwritten, and publication does not require hard links or renames.
+Payload files are content-hashed and immutable. Each serialization publishes a unique file directly beneath the
+configured base path with a single `CREATE_NEW` write. Existing files are never overwritten, and publication does not
+require hard links or renames.
 Every inline and file envelope records the payload's SHA-256 digest. During deserialization, the stage verifies the
 restored bytes against that envelope digest; file payloads must also have a content-addressed filename consistent with
-the digest. The stage traverses directories with `SecureDirectoryStream`, disables symbolic-link following, and holds
-the relative directory handles through each file read or write. This makes path validation and access one safe
-operation even if another process changes names on the shared filesystem. Providers without
-`SecureDirectoryStream` support are rejected. The stage also validates that ordinary checkpoint replay matches the
-execution and entity that produced the reference. Invoke input and result boundaries can consume a file owned by the
-other Lambda execution when both functions use the same shared root and path encoding.
+the digest. The base path and all of its ancestors must already exist; the stage never creates directories. It
+traverses to that base path with `SecureDirectoryStream`, disables symbolic-link following, and holds the handle
+through each file read or write. This makes path validation and access one safe operation even if another process
+changes names on the shared filesystem. Providers without `SecureDirectoryStream` support are rejected. The stage
+also validates that ordinary checkpoint replay matches the execution and entity that produced the reference. Invoke
+input and result boundaries can consume a file owned by the other Lambda execution when both functions use the same
+shared root and path encoding.
 
 Stages may follow `FileSystemSerDesStage` to transform its inline or file-reference envelope. `OVERFLOW` and preview
 size checks occur before those later stages, so account for any expansion when staying within the service checkpoint
@@ -335,10 +337,11 @@ limit.
 Do not use Lambda's ephemeral `/tmp` directory. Durable replay may run in another execution environment where the file
 does not exist.
 
-Use a durable shared mount such as EFS or S3 Files. The stage does not rely on hard links or renames, which S3 Files
-does not support. The mounted Java filesystem provider must expose `SecureDirectoryStream`; ordinary Linux EFS and S3
-Files mounts use the default provider that supplies it. S3 Files can synchronize writes asynchronously, so a runtime
-crash before a flush can lose recent data; use it only when that durability tradeoff is acceptable.
+Use a pre-provisioned durable shared directory on a mount such as EFS or S3 Files. The stage does not rely on hard
+links or renames, which S3 Files does not support. The mounted Java filesystem provider must expose
+`SecureDirectoryStream`; ordinary Linux EFS and S3 Files mounts use the default provider that supplies it. S3 Files
+can synchronize writes asynchronously, so a runtime crash before a flush can lose recent data; use it only when that
+durability tradeoff is acceptable.
 
 The SDK does not delete payload files. Configure an appropriate retention or lifecycle policy for the backing
 storage.

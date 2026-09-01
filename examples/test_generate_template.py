@@ -35,6 +35,7 @@ class GenerateTemplateTest(unittest.TestCase):
         self.assertIn("${FileSystemInfrastructureStackName}-SubnetId", template)
         self.assertIn("${FileSystemInfrastructureStackName}-LambdaSecurityGroupId", template)
         self.assertIn("${FileSystemInfrastructureStackName}-AccessPointArn", template)
+        self.assertIn("FILESYSTEM_SERDES_PATH: /mnt/efs", template)
         self.assertNotIn("AWS::EFS::FileSystem", template)
         self.assertNotIn("FileSystemMountTarget", template)
 

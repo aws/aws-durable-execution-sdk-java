@@ -141,7 +141,7 @@ def emit_function(lines: list[str], example: ExampleFunction) -> None:
                 "          LocalMountPath: /mnt/efs",
                 "      Environment:",
                 "        Variables:",
-                "          FILESYSTEM_SERDES_PATH: /mnt/efs/durable-payloads",
+                "          FILESYSTEM_SERDES_PATH: /mnt/efs",
             ]
         )
     lines.append("")
