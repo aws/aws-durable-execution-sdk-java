@@ -477,6 +477,7 @@ The decision is based on the following:
 This ADR applies to the Java SDK. Python and JavaScript are not required to introduce `PayloadOffloader` or mirror the
 Java API. They may retain filesystem `SerDes` APIs when those APIs remain idiomatic for their languages.
 
-Cross-language API consistency is not a decision criterion. Shared behavior or wire formats should be standardized only
-when a concrete interoperability requirement exists. The Java SDK should not couple storage to `SerDes` solely to
-match another language's API shape.
+Cross-language API consistency is an important consideration, but it does not override language-idiomatic design.
+Shared behavior and wire formats should remain consistent where interoperability requires them, while public API
+shapes may differ by language. The Java SDK should not couple storage to `SerDes` solely to match another language's
+API shape.
