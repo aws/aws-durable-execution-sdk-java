@@ -295,64 +295,208 @@ This option leaves `SerDes` responsible for value encoding and adds a separate s
 
 ```java
 public interface PayloadOffloader {
-    OffloadedPayload offload(
+    StoredPayload store(
             String serializedPayload,
             PayloadOffloadContext context);
 
     String load(
-            OffloadedPayload payload,
+            StoredPayload payload,
             PayloadOffloadContext context);
 }
+
+public record StoredPayload(
+        String reference,
+        Map<String, Object> preview) {}
 ```
 
-The runtime pipeline becomes:
+`StoredPayload` represents only externally stored data. It does not represent inline data and does not own the durable
+checkpoint envelope.
+
+The forward runtime pipeline becomes:
 
 ```
 Object
   -> SerDes
   -> serialized String
-  -> PayloadOffloader
-  -> SDK-owned payload envelope
-  -> checkpoint String
+  -> SDK inline-size decision
+     -> SDK-owned inline envelope
+     or
+     -> PayloadOffloader.store
+     -> StoredPayload
+     -> SDK-owned reference envelope
 ```
 
 Replay reverses the flow:
 
 ```
 checkpoint String
-  -> SDK-owned payload envelope
-  -> PayloadOffloader.load
+  -> reserved envelope marker?
+     -> no: legacy raw SerDes string
+     -> yes: SDK-owned inline or reference envelope
+  -> inline data or PayloadOffloader.load
   -> serialized String
   -> SerDes
   -> Object
 ```
 
-The SDK-owned `OffloadedPayload` model distinguishes inline data from an external reference and carries preview, producer ownership, content-digest, producer-context, and load-semantics metadata. `PayloadOffloadContext` explicitly provides execution identity, payload kind, operation metadata, attempt, and the original serialization value when available.
+The SDK-owned envelope distinguishes inline data from an external reference and carries preview, producer ownership,
+content digest, producer context, and load semantics. `PayloadOffloadContext` explicitly provides execution identity,
+payload kind, operation metadata, attempt, and the original serialization value when available.
 
 The offloader can be configured globally or overridden per operation. Operation builders provide an explicit
 `disablePayloadOffloading()` method when an operation must bypass a global offloader. Serialization remains
 independently configurable through existing `SerDes` options.
 
+### Legacy payload compatibility
+
+The SDK envelope uses a reserved marker and version. During decoding:
+
+- data without the reserved marker is a legacy raw `SerDes` string and is passed directly to `SerDes`;
+- a recognized supported envelope is validated and decoded;
+- a recognized malformed or unsupported envelope fails closed;
+- disabling offloading writes the legacy raw format rather than an envelope.
+
+This behavior is required even when an offloader is configured after an SDK upgrade. Existing in-flight executions
+must continue replaying raw checkpoint payloads without migration.
+
+### Inline-versus-reference decision
+
+The SDK, not the storage implementation, decides whether a payload remains inline:
+
+1. Serialize the user value once and compute its content digest.
+2. Build the exact inline envelope, including marker, version, ownership, digest, producer context, escaping, and other
+   metadata.
+3. Measure the final UTF-8 envelope.
+4. Persist it inline only when the configured policy permits inline storage and the complete envelope fits.
+5. Otherwise call `PayloadOffloader.store`, build the exact reference envelope from the returned reference and preview,
+   and validate that the reference envelope also fits.
+
+The offloader always stores externally when called. `ALWAYS` and `OVERFLOW` are SDK-owned policies. A reference or
+preview that makes the final reference envelope exceed the checkpoint limit fails as a non-retryable configuration or
+storage-contract error.
+
+### Root result and error decoding
+
+Root execution output and error data are consumed outside the handler and therefore require an explicit producer and
+consumer contract:
+
+- root output and error offloading are disabled by default, even when checkpoint-internal payloads use a global
+  offloader;
+- a handler must explicitly enable root payload offloading, for example with
+  `DurableConfig.Builder.withRootPayloadOffloading(true)`;
+- a caller must configure the compatible offloader and `SerDes` through a public `DurablePayloadDecoder`, or through
+  equivalent payload-aware cloud test-runner and history APIs;
+- the envelope carries the producer context, and the decoder passes that context unchanged to
+  `PayloadOffloader.load`;
+- callers without the decoder continue receiving ordinary raw root payloads unless the producer explicitly opts in.
+
+The public decoder recognizes legacy raw data, inline envelopes, reference envelopes, and serialized error data. Cloud
+history and testing utilities must use the same decoder rather than passing every result directly to `SerDes`.
+Encountering a marked reference envelope without a configured offloader produces a clear configuration error.
+
+```java
+var decoder = DurablePayloadDecoder.builder()
+        .serDes(customSerDes)
+        .payloadOffloader(fileSystemOffloader)
+        .build();
+
+var result = decoder.decode(serializedResult, new TypeToken<Result>() {});
+```
+
+### Storage failure contract
+
+Custom offloaders report failures through a common public exception contract:
+
+```java
+public enum PayloadStorageFailureKind {
+    TRANSIENT_IO(true),
+    THROTTLED(true),
+    AUTHORIZATION(false),
+    NOT_FOUND(false),
+    INVALID_REFERENCE(false),
+    INTEGRITY(false),
+    UNSUPPORTED_FORMAT(false),
+    CONFIGURATION(false),
+    INTERRUPTED(false),
+    BACKEND(false);
+
+    private final boolean retryable;
+
+    PayloadStorageFailureKind(boolean retryable) {
+        this.retryable = retryable;
+    }
+
+    public boolean retryable() {
+        return retryable;
+    }
+}
+
+public class PayloadStorageException extends RuntimeException {
+    private final PayloadStorageFailureKind kind;
+
+    public PayloadStorageException(
+            PayloadStorageFailureKind kind,
+            String message,
+            Throwable cause) {
+        super(message, cause);
+        this.kind = Objects.requireNonNull(kind);
+    }
+
+    public PayloadStorageFailureKind kind() {
+        return kind;
+    }
+
+    public boolean retryable() {
+        return kind.retryable();
+    }
+}
+```
+
+The failure kind, rather than each backend, defines retryability. The SDK retries only retryable kinds and always
+applies a bounded retry strategy. Authorization, not-found, configuration, invalid-reference, integrity,
+unsupported-format, and interruption failures are non-retryable. A backend may classify an eventually consistent
+temporary miss as `TRANSIENT_IO`, but a definitive missing reference is `NOT_FOUND`. Unknown backend exceptions are
+wrapped as non-retryable `BACKEND` failures with the original cause.
+
+When interruption is detected, the SDK restores the thread interrupt flag and stops retrying. Fatal JVM errors are not
+wrapped. Storage failures remain distinct from user-function failures and checkpoint transport failures.
+
 The SDK owns:
 
 - envelope encoding and versioning;
+- legacy raw-payload recognition;
+- inline-versus-reference policy and exact final-envelope sizing;
 - producer ownership and cross-execution validation;
-- final envelope sizing;
 - loaded-string and deserialized-object caches;
 - failure classification at the payload-storage boundary;
+- root output and error opt-in and public decoding;
 - framed chained-invoke request, result, and error handling;
 - precedence between global, operation-specific, and disabled offloaders.
 
 The filesystem implementation owns:
 
-- inline-versus-reference selection;
 - filesystem path construction;
 - immutable publication;
 - secure loading;
 - preview generation;
-- backend-specific retryable failures.
+- backend-specific references;
+- failure classification through `PayloadStorageException`.
 
-Direct Lambda input and externally submitted callback results retain their existing `SerDes` wire contracts. Offloaded chained invokes require an explicit caller opt-in and target acceptance setting, preserving compatibility with standard Lambda functions and older SDKs by default.
+Direct Lambda input and externally submitted callback results retain their existing `SerDes` wire contracts. Offloaded
+chained invokes require an explicit caller opt-in and target acceptance setting, preserving compatibility with standard
+Lambda functions and older SDKs by default.
+
+### Required compatibility and contract tests
+
+The implementation must cover:
+
+- replay of legacy raw checkpoint payloads after upgrading to a configured offloader;
+- raw payloads written while offloading is disabled;
+- fail-closed behavior for malformed and unsupported marked envelopes;
+- exact inline and reference envelope boundaries, including escaping, ownership metadata, digests, and previews;
+- root result and error defaults, producer opt-in, public decoder opt-in, and cloud-history decoding;
+- retryable and permanent backend failures, unknown exceptions, and interruption preservation;
+- cross-execution producer-context preservation for chained-invoke payloads, results, and errors.
 
 ### Advantages
 
