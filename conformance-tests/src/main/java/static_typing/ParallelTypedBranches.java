@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package parallel;
+package static_typing;
 
 import java.util.List;
 import java.util.Map;
@@ -12,7 +12,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.ParallelConfig;
 
 /**
- * 8-23: Parallel exposes independently typed handles for heterogeneous branch results.
+ * 12-1: Parallel exposes independently typed handles for heterogeneous branch results.
  *
  * <p>Each branch declares its own concrete result type, including a parameterized map, and the values are retrieved
  * from those typed handles after the parallel operation is sealed.

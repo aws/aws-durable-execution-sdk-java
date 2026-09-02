@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package parallel;
+package static_typing;
 
 import java.util.List;
 import software.amazon.lambda.durable.DurableContext;
@@ -10,7 +10,7 @@ import software.amazon.lambda.durable.ParallelDurableFuture;
 import software.amazon.lambda.durable.config.ParallelConfig;
 
 /**
- * 8-24: A parallel branch can complete before later branches are registered.
+ * 12-2: A parallel branch can complete before later branches are registered.
  *
  * <p>The first branch is awaited while the parallel operation is still open. The second branch is registered only after
  * that result is available, proving that registration starts branches before the operation is sealed.
