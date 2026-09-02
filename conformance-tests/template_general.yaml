@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Durable Execution Conformance Test Examples - Java (General)
+
+Parameters:
+  Architecture:
+    Type: String
+    Default: arm64
+    Description: Lambda Function Architecture
+    AllowedValues:
+      - x86_64
+      - arm64
+  JavaVersion:
+    Type: String
+    Default: 'java21'
+    Description: Java runtime version
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 512
+    Runtime:
+      Ref: JavaVersion
+    Architectures:
+      - Ref: Architecture
+    LoggingConfig:
+      LogFormat: JSON
+
+Resources:
+  DurableFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: DurableExecutionPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - lambda:CheckpointDurableExecution
+            - lambda:GetDurableExecutionState
+            Resource: '*'
+
+  ReplayOperationIdentity:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription: ["11-1"]
+    Properties:
+      CodeUri: .
+      Handler: general.ReplayOperationIdentity
+      Description: Replay rejects an operation-type mismatch
+      Role:
+        Fn::GetAtt:
+        - DurableFunctionRole
+        - Arn
+      DurableConfig:
+        RetentionPeriodInDays: 7
+        ExecutionTimeout: 300
