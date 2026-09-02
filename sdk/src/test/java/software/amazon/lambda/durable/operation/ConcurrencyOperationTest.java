@@ -12,6 +12,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -22,6 +23,7 @@ import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -33,11 +35,14 @@ import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.PayloadOffloadException;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
+import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -351,6 +356,153 @@ class ConcurrencyOperationTest {
         assertTrue(op.awaitCoordinatorStopped());
     }
 
+    @Test
+    void parentCompletionWaitsForReservedChildPersistence() throws Exception {
+        var operation = createOperation(CompletionConfig.firstSuccessful());
+        var persistenceStarted = new CountDownLatch(1);
+        var releasePersistence = new CountDownLatch(1);
+        var persistenceCompleted = new AtomicBoolean();
+
+        var childPersistence = CompletableFuture.runAsync(() -> assertTrue(operation.persistChildCompletion(() -> {
+            persistenceStarted.countDown();
+            try {
+                assertTrue(releasePersistence.await(5, TimeUnit.SECONDS));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+            persistenceCompleted.set(true);
+        })));
+        assertTrue(persistenceStarted.await(5, TimeUnit.SECONDS));
+
+        var parentCompletion = CompletableFuture.runAsync(() -> operation.initiateCompletion(
+                CompletionConfig.CompletionDecision.complete(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED)));
+        Thread.sleep(50);
+        assertFalse(parentCompletion.isDone(), "Parent completion must wait until child persistence finishes");
+
+        releasePersistence.countDown();
+        childPersistence.get(5, TimeUnit.SECONDS);
+        parentCompletion.get(5, TimeUnit.SECONDS);
+
+        assertTrue(persistenceCompleted.get());
+        assertTrue(operation.isSuccessHandled());
+        assertFalse(
+                operation.persistChildCompletion(() -> fail("Persistence must be rejected after completion starts")));
+    }
+
+    @Test
+    void parentCompletionHoldsLockThroughAggregateCheckpointing() throws Exception {
+        var operation = new BlockingAggregateConcurrencyOperation(durableContext);
+        var parentCompletion = CompletableFuture.runAsync(() -> operation.initiateCompletion(
+                CompletionConfig.CompletionDecision.complete(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED)));
+        assertTrue(operation.awaitCompletionStarted());
+        var lateChildRan = new AtomicBoolean();
+        var lateChild =
+                CompletableFuture.supplyAsync(() -> operation.persistChildCompletion(() -> lateChildRan.set(true)));
+
+        Thread.sleep(100);
+        assertFalse(lateChild.isDone());
+
+        operation.releaseCompletion();
+        parentCompletion.get(5, TimeUnit.SECONDS);
+
+        assertFalse(lateChild.get(5, TimeUnit.SECONDS));
+        assertFalse(lateChildRan.get());
+    }
+
+    @Test
+    void childPayloadFailureClaimPreventsParentCompletion() throws Exception {
+        var operation = createOperation(CompletionConfig.firstSuccessful());
+        var failure = new PayloadOffloadException("payload failure");
+
+        assertTrue(operation.claimChildPayloadFailure(failure));
+        operation.initiateCompletion(
+                CompletionConfig.CompletionDecision.complete(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED));
+
+        assertFalse(operation.isSuccessHandled());
+        assertFalse(operation.claimChildPayloadFailure(new PayloadOffloadException("later payload failure")));
+    }
+
+    @Test
+    void payloadFailureDuringChildPersistenceBeatsWaitingEarlyCompletion() throws Exception {
+        var operation = createOperation(CompletionConfig.firstSuccessful());
+        var persistenceStarted = new CountDownLatch(1);
+        var releasePersistence = new CountDownLatch(1);
+        var payloadFailure = new PayloadOffloadException("exception offload failed");
+        var observedFailure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+
+        var childPersistence = CompletableFuture.runAsync(() -> {
+            try {
+                operation.persistChildCompletion(() -> {
+                    persistenceStarted.countDown();
+                    try {
+                        assertTrue(releasePersistence.await(5, TimeUnit.SECONDS));
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                    throw payloadFailure;
+                });
+            } catch (Throwable failure) {
+                observedFailure.set(failure);
+            }
+        });
+        assertTrue(persistenceStarted.await(5, TimeUnit.SECONDS));
+
+        var parentCompletion = CompletableFuture.runAsync(() -> operation.initiateCompletion(
+                CompletionConfig.CompletionDecision.complete(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED)));
+        Thread.sleep(100);
+        assertFalse(parentCompletion.isDone(), "Early completion must wait while exception persistence holds the lock");
+
+        releasePersistence.countDown();
+        childPersistence.get(5, TimeUnit.SECONDS);
+        parentCompletion.get(5, TimeUnit.SECONDS);
+
+        assertSame(payloadFailure, observedFailure.get());
+        assertFalse(operation.isSuccessHandled());
+        assertTrue(operation.claimChildPayloadFailure(payloadFailure));
+    }
+
+    @Test
+    void checkpointFailureDuringChildPersistenceBeatsWaitingEarlyCompletion() throws Exception {
+        var operation = createOperation(CompletionConfig.firstSuccessful());
+        var persistenceStarted = new CountDownLatch(1);
+        var releasePersistence = new CountDownLatch(1);
+        var checkpointFailure = new UnrecoverableDurableExecutionException(
+                ErrorObject.builder().errorMessage("checkpoint failed").build());
+        var observedFailure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+
+        var childPersistence = CompletableFuture.runAsync(() -> {
+            try {
+                operation.persistChildCompletion(() -> {
+                    persistenceStarted.countDown();
+                    try {
+                        assertTrue(releasePersistence.await(5, TimeUnit.SECONDS));
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                    throw new CompletionException(checkpointFailure);
+                });
+            } catch (Throwable failure) {
+                observedFailure.set(failure);
+            }
+        });
+        assertTrue(persistenceStarted.await(5, TimeUnit.SECONDS));
+
+        var parentCompletion = CompletableFuture.runAsync(() -> operation.initiateCompletion(
+                CompletionConfig.CompletionDecision.complete(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED)));
+        Thread.sleep(100);
+        assertFalse(parentCompletion.isDone());
+
+        releasePersistence.countDown();
+        childPersistence.get(5, TimeUnit.SECONDS);
+        parentCompletion.get(5, TimeUnit.SECONDS);
+
+        assertSame(checkpointFailure, observedFailure.get());
+        assertFalse(operation.isSuccessHandled());
+    }
+
     // ===== Test subclass =====
 
     static class TestConcurrencyOperation extends ConcurrencyOperation<Void> {
@@ -518,6 +670,41 @@ class ConcurrencyOperationTest {
         boolean awaitCoordinatorStopped() throws Exception {
             getRunningUserHandler().get(5, TimeUnit.SECONDS);
             return getRunningUserHandler().isDone();
+        }
+    }
+
+    static class BlockingAggregateConcurrencyOperation extends TestConcurrencyOperation {
+        private final CountDownLatch completionStarted = new CountDownLatch(1);
+        private final CountDownLatch releaseCompletion = new CountDownLatch(1);
+
+        BlockingAggregateConcurrencyOperation(DurableContextImpl durableContext) {
+            super(
+                    OperationIdentifier.of(OPERATION_ID, "test-concurrency", OperationSubType.PARALLEL),
+                    RESULT_TYPE,
+                    SER_DES,
+                    durableContext,
+                    Integer.MAX_VALUE,
+                    CompletionConfig.firstSuccessful());
+        }
+
+        @Override
+        protected void handleCompletion(CompletionConfig.CompletionDecision completionDecision) {
+            completionStarted.countDown();
+            try {
+                assertTrue(releaseCompletion.await(5, TimeUnit.SECONDS));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+            super.handleCompletion(completionDecision);
+        }
+
+        boolean awaitCompletionStarted() throws InterruptedException {
+            return completionStarted.await(5, TimeUnit.SECONDS);
+        }
+
+        void releaseCompletion() {
+            releaseCompletion.countDown();
         }
     }
 

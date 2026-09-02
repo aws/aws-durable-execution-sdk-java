@@ -76,7 +76,7 @@ public class CallbackOperation<T> extends SerializableDurableOperation<T> implem
         var op = waitForOperationCompletion();
 
         return switch (op.status()) {
-            case SUCCEEDED -> deserializeResult(op.callbackDetails().result());
+            case SUCCEEDED -> deserializeExternalResult(op.callbackDetails().result());
             case FAILED -> throw new CallbackFailedException(op);
             case TIMED_OUT -> throw new CallbackTimeoutException(op);
             default ->

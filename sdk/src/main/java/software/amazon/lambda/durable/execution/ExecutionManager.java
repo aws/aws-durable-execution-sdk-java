@@ -63,6 +63,7 @@ public class ExecutionManager implements SafeCloseable {
     private final Context lambdaContext;
     private final AtomicReference<ExecutionMode> executionMode;
     private final DurableConfig durableConfig;
+    private final PayloadCodec payloadCodec;
     private final Set<String> updatedOperationIdsSinceLastInvocation;
     private final Set<String> initialOperationIds;
 
@@ -79,6 +80,8 @@ public class ExecutionManager implements SafeCloseable {
 
     public ExecutionManager(DurableExecutionInput input, DurableConfig config, Context lambdaContext) {
         durableConfig = config;
+        payloadCodec =
+                new PayloadCodec(config.getPayloadOffloadExecutorService(), () -> currentThreadContext.get() != null);
         this.durableExecutionArn = input.durableExecutionArn();
         this.lambdaContext = lambdaContext;
 
@@ -267,6 +270,11 @@ public class ExecutionManager implements SafeCloseable {
         return executionOp;
     }
 
+    /** Returns the invocation-scoped payload serialization and offload pipeline. */
+    public PayloadCodec getPayloadCodec() {
+        return payloadCodec;
+    }
+
     /**
      * Checks whether there are any cached operations for the given parent context ID. Used to initialize per-context
      * replay state — a context starts in replay mode if the ExecutionManager has cached operations belonging to it.
@@ -412,6 +420,7 @@ public class ExecutionManager implements SafeCloseable {
         validateRunningThreads();
 
         checkpointManager.shutdown();
+        payloadCodec.clear();
     }
 
     private void validateRunningThreads() {
@@ -459,6 +468,13 @@ public class ExecutionManager implements SafeCloseable {
      * @param exception the unrecoverable exception that caused termination
      */
     public void terminateExecution(UnrecoverableDurableExecutionException exception) {
+        stopAllOperations(exception);
+        executionExceptionFuture.completeExceptionally(exception);
+        throw exception;
+    }
+
+    /** Fails the current invocation without converting an infrastructure failure into an operation outcome. */
+    public void failInvocation(RuntimeException exception) {
         stopAllOperations(exception);
         executionExceptionFuture.completeExceptionally(exception);
         throw exception;

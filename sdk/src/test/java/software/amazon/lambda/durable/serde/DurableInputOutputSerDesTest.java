@@ -12,6 +12,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.model.InvocationSource;
 
 class DurableInputOutputSerDesTest {
 
@@ -50,6 +51,26 @@ class DurableInputOutputSerDesTest {
         assertEquals("arn:aws:lambda:us-east-1:123456789012:function:my-function", input.durableExecutionArn());
         assertEquals("token-123", input.checkpointToken());
         assertNotNull(input.initialExecutionState());
+        assertEquals(InvocationSource.DIRECT, input.invocationSource());
+    }
+
+    @Test
+    void testObjectMapperDeserializesChainedInvokeSource() {
+        var json = """
+                {
+                    "DurableExecutionArn": "arn:aws:lambda:us-east-1:123456789012:function:my-function",
+                    "CheckpointToken": "token-123",
+                    "InitialExecutionState": {
+                        "Operations": [],
+                        "NextMarker": null
+                    },
+                    "InvocationSource": "CHAINED_INVOKE"
+                }
+                """;
+
+        var input = serDes.deserialize(json, TypeToken.get(DurableExecutionInput.class));
+
+        assertEquals(InvocationSource.CHAINED_INVOKE, input.invocationSource());
     }
 
     @Test

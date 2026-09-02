@@ -22,12 +22,14 @@ import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.PayloadOffloadException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.offload.PayloadOffloader;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -94,6 +96,11 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
     private boolean stateChangedQueued;
     private boolean coordinatorWaiting;
 
+    // coordinates parent completion with child result persistence
+    private final Object childPersistenceLock = new Object();
+    private boolean completionInitiated;
+    private PayloadOffloadException claimedChildPayloadFailure;
+
     // set by context thread and used by consumer thread
     protected final AtomicBoolean isJoined = new AtomicBoolean(false);
 
@@ -105,7 +112,27 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             int maxConcurrency,
             Function<CompletionConfig.CompletionStatus, CompletionConfig.CompletionDecision> shouldComplete,
             NestingType nestingType) {
-        super(operationIdentifier, resultTypeToken, resultSerDes, durableContext);
+        this(
+                operationIdentifier,
+                resultTypeToken,
+                resultSerDes,
+                null,
+                durableContext,
+                maxConcurrency,
+                shouldComplete,
+                nestingType);
+    }
+
+    protected ConcurrencyOperation(
+            OperationIdentifier operationIdentifier,
+            TypeToken<T> resultTypeToken,
+            SerDes resultSerDes,
+            PayloadOffloader payloadOffloader,
+            DurableContextImpl durableContext,
+            int maxConcurrency,
+            Function<CompletionConfig.CompletionStatus, CompletionConfig.CompletionDecision> shouldComplete,
+            NestingType nestingType) {
+        super(operationIdentifier, resultTypeToken, resultSerDes, payloadOffloader, durableContext);
         this.maxConcurrency = maxConcurrency;
         this.shouldComplete = Objects.requireNonNull(shouldComplete, "shouldComplete cannot be null");
         this.operationIdGenerator = new OperationIdGenerator(getOperationId());
@@ -151,6 +178,30 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
                 this);
     }
 
+    protected <R> ChildContextOperation<R> createItem(
+            String operationId,
+            String name,
+            Function<DurableContext, R> function,
+            TypeToken<R> resultType,
+            SerDes serDes,
+            PayloadOffloader payloadOffloader,
+            OperationSubType branchSubType) {
+        if (payloadOffloader == null) {
+            return createItem(operationId, name, function, resultType, serDes, branchSubType);
+        }
+        return new ChildContextOperation<>(
+                OperationIdentifier.of(operationId, name, branchSubType),
+                function,
+                resultType,
+                RunInChildContextConfig.builder()
+                        .serDes(serDes)
+                        .payloadOffloader(payloadOffloader)
+                        .isVirtual(nestingType == NestingType.FLAT)
+                        .build(),
+                rootContext,
+                this);
+    }
+
     /** Called when the concurrency operation completes. Subclasses define checkpointing behavior. */
     protected abstract void handleCompletion(CompletionConfig.CompletionDecision completionDecision);
 
@@ -168,8 +219,19 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             SerDes serDes,
             OperationSubType branchSubType,
             boolean skipped) {
+        return enqueueItem(name, function, resultType, serDes, null, branchSubType, skipped);
+    }
+
+    protected <R> ChildContextOperation<R> enqueueItem(
+            String name,
+            Function<DurableContext, R> function,
+            TypeToken<R> resultType,
+            SerDes serDes,
+            PayloadOffloader payloadOffloader,
+            OperationSubType branchSubType,
+            boolean skipped) {
         var operationId = this.operationIdGenerator.nextOperationId();
-        var childOp = createItem(operationId, name, function, resultType, serDes, branchSubType);
+        var childOp = createItem(operationId, name, function, resultType, serDes, payloadOffloader, branchSubType);
         branches.add(childOp);
         if (!skipped) {
             logger.debug("Item enqueued {}", name);
@@ -222,7 +284,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             while (!isOperationCompleted()) {
                 var completionDecision = canComplete(state.succeededCount, state.failedCount, expectedCompletionStatus);
                 if (completionDecision != null) {
-                    handleCompletion(completionDecision);
+                    initiateCompletion(completionDecision);
                     return;
                 }
                 startPendingItems(state);
@@ -291,9 +353,75 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
         if (throwable instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
             throw terminateExecution(unrecoverableDurableExecutionException);
         }
+        if (throwable instanceof PayloadOffloadException payloadOffloadException) {
+            throw payloadOffloadException;
+        }
 
         throw terminateExecutionWithIllegalDurableOperationException(
                 String.format("Unexpected exception in concurrency operation: %s", throwable));
+    }
+
+    void initiateCompletion(CompletionConfig.CompletionDecision completionDecision) {
+        synchronized (childPersistenceLock) {
+            if (completionInitiated || isOperationCompleted()) {
+                return;
+            }
+            completionInitiated = true;
+            handleCompletion(completionDecision);
+        }
+    }
+
+    /**
+     * Persists one child outcome only when parent completion has not started.
+     *
+     * <p>The lock remains held through offloading and checkpoint publication so parent completion cannot win between
+     * those two actions and orphan an external payload. A payload failure claims parent completion before the lock is
+     * released.
+     */
+    boolean persistChildCompletion(Runnable persistence) {
+        synchronized (childPersistenceLock) {
+            if (completionInitiated || isOperationCompleted()) {
+                return false;
+            }
+            try {
+                persistence.run();
+            } catch (Throwable failure) {
+                var unwrapped = ExceptionHelper.unwrapCompletableFuture(failure);
+                if (unwrapped instanceof PayloadOffloadException payloadFailure) {
+                    completionInitiated = true;
+                    claimedChildPayloadFailure = payloadFailure;
+                    ExceptionHelper.sneakyThrow(payloadFailure);
+                }
+                if (unwrapped instanceof UnrecoverableDurableExecutionException) {
+                    completionInitiated = true;
+                    ExceptionHelper.sneakyThrow(unwrapped);
+                }
+                throw failure;
+            }
+            return true;
+        }
+    }
+
+    /**
+     * Atomically claims parent completion for a child payload failure.
+     *
+     * <p>This also recognizes a failure already claimed by {@link #persistChildCompletion(Runnable)}. A false result
+     * means successful early completion already won, so the late child must be treated as skipped.
+     *
+     * @param failure the payload failure being claimed
+     */
+    boolean claimChildPayloadFailure(PayloadOffloadException failure) {
+        synchronized (childPersistenceLock) {
+            if (claimedChildPayloadFailure == failure) {
+                claimedChildPayloadFailure = null;
+                return true;
+            }
+            if (completionInitiated || isOperationCompleted()) {
+                return false;
+            }
+            completionInitiated = true;
+            return true;
+        }
     }
 
     /**
@@ -310,7 +438,11 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             logger.debug("Result succeeded - {}", child.getName());
             state.succeededCount++;
         } catch (Throwable e) {
-            logger.debug("Child operation {} failed: {}", child.getOperationId(), e.getMessage());
+            var failure = ExceptionHelper.unwrapCompletableFuture(e);
+            if (failure instanceof PayloadOffloadException payloadOffloadException) {
+                throw payloadOffloadException;
+            }
+            logger.debug("Child operation {} failed: {}", child.getOperationId(), failure.getMessage());
             state.failedCount++;
         }
     }

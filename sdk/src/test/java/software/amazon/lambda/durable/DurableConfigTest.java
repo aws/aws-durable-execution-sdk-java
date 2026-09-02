@@ -88,6 +88,41 @@ class DurableConfigTest {
     }
 
     @Test
+    void payloadOffloadExecutorDefaultsToInline() {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
+
+        assertEquals(null, config.getPayloadOffloadExecutorService());
+    }
+
+    @Test
+    void payloadOffloadExecutorCannotAliasUserExecutor() {
+        var builder = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withExecutorService(mockExecutor)
+                .withPayloadOffloadExecutorService(mockExecutor);
+
+        var error = assertThrows(IllegalStateException.class, builder::build);
+
+        assertEquals(
+                "Payload offload ExecutorService must be different from the user operation ExecutorService",
+                error.getMessage());
+    }
+
+    @Test
+    void chainedInvokePayloadOffloaderAcceptanceIsOptIn() {
+        var defaults =
+                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
+        var enabled = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withPayloadOffloaderForChainedInvokePayloads(true)
+                .build();
+
+        assertFalse(defaults.shouldUsePayloadOffloaderForChainedInvokePayloads());
+        assertTrue(enabled.shouldUsePayloadOffloaderForChainedInvokePayloads());
+    }
+
+    @Test
     void testBuilder_DeserializeAfterSerializationDefaultsToTrue() {
         var config =
                 DurableConfig.builder().withDurableExecutionClient(mockClient).build();

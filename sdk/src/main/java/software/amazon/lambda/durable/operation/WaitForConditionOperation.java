@@ -16,6 +16,7 @@ import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.PayloadOffloadException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
@@ -23,6 +24,7 @@ import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
+import software.amazon.lambda.durable.offload.SerDesPayloadKind;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -46,7 +48,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
             TypeToken<T> resultTypeToken,
             WaitForConditionConfig<T> config,
             DurableContextImpl durableContext) {
-        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
+        super(operationIdentifier, resultTypeToken, config.serDes(), config.payloadOffloader(), durableContext);
 
         this.checkFunc = checkFunc;
         this.config = config;
@@ -79,17 +81,19 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
         if (op.status() == OperationStatus.SUCCEEDED) {
             var stepDetails = op.stepDetails();
             var result = (stepDetails != null) ? stepDetails.result() : null;
-            return deserializeResult(result);
+            var attempt = stepDetails != null ? stepDetails.attempt() : null;
+            return deserializeResult(result, SerDesPayloadKind.STATE, attempt);
         } else {
             var errorObject = op.stepDetails().error();
 
             // Attempt to reconstruct and throw the original exception
-            Throwable original = deserializeException(errorObject);
+            var attempt = op.stepDetails() != null ? op.stepDetails().attempt() : null;
+            Throwable original = deserializeException(errorObject, attempt);
             if (original != null) {
                 ExceptionHelper.sneakyThrow(original);
             }
             // Fallback: wrap in WaitForConditionFailedException
-            throw new WaitForConditionFailedException(op);
+            throw attachPayloadSource(new WaitForConditionFailedException(op), SerDesPayloadKind.EXCEPTION, attempt);
         }
     }
 
@@ -100,7 +104,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
         var checkpointData = stepDetails != null ? stepDetails.result() : null;
         T currentState; // Get current state
         if (checkpointData != null) {
-            currentState = deserializeResult(checkpointData);
+            currentState = deserializeResult(checkpointData, SerDesPayloadKind.STATE, attempt - 1);
         } else {
             currentState = config.initialState();
         }
@@ -134,7 +138,8 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
                             runUserFunction(attempt, () -> checkFunc.apply(currentState, stepContext));
 
                     // Normalize the value through SerDes so first execution matches replay.
-                    var serializedState = serializeAndDeserializeResult(result.value());
+                    var serializedState =
+                            serializeAndDeserializeResult(result.value(), SerDesPayloadKind.STATE, attempt);
                     T deserializedValue = serializedState.deserialized();
 
                     if (result.isDone()) {
@@ -163,8 +168,10 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
                                         : pollForOperationUpdates())
                                 .thenRun(() -> executeCheckLogic(deserializedValue, attempt + 1));
                     }
+                } catch (PayloadOffloadException e) {
+                    throw e;
                 } catch (Throwable e) {
-                    handleCheckFailure(e);
+                    handleCheckFailure(e, attempt);
                 }
             }
         };
@@ -172,7 +179,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
         runUserHandler(userHandler, ThreadType.STEP);
     }
 
-    private void handleCheckFailure(Throwable exception) {
+    private void handleCheckFailure(Throwable exception, int attempt) {
         exception = ExceptionHelper.unwrapCompletableFuture(exception);
         if (exception instanceof SuspendExecutionException suspendExecutionException) {
             throw suspendExecutionException;
@@ -182,8 +189,8 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
         }
 
         final var errorObject = (exception instanceof DurableOperationException durableOpEx)
-                ? durableOpEx.getErrorObject()
-                : serializeException(exception);
+                ? rebindForwardedError(durableOpEx, attempt)
+                : serializeException(exception, attempt);
 
         // Checkpoint FAIL
         var failUpdate = OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject);

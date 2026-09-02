@@ -20,6 +20,7 @@ import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
+import software.amazon.lambda.durable.exception.PayloadOffloadException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
@@ -111,6 +112,11 @@ public abstract class BaseDurableOperation {
     /** Gets the operation name (may be null). */
     public String getName() {
         return operationIdentifier.name();
+    }
+
+    /** Gets the complete operation identifier. */
+    protected OperationIdentifier getOperationIdentifier() {
+        return operationIdentifier;
     }
 
     /** Gets the parent context. */
@@ -216,6 +222,11 @@ public abstract class BaseDurableOperation {
         return completionFuture.isDone();
     }
 
+    /** Returns whether this operation has an in-memory completion outcome that does not require a stored operation. */
+    protected boolean hasInMemoryCompletion() {
+        return false;
+    }
+
     /**
      * Waits for the operation to complete. Deregisters the current thread to allow Lambda suspension if the operation
      * is still in progress, then re-registers when the operation completes.
@@ -254,8 +265,8 @@ public abstract class BaseDurableOperation {
             ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
         }
 
-        if (isVirtual) {
-            // We don't  store virtual operations so they don't corresponding Operation in storage
+        if (isVirtual || hasInMemoryCompletion()) {
+            // Virtual and explicitly in-memory outcomes do not require a corresponding stored operation.
             return null;
         } else {
             // Get result based on status
@@ -287,6 +298,9 @@ public abstract class BaseDurableOperation {
             try {
                 runnable.run();
             } catch (Throwable throwable) {
+                if (throwable instanceof PayloadOffloadException payloadOffloadException) {
+                    executionManager.failInvocation(payloadOffloadException);
+                }
                 // Operations wrap the user function and handle all outcomes except for SuspendExecutionException.
                 // Anything else reaching here is unexpected and terminates the execution.
                 if (!executionManager.isExecutionCompletedExceptionally()
@@ -523,6 +537,11 @@ public abstract class BaseDurableOperation {
         } else {
             return executionManager.sendOperationUpdate(update);
         }
+    }
+
+    /** Returns whether an update sent by this operation would be persisted. */
+    protected boolean shouldPersistUpdate() {
+        return !replayCompletedOperation.get();
     }
 
     /** Validates that current operation matches checkpointed operation during replay. */
