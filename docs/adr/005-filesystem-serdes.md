@@ -1,6 +1,6 @@
 # ADR-005: Payload Offloading for Filesystem Storage
 
-**Status:** Proposed  
+**Status:** Superseded by [ADR-006](006-java-payload-offloading.md)
 **Date:** 2026-07-02
 
 ## Context
