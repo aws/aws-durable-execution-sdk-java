@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.examples;
 import static org.junit.jupiter.api.Assertions.*;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledForJreRange;
 import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.condition.JRE;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -24,6 +26,7 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.examples.general.FileSystemPayloadOffloaderExample;
 import software.amazon.lambda.durable.examples.general.GenericTypesExample;
 import software.amazon.lambda.durable.examples.types.ApprovalRequest;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
@@ -38,6 +41,7 @@ import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
 @EnabledIf("isEnabled")
 class CloudBasedIntegrationTest {
     private static final int PERFORMANCE_TEST_REPEAT = 3;
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static String account;
     private static String region;
@@ -83,6 +87,33 @@ class CloudBasedIntegrationTest {
     private static String arn(String functionName) {
         return "arn:aws:lambda:" + region + ":" + account + ":function:" + functionNamePrefix + functionName
                 + ":$LATEST";
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "test.filesystem.enabled", matches = "true")
+    void testFileSystemPayloadOffloaderExample() throws Exception {
+        var value = "filesystem-e2e-".repeat(24 * 1024);
+        var input = new FileSystemPayloadOffloaderExample.Input("payload-1", value);
+        var runner = CloudDurableTestRunner.create(
+                arn("file-system-payload-offloader-example"),
+                FileSystemPayloadOffloaderExample.Input.class,
+                FileSystemPayloadOffloaderExample.Output.class,
+                lambdaClient);
+
+        var result = runner.run(input);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertTrue(result.getHistoryEvents().stream()
+                        .filter(event -> event.eventType()
+                                == software.amazon.awssdk.services.lambda.model.EventType.INVOCATION_COMPLETED)
+                        .count()
+                >= 2);
+        var stored = result.getOperation("store-payload").getStepDetails().result();
+        var envelope = MAPPER.readTree(stored.substring("@aws-durable-payload:v1:".length()));
+        assertEquals("REFERENCE", envelope.get("mode").textValue());
+        assertEquals("payload-1", envelope.get("preview").get("id").textValue());
+        assertEquals("***", envelope.get("preview").get("value").textValue());
+        assertTrue(envelope.get("payloadDigest").textValue().matches("[0-9a-f]{64}"));
     }
 
     /** Custom SerDes that tracks serialization calls. */
