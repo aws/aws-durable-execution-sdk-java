@@ -5,8 +5,11 @@ package software.amazon.lambda.durable.testing;
 import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -19,8 +22,15 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.execution.DurableExecutor;
+import software.amazon.lambda.durable.execution.PayloadCodec;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.offload.PayloadOffloadContext;
+import software.amazon.lambda.durable.offload.PayloadOffloader;
+import software.amazon.lambda.durable.offload.SerDesPayloadKind;
+import software.amazon.lambda.durable.offload.internal.PayloadOffloadTracking;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
@@ -42,11 +52,15 @@ public class LocalDurableTestRunner<I, O> {
     private final LocalMemoryExecutionClient storage;
     private final SerDes serDes;
     private final DurableConfig customerConfig;
+    private final Map<String, PayloadOffloader> operationPayloadOffloaders = new ConcurrentHashMap<>();
     private final Instant executionStartTime = Instant.now();
     // The execution identity is fixed for the whole execution, matching the backend: the ARN and the EXECUTION
     // operation ID stay stable across reinvocations, while only per-invocation values (the checkpoint token) change.
     private final String executionName = UUID.randomUUID().toString();
     private final String executionOperationId = UUID.randomUUID().toString();
+    private final String executionArn = String.format(
+            "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/%s/%s",
+            executionName, executionOperationId);
 
     private LocalDurableTestRunner(
             TypeToken<I> inputType,
@@ -61,17 +75,26 @@ public class LocalDurableTestRunner<I, O> {
         // Create config that uses customer's configuration but overrides the client with in-memory storage
         if (customerConfig != null) {
             // Use customer's config but override the client with our in-memory implementation
-            this.customerConfig = DurableConfig.builder()
+            var builder = DurableConfig.builder()
                     .withDurableExecutionClient(storage)
                     .withSerDes(customerConfig.getSerDes())
                     .withExecutorService(customerConfig.getExecutorService())
                     .withPollingStrategy(customerConfig.getPollingStrategy())
                     .withCheckpointDelay(customerConfig.getCheckpointDelay())
                     .withLoggerConfig(customerConfig.getLoggerConfig())
+                    .withDeserializeAfterSerialization(customerConfig.shouldDeserializeAfterSerialization())
+                    .withPayloadOffloaderForChainedInvokePayloads(
+                            customerConfig.shouldUsePayloadOffloaderForChainedInvokePayloads())
                     // Temporary: remove along with the checkpointEmptyMap flag in a future major version.
                     .withCheckpointEmptyMap(customerConfig.shouldCheckpointEmptyMap())
-                    .withPlugins(customerConfig.getPluginRunner().getPlugins().toArray(new DurableExecutionPlugin[0]))
-                    .build();
+                    .withPlugins(customerConfig.getPluginRunner().getPlugins().toArray(new DurableExecutionPlugin[0]));
+            if (customerConfig.getPayloadOffloader() != null) {
+                builder.withPayloadOffloader(customerConfig.getPayloadOffloader());
+            }
+            if (customerConfig.getPayloadOffloadExecutorService() != null) {
+                builder.withPayloadOffloadExecutorService(customerConfig.getPayloadOffloadExecutorService());
+            }
+            this.customerConfig = builder.build();
         } else {
             // Fallback to default config with in-memory client
             this.customerConfig =
@@ -244,9 +267,19 @@ public class LocalDurableTestRunner<I, O> {
     public TestResult<O> run(I input) {
         var durableInput = createDurableInput(input);
 
-        var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, customerConfig);
+        final DurableExecutionOutput output;
+        try (var ignored = PayloadOffloadTracking.observe(
+                executionArn, (context, offloader) -> operationPayloadOffloaders.put(context.entityId(), offloader))) {
+            output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, customerConfig);
+        }
+        var codec = new PayloadCodec(customerConfig.getPayloadOffloadExecutorService());
 
-        return storage.toTestResult(output, outputType, serDes);
+        return storage.toTestResult(
+                output,
+                outputType,
+                serDes,
+                payload -> resolveExecutionPayload(payload, durableInput, codec),
+                (operation, payload) -> resolveOperationPayload(operation, payload, codec));
     }
 
     /**
@@ -285,7 +318,11 @@ public class LocalDurableTestRunner<I, O> {
     /** Returns the {@link TestOperation} for the given operation name, or null if not found. */
     public TestOperation getOperation(String name) {
         var op = storage.getOperationByName(name);
-        return op != null ? new TestOperation(op, serDes) : null;
+        if (op == null) {
+            return null;
+        }
+        var codec = new PayloadCodec(customerConfig.getPayloadOffloadExecutorService());
+        return new TestOperation(op, List.of(), serDes, payload -> resolveOperationPayload(op, payload, codec));
     }
 
     /** Get callback ID for a named callback operation. */
@@ -334,11 +371,6 @@ public class LocalDurableTestRunner<I, O> {
     }
 
     private DurableExecutionInput createDurableInput(I input) {
-        // The last ARN segment must equal the EXECUTION operation ID (ExecutionManager parses the ARN to find it), and
-        // both are stable across reinvocations so the execution keeps one identity — and one derived trace ID.
-        var executionArn = String.format(
-                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/%s/%s",
-                executionName, executionOperationId);
         var inputJson = serDes.serialize(input);
 
         // The list must contain exactly one EXECUTION operation, matching the backend, which keeps a single EXECUTION
@@ -396,6 +428,51 @@ public class LocalDurableTestRunner<I, O> {
                 UUID.randomUUID().toString(),
                 CheckpointUpdatedExecutionState.builder().operations(allOps).build(),
                 updatedOperationIds);
+    }
+
+    private String resolveExecutionPayload(String payload, DurableExecutionInput input, PayloadCodec codec) {
+        var executionOperation = input.initialExecutionState().operations().stream()
+                .filter(operation -> operation.type() == OperationType.EXECUTION)
+                .findFirst()
+                .orElseThrow();
+        var context = PayloadOffloadContext.forExecution(
+                input.durableExecutionArn(),
+                executionOperation.id(),
+                executionOperation.name(),
+                SerDesPayloadKind.OUTPUT);
+        return codec.resolveSerializedPayload(payload, customerConfig.getPayloadOffloader(), context);
+    }
+
+    private String resolveOperationPayload(Operation operation, String payload, PayloadCodec codec) {
+        var payloadKind = OperationSubType.WAIT_FOR_CONDITION.getValue().equals(operation.subType())
+                ? SerDesPayloadKind.STATE
+                : SerDesPayloadKind.RESULT;
+        var attempt = operation.stepDetails() != null ? operation.stepDetails().attempt() : null;
+        var operationSubType = operation.subType() == null
+                ? null
+                : Arrays.stream(OperationSubType.values())
+                        .filter(value -> value.getValue().equals(operation.subType()))
+                        .findFirst()
+                        .orElse(null);
+        var entityId = "operation/" + operation.id() + "/"
+                + payloadKind.name().toLowerCase().replace('_', '-');
+        if (attempt != null) {
+            entityId += "/attempt-" + attempt;
+        }
+        var context = new PayloadOffloadContext(
+                executionArn,
+                entityId,
+                payloadKind,
+                operation.id(),
+                operation.name(),
+                operation.parentId(),
+                operation.type(),
+                operationSubType,
+                attempt,
+                null);
+        var offloader =
+                operationPayloadOffloaders.getOrDefault(context.entityId(), customerConfig.getPayloadOffloader());
+        return codec.resolveSerializedPayload(payload, offloader, context);
     }
 
     private Context mockLambdaContext() {

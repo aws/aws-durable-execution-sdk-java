@@ -12,6 +12,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
@@ -131,9 +133,32 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     /** Build TestResult from current state. */
     public <O> TestResult<O> toTestResult(DurableExecutionOutput output, TypeToken<O> resultType, SerDes serDes) {
+        return toTestResult(output, resultType, serDes, Function.identity(), (operation, payload) -> payload);
+    }
+
+    /** Build TestResult from current state, resolving operation payloads before deserialization. */
+    public <O> TestResult<O> toTestResult(
+            DurableExecutionOutput output,
+            TypeToken<O> resultType,
+            SerDes serDes,
+            BiFunction<Operation, String, String> payloadResolver) {
+        return toTestResult(output, resultType, serDes, Function.identity(), payloadResolver);
+    }
+
+    /** Build TestResult from current state, resolving execution and operation payloads lazily. */
+    public <O> TestResult<O> toTestResult(
+            DurableExecutionOutput output,
+            TypeToken<O> resultType,
+            SerDes serDes,
+            Function<String, String> executionPayloadResolver,
+            BiFunction<Operation, String, String> operationPayloadResolver) {
         var testOperations = existingOperations.values().stream()
                 .filter(op -> op.type() != OperationType.EXECUTION)
-                .map(op -> new TestOperation(op, eventProcessor.getEventsForOperation(op.id()), serDes))
+                .map(op -> new TestOperation(
+                        op,
+                        eventProcessor.getEventsForOperation(op.id()),
+                        serDes,
+                        payload -> operationPayloadResolver.apply(op, payload)))
                 .toList();
         return new TestResult<>(
                 output.status(),
@@ -142,7 +167,8 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
                 testOperations,
                 eventProcessor.getAllEvents(),
                 resultType,
-                serDes);
+                serDes,
+                executionPayloadResolver);
     }
 
     /** Simulate checkpoint failure by forcing an operation into STARTED state */

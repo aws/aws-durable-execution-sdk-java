@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.testing;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 import java.util.function.Predicate;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.lambda.LambdaClient;
@@ -14,7 +15,9 @@ import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionHistoryRequest;
 import software.amazon.awssdk.services.lambda.model.ResourceNotFoundException;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.execution.PayloadCodec;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.offload.PayloadOffloader;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.cloud.HistoryEventProcessor;
 
@@ -27,17 +30,33 @@ public class AsyncExecution<O> {
     private final LambdaClient lambdaClient;
     private final TypeToken<O> outputType;
     private final SerDes serDes;
+    private final PayloadOffloader payloadOffloader;
+    private final ExecutorService payloadOffloadExecutorService;
     private final Duration pollInterval;
     private final Duration timeout;
     private final HistoryEventProcessor processor;
     private List<Event> currentHistory;
     private TestResult<O> currentResult;
 
+    /** Creates an execution handle without payload-offloader-aware history decoding. */
     public AsyncExecution(
             String executionArn,
             LambdaClient lambdaClient,
             TypeToken<O> outputType,
             SerDes serDes,
+            Duration pollInterval,
+            Duration timeout) {
+        this(executionArn, lambdaClient, outputType, serDes, null, null, pollInterval, timeout);
+    }
+
+    /** Creates an execution handle with optional payload-offloader-aware history decoding. */
+    public AsyncExecution(
+            String executionArn,
+            LambdaClient lambdaClient,
+            TypeToken<O> outputType,
+            SerDes serDes,
+            PayloadOffloader payloadOffloader,
+            ExecutorService payloadOffloadExecutorService,
             Duration pollInterval,
             Duration timeout) {
         this.executionArn = executionArn;
@@ -46,6 +65,8 @@ public class AsyncExecution<O> {
         this.pollInterval = pollInterval;
         this.timeout = timeout;
         this.serDes = serDes;
+        this.payloadOffloader = payloadOffloader;
+        this.payloadOffloadExecutorService = payloadOffloadExecutorService;
         this.processor = new HistoryEventProcessor();
     }
 
@@ -195,7 +216,13 @@ public class AsyncExecution<O> {
                     .build();
             var response = lambdaClient.getDurableExecutionHistory(request);
             this.currentHistory = response.events();
-            this.currentResult = processor.processEvents(currentHistory, outputType, serDes);
+            this.currentResult = processor.processEvents(
+                    currentHistory,
+                    outputType,
+                    serDes,
+                    new PayloadCodec(payloadOffloadExecutorService),
+                    payloadOffloader,
+                    executionArn);
         } catch (ResourceNotFoundException e) {
             // Execution doesn't exist yet - this can happen immediately after async invoke
             // Leave currentHistory as null, pollUntil will retry

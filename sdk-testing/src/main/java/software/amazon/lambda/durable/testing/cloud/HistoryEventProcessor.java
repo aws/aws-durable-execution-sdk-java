@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.testing.cloud;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
@@ -16,7 +17,12 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.awssdk.services.lambda.model.WaitDetails;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.execution.PayloadCodec;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.offload.PayloadOffloadContext;
+import software.amazon.lambda.durable.offload.PayloadOffloader;
+import software.amazon.lambda.durable.offload.SerDesPayloadKind;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.AsyncExecution;
 import software.amazon.lambda.durable.testing.CloudDurableTestRunner;
@@ -37,6 +43,17 @@ public class HistoryEventProcessor {
      * @return a TestResult containing the execution status, output, and operation details
      */
     public <O> TestResult<O> processEvents(List<Event> events, TypeToken<O> outputType, SerDes serDes) {
+        return processEvents(events, outputType, serDes, new PayloadCodec(null), null, null);
+    }
+
+    /** Processes history while resolving SDK payload offload envelopes. */
+    public <O> TestResult<O> processEvents(
+            List<Event> events,
+            TypeToken<O> outputType,
+            SerDes serDes,
+            PayloadCodec codec,
+            PayloadOffloader offloader,
+            String executionArn) {
         var operations = new HashMap<String, Operation>();
         var operationEvents = new HashMap<String, List<Event>>();
         var status = ExecutionStatus.PENDING;
@@ -111,7 +128,14 @@ public class HistoryEventProcessor {
                     if (operationId != null) {
                         operations.putIfAbsent(
                                 operationId,
-                                createStepOperation(operationId, event.name(), null, OperationStatus.STARTED, 1));
+                                createStepOperation(
+                                        operationId,
+                                        event.name(),
+                                        event.parentId(),
+                                        event.subType(),
+                                        null,
+                                        OperationStatus.STARTED,
+                                        1));
                     }
                 }
                 case STEP_SUCCEEDED -> {
@@ -126,7 +150,13 @@ public class HistoryEventProcessor {
                         operations.put(
                                 operationId,
                                 createStepOperation(
-                                        operationId, event.name(), stepResult, OperationStatus.SUCCEEDED, attempt));
+                                        operationId,
+                                        event.name(),
+                                        event.parentId(),
+                                        event.subType(),
+                                        stepResult,
+                                        OperationStatus.SUCCEEDED,
+                                        attempt));
                     }
                 }
                 case STEP_FAILED -> {
@@ -137,7 +167,14 @@ public class HistoryEventProcessor {
                                 : 1;
                         operations.put(
                                 operationId,
-                                createStepOperation(operationId, event.name(), null, OperationStatus.FAILED, attempt));
+                                createStepOperation(
+                                        operationId,
+                                        event.name(),
+                                        event.parentId(),
+                                        event.subType(),
+                                        null,
+                                        OperationStatus.FAILED,
+                                        attempt));
                     }
                 }
 
@@ -236,14 +273,95 @@ public class HistoryEventProcessor {
         var testOperations = new ArrayList<TestOperation>();
         for (var entry : operations.entrySet()) {
             var opEvents = operationEvents.getOrDefault(entry.getKey(), List.of());
-            testOperations.add(new TestOperation(entry.getValue(), opEvents, serDes));
+            var operation = entry.getValue();
+            testOperations.add(new TestOperation(
+                    operation,
+                    opEvents,
+                    serDes,
+                    payload -> resolveOperationPayload(operation, payload, codec, offloader, executionArn)));
         }
 
-        return new TestResult<>(status, result, error, testOperations, events, outputType, serDes);
+        return new TestResult<>(
+                status,
+                result,
+                error,
+                testOperations,
+                events,
+                outputType,
+                serDes,
+                payload -> resolveExecutionPayload(payload, codec, offloader, executionArn));
+    }
+
+    private String resolveExecutionPayload(
+            String payload, PayloadCodec codec, PayloadOffloader offloader, String executionArn) {
+        if (!PayloadCodec.isOffloadEnvelope(payload)) {
+            return payload;
+        }
+        if (executionArn == null) {
+            return codec.resolveSerializedPayloadUsingProducerContext(payload, offloader);
+        }
+        var parts = executionParts(executionArn);
+        var context = PayloadOffloadContext.forExecution(executionArn, parts[1], parts[0], SerDesPayloadKind.OUTPUT);
+        return codec.resolveSerializedPayload(payload, offloader, context);
+    }
+
+    private String resolveOperationPayload(
+            Operation operation, String payload, PayloadCodec codec, PayloadOffloader offloader, String executionArn) {
+        if (!PayloadCodec.isOffloadEnvelope(payload)) {
+            return payload;
+        }
+        if (executionArn == null) {
+            return codec.resolveSerializedPayloadUsingProducerContext(payload, offloader);
+        }
+        var payloadKind = OperationSubType.WAIT_FOR_CONDITION.getValue().equals(operation.subType())
+                ? SerDesPayloadKind.STATE
+                : SerDesPayloadKind.RESULT;
+        var attempt = operation.stepDetails() != null ? operation.stepDetails().attempt() : null;
+        var operationSubType = operation.subType() == null
+                ? null
+                : Arrays.stream(OperationSubType.values())
+                        .filter(value -> value.getValue().equals(operation.subType()))
+                        .findFirst()
+                        .orElse(null);
+        var context = new PayloadOffloadContext(
+                executionArn,
+                operationEntityId(operation, payloadKind, attempt),
+                payloadKind,
+                operation.id(),
+                operation.name(),
+                operation.parentId(),
+                operation.type(),
+                operationSubType,
+                attempt,
+                null);
+        return codec.resolveSerializedPayload(payload, offloader, context);
+    }
+
+    private static String operationEntityId(Operation operation, SerDesPayloadKind payloadKind, Integer attempt) {
+        var entityId = "operation/" + operation.id() + "/"
+                + payloadKind.name().toLowerCase().replace('_', '-');
+        return attempt == null ? entityId : entityId + "/attempt-" + attempt;
+    }
+
+    private static String[] executionParts(String executionArn) {
+        if (executionArn == null) {
+            throw new IllegalStateException("Execution ARN is required to resolve offloaded history payloads");
+        }
+        var parts = executionArn.split("/", -1);
+        if (parts.length < 2) {
+            throw new IllegalStateException("Invalid durable execution ARN: " + executionArn);
+        }
+        return new String[] {parts[parts.length - 2], parts[parts.length - 1]};
     }
 
     private Operation createStepOperation(
-            String id, String name, String stepResult, OperationStatus status, Integer attempt) {
+            String id,
+            String name,
+            String parentId,
+            String subType,
+            String stepResult,
+            OperationStatus status,
+            Integer attempt) {
         var stepDetails = StepDetails.builder()
                 .result(stepResult)
                 .attempt(attempt != null ? attempt : 1)
@@ -252,8 +370,10 @@ public class HistoryEventProcessor {
         return Operation.builder()
                 .id(id)
                 .name(name)
+                .parentId(parentId)
                 .status(status)
                 .type(OperationType.STEP)
+                .subType(subType)
                 .stepDetails(stepDetails)
                 .build();
     }

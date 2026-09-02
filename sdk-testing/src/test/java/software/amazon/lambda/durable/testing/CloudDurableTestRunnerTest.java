@@ -6,9 +6,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import java.time.Duration;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.InvocationType;
+import software.amazon.lambda.durable.offload.PayloadOffloader;
 
 class CloudDurableTestRunnerTest {
 
@@ -21,6 +23,22 @@ class CloudDurableTestRunnerTest {
                 .withInvocationType(InvocationType.EVENT);
 
         assertNotNull(runner);
+    }
+
+    @Test
+    void payloadOffloaderConfigurationIsFluent() {
+        var mockClient = mock(LambdaClient.class);
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            var runner = CloudDurableTestRunner.create(
+                            "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient)
+                    .withPayloadOffloader(PayloadOffloader.disabled())
+                    .withPayloadOffloadExecutorService(executor);
+
+            assertNotNull(runner);
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test
