@@ -61,7 +61,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
       - name: Setup Java ${{ matrix.java }}
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: corretto
           java-version: ${{ matrix.java }}

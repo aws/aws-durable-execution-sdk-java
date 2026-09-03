@@ -57,7 +57,9 @@ public class StepPrimitive<T> extends SerializablePrimitive<T> {
     /** Starts the operation. */
     @Override
     protected void start() {
-        executeExtensionStepLogic(extensionConfig.initialState(), FIRST_ATTEMPT);
+        var initialState =
+                serializeAndDeserializeResult(extensionConfig.initialState()).deserialized();
+        executeExtensionStepLogic(initialState, FIRST_ATTEMPT);
     }
 
     /** Replays the operation. */

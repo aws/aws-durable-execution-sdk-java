@@ -12,7 +12,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -212,6 +214,76 @@ class StatefulExtensionStepPrimitiveTest {
         operation.execute();
 
         assertTrue(called.await(2, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void startNormalizesInitialStateThroughSerDes() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
+        when(executionManager.sendOperationUpdate(any())).thenReturn(CompletableFuture.completedFuture(null));
+        var called = new CountDownLatch(1);
+        var state = new AtomicReference<String>();
+        var operation = new StepPrimitive<>(
+                new PrimitiveOperationIdentifier(
+                        OPERATION_ID,
+                        OPERATION_NAME,
+                        OperationType.STEP,
+                        OperationSubType.WAIT_FOR_CONDITION.getValue()),
+                value -> {
+                    state.set(value);
+                    called.countDown();
+                    return CompletableFuture.completedFuture(ExtensionStepResult.succeed(value));
+                },
+                TypeToken.get(String.class),
+                ExtensionStepConfig.<String>builder()
+                        .initialState("raw")
+                        .serDes(new NormalizingSerDes())
+                        .build(),
+                durableContext);
+
+        operation.execute();
+
+        assertTrue(called.await(2, TimeUnit.SECONDS));
+        assertEquals("normalized", state.get());
+    }
+
+    @Test
+    void startSerializesInitialStateButSkipsDeserializeWhenDisabled() throws Exception {
+        var serDes = mock(SerDes.class);
+        when(serDes.serialize(42)).thenReturn("42");
+        when(serDes.deserialize(eq("42"), any())).thenReturn(99);
+        when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(null);
+        when(executionManager.sendOperationUpdate(any())).thenReturn(CompletableFuture.completedFuture(null));
+        when(durableContext.getDurableConfig())
+                .thenReturn(DurableConfig.builder()
+                        .withExecutorService(Executors.newCachedThreadPool())
+                        .withDeserializeAfterSerialization(false)
+                        .build());
+        var called = new CountDownLatch(1);
+        var state = new AtomicReference<Integer>();
+        var operation = new StepPrimitive<>(
+                new PrimitiveOperationIdentifier(
+                        OPERATION_ID,
+                        OPERATION_NAME,
+                        OperationType.STEP,
+                        OperationSubType.WAIT_FOR_CONDITION.getValue()),
+                value -> {
+                    state.set(value);
+                    called.countDown();
+                    return CompletableFuture.completedFuture(ExtensionStepResult.succeed(value));
+                },
+                TypeToken.get(Integer.class),
+                ExtensionStepConfig.<Integer>builder()
+                        .initialState(42)
+                        .serDes(serDes)
+                        .build(),
+                durableContext);
+
+        operation.execute();
+
+        assertTrue(called.await(2, TimeUnit.SECONDS));
+        verify(serDes, atLeastOnce()).serialize(42);
+        verify(serDes, never()).deserialize(any(), any());
+        assertEquals(42, state.get());
     }
 
     @Test
