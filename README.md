@@ -23,6 +23,7 @@ Build resilient, long-running AWS Lambda functions that automatically checkpoint
 - **Replay Safety** – Functions deterministically resume from checkpoints after interruptions
 - **Type Safety** – Full generic type support for step results
 - **Data-Driven Concurrency** – Apply a function across a collection with `map()`, with per-item error isolation and configurable completion criteria
+- **Payload Offloading** – Keep large serialized payloads in durable external storage while checkpoints retain compact references
 
 ## How It Works
 
@@ -49,6 +50,9 @@ Your durable function extends `DurableHandler<I, O>` and implements `handleReque
     <version>VERSION</version>
 </dependency>
 ```
+
+Filesystem payload offloading is included in the core SDK artifact under
+`software.amazon.lambda.durable.offload.filesystem`.
 
 ### Your First Durable Function
 
@@ -111,6 +115,7 @@ See [Deploy Lambda durable functions with Infrastructure as Code](https://docs.a
 **Advanced Topics**
 
 - [<u>Configuration</u>](docs/advanced/configuration.md) - Customize SDK behaviour
+- [<u>Payload Offloading</u>](docs/advanced/configuration.md#payload-offloading) - Store serialized payloads outside checkpoints
 - [<u>Error Handling</u>](docs/advanced/error-handling.md) - SDK exceptions for handling failures
 - [<u>Logging</u>](docs/advanced/logging.md) - How to use DurableLogger
 - [<u>Migrating from 1.x to 2.x</u>](docs/migration-1.x-to-2.x.md) - Upgrade guide for breaking changes since `v1.2.1`

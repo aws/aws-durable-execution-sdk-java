@@ -77,6 +77,22 @@ mvn test -Dtest=CloudBasedIntegrationTest \
   -Dtest.aws.region=us-east-1
 ```
 
+The filesystem payload-offloader cloud test is disabled by default because it requires VPC and EFS infrastructure.
+Create the persistent infrastructure stack once:
+
+```bash
+python3 generate-template.py \
+  --file-system-infrastructure-only \
+  --output filesystem-infrastructure-template.yaml
+aws cloudformation deploy \
+  --template-file filesystem-infrastructure-template.yaml \
+  --stack-name JavaSDKFileSystemPayloadE2EInfrastructureStack
+```
+
+Then generate, build, and deploy the filesystem Lambda stack with
+`FileSystemInfrastructureStackName=JavaSDKFileSystemPayloadE2EInfrastructureStack`, and include
+`-Dtest.filesystem.enabled=true` when running `CloudBasedIntegrationTest`.
+
 ## Examples
 
 | Example | Description |

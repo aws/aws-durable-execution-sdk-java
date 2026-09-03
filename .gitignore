@@ -42,6 +42,7 @@ __pycache__/
 # SAM
 .aws-sam/
 examples/template.yaml
+examples/filesystem-template.yaml
 samconfig.toml
 samconfig.toml.bak
 
