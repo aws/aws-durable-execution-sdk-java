@@ -18,6 +18,7 @@ import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.context.BaseContextImpl;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.PayloadOffloadException;
 import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -25,6 +26,7 @@ import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.offload.SerDesPayloadKind;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -47,7 +49,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             TypeToken<T> resultTypeToken,
             StepConfig config,
             DurableContextImpl durableContext) {
-        super(operationIdentifier, resultTypeToken, config.serDes(), durableContext);
+        super(operationIdentifier, resultTypeToken, config.serDes(), config.payloadOffloader(), durableContext);
 
         this.function = function;
         this.config = config;
@@ -117,7 +119,9 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
                     // through onUserFunctionEnd; retry/checkpoint handling stays outside the boundary.
                     T result = runUserFunction(attempt, () -> function.apply(stepContext));
 
-                    handleStepSucceeded(result);
+                    handleStepSucceeded(result, attempt);
+                } catch (PayloadOffloadException e) {
+                    throw e;
                 } catch (Throwable e) {
                     handleStepFailure(e, attempt);
                 }
@@ -144,8 +148,8 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         }
     }
 
-    private void handleStepSucceeded(T result) {
-        var serializedResult = serializeAndDeserializeResult(result);
+    private void handleStepSucceeded(T result, int attempt) {
+        var serializedResult = serializeAndDeserializeResult(result, SerDesPayloadKind.RESULT, attempt);
 
         // Send SUCCEED
         var successUpdate =
@@ -168,9 +172,9 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
         final ErrorObject errorObject;
         if (exception instanceof DurableOperationException durableOperationException) {
-            errorObject = durableOperationException.getErrorObject();
+            errorObject = rebindForwardedError(durableOperationException, attempt);
         } else {
-            errorObject = serializeException(exception);
+            errorObject = serializeException(exception, attempt);
         }
 
         var retryDecision = config.retryStrategy().makeRetryDecision(exception, attempt);
@@ -205,8 +209,9 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         if (op.status() == OperationStatus.SUCCEEDED) {
             var stepDetails = op.stepDetails();
             var result = (stepDetails != null) ? stepDetails.result() : null;
+            var attempt = stepDetails != null ? stepDetails.attempt() : null;
 
-            return deserializeResult(result);
+            return deserializeResult(result, SerDesPayloadKind.RESULT, attempt);
         } else {
             var errorObject = op.stepDetails().error();
 
@@ -216,12 +221,13 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             }
 
             // Attempt to reconstruct and throw the original exception
-            Throwable original = deserializeException(errorObject);
+            var attempt = op.stepDetails() != null ? op.stepDetails().attempt() : null;
+            Throwable original = deserializeException(errorObject, attempt);
             if (original != null) {
                 ExceptionHelper.sneakyThrow(original);
             }
             // Fallback: wrap in StepFailedException
-            throw new StepFailedException(op);
+            throw attachPayloadSource(new StepFailedException(op), SerDesPayloadKind.EXCEPTION, attempt);
         }
     }
 

@@ -192,6 +192,45 @@ class CallbackOperationTest {
     }
 
     @Test
+    void callbackResultDoesNotInterpretPayloadOffloadEnvelopeMarkers() {
+        var markerPayload = "@aws-durable-payload:v2:{}";
+        var existingCallback = Operation.builder()
+                .id(OPERATION_ID)
+                .name(OPERATION_NAME)
+                .type(OperationType.CALLBACK)
+                .subType(OperationSubType.CALLBACK.getValue())
+                .status(OperationStatus.SUCCEEDED)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("callback-id")
+                        .result(markerPayload)
+                        .build())
+                .build();
+        var executionManager = createExecutionManager(List.of(existingCallback));
+        when(durableContext.getExecutionManager()).thenReturn(executionManager);
+        var passThroughSerDes = new SerDes() {
+            @Override
+            public String serialize(Object value) {
+                return (String) value;
+            }
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T deserialize(String data, TypeToken<T> typeToken) {
+                return (T) data;
+            }
+        };
+        var operation = new CallbackOperation<>(
+                OPERATION_IDENTIFIER,
+                TypeToken.get(String.class),
+                CallbackConfig.builder().serDes(passThroughSerDes).build(),
+                durableContext);
+
+        operation.execute();
+
+        assertEquals(markerPayload, operation.get());
+    }
+
+    @Test
     void getThrowsCallbackExceptionWhenFailed() {
         var existingCallback = Operation.builder()
                 .id(OPERATION_ID)

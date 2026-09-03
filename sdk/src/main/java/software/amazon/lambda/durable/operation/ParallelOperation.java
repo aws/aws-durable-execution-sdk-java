@@ -17,11 +17,13 @@ import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.ParallelBranchConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.PayloadOffloadException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.model.ParallelResult;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Manages parallel execution of multiple branches as child context operations.
@@ -59,6 +61,7 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
                 operationIdentifier,
                 TypeToken.get(ParallelResult.class),
                 resultSerDes,
+                config.payloadOffloader(),
                 durableContext,
                 config.maxConcurrency(),
                 config.completionConfig().completionDecisionFunction(),
@@ -83,7 +86,8 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
                 skippedCount,
                 completionDecision.completionStatus(),
                 statuses);
-        var serializedResult = serializeAndDeserializeResult(cachedResult);
+        var serializedResult =
+                shouldPersistUpdate() ? serializeAndDeserializeResult(cachedResult) : normalizeResult(cachedResult);
         cachedResult = serializedResult.deserialized();
 
         // Branches added after checkpoint will not exist in the checkpointed result, but they'll be in the returned
@@ -103,6 +107,10 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
             childContextOperation.get();
             return ParallelResult.Status.SUCCEEDED;
         } catch (Throwable t) {
+            var failure = ExceptionHelper.unwrapCompletableFuture(t);
+            if (failure instanceof PayloadOffloadException payloadOffloadException) {
+                throw payloadOffloadException;
+            }
             return ParallelResult.Status.FAILED;
         }
     }
@@ -187,6 +195,9 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
                 && (partialResult.statuses().size() <= nextBranchIndex
                         || partialResult.statuses().get(nextBranchIndex) == ParallelResult.Status.SKIPPED);
         var serDes = config.serDes() == null ? getContext().getDurableConfig().getSerDes() : config.serDes();
-        return enqueueItem(name, func, resultType, serDes, OperationSubType.PARALLEL_BRANCH, skip);
+        var offloader = config.payloadOffloader() == null
+                ? getContext().getDurableConfig().getPayloadOffloader()
+                : config.payloadOffloader();
+        return enqueueItem(name, func, resultType, serDes, offloader, OperationSubType.PARALLEL_BRANCH, skip);
     }
 }

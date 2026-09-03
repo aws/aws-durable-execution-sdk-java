@@ -23,6 +23,7 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequ
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
 import software.amazon.lambda.durable.logging.LoggerConfig;
+import software.amazon.lambda.durable.offload.PayloadOffloader;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.retry.PollingStrategies;
@@ -94,12 +95,15 @@ public final class DurableConfig {
 
     private final DurableExecutionClient durableExecutionClient;
     private final SerDes serDes;
+    private final PayloadOffloader payloadOffloader;
     private final ExecutorService executorService;
+    private final ExecutorService payloadOffloadExecutorService;
     private final LoggerConfig loggerConfig;
     private final PollingStrategy pollingStrategy;
     private final Duration checkpointDelay;
     private final boolean deserializeAfterSerialization;
     private final boolean checkpointEmptyMap;
+    private final boolean payloadOffloaderForChainedInvokePayloads;
     private final PluginRunner pluginRunner;
 
     private DurableConfig(Builder builder) {
@@ -107,13 +111,16 @@ public final class DurableConfig {
         this.durableExecutionClient = Objects.requireNonNullElseGet(
                 builder.durableExecutionClient, DurableConfig::createDefaultDurableExecutionClient);
         this.serDes = Objects.requireNonNullElseGet(builder.serDes, JacksonSerDes::new);
+        this.payloadOffloader = builder.payloadOffloader;
         this.executorService =
                 Objects.requireNonNullElseGet(builder.executorService, DurableConfig::createDefaultExecutor);
+        this.payloadOffloadExecutorService = builder.payloadOffloadExecutorService;
         this.loggerConfig = Objects.requireNonNullElseGet(builder.loggerConfig, LoggerConfig::defaults);
         this.pollingStrategy = Objects.requireNonNullElse(builder.pollingStrategy, PollingStrategies.Presets.DEFAULT);
         this.checkpointDelay = Objects.requireNonNullElseGet(builder.checkpointDelay, () -> Duration.ofSeconds(0));
         this.deserializeAfterSerialization = builder.deserializeAfterSerialization;
         this.checkpointEmptyMap = builder.checkpointEmptyMap;
+        this.payloadOffloaderForChainedInvokePayloads = builder.payloadOffloaderForChainedInvokePayloads;
         this.pluginRunner = plugins.isEmpty() ? PluginRunner.noOp() : new PluginRunner(plugins);
 
         validateConfiguration();
@@ -155,6 +162,11 @@ public final class DurableConfig {
         return serDes;
     }
 
+    /** Gets the globally configured payload offloader, or null when payload offloading is disabled. */
+    public PayloadOffloader getPayloadOffloader() {
+        return payloadOffloader;
+    }
+
     /**
      * Gets the configured ExecutorService.
      *
@@ -162,6 +174,11 @@ public final class DurableConfig {
      */
     public ExecutorService getExecutorService() {
         return executorService;
+    }
+
+    /** Gets the executor used for blocking payload offload and load operations, or null to execute inline. */
+    public ExecutorService getPayloadOffloadExecutorService() {
+        return payloadOffloadExecutorService;
     }
 
     /**
@@ -214,6 +231,11 @@ public final class DurableConfig {
         return checkpointEmptyMap;
     }
 
+    /** Returns whether framed chained-invoke inputs may use the configured payload offloader. */
+    public boolean shouldUsePayloadOffloaderForChainedInvokePayloads() {
+        return payloadOffloaderForChainedInvokePayloads;
+    }
+
     /**
      * Gets the plugin runner that dispatches lifecycle events to registered plugins.
      *
@@ -234,6 +256,10 @@ public final class DurableConfig {
         }
         if (getExecutorService() == null) {
             throw new IllegalStateException("ExecutorService configuration failed");
+        }
+        if (getPayloadOffloadExecutorService() != null && getPayloadOffloadExecutorService() == getExecutorService()) {
+            throw new IllegalStateException(
+                    "Payload offload ExecutorService must be different from the user operation ExecutorService");
         }
     }
 
@@ -315,12 +341,15 @@ public final class DurableConfig {
     public static final class Builder {
         private DurableExecutionClient durableExecutionClient;
         private SerDes serDes;
+        private PayloadOffloader payloadOffloader;
         private ExecutorService executorService;
+        private ExecutorService payloadOffloadExecutorService;
         private LoggerConfig loggerConfig;
         private PollingStrategy pollingStrategy;
         private Duration checkpointDelay;
         private boolean deserializeAfterSerialization = true;
         private boolean checkpointEmptyMap = false;
+        private boolean payloadOffloaderForChainedInvokePayloads;
         private List<DurableExecutionPlugin> plugins = new ArrayList<>();
 
         public Builder() {}
@@ -382,6 +411,29 @@ public final class DurableConfig {
         }
 
         /**
+         * Sets the global payload offloader applied after SerDes processing.
+         *
+         * @param payloadOffloader payload offloader
+         * @return this builder
+         */
+        public Builder withPayloadOffloader(PayloadOffloader payloadOffloader) {
+            this.payloadOffloader = Objects.requireNonNull(payloadOffloader, "PayloadOffloader cannot be null");
+            return this;
+        }
+
+        /**
+         * Controls whether SDK-framed chained-invoke inputs and outputs may use this handler's configured payload
+         * offloader.
+         *
+         * <p>This is disabled by default. Enable it only for compatible durable callers that also opt in through
+         * {@link software.amazon.lambda.durable.config.InvokeConfig.Builder#usePayloadOffloaderForPayload(boolean)}.
+         */
+        public Builder withPayloadOffloaderForChainedInvokePayloads(boolean enabled) {
+            payloadOffloaderForChainedInvokePayloads = enabled;
+            return this;
+        }
+
+        /**
          * Sets a custom ExecutorService for running user-defined operations. If not set, a default cached thread pool
          * will be created.
          *
@@ -393,6 +445,22 @@ public final class DurableConfig {
          */
         public Builder withExecutorService(ExecutorService executorService) {
             this.executorService = executorService;
+            return this;
+        }
+
+        /**
+         * Sets the executor used for blocking payload storage operations. If not set, payload offloader calls execute
+         * inline on the calling thread.
+         *
+         * <p>This executor must be different from the user operation executor to prevent synchronous dispatch from
+         * deadlocking a saturated operation pool.
+         *
+         * @param executorService payload offload executor
+         * @return this builder
+         */
+        public Builder withPayloadOffloadExecutorService(ExecutorService executorService) {
+            this.payloadOffloadExecutorService =
+                    Objects.requireNonNull(executorService, "Payload offload ExecutorService cannot be null");
             return this;
         }
 

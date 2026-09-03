@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import software.amazon.lambda.durable.offload.PayloadOffloader;
 import software.amazon.lambda.durable.retry.WaitForConditionWaitStrategy;
 import software.amazon.lambda.durable.retry.WaitStrategies;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -16,11 +17,13 @@ import software.amazon.lambda.durable.serde.SerDes;
 public class WaitForConditionConfig<T> {
     private final WaitForConditionWaitStrategy<T> waitStrategy;
     private final SerDes serDes;
+    private final PayloadOffloader payloadOffloader;
     private final T initialState;
 
     private WaitForConditionConfig(Builder<T> builder) {
         this.waitStrategy = builder.waitStrategy;
         this.serDes = builder.serDes;
+        this.payloadOffloader = builder.payloadOffloader;
         this.initialState = builder.initialState;
     }
 
@@ -35,6 +38,11 @@ public class WaitForConditionConfig<T> {
     /** Returns the custom serializer, or null if not specified (uses default SerDes). */
     public SerDes serDes() {
         return serDes;
+    }
+
+    /** Returns the state offloader, or null to inherit the global offloader. */
+    public PayloadOffloader payloadOffloader() {
+        return payloadOffloader;
     }
 
     /** Returns the initial state object, or null if not specified. */
@@ -52,6 +60,7 @@ public class WaitForConditionConfig<T> {
         var b = new Builder<T>();
         b.waitStrategy = this.waitStrategy;
         b.serDes = this.serDes;
+        b.payloadOffloader = this.payloadOffloader;
         b.initialState = this.initialState;
         return b;
     }
@@ -69,6 +78,7 @@ public class WaitForConditionConfig<T> {
     public static class Builder<T> {
         private WaitForConditionWaitStrategy<T> waitStrategy;
         private SerDes serDes;
+        private PayloadOffloader payloadOffloader;
         private T initialState;
 
         private Builder() {}
@@ -97,6 +107,12 @@ public class WaitForConditionConfig<T> {
          */
         public Builder<T> serDes(SerDes serDes) {
             this.serDes = serDes;
+            return this;
+        }
+
+        /** Sets the payload offloader for checkpointed condition state. */
+        public Builder<T> payloadOffloader(PayloadOffloader payloadOffloader) {
+            this.payloadOffloader = payloadOffloader;
             return this;
         }
 

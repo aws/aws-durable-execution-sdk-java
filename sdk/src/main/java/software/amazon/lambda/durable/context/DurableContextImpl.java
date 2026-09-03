@@ -26,6 +26,7 @@ import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.WaitForCallbackConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.config.WithRetryConfig;
+import software.amazon.lambda.durable.exception.PayloadOffloadException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
@@ -140,6 +141,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
+        if (config.payloadOffloader() == null) {
+            config = config.toBuilder()
+                    .payloadOffloader(getDurableConfig().getPayloadOffloader())
+                    .build();
+        }
         var operationId = nextOperationId();
 
         // Create and start step operation with TypeToken
@@ -179,6 +185,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         if (config.payloadSerDes() == null) {
             config = config.toBuilder()
                     .payloadSerDes(getDurableConfig().getSerDes())
+                    .build();
+        }
+        if (config.payloadOffloader() == null) {
+            config = config.toBuilder()
+                    .payloadOffloader(getDurableConfig().getPayloadOffloader())
                     .build();
         }
         var operationId = nextOperationId();
@@ -242,6 +253,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
+        if (config.payloadOffloader() == null) {
+            config = config.toBuilder()
+                    .payloadOffloader(getDurableConfig().getPayloadOffloader())
+                    .build();
+        }
 
         var operationId = nextOperationId();
 
@@ -265,6 +281,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
+        if (config.payloadOffloader() == null) {
+            config = config.toBuilder()
+                    .payloadOffloader(getDurableConfig().getPayloadOffloader())
+                    .build();
+        }
 
         // Convert to List for deterministic index-based access
         var itemList = List.copyOf(items);
@@ -286,6 +307,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
     @Override
     public ParallelDurableFuture parallel(String name, ParallelConfig config) {
         Objects.requireNonNull(config, "config cannot be null");
+        if (config.payloadOffloader() == null) {
+            config = config.toBuilder()
+                    .payloadOffloader(getDurableConfig().getPayloadOffloader())
+                    .build();
+        }
         var operationId = nextOperationId();
 
         var parallelOp = new ParallelOperation(
@@ -357,6 +383,11 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         if (config.serDes() == null) {
             config = config.toBuilder().serDes(getDurableConfig().getSerDes()).build();
         }
+        if (config.payloadOffloader() == null) {
+            config = config.toBuilder()
+                    .payloadOffloader(getDurableConfig().getPayloadOffloader())
+                    .build();
+        }
         var operationId = nextOperationId();
 
         var operation = new WaitForConditionOperation<>(
@@ -401,8 +432,9 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
      * Core retry loop. Replay-safe because every side-effect is a durable operation: the user's operation calls durable
      * primitives, and backoff uses {@code context.wait()}.
      *
-     * <p>{@link SuspendExecutionException} and {@link UnrecoverableDurableExecutionException} are never retried — they
-     * are internal SDK control flow signals that must propagate immediately.
+     * <p>{@link SuspendExecutionException}, {@link UnrecoverableDurableExecutionException}, and
+     * {@link PayloadOffloadException} are never retried — they are SDK control flow or infrastructure failures that
+     * must propagate immediately.
      */
     private static <T> T executeRetryLoop(
             DurableContext context,
@@ -413,8 +445,8 @@ public class DurableContextImpl extends BaseContextImpl implements DurableContex
         while (true) {
             try {
                 return operation.apply(attempt, context);
-            } catch (SuspendExecutionException | UnrecoverableDurableExecutionException e) {
-                // Internal SDK control flow — never retry, always propagate
+            } catch (SuspendExecutionException | UnrecoverableDurableExecutionException | PayloadOffloadException e) {
+                // SDK control flow and payload infrastructure failures — never retry, always propagate
                 throw e;
             } catch (Exception e) {
                 RetryDecision decision = config.retryStrategy().makeRetryDecision(e, attempt);

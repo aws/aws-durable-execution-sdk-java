@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.config;
 
 import java.util.Objects;
+import software.amazon.lambda.durable.offload.PayloadOffloader;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -12,10 +13,12 @@ import software.amazon.lambda.durable.serde.SerDes;
  */
 public class RunInChildContextConfig {
     private final SerDes serDes;
+    private final PayloadOffloader payloadOffloader;
     private final Boolean isVirtual;
 
     private RunInChildContextConfig(Builder builder) {
         this.serDes = builder.serDes;
+        this.payloadOffloader = builder.payloadOffloader;
         this.isVirtual = Objects.requireNonNullElse(builder.isVirtual, false);
     }
 
@@ -27,13 +30,18 @@ public class RunInChildContextConfig {
         return serDes;
     }
 
+    /** Returns the child context result offloader, or null to inherit the global offloader. */
+    public PayloadOffloader payloadOffloader() {
+        return payloadOffloader;
+    }
+
     /** Returns true if the context operation will not be checkpointed, false otherwise. */
     public Boolean isVirtual() {
         return isVirtual;
     }
 
     public Builder toBuilder() {
-        return new Builder().serDes(serDes).isVirtual(isVirtual);
+        return new Builder().serDes(serDes).payloadOffloader(payloadOffloader).isVirtual(isVirtual);
     }
 
     /**
@@ -48,6 +56,7 @@ public class RunInChildContextConfig {
     /** Builder for creating StepConfig instances. */
     public static class Builder {
         private SerDes serDes;
+        private PayloadOffloader payloadOffloader;
         private Boolean isVirtual;
 
         private Builder() {}
@@ -64,6 +73,12 @@ public class RunInChildContextConfig {
          */
         public Builder serDes(SerDes serDes) {
             this.serDes = serDes;
+            return this;
+        }
+
+        /** Sets the payload offloader for the child context result and exception. */
+        public Builder payloadOffloader(PayloadOffloader payloadOffloader) {
+            this.payloadOffloader = payloadOffloader;
             return this;
         }
 

@@ -12,7 +12,6 @@ import java.util.function.BiFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
-import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
@@ -22,16 +21,24 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
+import software.amazon.lambda.durable.exception.PayloadOffloadException;
+import software.amazon.lambda.durable.exception.RetryablePayloadOffloadException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
+import software.amazon.lambda.durable.model.InvocationSource;
+import software.amazon.lambda.durable.offload.PayloadOffloadContext;
+import software.amazon.lambda.durable.offload.PayloadOffloader;
+import software.amazon.lambda.durable.offload.PayloadOffloaders;
+import software.amazon.lambda.durable.offload.SerDesPayloadKind;
+import software.amazon.lambda.durable.offload.internal.ChainedInvokeOutputFrame;
+import software.amazon.lambda.durable.offload.internal.ChainedInvokePayloadFrame;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 import software.amazon.lambda.durable.plugin.PluginRunner;
-import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -60,6 +67,11 @@ public class DurableExecutor {
             var isFirstInvocation = !executionManager.isReplaying();
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             var executionArn = input.durableExecutionArn();
+            var frameChainedInvokeOutput = shouldFrameChainedInvokeOutput(executionManager, config);
+            var outputOffloader =
+                    input.invocationSource() == InvocationSource.CHAINED_INVOKE && !frameChainedInvokeOutput
+                            ? PayloadOffloaders.disabled()
+                            : config.getPayloadOffloader();
 
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
@@ -77,8 +89,7 @@ public class DurableExecutor {
                         I userInput = null;
                         Throwable inputFailure = null;
                         try {
-                            userInput = extractUserInput(
-                                    executionManager.getExecutionOperation(), config.getSerDes(), inputType);
+                            userInput = extractUserInput(executionManager, config, inputType);
                         } catch (Throwable t) {
                             inputFailure = t;
                         }
@@ -122,62 +133,53 @@ public class DurableExecutor {
                         .runUntilCompleteOrSuspend(handlerFuture)
                         .handle((result, ex) -> {
                             if (ex != null) {
-                                // an exception thrown from handlerFuture or suspension/termination occurred
-                                Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);
-
-                                // return PENDING if it's SuspendExecutionException
-                                if (cause instanceof SuspendExecutionException) {
-                                    fireOnInvocationEnd(
-                                            pluginRunner,
-                                            executionManager,
-                                            requestId,
-                                            executionArn,
-                                            isFirstInvocation,
-                                            InvocationStatus.PENDING,
-                                            null,
-                                            pluginExecutionInput.get(),
-                                            null);
-                                    return DurableExecutionOutput.pending();
-                                }
-
-                                // let the backend retry the invocation if the exception is retryable
-                                if (cause
-                                                instanceof
-                                                UnrecoverableDurableExecutionException
-                                                        unrecoverableDurableExecutionException
-                                        && unrecoverableDurableExecutionException.isRetryable()) {
-                                    fireOnInvocationEnd(
-                                            pluginRunner,
-                                            executionManager,
-                                            requestId,
-                                            executionArn,
-                                            isFirstInvocation,
-                                            InvocationStatus.RETRYING,
-                                            cause,
-                                            pluginExecutionInput.get(),
-                                            null);
-                                    throw unrecoverableDurableExecutionException;
-                                }
-
-                                // fail the execution otherwise
-                                logger.debug("Execution failed: {}", cause.getMessage());
-                                fireOnInvocationEnd(
+                                return handleExecutionFailure(
+                                        ExceptionHelper.unwrapCompletableFuture(ex),
                                         pluginRunner,
                                         executionManager,
+                                        config,
                                         requestId,
                                         executionArn,
                                         isFirstInvocation,
-                                        InvocationStatus.FAILED,
-                                        cause,
-                                        pluginExecutionInput.get(),
-                                        null);
-                                return DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
+                                        frameChainedInvokeOutput,
+                                        outputOffloader,
+                                        pluginExecutionInput.get());
                             }
-                            // user handler complete successfully
+                            final String outputPayload;
+                            try {
+                                outputPayload = executionManager
+                                        .getPayloadCodec()
+                                        .serialize(
+                                                result,
+                                                config.getSerDes(),
+                                                outputOffloader,
+                                                executionContext(executionManager, SerDesPayloadKind.OUTPUT));
+                            } catch (PayloadOffloadException outputFailure) {
+                                return handleExecutionFailure(
+                                        outputFailure,
+                                        pluginRunner,
+                                        executionManager,
+                                        config,
+                                        requestId,
+                                        executionArn,
+                                        isFirstInvocation,
+                                        frameChainedInvokeOutput,
+                                        outputOffloader,
+                                        pluginExecutionInput.get());
+                            }
+
+                            // User handler and output serialization completed successfully. Infrastructure failures
+                            // while
+                            // publishing a large root result must escape for invocation retry rather than being
+                            // converted
+                            // into a terminal user failure.
                             logger.debug("Execution completed");
-                            var outputPayload = config.getSerDes().serialize(result);
-                            var output =
-                                    DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
+                            var responsePayload = frameChainedInvokeOutput
+                                    ? ChainedInvokeOutputFrame.encode(
+                                            outputPayload, PayloadCodec.isOffloadEnvelope(outputPayload))
+                                    : outputPayload;
+                            var output = DurableExecutionOutput.success(
+                                    handleLargePayload(executionManager, responsePayload));
                             fireOnInvocationEnd(
                                     pluginRunner,
                                     executionManager,
@@ -197,6 +199,140 @@ public class DurableExecutor {
                 return null;
             }
         }
+    }
+
+    private static DurableExecutionOutput handleExecutionFailure(
+            Throwable cause,
+            PluginRunner pluginRunner,
+            ExecutionManager executionManager,
+            DurableConfig config,
+            String requestId,
+            String executionArn,
+            boolean isFirstInvocation,
+            boolean frameChainedInvokeOutput,
+            PayloadOffloader outputOffloader,
+            Object executionInput) {
+        if (cause instanceof SuspendExecutionException) {
+            fireOnInvocationEnd(
+                    pluginRunner,
+                    executionManager,
+                    requestId,
+                    executionArn,
+                    isFirstInvocation,
+                    InvocationStatus.PENDING,
+                    null,
+                    executionInput,
+                    null);
+            return DurableExecutionOutput.pending();
+        }
+
+        if (cause instanceof RetryablePayloadOffloadException retryablePayloadOffloadException) {
+            fireOnInvocationEnd(
+                    pluginRunner,
+                    executionManager,
+                    requestId,
+                    executionArn,
+                    isFirstInvocation,
+                    InvocationStatus.RETRYING,
+                    cause,
+                    executionInput,
+                    null);
+            throw retryablePayloadOffloadException;
+        }
+
+        if (cause instanceof UnrecoverableDurableExecutionException unrecoverable && unrecoverable.isRetryable()) {
+            fireOnInvocationEnd(
+                    pluginRunner,
+                    executionManager,
+                    requestId,
+                    executionArn,
+                    isFirstInvocation,
+                    InvocationStatus.RETRYING,
+                    cause,
+                    executionInput,
+                    null);
+            throw unrecoverable;
+        }
+
+        logger.debug("Execution failed: {}", cause.getMessage());
+        Throwable reportedCause = cause;
+        EncodedError encodedError;
+        try {
+            encodedError = buildErrorObject(cause, executionManager, config, outputOffloader);
+        } catch (PayloadOffloadException payloadFailure) {
+            if (payloadFailure instanceof RetryablePayloadOffloadException retryablePayloadFailure) {
+                fireOnInvocationEnd(
+                        pluginRunner,
+                        executionManager,
+                        requestId,
+                        executionArn,
+                        isFirstInvocation,
+                        InvocationStatus.RETRYING,
+                        retryablePayloadFailure,
+                        executionInput,
+                        null);
+                throw retryablePayloadFailure;
+            }
+            reportedCause = payloadFailure;
+            try {
+                encodedError = buildErrorObject(payloadFailure, executionManager, config, outputOffloader);
+            } catch (Throwable encodingFailure) {
+                return rethrowEncodingFailureAfterInvocationEnd(
+                        encodingFailure,
+                        cause,
+                        pluginRunner,
+                        executionManager,
+                        requestId,
+                        executionArn,
+                        isFirstInvocation,
+                        executionInput);
+            }
+        } catch (Throwable encodingFailure) {
+            return rethrowEncodingFailureAfterInvocationEnd(
+                    encodingFailure,
+                    cause,
+                    pluginRunner,
+                    executionManager,
+                    requestId,
+                    executionArn,
+                    isFirstInvocation,
+                    executionInput);
+        }
+        fireOnInvocationEnd(
+                pluginRunner,
+                executionManager,
+                requestId,
+                executionArn,
+                isFirstInvocation,
+                InvocationStatus.FAILED,
+                reportedCause,
+                executionInput,
+                null);
+        var errorObject = frameChainedInvokeOutput ? frameChainedInvokeError(encodedError) : encodedError.error();
+        return DurableExecutionOutput.failure(errorObject);
+    }
+
+    private static <T> T rethrowEncodingFailureAfterInvocationEnd(
+            Throwable encodingFailure,
+            Throwable originalCause,
+            PluginRunner pluginRunner,
+            ExecutionManager executionManager,
+            String requestId,
+            String executionArn,
+            boolean isFirstInvocation,
+            Object executionInput) {
+        fireOnInvocationEnd(
+                pluginRunner,
+                executionManager,
+                requestId,
+                executionArn,
+                isFirstInvocation,
+                InvocationStatus.FAILED,
+                originalCause,
+                executionInput,
+                null);
+        ExceptionHelper.sneakyThrow(encodingFailure);
+        return null;
     }
 
     private static void fireOnInvocationEnd(
@@ -254,25 +390,115 @@ public class DurableExecutor {
         return outputPayload;
     }
 
-    private static ErrorObject buildErrorObject(Throwable e, SerDes serDes) {
+    private static EncodedError buildErrorObject(
+            Throwable e, ExecutionManager executionManager, DurableConfig config, PayloadOffloader outputOffloader) {
         // exceptions thrown from operations, e.g. Step
         if (e instanceof DurableOperationException durableOperationException) {
-            return durableOperationException.getErrorObject();
+            var error = durableOperationException.getErrorObject();
+            if (error == null || error.errorData() == null) {
+                return new EncodedError(error, false);
+            }
+            var targetContext = executionContext(executionManager, SerDesPayloadKind.EXCEPTION);
+            final String errorData;
+            final boolean usesPayloadCodec;
+            if (durableOperationException.getPayloadOffloadContext() == null) {
+                errorData = executionManager
+                        .getPayloadCodec()
+                        .offloadSerializedPayload(error.errorData(), outputOffloader, targetContext);
+                usesPayloadCodec = hasActivePayloadOffloader(outputOffloader);
+            } else {
+                errorData = executionManager
+                        .getPayloadCodec()
+                        .rebindSerializedPayload(
+                                error.errorData(),
+                                durableOperationException.getPayloadOffloader(),
+                                durableOperationException.getPayloadOffloadContext(),
+                                outputOffloader,
+                                targetContext);
+                usesPayloadCodec = PayloadCodec.isOffloadEnvelope(errorData);
+            }
+            return new EncodedError(error.toBuilder().errorData(errorData).build(), usesPayloadCodec);
         }
         if (e instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
-            return unrecoverableDurableExecutionException.getErrorObject();
+            return new EncodedError(unrecoverableDurableExecutionException.getErrorObject(), false);
         }
         // exceptions thrown from non-operation code
-        return ExceptionHelper.buildErrorObject(e, serDes);
+        final String errorData;
+        final boolean usesPayloadCodec;
+        if (e instanceof PayloadOffloadException) {
+            errorData = config.getSerDes().serialize(e);
+            usesPayloadCodec = false;
+        } else {
+            errorData = executionManager
+                    .getPayloadCodec()
+                    .serialize(
+                            e,
+                            config.getSerDes(),
+                            outputOffloader,
+                            executionContext(executionManager, SerDesPayloadKind.EXCEPTION));
+            usesPayloadCodec = PayloadCodec.isOffloadEnvelope(errorData);
+        }
+        return new EncodedError(
+                ErrorObject.builder()
+                        .errorType(e.getClass().getName())
+                        .errorMessage(e.getMessage())
+                        .errorData(errorData)
+                        .stackTrace(ExceptionHelper.serializeStackTrace(e.getStackTrace()))
+                        .build(),
+                usesPayloadCodec);
     }
 
-    private static <I> I extractUserInput(Operation executionOp, SerDes serDes, TypeToken<I> inputType) {
+    private static ErrorObject frameChainedInvokeError(EncodedError encodedError) {
+        var error = encodedError.error();
+        if (error == null || error.errorData() == null) {
+            return error;
+        }
+        return error.toBuilder()
+                .errorData(ChainedInvokeOutputFrame.encode(error.errorData(), encodedError.usesPayloadCodec()))
+                .build();
+    }
+
+    private static boolean shouldFrameChainedInvokeOutput(ExecutionManager executionManager, DurableConfig config) {
+        var details = executionManager.getExecutionOperation().executionDetails();
+        return config.shouldUsePayloadOffloaderForChainedInvokePayloads()
+                && details != null
+                && ChainedInvokePayloadFrame.isFramed(details.inputPayload());
+    }
+
+    private static boolean hasActivePayloadOffloader(PayloadOffloader offloader) {
+        return offloader != null && !PayloadOffloaders.isDisabled(offloader);
+    }
+
+    private record EncodedError(ErrorObject error, boolean usesPayloadCodec) {}
+
+    private static <I> I extractUserInput(
+            ExecutionManager executionManager, DurableConfig config, TypeToken<I> inputType) {
+        var executionOp = executionManager.getExecutionOperation();
         if (executionOp.executionDetails() == null) {
             throw new IllegalDurableOperationException("EXECUTION operation missing executionDetails");
         }
 
         var inputPayload = executionOp.executionDetails().inputPayload();
-        return serDes.deserialize(inputPayload, inputType);
+        if (!config.shouldUsePayloadOffloaderForChainedInvokePayloads()
+                || !ChainedInvokePayloadFrame.isFramed(inputPayload)) {
+            return config.getSerDes().deserialize(inputPayload, inputType);
+        }
+        inputPayload = ChainedInvokePayloadFrame.decode(inputPayload);
+        return executionManager
+                .getPayloadCodec()
+                .deserialize(
+                        inputPayload,
+                        inputType,
+                        config.getSerDes(),
+                        config.getPayloadOffloader(),
+                        executionContext(executionManager, SerDesPayloadKind.INPUT));
+    }
+
+    private static PayloadOffloadContext executionContext(
+            ExecutionManager executionManager, SerDesPayloadKind payloadKind) {
+        var operation = executionManager.getExecutionOperation();
+        return PayloadOffloadContext.forExecution(
+                executionManager.getDurableExecutionArn(), operation.id(), operation.name(), payloadKind);
     }
 
     /**

@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.config;
 
 import java.util.Objects;
 import java.util.function.BiFunction;
+import software.amazon.lambda.durable.offload.PayloadOffloader;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -15,6 +16,7 @@ public class MapConfig {
     private final Integer maxConcurrency;
     private final CompletionConfig completionConfig;
     private final SerDes serDes;
+    private final PayloadOffloader payloadOffloader;
     private final NestingType nestingType;
     private final BiFunction<Object, Integer, String> itemNamer;
 
@@ -23,6 +25,7 @@ public class MapConfig {
         this.completionConfig = Objects.requireNonNullElse(builder.completionConfig, CompletionConfig.allCompleted());
         this.nestingType = Objects.requireNonNullElse(builder.nestingType, NestingType.NESTED);
         this.serDes = builder.serDes;
+        this.payloadOffloader = builder.payloadOffloader;
         this.itemNamer = builder.itemNamer;
         if (itemNamer != null && nestingType == NestingType.FLAT) {
             throw new IllegalArgumentException("itemNamer is not supported with FLAT map nesting");
@@ -42,6 +45,11 @@ public class MapConfig {
     /** @return the custom serializer, or null to use the default */
     public SerDes serDes() {
         return serDes;
+    }
+
+    /** @return the map and iteration result offloader, or null to inherit the global offloader */
+    public PayloadOffloader payloadOffloader() {
+        return payloadOffloader;
     }
 
     /** @return nesting type, defaults to {@link NestingType#NESTED} */
@@ -70,6 +78,7 @@ public class MapConfig {
                 .maxConcurrency(maxConcurrency)
                 .completionConfig(completionConfig)
                 .serDes(serDes)
+                .payloadOffloader(payloadOffloader)
                 .nestingType(nestingType)
                 .itemNamer(itemNamer);
     }
@@ -80,6 +89,7 @@ public class MapConfig {
         private Integer maxConcurrency;
         private CompletionConfig completionConfig;
         private SerDes serDes;
+        private PayloadOffloader payloadOffloader;
         private BiFunction<Object, Integer, String> itemNamer;
 
         private Builder() {}
@@ -111,6 +121,12 @@ public class MapConfig {
          */
         public Builder serDes(SerDes serDes) {
             this.serDes = serDes;
+            return this;
+        }
+
+        /** Sets the payload offloader for map iteration and aggregate results. */
+        public Builder payloadOffloader(PayloadOffloader payloadOffloader) {
+            this.payloadOffloader = payloadOffloader;
             return this;
         }
 

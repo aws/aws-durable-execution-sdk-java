@@ -5,12 +5,16 @@ package software.amazon.lambda.durable.exception;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.offload.PayloadOffloadContext;
+import software.amazon.lambda.durable.offload.PayloadOffloader;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /** Exception associated with a specific durable operation, carrying the operation and error details. */
 public class DurableOperationException extends DurableExecutionException {
     private final Operation operation;
     private final ErrorObject errorObject;
+    private PayloadOffloader payloadOffloader;
+    private PayloadOffloadContext payloadOffloadContext;
 
     public DurableOperationException(Operation operation, ErrorObject errorObject) {
         this(operation, errorObject, errorObject != null ? errorObject.errorMessage() : null);
@@ -59,5 +63,20 @@ public class DurableOperationException extends DurableExecutionException {
     /** Returns the ID of the operation that caused this exception. */
     public String getOperationId() {
         return operation.id();
+    }
+
+    /** Retains the operation-level payload policy that produced this exception's serialized error data. */
+    public DurableOperationException withPayloadSource(PayloadOffloader offloader, PayloadOffloadContext context) {
+        payloadOffloader = offloader;
+        payloadOffloadContext = context;
+        return this;
+    }
+
+    public PayloadOffloader getPayloadOffloader() {
+        return payloadOffloader;
+    }
+
+    public PayloadOffloadContext getPayloadOffloadContext() {
+        return payloadOffloadContext;
     }
 }

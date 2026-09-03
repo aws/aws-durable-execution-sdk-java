@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import software.amazon.lambda.durable.offload.PayloadOffloader;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -11,9 +12,11 @@ import software.amazon.lambda.durable.serde.SerDes;
  */
 public class ParallelBranchConfig {
     private final SerDes serDes;
+    private final PayloadOffloader payloadOffloader;
 
     private ParallelBranchConfig(Builder builder) {
         this.serDes = builder.serDes;
+        this.payloadOffloader = builder.payloadOffloader;
     }
 
     /** Returns the custom serializer for this step, or null if not specified (uses default SerDes). */
@@ -21,8 +24,13 @@ public class ParallelBranchConfig {
         return serDes;
     }
 
+    /** Returns the branch result offloader, or null to inherit the global offloader. */
+    public PayloadOffloader payloadOffloader() {
+        return payloadOffloader;
+    }
+
     public Builder toBuilder() {
-        return new Builder(serDes);
+        return new Builder(serDes).payloadOffloader(payloadOffloader);
     }
 
     /**
@@ -37,6 +45,7 @@ public class ParallelBranchConfig {
     /** Builder for creating StepConfig instances. */
     public static class Builder {
         private SerDes serDes;
+        private PayloadOffloader payloadOffloader;
 
         public Builder(SerDes serDes) {
             this.serDes = serDes;
@@ -54,6 +63,12 @@ public class ParallelBranchConfig {
          */
         public Builder serDes(SerDes serDes) {
             this.serDes = serDes;
+            return this;
+        }
+
+        /** Sets the payload offloader for the parallel branch result. */
+        public Builder payloadOffloader(PayloadOffloader payloadOffloader) {
+            this.payloadOffloader = payloadOffloader;
             return this;
         }
 

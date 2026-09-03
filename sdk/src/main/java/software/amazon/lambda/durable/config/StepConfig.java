@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import software.amazon.lambda.durable.offload.PayloadOffloader;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 import software.amazon.lambda.durable.retry.RetryStrategy;
 import software.amazon.lambda.durable.serde.SerDes;
@@ -16,11 +17,13 @@ public class StepConfig {
     private final RetryStrategy retryStrategy;
     private final StepSemantics semanticsPerRetry;
     private final SerDes serDes;
+    private final PayloadOffloader payloadOffloader;
 
     private StepConfig(Builder builder) {
         this.retryStrategy = builder.retryStrategy;
         this.semanticsPerRetry = builder.semanticsPerRetry;
         this.serDes = builder.serDes;
+        this.payloadOffloader = builder.payloadOffloader;
     }
 
     /** Returns the retry strategy for this step, or the default strategy if not specified. */
@@ -38,8 +41,13 @@ public class StepConfig {
         return serDes;
     }
 
+    /** Returns the operation payload offloader, or null to inherit the handler configuration. */
+    public PayloadOffloader payloadOffloader() {
+        return payloadOffloader;
+    }
+
     public Builder toBuilder() {
-        return new Builder(retryStrategy, semanticsPerRetry, serDes);
+        return new Builder(retryStrategy, semanticsPerRetry, serDes).payloadOffloader(payloadOffloader);
     }
 
     /**
@@ -56,6 +64,7 @@ public class StepConfig {
         private RetryStrategy retryStrategy;
         private StepSemantics semanticsPerRetry;
         private SerDes serDes;
+        private PayloadOffloader payloadOffloader;
 
         public Builder(RetryStrategy retryStrategy, StepSemantics semanticsPerRetry, SerDes serDes) {
             this.retryStrategy = retryStrategy;
@@ -97,6 +106,15 @@ public class StepConfig {
          */
         public Builder serDes(SerDes serDes) {
             this.serDes = serDes;
+            return this;
+        }
+
+        /**
+         * Sets the payload offloader for this step. Use {@link PayloadOffloader#disabled()} to force inline storage
+         * when a global offloader is configured.
+         */
+        public Builder payloadOffloader(PayloadOffloader payloadOffloader) {
+            this.payloadOffloader = payloadOffloader;
             return this;
         }
 

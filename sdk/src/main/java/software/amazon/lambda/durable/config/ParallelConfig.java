@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.config;
 
 import java.util.Objects;
+import software.amazon.lambda.durable.offload.PayloadOffloader;
 
 /**
  * Configuration options for parallel operations in durable executions.
@@ -14,11 +15,13 @@ public class ParallelConfig {
     private final int maxConcurrency;
     private final CompletionConfig completionConfig;
     private final NestingType nestingType;
+    private final PayloadOffloader payloadOffloader;
 
     private ParallelConfig(Builder builder) {
         this.maxConcurrency = Objects.requireNonNullElse(builder.maxConcurrency, Integer.MAX_VALUE);
         this.completionConfig = Objects.requireNonNullElseGet(builder.completionConfig, CompletionConfig::allCompleted);
         this.nestingType = Objects.requireNonNullElse(builder.nestingType, NestingType.NESTED);
+        this.payloadOffloader = builder.payloadOffloader;
     }
 
     /** @return the maximum number of branches running simultaneously, or -1 for unlimited */
@@ -36,6 +39,11 @@ public class ParallelConfig {
         return nestingType;
     }
 
+    /** @return the aggregate result offloader, or null to inherit the global offloader */
+    public PayloadOffloader payloadOffloader() {
+        return payloadOffloader;
+    }
+
     /**
      * Creates a new builder for ParallelConfig.
      *
@@ -49,7 +57,8 @@ public class ParallelConfig {
         return new Builder()
                 .maxConcurrency(maxConcurrency)
                 .completionConfig(completionConfig)
-                .nestingType(nestingType);
+                .nestingType(nestingType)
+                .payloadOffloader(payloadOffloader);
     }
 
     /** Builder for creating ParallelConfig instances. */
@@ -57,6 +66,7 @@ public class ParallelConfig {
         private Integer maxConcurrency;
         private CompletionConfig completionConfig;
         private NestingType nestingType;
+        private PayloadOffloader payloadOffloader;
 
         private Builder() {}
 
@@ -98,6 +108,12 @@ public class ParallelConfig {
          */
         public Builder nestingType(NestingType nestingType) {
             this.nestingType = nestingType;
+            return this;
+        }
+
+        /** Sets the payload offloader for the aggregate parallel result. */
+        public Builder payloadOffloader(PayloadOffloader payloadOffloader) {
+            this.payloadOffloader = payloadOffloader;
             return this;
         }
 

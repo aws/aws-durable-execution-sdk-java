@@ -27,6 +27,7 @@ import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.MapIterationFailedException;
 import software.amazon.lambda.durable.exception.ParallelBranchFailedException;
+import software.amazon.lambda.durable.exception.PayloadOffloadException;
 import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -35,6 +36,10 @@ import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.DeserializedOperationResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.offload.PayloadOffloader;
+import software.amazon.lambda.durable.offload.PayloadOffloaders;
+import software.amazon.lambda.durable.offload.SerDesPayloadKind;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -48,10 +53,16 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  * parent operation has already succeeded.
  */
 public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
+    private enum PersistenceOutcome {
+        PERSISTED,
+        NOT_APPLICABLE,
+        REJECTED_BY_PARENT
+    }
 
     private static final int LARGE_RESULT_THRESHOLD = 256 * 1024;
 
     private final Function<DurableContext, T> function;
+    private final ConcurrencyOperation<?> concurrencyParent;
     private final AtomicBoolean replayChildren = new AtomicBoolean(false);
     private final AtomicReference<DeserializedOperationResult<T>> cachedOperationResult = new AtomicReference<>(null);
 
@@ -77,10 +88,12 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
                 operationIdentifier,
                 resultTypeToken,
                 config.serDes(),
+                config.payloadOffloader(),
                 durableContext,
                 parentOperation,
                 config.isVirtual());
         this.function = function;
+        this.concurrencyParent = parentOperation;
     }
 
     /** Starts the operation. */
@@ -140,6 +153,13 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
                     T result = runUserFunction(null, () -> function.apply(childContext));
 
                     handleChildContextSuccess(result);
+                } catch (PayloadOffloadException e) {
+                    if (concurrencyParent == null || concurrencyParent.claimChildPayloadFailure(e)) {
+                        throw e;
+                    }
+                    cachedOperationResult.set(DeserializedOperationResult.failed(e));
+                    fireOnOperationEnd(null, e, false);
+                    markAlreadyCompleted();
                 } catch (Throwable e) {
                     handleChildContextFailure(e);
                 }
@@ -151,23 +171,23 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private void handleChildContextSuccess(T result) {
-        var serializedResult = serializeAndDeserializeResult(result);
-
-        if (replayChildren.get() || isVirtual || parentOperation != null && parentOperation.isOperationCompleted()) {
-            // Skip checkpointing if
-            // - parent ConcurrencyOperation has already completed, preventing race conditions where a child finishes
-            // after the parent has already completed.
-            // - replaying a SUCCEEDED child with replayChildren=true — skip checkpointing.
-            // - nestingType is FLAT
-            // Mark the completableFuture completed so get() doesn't block waiting for a checkpoint response.
-            cachedOperationResult.set(DeserializedOperationResult.succeeded(serializedResult.deserialized()));
-            if (isVirtual) {
-                fireOnOperationEnd(null, null, false);
-            }
-            markAlreadyCompleted();
-        } else {
+        var persistenceOutcome = persistCompletionIfAllowed(() -> {
+            var serializedResult = serializeAndDeserializeResult(result);
             checkpointSuccess(serializedResult.deserialized(), serializedResult.serialized());
+        });
+        if (persistenceOutcome == PersistenceOutcome.PERSISTED) {
+            return;
         }
+
+        // The result is not persisted when this is virtual, replaying children, or the parent has begun early
+        // completion. Normalize without offloading so the caller still observes SerDes semantics without an orphaned
+        // storage side effect.
+        var normalizedResult = normalizeResult(result);
+        cachedOperationResult.set(DeserializedOperationResult.succeeded(normalizedResult.deserialized()));
+        if (isVirtual || persistenceOutcome == PersistenceOutcome.REJECTED_BY_PARENT) {
+            fireOnOperationEnd(null, null, false);
+        }
+        markAlreadyCompleted();
     }
 
     private void checkpointSuccess(T result, String serialized) {
@@ -187,40 +207,60 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private void handleChildContextFailure(Throwable exception) {
-        exception = ExceptionHelper.unwrapCompletableFuture(exception);
-        if (exception instanceof SuspendExecutionException suspendExecutionException) {
+        var unwrappedException = ExceptionHelper.unwrapCompletableFuture(exception);
+        if (unwrappedException instanceof SuspendExecutionException suspendExecutionException) {
             // Rethrow Error immediately — do not checkpoint
             throw suspendExecutionException;
         }
-        if (exception instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
+        if (unwrappedException
+                instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
             // terminate the execution and throw the exception if it's not recoverable
             throw terminateExecution(unrecoverableDurableExecutionException);
         }
 
-        final ErrorObject errorObject;
-        if (exception instanceof DurableOperationException opEx) {
-            errorObject = opEx.getErrorObject();
-        } else {
-            errorObject = serializeException(exception);
-        }
-
-        var op = createVirtualOperation(errorObject);
-        cachedOperationResult.set(DeserializedOperationResult.failed(translateException(op, errorObject)));
-
-        // Skip checkpointing if
-        // - parent ConcurrencyOperation has already completed, preventing race conditions where a child finishes after
-        // the parent has already succeeded.
-        // - this child is not a direct child of a parent context (i.e. nestingType == FLAT), such as a parallel branch.
-        if ((parentOperation != null && parentOperation.isOperationCompleted()) || isVirtual) {
-            if (isVirtual) {
-                fireOnOperationEnd(null, exception, false);
-            }
-            markAlreadyCompleted();
+        var persistenceOutcome = persistCompletionIfAllowed(() -> {
+            var errorObject = unwrappedException instanceof DurableOperationException opEx
+                    ? rebindForwardedError(opEx)
+                    : serializeException(unwrappedException);
+            var op = createVirtualOperation(errorObject);
+            cachedOperationResult.set(DeserializedOperationResult.failed(translateException(op, errorObject)));
+            sendOperationUpdate(
+                    OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject));
+        });
+        if (persistenceOutcome == PersistenceOutcome.PERSISTED) {
             return;
         }
 
-        sendOperationUpdate(
-                OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject));
+        if (unwrappedException instanceof DurableOperationException operationException) {
+            cachedOperationResult.set(DeserializedOperationResult.failed(operationException));
+        } else {
+            var errorObject = serializeExceptionWithoutOffloading(unwrappedException);
+            var op = createVirtualOperation(errorObject);
+            cachedOperationResult.set(DeserializedOperationResult.failed(
+                    translateException(op, errorObject, PayloadOffloaders.disabled())));
+        }
+        if (isVirtual || persistenceOutcome == PersistenceOutcome.REJECTED_BY_PARENT) {
+            fireOnOperationEnd(null, unwrappedException, false);
+        }
+        markAlreadyCompleted();
+    }
+
+    private PersistenceOutcome persistCompletionIfAllowed(Runnable persistence) {
+        if (!shouldPersistUpdate() || replayChildren.get() || isVirtual) {
+            return PersistenceOutcome.NOT_APPLICABLE;
+        }
+        if (concurrencyParent == null) {
+            persistence.run();
+            return PersistenceOutcome.PERSISTED;
+        }
+        return concurrencyParent.persistChildCompletion(persistence)
+                ? PersistenceOutcome.PERSISTED
+                : PersistenceOutcome.REJECTED_BY_PARENT;
+    }
+
+    @Override
+    protected boolean hasInMemoryCompletion() {
+        return cachedOperationResult.get() != null;
     }
 
     @Override
@@ -245,8 +285,22 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private Throwable translateException(Operation op, ErrorObject errorObject) {
+        return translateException(op, errorObject, null);
+    }
+
+    private Throwable translateException(
+            Operation op, ErrorObject errorObject, PayloadOffloader sourceOffloaderOverride) {
+        if (getSubType() == OperationSubType.WAIT_FOR_CALLBACK) {
+            var callbackFailure = externalCallbackFailure();
+            if (callbackFailure != null) {
+                return callbackFailure;
+            }
+        }
+
         // Attempt to reconstruct and throw the original exception
-        Throwable original = deserializeException(errorObject);
+        Throwable original = sourceOffloaderOverride == null
+                ? deserializeException(errorObject)
+                : deserializeException(errorObject, null, sourceOffloaderOverride);
         if (original != null) {
             return original;
         }
@@ -254,14 +308,24 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         // throw a general failed exception if a user exception is not reconstructed
         return switch (getSubType()) {
             case WAIT_FOR_CALLBACK -> handleWaitForCallbackFailure();
-            case MAP_ITERATION -> new MapIterationFailedException(op);
-            case PARALLEL_BRANCH -> new ParallelBranchFailedException(op);
-            case RUN_IN_CHILD_CONTEXT, WITH_RETRY -> new ChildContextFailedException(op);
+            case MAP_ITERATION ->
+                attachTranslatedPayloadSource(new MapIterationFailedException(op), sourceOffloaderOverride);
+            case PARALLEL_BRANCH ->
+                attachTranslatedPayloadSource(new ParallelBranchFailedException(op), sourceOffloaderOverride);
+            case RUN_IN_CHILD_CONTEXT, WITH_RETRY ->
+                attachTranslatedPayloadSource(new ChildContextFailedException(op), sourceOffloaderOverride);
 
             // the following subtypes should not be able to reach here
             case PARALLEL, MAP, WAIT_FOR_CONDITION, STEP, WAIT, CALLBACK, CHAINED_INVOKE ->
                 new IllegalStateException("Unexpected sub-type: " + getSubType());
         };
+    }
+
+    private <E extends DurableOperationException> E attachTranslatedPayloadSource(
+            E exception, PayloadOffloader sourceOffloaderOverride) {
+        return sourceOffloaderOverride == null
+                ? attachPayloadSource(exception, SerDesPayloadKind.EXCEPTION, null)
+                : attachPayloadSource(exception, SerDesPayloadKind.EXCEPTION, null, sourceOffloaderOverride);
     }
 
     private Operation createVirtualOperation(ErrorObject errorObject) {
@@ -275,28 +339,21 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private Throwable handleWaitForCallbackFailure() {
+        var callbackFailure = externalCallbackFailure();
+        if (callbackFailure != null) {
+            return callbackFailure;
+        }
+
         var childrenOps = getChildOperations();
-        var callbackOp = childrenOps.stream()
-                .filter(o -> o.type() == OperationType.CALLBACK)
-                .findFirst()
-                .orElse(null);
         var submitterOp = childrenOps.stream()
                 .filter(o -> o.type() == OperationType.STEP)
                 .findFirst()
                 .orElse(null);
+        var callbackOp = childrenOps.stream()
+                .filter(o -> o.type() == OperationType.CALLBACK)
+                .findFirst()
+                .orElse(null);
         if (callbackOp != null) {
-            // if callback failed
-            if (isTerminalStatus(callbackOp.status())) {
-                switch (callbackOp.status()) {
-                    case FAILED -> {
-                        return new CallbackFailedException(callbackOp);
-                    }
-                    case TIMED_OUT -> {
-                        return new CallbackTimeoutException(callbackOp);
-                    }
-                }
-            }
-
             // if submitter failed
             if (submitterOp != null
                     && isTerminalStatus(submitterOp.status())
@@ -311,5 +368,31 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         }
 
         return new IllegalStateException("Unknown waitForCallback status");
+    }
+
+    private Throwable externalCallbackFailure() {
+        var childrenOps = getChildOperations();
+        var submitterOp = childrenOps.stream()
+                .filter(operation -> operation.type() == OperationType.STEP)
+                .findFirst()
+                .orElse(null);
+        if (submitterOp != null
+                && isTerminalStatus(submitterOp.status())
+                && submitterOp.status() != OperationStatus.SUCCEEDED) {
+            return null;
+        }
+
+        var callbackOp = childrenOps.stream()
+                .filter(operation -> operation.type() == OperationType.CALLBACK)
+                .findFirst()
+                .orElse(null);
+        if (callbackOp == null) {
+            return null;
+        }
+        return switch (callbackOp.status()) {
+            case FAILED -> new CallbackFailedException(callbackOp);
+            case TIMED_OUT -> new CallbackTimeoutException(callbackOp);
+            default -> null;
+        };
     }
 }

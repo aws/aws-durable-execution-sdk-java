@@ -20,12 +20,14 @@ import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
+import software.amazon.lambda.durable.exception.PayloadOffloadException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.offload.PayloadOffloader;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 import software.amazon.lambda.durable.util.ParameterValidator;
@@ -50,6 +52,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     private final DurableContext.MapFunction<I, O> function;
     private final TypeToken<O> itemResultType;
     private final SerDes serDes;
+    private final PayloadOffloader payloadOffloader;
     private final List<String> iterationNames;
     private volatile MapResult<O> cachedResult;
 
@@ -82,6 +85,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                 operationIdentifier,
                 new TypeToken<>() {},
                 config.serDes(),
+                config.payloadOffloader(),
                 durableContext,
                 config.maxConcurrency(),
                 config.completionConfig().completionDecisionFunction(),
@@ -96,6 +100,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         this.function = function;
         this.itemResultType = itemResultType;
         this.serDes = config.serDes();
+        this.payloadOffloader = config.payloadOffloader();
         this.iterationNames = Collections.unmodifiableList(new ArrayList<>(iterationNames));
         if (this.iterationNames.size() != this.items.size()) {
             throw new IllegalArgumentException("iterationNames must have one entry per item");
@@ -152,6 +157,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                     childCtx -> function.apply(item, index, childCtx),
                     itemResultType,
                     serDes,
+                    payloadOffloader,
                     OperationSubType.MAP_ITERATION,
                     skip);
         }
@@ -251,7 +257,8 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     @Override
     protected void handleCompletion(CompletionConfig.CompletionDecision completionDecision) {
         this.cachedResult = constructMapResult(completionDecision);
-        var serializedResult = serializeAndDeserializeResult(cachedResult);
+        var serializedResult =
+                shouldPersistUpdate() ? serializeAndDeserializeResult(cachedResult) : normalizeResult(cachedResult);
         this.cachedResult = serializedResult.deserialized();
         var serializedBytes = serializedResult.serialized().getBytes(StandardCharsets.UTF_8);
 
@@ -262,7 +269,9 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                     .payload(serializedResult.serialized()));
         } else {
             // Large result: checkpoint with stripped payload + replayChildren flag
-            var strippedResult = serializeAndDeserializeResult(stripMapResult(cachedResult));
+            var strippedResult = shouldPersistUpdate()
+                    ? serializeAndDeserializeResult(stripMapResult(cachedResult))
+                    : normalizeResult(stripMapResult(cachedResult));
             sendOperationUpdate(OperationUpdate.builder()
                     .action(OperationAction.SUCCEED)
                     .subType(getSubType().getValue())
@@ -302,6 +311,9 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
                             instanceof UnrecoverableDurableExecutionException unrecoverableDurableExecutionException) {
                         // terminate the execution and throw the exception if it's not recoverable
                         throw terminateExecution(unrecoverableDurableExecutionException);
+                    }
+                    if (throwable instanceof PayloadOffloadException payloadOffloadException) {
+                        throw payloadOffloadException;
                     }
                     resultItems.set(i, MapResult.MapResultItem.failed(MapResult.MapError.of(throwable)));
                 }

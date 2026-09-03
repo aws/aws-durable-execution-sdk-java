@@ -13,12 +13,27 @@ import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionSt
  * @param initialExecutionState snapshot of operations already completed in previous invocations
  * @param updatedOperationIds IDs of operations that changed since the previous successful invocation; empty list if
  *     nothing changed
+ * @param invocationSource whether this execution was invoked directly or by a chained invoke
  */
 public record DurableExecutionInput(
         String durableExecutionArn,
         String checkpointToken,
         CheckpointUpdatedExecutionState initialExecutionState,
-        List<String> updatedOperationIds) {
+        List<String> updatedOperationIds,
+        InvocationSource invocationSource) {
+
+    public DurableExecutionInput {
+        invocationSource = invocationSource == null ? InvocationSource.DIRECT : invocationSource;
+    }
+
+    /** Constructor that defaults invocation source to direct execution. */
+    public DurableExecutionInput(
+            String durableExecutionArn,
+            String checkpointToken,
+            CheckpointUpdatedExecutionState initialExecutionState,
+            List<String> updatedOperationIds) {
+        this(durableExecutionArn, checkpointToken, initialExecutionState, updatedOperationIds, InvocationSource.DIRECT);
+    }
 
     /**
      * Constructor that defaults updatedOperationIds to empty list. Used by tests that don't need to supply updated
@@ -26,6 +41,6 @@ public record DurableExecutionInput(
      */
     public DurableExecutionInput(
             String durableExecutionArn, String checkpointToken, CheckpointUpdatedExecutionState initialExecutionState) {
-        this(durableExecutionArn, checkpointToken, initialExecutionState, List.of());
+        this(durableExecutionArn, checkpointToken, initialExecutionState, List.of(), InvocationSource.DIRECT);
     }
 }
