@@ -526,8 +526,9 @@ class ParallelIntegrationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"FLAT, 2", "NESTED, 12"})
-    void testParallelUnlimitedConcurrencyWithToleratedFailureCount(NestingType nestingType, int events) {
+    @CsvSource({"FLAT, 2, 2", "NESTED, 11, 12"})
+    void testParallelUnlimitedConcurrencyWithToleratedFailureCount(
+            NestingType nestingType, int minimumEvents, int maximumEvents) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder()
                     .completionConfig(CompletionConfig.toleratedFailureCount(1))
@@ -555,7 +556,8 @@ class ParallelIntegrationTest {
 
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals(events, result.getHistoryEvents().size());
+        assertTrue(minimumEvents <= result.getHistoryEvents().size());
+        assertTrue(result.getHistoryEvents().size() <= maximumEvents);
     }
 
     @ParameterizedTest

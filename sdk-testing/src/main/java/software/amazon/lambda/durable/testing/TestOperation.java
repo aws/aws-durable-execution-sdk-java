@@ -5,6 +5,8 @@ package software.amazon.lambda.durable.testing;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
+import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
@@ -25,15 +27,23 @@ public class TestOperation {
     private final Operation operation;
     private final List<Event> events;
     private final SerDes serDes;
+    private final Function<String, String> payloadResolver;
 
     public TestOperation(Operation operation, SerDes serDes) {
         this(operation, List.of(), serDes);
     }
 
     public TestOperation(Operation operation, List<Event> events, SerDes serDes) {
+        this(operation, events, serDes, Function.identity());
+    }
+
+    /** Creates an operation wrapper that resolves stored payloads before passing them to SerDes. */
+    public TestOperation(
+            Operation operation, List<Event> events, SerDes serDes, Function<String, String> payloadResolver) {
         this.operation = operation;
         this.events = events;
         this.serDes = serDes;
+        this.payloadResolver = payloadResolver;
     }
 
     /** Returns the raw history events associated with this operation. */
@@ -73,9 +83,25 @@ public class TestOperation {
 
     /** Returns the duration of the operation */
     public Duration getDuration() {
-        return Duration.between(
-                operation.startTimestamp(),
-                operation.endTimestamp() != null ? operation.endTimestamp() : Instant.now());
+        var startTimestamp = operation.startTimestamp();
+        if (startTimestamp == null) {
+            startTimestamp = events.stream()
+                    .map(Event::eventTimestamp)
+                    .filter(Objects::nonNull)
+                    .min(Instant::compareTo)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Operation duration is unavailable because no start timestamp was recorded"));
+        }
+
+        var endTimestamp = operation.endTimestamp();
+        if (endTimestamp == null && isCompleted()) {
+            endTimestamp = events.stream()
+                    .map(Event::eventTimestamp)
+                    .filter(Objects::nonNull)
+                    .max(Instant::compareTo)
+                    .orElse(startTimestamp);
+        }
+        return Duration.between(startTimestamp, endTimestamp != null ? endTimestamp : Instant.now());
     }
 
     /** Returns the step details, or null if this is not a step operation. */
@@ -119,7 +145,7 @@ public class TestOperation {
         if (details == null || details.result() == null) {
             return null;
         }
-        return serDes.deserialize(details.result(), type);
+        return serDes.deserialize(payloadResolver.apply(details.result()), type);
     }
 
     /** Returns the step error, or null if the step succeeded or this is not a step operation. */

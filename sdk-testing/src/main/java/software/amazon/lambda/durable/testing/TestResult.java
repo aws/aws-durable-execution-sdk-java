@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Event;
@@ -33,6 +34,7 @@ public class TestResult<O> {
     private final List<Event> allEvents;
     private final SerDes serDes;
     private final TypeToken<O> resultType;
+    private final Function<String, String> payloadResolver;
 
     public TestResult(
             ExecutionStatus status,
@@ -42,6 +44,19 @@ public class TestResult<O> {
             List<Event> allEvents,
             TypeToken<O> resultType,
             SerDes serDes) {
+        this(status, resultPayload, error, operations, allEvents, resultType, serDes, Function.identity());
+    }
+
+    /** Creates a result whose execution payload is resolved lazily when result access is requested. */
+    public TestResult(
+            ExecutionStatus status,
+            String resultPayload,
+            ErrorObject error,
+            List<TestOperation> operations,
+            List<Event> allEvents,
+            TypeToken<O> resultType,
+            SerDes serDes,
+            Function<String, String> payloadResolver) {
         this.status = status;
         this.resultPayload = resultPayload;
         this.error = error;
@@ -51,6 +66,7 @@ public class TestResult<O> {
         this.allEvents = List.copyOf(allEvents);
         this.serDes = serDes;
         this.resultType = resultType;
+        this.payloadResolver = payloadResolver;
     }
 
     /** Returns the execution status (SUCCEEDED, FAILED, or PENDING). */
@@ -76,11 +92,13 @@ public class TestResult<O> {
             var lastEvent = allEvents.get(allEvents.size() - 1);
             if (lastEvent.eventType() == EventType.EXECUTION_SUCCEEDED) {
                 return serDes.deserialize(
-                        lastEvent.executionSucceededDetails().result().payload(), resultType);
+                        payloadResolver.apply(
+                                lastEvent.executionSucceededDetails().result().payload()),
+                        resultType);
             }
             return null;
         }
-        return serDes.deserialize(resultPayload, resultType);
+        return serDes.deserialize(payloadResolver.apply(resultPayload), resultType);
     }
 
     /** Deserializes and returns the execution output if the result type is known. */
