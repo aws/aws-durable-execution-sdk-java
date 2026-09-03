@@ -30,6 +30,11 @@
             <artifactId>aws-durable-execution-sdk-java</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>software.amazon.lambda.durable</groupId>
+            <artifactId>aws-durable-execution-sdk-java-extra-serdes</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
         <!-- AWS Lambda Java Core -->
         <dependency>

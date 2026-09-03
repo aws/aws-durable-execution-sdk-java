@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.examples;
 import static org.junit.jupiter.api.Assertions.*;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import com.amazonaws.services.lambda.runtime.events.SQSEvent;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -24,6 +25,7 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.events.LambdaEventSerDes;
 import software.amazon.lambda.durable.examples.general.GenericTypesExample;
 import software.amazon.lambda.durable.examples.types.ApprovalRequest;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
@@ -361,6 +363,32 @@ class CloudBasedIntegrationTest {
         assertTrue(stepResult.contains("full_name"));
         assertTrue(stepResult.contains("user_age"));
         assertTrue(stepResult.contains("email_address"));
+    }
+
+    @Test
+    void testLambdaEventSerDesExample() {
+        var message = new SQSEvent.SQSMessage();
+        message.setMessageId("cloud-message-1");
+        message.setBody("hello from cloud sqs");
+        message.setEventSourceArn("arn:aws:sqs:us-west-2:123456789012:orders");
+
+        var event = new SQSEvent();
+        event.setRecords(List.of(message));
+
+        var runner = CloudDurableTestRunner.create(
+                        arn("lambda-event-ser-des-example"), SQSEvent.class, String.class, lambdaClient)
+                .withSerDes(new LambdaEventSerDes());
+        var result = runner.run(event);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals(
+                "cloud-message-1|hello from cloud sqs|arn:aws:sqs:us-west-2:123456789012:orders", result.getResult());
+
+        var operation = runner.getOperation("read-sqs-message");
+        assertNotNull(operation);
+        assertEquals(
+                "cloud-message-1|hello from cloud sqs|arn:aws:sqs:us-west-2:123456789012:orders",
+                operation.getStepResult(String.class));
     }
 
     @Test
