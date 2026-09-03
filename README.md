@@ -23,6 +23,7 @@ Build resilient, long-running AWS Lambda functions that automatically checkpoint
 - **Replay Safety** – Functions deterministically resume from checkpoints after interruptions
 - **Type Safety** – Full generic type support for step results
 - **Data-Driven Concurrency** – Apply a function across a collection with `map()`, with per-item error isolation and configurable completion criteria
+- **Optional Lambda Event Models** – Parse SQS, SNS, S3, and other Lambda trigger events with the Java Lambda runtime mappings
 
 ## How It Works
 
@@ -49,6 +50,20 @@ Your durable function extends `DurableHandler<I, O>` and implements `handleReque
     <version>VERSION</version>
 </dependency>
 ```
+
+For handlers that receive models from `aws-lambda-java-events`, also add the
+optional event serialization module:
+
+```xml
+<dependency>
+    <groupId>software.amazon.lambda.durable</groupId>
+    <artifactId>aws-durable-execution-sdk-java-extra-serdes</artifactId>
+    <version>VERSION</version>
+</dependency>
+```
+
+Configure the module with
+`DurableConfig.builder().withSerDes(new LambdaEventSerDes()).build()`.
 
 ### Your First Durable Function
 

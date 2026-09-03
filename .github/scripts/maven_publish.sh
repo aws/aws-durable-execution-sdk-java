@@ -43,6 +43,7 @@ echo "settings.xml written."
 echo "=== Step 3: Upload to Sonatype Central Portal ==="
 
 mvn clean deploy -s "${SETTINGS_FILE}" -pl sdk -P publishing -DskipTests --no-transfer-progress
+mvn clean deploy -s "${SETTINGS_FILE}" -pl extra-serdes -P publishing -DskipTests --no-transfer-progress
 mvn clean deploy -s "${SETTINGS_FILE}" -pl sdk-testing -P publishing -DskipTests --no-transfer-progress
 mvn clean deploy -s "${SETTINGS_FILE}" -pl otel-plugin -P publishing -DskipTests --no-transfer-progress
 

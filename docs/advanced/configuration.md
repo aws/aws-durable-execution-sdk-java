@@ -40,6 +40,24 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 
 The `withExecutorService()` option configures the thread pool used for running user-defined operations. Internal SDK coordination (checkpoint batching, polling) runs on an SDK-managed thread pool.
 
+### Lambda trigger event inputs
+
+The optional `aws-durable-execution-sdk-java-extra-serdes` module provides
+`LambdaEventSerDes`, which applies the official Java Lambda runtime mappings
+for `SQSEvent`, `SNSEvent`, `S3Event`, and other supported event models:
+
+```java
+@Override
+protected DurableConfig createConfiguration() {
+    return DurableConfig.builder()
+        .withSerDes(new LambdaEventSerDes())
+        .build();
+}
+```
+
+The module delegates non-event values, including generic types, to
+`JacksonSerDes`. See the module README for installation details.
+
 ### Dynamic plugin loading
 
 Dynamic plugin loading is an opt-in alternative to registering plugins in application code. Put provider JARs on the application class path, then set `DURABLE_EXECUTION_PLUGINS` to an ordered, comma-separated list of provider names:
