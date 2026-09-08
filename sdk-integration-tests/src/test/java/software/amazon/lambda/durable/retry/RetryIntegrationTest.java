@@ -4,6 +4,9 @@ package software.amazon.lambda.durable.retry;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.time.Duration;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -102,5 +105,35 @@ class RetryIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("success: test-input", result.getResult(String.class));
         assertEquals(1, callCount.get());
+    }
+
+    @Test
+    void testStepContextAttemptNumbers_ShouldBeOneBased() {
+        var attempts = new CopyOnWriteArrayList<Integer>();
+        var handler = new DurableHandler<String, String>() {
+            @Override
+            public String handleRequest(String input, DurableContext context) {
+                return context.step(
+                        "retry-step",
+                        String.class,
+                        stepContext -> {
+                            attempts.add(stepContext.getAttempt());
+                            if (stepContext.getAttempt() == 1) {
+                                throw new RuntimeException("Retry once");
+                            }
+                            return "success";
+                        },
+                        StepConfig.builder()
+                                .retryStrategy(RetryStrategies.fixedDelay(2, Duration.ofSeconds(1)))
+                                .build());
+            }
+        };
+
+        var runner = LocalDurableTestRunner.create(String.class, handler);
+        var result = runner.runUntilComplete("test-input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("success", result.getResult(String.class));
+        assertEquals(List.of(1, 2), attempts);
     }
 }

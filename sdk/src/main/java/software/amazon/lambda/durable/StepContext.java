@@ -5,7 +5,7 @@ package software.amazon.lambda.durable;
 import software.amazon.lambda.durable.context.BaseContext;
 
 public interface StepContext extends BaseContext {
-    /** Returns the current retry attempt number (0-based). */
+    /** Returns the current retry attempt number (1-based). */
     int getAttempt();
 
     static StepContext getCurrentContext() {
