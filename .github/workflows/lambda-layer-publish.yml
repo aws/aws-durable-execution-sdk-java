@@ -1,8 +1,20 @@
 name: Publish OTel Plugin Lambda Layer
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      source_ref:
+        description: "Immutable release source ref"
+        required: true
+        type: string
+      release_tag:
+        description: "Published release tag"
+        required: true
+        type: string
+      regions:
+        description: "Comma-separated AWS Regions; defaults to all commercial Regions"
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       regions:
@@ -19,7 +31,8 @@ concurrency:
 
 env:
   LAYER_NAME: aws-durable-execution-sdk-java-otel-plugin
-  SOURCE_REF: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.release.tag_name }}
+  SOURCE_REF: ${{ inputs.source_ref || github.sha }}
+  RELEASE_TAG: ${{ inputs.release_tag }}
   DEFAULT_LAYER_REGIONS: >-
     af-south-1,
     ap-east-1,
@@ -59,7 +72,7 @@ env:
 jobs:
   build-layer:
     if: >-
-      github.event_name == 'release' ||
+      inputs.release_tag != '' ||
       (github.event_name == 'workflow_dispatch' &&
       github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
     runs-on: ubuntu-latest
@@ -92,14 +105,12 @@ jobs:
 
       - name: Determine SDK version
         id: version
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
         shell: bash
         run: |
           set -euo pipefail
 
           sdk_version="$(mvn -q help:evaluate -Dexpression=project.version -DforceStdout)"
-          if [ "$GITHUB_EVENT_NAME" = "release" ]; then
+          if [ -n "$RELEASE_TAG" ]; then
             if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?)$ ]]; then
               echo "Release tag must be a semantic version prefixed with v (for example, v1.2.0)." >&2
               exit 1
@@ -113,10 +124,9 @@ jobs:
           echo "sdk_version=$sdk_version" >> "$GITHUB_OUTPUT"
 
       - name: Verify release source
-        if: github.event_name == 'release'
+        if: inputs.release_tag != ''
         env:
           BASE_BRANCH: ${{ github.event.repository.default_branch }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
         shell: bash
         run: |
           set -euo pipefail
@@ -203,15 +213,12 @@ jobs:
       matrix:
         include:
           - partition: commercial
-            role_secret: LAYER_PUBLISH_ROLE_ARN
             aws_region: us-east-1
             audience: sts.amazonaws.com
           - partition: china
-            role_secret: LAYER_PUBLISH_ROLE_ARN_CN
             aws_region: cn-north-1
             audience: sts.amazonaws.com.cn
           - partition: govcloud
-            role_secret: LAYER_PUBLISH_ROLE_ARN_GOV
             aws_region: us-gov-west-1
             audience: sts.amazonaws.com
     environment:
@@ -272,11 +279,68 @@ jobs:
 
           (IFS=','; echo "regions=${PARTITION_REGIONS[*]}" >> "$GITHUB_OUTPUT")
 
-      - name: Configure AWS credentials (${{ matrix.partition }})
-        if: steps.regions.outputs.regions != ''
+      - name: Validate commercial publish role
+        if: steps.regions.outputs.regions != '' && matrix.partition == 'commercial'
+        env:
+          ROLE_ARN: ${{ secrets.LAYER_PUBLISH_ROLE_ARN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "$ROLE_ARN" ]; then
+            echo "LAYER_PUBLISH_ROLE_ARN must be set to publish to configured commercial Regions." >&2
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (commercial)
+        if: steps.regions.outputs.regions != '' && matrix.partition == 'commercial'
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
-          role-to-assume: ${{ secrets[matrix.role_secret] }}
+          role-to-assume: ${{ secrets.LAYER_PUBLISH_ROLE_ARN }}
+          role-session-name: otelLayerPublish
+          aws-region: ${{ matrix.aws_region }}
+          audience: ${{ matrix.audience }}
+
+      - name: Validate China publish role
+        if: steps.regions.outputs.regions != '' && matrix.partition == 'china'
+        env:
+          ROLE_ARN: ${{ secrets.LAYER_PUBLISH_ROLE_ARN_CN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "$ROLE_ARN" ]; then
+            echo "LAYER_PUBLISH_ROLE_ARN_CN must be set to publish to configured China Regions." >&2
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (China)
+        if: steps.regions.outputs.regions != '' && matrix.partition == 'china'
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ secrets.LAYER_PUBLISH_ROLE_ARN_CN }}
+          role-session-name: otelLayerPublish
+          aws-region: ${{ matrix.aws_region }}
+          audience: ${{ matrix.audience }}
+
+      - name: Validate GovCloud publish role
+        if: steps.regions.outputs.regions != '' && matrix.partition == 'govcloud'
+        env:
+          ROLE_ARN: ${{ secrets.LAYER_PUBLISH_ROLE_ARN_GOV }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "$ROLE_ARN" ]; then
+            echo "LAYER_PUBLISH_ROLE_ARN_GOV must be set to publish to configured GovCloud Regions." >&2
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (GovCloud)
+        if: steps.regions.outputs.regions != '' && matrix.partition == 'govcloud'
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ secrets.LAYER_PUBLISH_ROLE_ARN_GOV }}
           role-session-name: otelLayerPublish
           aws-region: ${{ matrix.aws_region }}
           audience: ${{ matrix.audience }}

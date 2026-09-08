@@ -137,3 +137,13 @@ jobs:
             --body "Bumps the Maven project version to ${NEXT_VERSION} after publishing ${RELEASE_TAG}.")"
           echo "Created next development version pull request: $pr_url"
           echo "Next development version pull request: $pr_url" >> "$GITHUB_STEP_SUMMARY"
+
+  publish-layer:
+    needs: publish
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/lambda-layer-publish.yml
+    with:
+      source_ref: ${{ github.event.release.tag_name }}
+      release_tag: ${{ github.event.release.tag_name }}
