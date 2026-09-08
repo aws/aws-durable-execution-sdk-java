@@ -62,3 +62,47 @@ After **Publish Maven Release** succeeds:
 4. Confirm that the GitHub release contains the expected JARs and that the
    artifacts are available in Maven Central.
 5. Review, approve, and merge the next development version pull request.
+
+## 4. Update the shared documentation
+
+After the artifacts are available in Maven Central, open a pull request in
+[`aws/aws-durable-execution-docs`](https://github.com/aws/aws-durable-execution-docs)
+that updates every literal Java SDK version to the release version without the
+leading `v`.
+
+For a prerelease, update the shared documentation only when that prerelease is
+intended to become the recommended version. Otherwise, wait for the final
+release.
+
+At minimum, check the Java runtime and testing dependencies in:
+
+- `docs/sdk-reference/languages/java/index.md`
+- `docs/getting-started/quickstart.md`
+- `docs/getting-started/quickstart-container-image.md`
+- `docs/getting-started/development-environment.md`
+- `docs/testing/authoring.md`
+
+Search the entire documentation repository so new dependency snippets are not
+missed:
+
+```bash
+rg -n -B2 -A2 \
+  '<artifactId>aws-durable-execution-sdk-java(-testing|-plugin-otel)?</artifactId>' \
+  docs
+```
+
+Update literal versions for the runtime SDK, testing library, and OpenTelemetry
+plugin when present. Do not change independently versioned dependencies such as
+`aws-lambda-java-core`.
+
+Run the documentation checks before opening the pull request:
+
+```bash
+mdformat --check docs/
+codespell docs/
+python3 scripts/check_example_refs.py
+zensical build --clean
+```
+
+Link the Java GitHub release in the pull request description and merge the
+documentation pull request after its required checks pass.
