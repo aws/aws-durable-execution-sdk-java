@@ -25,7 +25,7 @@ public class StepContextImpl extends BaseContextImpl implements StepContext {
      * @param lambdaContext AWS Lambda runtime context
      * @param stepOperationId Unique identifier for this context instance that equals to step operation id
      * @param stepOperationName the name of the step operation
-     * @param attempt the current retry attempt number (0-based)
+     * @param attempt the current retry attempt number (1-based)
      */
     protected StepContextImpl(
             ExecutionManager executionManager,
@@ -38,7 +38,7 @@ public class StepContextImpl extends BaseContextImpl implements StepContext {
         this.attempt = attempt;
     }
 
-    /** Returns the current retry attempt number (0-based). */
+    /** Returns the current retry attempt number (1-based). */
     @Override
     public int getAttempt() {
         return attempt;
