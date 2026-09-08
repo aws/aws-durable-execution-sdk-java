@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * The curated execution record emitted to destinations.
@@ -14,10 +15,8 @@ import java.util.Map;
  * <p>Mirrors the JS {@code WorkflowInsightRecord} interface field-for-field so the emitted wire JSON is identical
  * (camelCase names, absent fields omitted). Exactly one of {@code operations} (array) or the {@code operationsByName}
  * rendering is emitted, depending on the exporter's {@code render}.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
+@Experimental
 public final class WorkflowInsightRecord {
     String recordType = "WorkflowInsight";
     String schemaVersion = "1.0";

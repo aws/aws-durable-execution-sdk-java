@@ -13,6 +13,7 @@ import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.insight.exporters.LambdaLogExporter;
@@ -40,10 +41,8 @@ import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
  * lifetime of a warm container. Nothing is lost across a resume: the next invocation recreates the same stable start
  * time from {@link InvocationInfo#executionStartTime()}, the same sampling decision deterministically from the ARN, and
  * the input snapshot from {@link InvocationInfo#executionInput()}.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
+@Experimental
 public final class WorkflowInsight {
 
     private static final Logger logger = LoggerFactory.getLogger(WorkflowInsight.class);
@@ -107,16 +106,48 @@ public final class WorkflowInsight {
 
         @Override
         public void onInvocationStart(InvocationInfo info) {
-            ExecutionState state = getState(info.durableExecutionArn(), info.executionStartTime());
-            if (!state.sampledIn) {
-                return;
+            try {
+                ExecutionState state = getState(info.durableExecutionArn(), info.executionStartTime());
+                if (!state.sampledIn) {
+                    return;
+                }
+                // Detach the execution input from the live handler value immediately, before the user handler or any
+                // content transform can mutate it. This raw, detached snapshot is the single source of truth for input
+                // on every emission (start / change / end); each build hands transforms a separate defensive copy so a
+                // mutating transform cannot corrupt it. Guard the snapshot: a Throwable here (e.g. a payload whose
+                // serialization overflows the stack) must omit the captured input, never fail the user handler.
+                try {
+                    state.cachedInput = Json.deepCopyContent(info.executionInput());
+                } catch (Throwable t) {
+                    logSafely("failed to snapshot execution input; omitting input", t);
+                    state.cachedInput = null;
+                }
+                if (emitMode == WorkflowInsightConfig.EmitMode.ON_CHANGE) {
+                    emit(buildRecord(
+                            state,
+                            info.durableExecutionArn(),
+                            "RUNNING",
+                            info.operations(),
+                            null,
+                            state.cachedInput,
+                            null,
+                            null));
+                }
+            } catch (Throwable t) {
+                logSafely("onInvocationStart failed", t);
             }
-            // Detach the execution input from the live handler value immediately, before the user handler or any
-            // content transform can mutate it. This raw, detached snapshot is the single source of truth for input on
-            // every emission (start / change / end); each build hands transforms a separate defensive copy so a
-            // mutating transform cannot corrupt it.
-            state.cachedInput = Json.deepCopyContent(info.executionInput());
-            if (emitMode == WorkflowInsightConfig.EmitMode.ON_CHANGE) {
+        }
+
+        @Override
+        public void onOperationChange(OperationChangeInfo info) {
+            try {
+                if (emitMode != WorkflowInsightConfig.EmitMode.ON_CHANGE) {
+                    return;
+                }
+                ExecutionState state = byArn.get(info.durableExecutionArn());
+                if (state == null || !state.sampledIn) {
+                    return;
+                }
                 emit(buildRecord(
                         state,
                         info.durableExecutionArn(),
@@ -126,33 +157,15 @@ public final class WorkflowInsight {
                         state.cachedInput,
                         null,
                         null));
+            } catch (Throwable t) {
+                logSafely("onOperationChange failed", t);
             }
-        }
-
-        @Override
-        public void onOperationChange(OperationChangeInfo info) {
-            if (emitMode != WorkflowInsightConfig.EmitMode.ON_CHANGE) {
-                return;
-            }
-            ExecutionState state = byArn.get(info.durableExecutionArn());
-            if (state == null || !state.sampledIn) {
-                return;
-            }
-            emit(buildRecord(
-                    state,
-                    info.durableExecutionArn(),
-                    "RUNNING",
-                    info.operations(),
-                    null,
-                    state.cachedInput,
-                    null,
-                    null));
         }
 
         @Override
         public void onInvocationEnd(InvocationEndInfo info) {
-            ExecutionState state = getState(info.durableExecutionArn(), info.executionStartTime());
             try {
+                ExecutionState state = getState(info.durableExecutionArn(), info.executionStartTime());
                 String status = mapStatus(info.invocationStatus());
                 boolean isTerminal = "SUCCEEDED".equals(status) || "FAILED".equals(status);
                 boolean isFailure = "FAILED".equals(status);
@@ -181,6 +194,10 @@ public final class WorkflowInsight {
                             info.executionResult(),
                             info.executionError()));
                 }
+            } catch (Throwable t) {
+                // A plugin failure at end-of-invocation (record construction, transforms, truncation, export/flush,
+                // or optional exporter class linkage) must never disrupt durable execution.
+                logSafely("onInvocationEnd failed", t);
             } finally {
                 // Remove per-execution state on EVERY invocation end, including non-terminal PENDING/RETRYING suspends,
                 // once any emission work above is done. Nothing durable is lost: the next invocation's onInvocation
@@ -188,7 +205,8 @@ public final class WorkflowInsight {
                 // resumes),
                 // the one-time sampling decision deterministically from the ARN, and the input snapshot from
                 // InvocationInfo.executionInput(). Retaining state instead leaked one entry per suspended execution for
-                // the lifetime of the warm container.
+                // the lifetime of the warm container. This runs even if emission above threw, so a plugin failure can
+                // never turn into a state leak.
                 byArn.remove(info.durableExecutionArn());
             }
         }
@@ -205,8 +223,12 @@ public final class WorkflowInsight {
                             Truncation.truncateRecord(isolated, exporter.maxRecordSizeBytes(), exporter::render);
                     exporter.export(shaped);
                     exporter.flush();
-                } catch (RuntimeException e) {
-                    logger.warn("[workflow-insight] exporter failed", e);
+                } catch (Throwable t) {
+                    // Catch Throwable, not just RuntimeException: deep copy, truncation, an exporter's render/export/
+                    // flush, or the linkage of an optional exporter class (a NoClassDefFoundError when the S3 /
+                    // CloudWatch SDK is absent) can each fail with an Error. Isolating every Throwable here guarantees
+                    // one failing exporter cannot block the exporters that run after it, nor disrupt the execution.
+                    logSafely("exporter failed", t);
                 }
             }
         }
@@ -238,14 +260,19 @@ public final class WorkflowInsight {
                 }
             }
             record.input = applyDataContent(
+                    "input",
                     input,
                     content == null || content.includeInput(),
                     content == null ? null : content.inputTransform());
             record.output = applyDataContent(
+                    "output",
                     output,
                     content == null || content.includeOutput(),
                     content == null ? null : content.outputTransform());
-            if (error != null) {
+            // Honor ContentConfig.includeErrors for the execution-level error exactly as for operation-level errors
+            // below: with includeErrors(false) no execution error is emitted, so a sensitive failure message never
+            // reaches a record. Without this gate the execution error leaked even when errors were disabled.
+            if (includeErrors && error != null) {
                 record.error = toErrorInfo(error);
             }
             record.operations = buildOperationRecords(operations);
@@ -320,8 +347,13 @@ public final class WorkflowInsight {
 
     /**
      * Applies a user-supplied result transform to an operation's checkpointed (serialized JSON) result. Parses the JSON
-     * before handing it to the transform, falling back to the raw string when it isn't valid JSON. User transforms are
-     * untrusted: a throwing transform omits the field rather than leaking the raw value or failing the execution.
+     * before handing it to the transform, so the transform always receives a <em>detached, JSON-compatible</em> value
+     * (a {@code Map} for a former POJO, a {@code List} for an array, or a scalar such as a {@code String} for a Java
+     * time value) — never the SDK's original Java object. The raw string is passed through only when the checkpointed
+     * result is not valid JSON. User transforms are untrusted: a throwing transform (any {@link Throwable}) omits the
+     * field rather than leaking the raw value or failing the execution, and the failure is logged for diagnosis.
+     * Because the value is freshly parsed from the immutable checkpoint string on every build, a transform that mutates
+     * its argument cannot corrupt any cached state or a later emission.
      */
     static Object applyResultOverride(Function<Object, Object> transform, String rawResult) {
         if (rawResult == null) {
@@ -335,31 +367,47 @@ public final class WorkflowInsight {
         }
         try {
             return transform.apply(parsed);
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
+            logSafely("operation result transform failed; result omitted", e);
             return null;
         }
     }
 
     /**
      * Resolves a {@code content.input}/{@code content.output} setting against a value: excluded means omit; a transform
-     * is applied (omit on throw so a failing redactor never leaks the raw value); otherwise include as-is.
+     * is applied (omit and log on throw so a failing redactor never leaks the raw value); otherwise include as-is. When
+     * a transform is present it receives a <em>detached, JSON-compatible</em> copy of the value — a POJO becomes a
+     * {@code Map}, a Java time type becomes its JSON representation (e.g. an {@code Instant} becomes an ISO-8601
+     * {@code String}) — never the SDK's original Java object.
      */
-    static Object applyDataContent(Object value, boolean include, Function<Object, Object> transform) {
+    static Object applyDataContent(String label, Object value, boolean include, Function<Object, Object> transform) {
         if (!include || value == null) {
             return null;
         }
         if (transform != null) {
             try {
-                // Hand the transform its own defensive copy: the value may be the cached raw input snapshot reused
-                // across multiple emissions (ON_CHANGE), so a transform that mutates its argument in place must not
-                // corrupt that snapshot or any later emission's view of it. Omit on throw so a failing redactor never
-                // leaks the raw value.
+                // Hand the transform its own defensive, detached copy: the value may be the cached raw input snapshot
+                // reused across multiple emissions (ON_CHANGE), so a transform that mutates its argument in place must
+                // not corrupt that snapshot or any later emission's view of it. deepCopyContent also normalizes POJOs
+                // to Maps and Java-time types to their JSON representation, so the transform operates on the same
+                // JSON-compatible shape the record will emit. Omit and log on any Throwable so a failing redactor never
+                // leaks the raw value and never disrupts the execution.
                 return transform.apply(Json.deepCopyContent(value));
-            } catch (RuntimeException e) {
+            } catch (Throwable e) {
+                logSafely(label + " transform failed; value omitted", e);
                 return null;
             }
         }
         return value;
+    }
+
+    /** Logs a plugin failure without ever letting the logging itself disrupt durable execution. */
+    private static void logSafely(String message, Throwable t) {
+        try {
+            logger.warn("[workflow-insight] {}", message, t);
+        } catch (Throwable ignored) {
+            // Never allow a logging failure to propagate into the SDK control flow.
+        }
     }
 
     private static ErrorInfo toErrorInfo(Throwable t) {

@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.insight;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Builds a name-keyed index of operation summaries from the canonical operations array.
@@ -13,10 +14,8 @@ import java.util.Map;
  * (including its {@code result}/{@code error}); on a repeated name aggregate the metrics and drop {@code result} and
  * {@code error} (no single representative value). Scalar fields ({@code type}, {@code subType}, {@code status}) reflect
  * the most recently seen occurrence. Unnamed operations are skipped.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
+@Experimental
 public final class OperationsIndex {
 
     private OperationsIndex() {}

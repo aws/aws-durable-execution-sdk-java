@@ -5,19 +5,26 @@ package software.amazon.lambda.durable.insight;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
+import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Controls what data is included in emitted records (input/output transforms, operation overrides, error inclusion).
  *
  * <p>Mirrors the JS {@code ContentConfig}. {@code input}/{@code output} may be included as-is, excluded, or
  * transformed; all three are honored — the plugin reads execution input from {@code InvocationInfo.executionInput()}
- * and output from {@code InvocationEndInfo.executionResult()}. {@code includeErrors} is honored via the operation error
- * carried on each operation snapshot item. Per-operation result opt-in is honored via
- * {@link OperationOverride#withResult} (see {@code OperationChangeItemInfo.result()}).
+ * and output from {@code InvocationEndInfo.executionResult()}. {@code includeErrors} is honored for <em>both</em> the
+ * execution-level error and the per-operation error: with {@code includeErrors(false)} neither is emitted.
+ * Per-operation result opt-in is honored via {@link OperationOverride#withResult} (see
+ * {@code OperationChangeItemInfo.result()}).
  *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
+ * <p><b>Transform value shape.</b> The {@code inputTransform} and {@code outputTransform} functions receive a
+ * <em>detached, JSON-compatible</em> copy of the value, never the SDK's original Java object: a POJO is presented as a
+ * {@code Map}, a list as a {@code List}, and a Java-time type as its JSON representation (for example an
+ * {@code Instant} arrives as an ISO-8601 {@code String}). Mutating the argument is therefore safe — it cannot corrupt
+ * the cached input snapshot or any later emission — and a transform that throws omits the field (the failure is logged)
+ * rather than failing the execution.
  */
-@Deprecated
+@Experimental
 public final class ContentConfig {
     private final boolean includeInput;
     private final Function<Object, Object> inputTransform;

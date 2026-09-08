@@ -4,16 +4,14 @@ package software.amazon.lambda.durable.insight;
 
 import java.util.ArrayList;
 import java.util.List;
+import software.amazon.lambda.durable.annotations.Experimental;
 
-/**
- * Configuration for the Workflow Insight plugin. Mirrors the JS {@code WorkflowInsightConfig}.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
- */
-@Deprecated
+/** Configuration for the Workflow Insight plugin. Mirrors the JS {@code WorkflowInsightConfig}. */
+@Experimental
 public final class WorkflowInsightConfig {
 
     /** When records are emitted. */
+    @Experimental
     public enum EmitMode {
         ON_COMPLETE,
         ON_CHANGE,
@@ -21,6 +19,7 @@ public final class WorkflowInsightConfig {
     }
 
     /** Which operations to include in each record's operations array. */
+    @Experimental
     public enum OperationDetail {
         TOP_LEVEL,
         FULL_TREE

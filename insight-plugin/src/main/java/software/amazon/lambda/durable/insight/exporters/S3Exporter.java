@@ -7,6 +7,7 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.insight.InsightExporter;
 import software.amazon.lambda.durable.insight.Json;
 import software.amazon.lambda.durable.insight.WorkflowInsightRecord;
@@ -15,13 +16,12 @@ import software.amazon.lambda.durable.insight.WorkflowInsightRecord;
  * Exports workflow insight records to Amazon S3, one JSON object per execution (keyed by execution name so updates
  * overwrite the same object). Emits the canonical {@code operations}-array wire shape. Mirrors the JS
  * {@code S3Exporter}.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
+@Experimental
 public final class S3Exporter implements InsightExporter {
 
     /** How to partition objects in S3. */
+    @Experimental
     public enum Partitioning {
         DATE,
         FUNCTION_NAME,

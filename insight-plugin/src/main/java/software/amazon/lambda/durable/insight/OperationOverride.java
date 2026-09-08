@@ -3,18 +3,19 @@
 package software.amazon.lambda.durable.insight;
 
 import java.util.function.Function;
+import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Per-operation override controlling inclusion and result transformation, matched by {@code operationName}.
  *
- * <p>Mirrors the JS {@code OperationOverride}. The {@code result} transform receives the operation's checkpointed,
- * JSON-parsed result (from {@code OperationChangeItemInfo.result()}); the raw string is passed through when it is not
- * valid JSON, and a throwing transform omits the field rather than leaking the raw value. An {@code exclude} override
- * drops the operation entirely.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
+ * <p>Mirrors the JS {@code OperationOverride}. The {@code result} transform receives the operation's checkpointed
+ * result as a <em>detached, JSON-compatible</em> value (from {@code OperationChangeItemInfo.result()}): a former POJO
+ * arrives as a {@code Map}, a Java-time type as its JSON representation (e.g. an {@code Instant} as an ISO-8601
+ * {@code String}), and the raw string is passed through only when the checkpoint is not valid JSON. Mutating the
+ * argument is safe, and a transform that throws omits the field (the failure is logged) rather than leaking the raw
+ * value or failing the execution. An {@code exclude} override drops the operation entirely.
  */
-@Deprecated
+@Experimental
 public final class OperationOverride {
     private final String operationName;
     private final boolean exclude;
