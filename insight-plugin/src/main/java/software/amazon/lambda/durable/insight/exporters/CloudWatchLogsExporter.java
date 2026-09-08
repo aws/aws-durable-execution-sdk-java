@@ -3,9 +3,9 @@
 package software.amazon.lambda.durable.insight.exporters;
 
 import java.time.Instant;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
 import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClientBuilder;
@@ -13,6 +13,7 @@ import software.amazon.awssdk.services.cloudwatchlogs.model.CreateLogStreamReque
 import software.amazon.awssdk.services.cloudwatchlogs.model.InputLogEvent;
 import software.amazon.awssdk.services.cloudwatchlogs.model.PutLogEventsRequest;
 import software.amazon.awssdk.services.cloudwatchlogs.model.ResourceAlreadyExistsException;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.insight.InsightExporter;
 import software.amazon.lambda.durable.insight.Json;
 import software.amazon.lambda.durable.insight.WorkflowInsightRecord;
@@ -21,16 +22,17 @@ import software.amazon.lambda.durable.insight.WorkflowInsightRecord;
  * Exports workflow insight records to a specific CloudWatch Logs group via PutLogEvents, emitting the
  * {@code operationsByName} map. Mirrors the JS {@code CloudWatchLogsExporter}. Requires {@code logs:CreateLogStream}
  * and {@code logs:PutLogEvents} on the target log group.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
+@Experimental
 public final class CloudWatchLogsExporter implements InsightExporter {
     private final String logGroupName;
     private final String logStreamPrefix;
     private final Integer maxRecordSizeBytes;
     private final CloudWatchLogsClient client;
-    private final Set<String> createdStreams = new HashSet<>();
+    // Concurrent set: the plugin can emit from multiple threads (e.g. concurrent child-context branches), so the
+    // create-once cache must be thread-safe. An unsynchronized HashSet could corrupt its internal table or spin under
+    // concurrent structural modification.
+    private final Set<String> createdStreams = ConcurrentHashMap.newKeySet();
 
     private CloudWatchLogsExporter(Builder b) {
         this.logGroupName = b.logGroupName;

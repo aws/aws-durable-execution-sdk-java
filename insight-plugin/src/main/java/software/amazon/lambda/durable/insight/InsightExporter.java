@@ -2,12 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.insight;
 
-/**
- * Exports workflow insight records to a destination.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
- */
-@Deprecated
+import software.amazon.lambda.durable.annotations.Experimental;
+
+/** Exports workflow insight records to a destination. */
+@Experimental
 public interface InsightExporter {
 
     /** Emits one record to the destination. */

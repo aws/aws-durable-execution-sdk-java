@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.insight;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * A per-operation-name summary emitted (as an {@code operationsByName} map) by point-access exporters (CloudWatch
@@ -12,10 +13,8 @@ import java.util.Map;
  * <p>Mirrors the JS {@code OperationSummary} interface. Metric fields aggregate across all occurrences of the name;
  * {@code type}, {@code subType}, {@code status} reflect the most recently seen occurrence; {@code result}/{@code error}
  * are included only when the name occurs exactly once.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
+@Experimental
 public final class OperationSummary {
     String type;
     String subType;

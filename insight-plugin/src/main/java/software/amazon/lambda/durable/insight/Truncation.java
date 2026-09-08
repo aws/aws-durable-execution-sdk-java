@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
+import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Best-effort size limiter, porting the JS {@code truncateRecord} drop order:
@@ -21,10 +22,8 @@ import java.util.function.Function;
  * {@code droppedOperations} / {@code droppedInput} / {@code droppedOutput} markers are set as applicable. The input
  * record is never mutated. {@code render} maps the record to the exact shape the exporter serializes so the size check
  * measures what is actually emitted.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
+@Experimental
 public final class Truncation {
 
     private Truncation() {}

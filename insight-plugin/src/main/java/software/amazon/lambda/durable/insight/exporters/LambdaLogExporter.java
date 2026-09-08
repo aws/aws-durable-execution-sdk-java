@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.insight.exporters;
 
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.insight.InsightExporter;
 import software.amazon.lambda.durable.insight.Json;
 import software.amazon.lambda.durable.insight.WorkflowInsightRecord;
@@ -11,10 +12,8 @@ import software.amazon.lambda.durable.insight.WorkflowInsightRecord;
  * function's own log group, so this needs no extra IAM). Emits the {@code operationsByName} map as ONE single-line JSON
  * record, mirroring the JS {@code LambdaLogExporter} (which uses {@code console.log}). The conformance CloudWatch sink
  * decodes both raw top-level JSON lines and the Lambda structured-logging envelope.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
  */
-@Deprecated
+@Experimental
 public final class LambdaLogExporter implements InsightExporter {
     /** CloudWatch Logs caps a single log event at 256 KB. */
     private final Integer maxRecordSizeBytes;

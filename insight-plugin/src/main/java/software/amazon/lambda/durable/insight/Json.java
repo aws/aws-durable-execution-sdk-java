@@ -11,13 +11,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import software.amazon.lambda.durable.annotations.Experimental;
 
-/**
- * Minimal JSON helper for emitting insight records and measuring their serialized size.
- *
- * @deprecated This is a preview API that is experimental and may be changed or removed in future releases.
- */
-@Deprecated
+/** Minimal JSON helper for emitting insight records and measuring their serialized size. */
+@Experimental
 public final class Json {
     // Register JavaTimeModule and emit ISO-8601 (not numeric timestamps) so SDK-default payload types such as
     // java.time.Instant/Duration in an included input/output/result serialize instead of throwing and silently
