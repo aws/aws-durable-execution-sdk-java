@@ -196,7 +196,24 @@ jobs:
 
   publish-layer:
     needs: build-layer
+    name: Publish layer versions (${{ matrix.partition }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - partition: commercial
+            role_secret: LAYER_PUBLISH_ROLE_ARN
+            aws_region: us-east-1
+            audience: sts.amazonaws.com
+          - partition: china
+            role_secret: LAYER_PUBLISH_ROLE_ARN_CN
+            aws_region: cn-north-1
+            audience: sts.amazonaws.com.cn
+          - partition: govcloud
+            role_secret: LAYER_PUBLISH_ROLE_ARN_GOV
+            aws_region: us-gov-west-1
+            audience: sts.amazonaws.com
     environment:
       name: lambda-layer-publish
     permissions:
@@ -212,16 +229,63 @@ jobs:
           name: otel-plugin-layer
           path: dist/
 
-      - name: Configure AWS credentials
+      - name: Select ${{ matrix.partition }} regions
+        id: regions
+        env:
+          PARTITION: ${{ matrix.partition }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REGION_LIST=${LAYER_REGIONS:-$DEFAULT_LAYER_REGIONS}
+          IFS=',' read -ra REGIONS <<< "$REGION_LIST"
+          PARTITION_REGIONS=()
+          CONFIGURED_REGIONS=0
+          for REGION in "${REGIONS[@]}"; do
+            REGION=$(echo "$REGION" | xargs)
+            if [ -z "$REGION" ]; then
+              continue
+            fi
+            CONFIGURED_REGIONS=$((CONFIGURED_REGIONS + 1))
+
+            case "$REGION" in
+              cn-*)
+                REGION_PARTITION=china
+                ;;
+              us-gov-*)
+                REGION_PARTITION=govcloud
+                ;;
+              *)
+                REGION_PARTITION=commercial
+                ;;
+            esac
+
+            if [ "$REGION_PARTITION" = "$PARTITION" ]; then
+              PARTITION_REGIONS+=("$REGION")
+            fi
+          done
+
+          if [ "$CONFIGURED_REGIONS" -eq 0 ]; then
+            echo "No AWS regions were configured for layer publishing." >&2
+            exit 1
+          fi
+
+          (IFS=','; echo "regions=${PARTITION_REGIONS[*]}" >> "$GITHUB_OUTPUT")
+
+      - name: Configure AWS credentials (${{ matrix.partition }})
+        if: steps.regions.outputs.regions != ''
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
-          role-to-assume: ${{ secrets.LAYER_PUBLISH_ROLE_ARN }}
+          role-to-assume: ${{ secrets[matrix.role_secret] }}
           role-session-name: otelLayerPublish
-          aws-region: us-east-1
+          aws-region: ${{ matrix.aws_region }}
+          audience: ${{ matrix.audience }}
 
-      - name: Publish layer versions
+      - name: Publish layer versions (${{ matrix.partition }})
+        if: steps.regions.outputs.regions != ''
         env:
           LAYER_ZIP: dist/${{ env.LAYER_NAME }}.zip
+          REGION_LIST: ${{ steps.regions.outputs.regions }}
           SDK_VERSION: ${{ needs.build-layer.outputs.sdk_version }}
           SOURCE_SHA: ${{ needs.build-layer.outputs.source_sha }}
         shell: bash
@@ -231,7 +295,6 @@ jobs:
           PUBLISHED=false
           FAILED_REGIONS=()
           LOCAL_CODE_SHA256=$(openssl dgst -sha256 -binary "$LAYER_ZIP" | openssl base64 -A)
-          REGION_LIST=${LAYER_REGIONS:-$DEFAULT_LAYER_REGIONS}
           IFS=',' read -ra REGIONS <<< "$REGION_LIST"
           for REGION in "${REGIONS[@]}"; do
             REGION=$(echo "$REGION" | xargs)
