@@ -1,14 +1,16 @@
 # AWS Durable Execution SDK - OpenTelemetry Plugin
 
-OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK for Java. Emits distributed traces that correlate across multiple Lambda invocations of a single durable execution, producing deterministic span and trace IDs so that spans from different invocations are stitched into a single coherent trace.
+OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK for Java. Anchors every durable execution on one trace so the Workflow span and its per-invocation spans stay correlated, joining the propagated backend trace when one is present.
 
 ## Features
 
-- **Deterministic Trace IDs**: All invocations of the same durable execution share a single trace, derived from the X-Ray trace header or execution ARN
+- **Backend-parented execution trace**: The Workflow span parents onto the execution ancestor resolved at invocation start — a propagated remote context, or a synthetic execution root — for one trace ID that is stable across all invocations, plus a stable span ID derived from the ARN
+- **Ambient Invocation Traces**: Invocation spans inherit the active Lambda/X-Ray context, or join the execution ancestor so they stay on the execution trace
+- **Scoped ID Generation**: Unrelated instrumentation scopes retain their provider's normal root trace ID generation
 - **Span-per-Operation**: Each durable operation (step, wait, map, etc.) gets its own span with accurate timing
 - **Attempt Spans**: Each user function execution (step attempt, child context run) gets a span, including retries
-- **Log Correlation**: Injects `trace_id`, `span_id`, and `traceSampled` into SLF4J MDC for end-to-end observability
-- **ADOT Java Agent Integration**: `new InvocationOtelPlugin()` uses the ADOT Java agent's global provider with no handler-side OpenTelemetry initialization
+- **Log Correlation**: Injects `traceId`, `spanId`, and `otelTraceSampled` into SLF4J MDC for end-to-end observability
+- **ADOT Java Agent Integration**: `new InvocationOtelPlugin()` late-binds the ADOT Java agent's global provider with no handler-side OpenTelemetry initialization
 - **Lambda Layer Discovery**: `DURABLE_EXECUTION_PLUGINS` loads either OTel plugin from a JAR under a layer's `java/lib` directory
 
 ## Installation
@@ -29,12 +31,12 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 <dependency>
     <groupId>io.opentelemetry</groupId>
     <artifactId>opentelemetry-sdk</artifactId>
-    <version>1.64.0</version>
+    <version>1.65.0</version>
 </dependency>
 <dependency>
     <groupId>io.opentelemetry</groupId>
     <artifactId>opentelemetry-exporter-logging</artifactId>
-    <version>1.64.0</version>
+    <version>1.65.0</version>
 </dependency>
 ```
 
@@ -48,7 +50,7 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 
 ### 1. ADOT Lambda Layer
 
-This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. The `new InvocationOtelPlugin()` constructor uses the global provider initialized by the ADOT Java agent with deterministic span ID generation installed through the plugin's `AutoConfigurationCustomizerProvider` SPI.
+This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. The `new InvocationOtelPlugin()` constructor resolves the global provider initialized by the ADOT Java agent at invocation start, with deterministic span ID generation installed through the plugin's `AutoConfigurationCustomizerProvider` SPI. If the provider is not ready, the plugin emits no telemetry for that invocation and retries provider resolution on the next invocation.
 
 The layer ARN follows the format:
 
@@ -90,7 +92,7 @@ Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-exe
 
 ### 2. AWS X-Ray Active Tracing
 
-Enable active tracing on your Lambda function so the `_X_AMZN_TRACE_ID` environment variable is populated at invocation time. The plugin uses this header to derive deterministic trace IDs that remain consistent across all invocations of the same durable execution.
+Enable active tracing on your Lambda function so the `_X_AMZN_TRACE_ID` environment variable is populated at invocation time. The plugin uses this header both to parent Invocation spans to the ambient Lambda/X-Ray trace and to anchor the execution trace on the propagated context when it carries a complete parent and an explicit sampling decision.
 
 **AWS Console:** Lambda > Configuration > Monitoring and operations tools > Active tracing > Enable
 
@@ -155,22 +157,46 @@ The function's execution role needs the `AWSXRayDaemonWriteAccess` managed polic
 
 ## Trace Structure
 
-The plugin creates spans at four levels:
+The whole execution shares one trace, anchored at the execution ancestor resolved at invocation start. When the backend propagates a valid remote server span (`Root` and `Parent`), that span is the ancestor and the Workflow and Invocation spans nest under it, alongside the ambient Lambda spans on the same trace:
 
 ```
-Workflow (deterministic ID, exported once on terminal invocation)
-Invocation
-├── fetch-data
-│   └── fetch-data attempt 1
-├── cool-down
-└── process
-    └── process attempt 1
+Remote backend server span (Root / Parent)
+├── Workflow (stable span ID, exported once)
+├── Ambient Lambda span 1
+│   └── Invocation 1
+├── Ambient Lambda span 2
+│   └── Invocation 2
+└── Invocation N          (direct child when no same-trace ambient span exists)
 ```
 
-- **Workflow span** — one logical span per durable execution with a deterministic ID derived from the ARN. Exported only on the terminal invocation (SUCCEEDED/FAILED). Serves as a correlation anchor across invocations.
-- **Invocation span** — one per Lambda invocation
+When no valid remote parent can be constructed, a synthetic execution root anchors the trace instead and both spans parent onto it:
+
+```
+Synthetic execution root
+├── Workflow
+├── Invocation 1
+├── Invocation 2
+└── Invocation N
+```
+
+- **Execution ancestor** — the common parent both the Workflow and Invocation spans resolve onto. A valid remote server span (`Root` and `Parent`) is used directly, whether or not `Sampled` is present; only when a valid remote parent cannot be constructed does a synthetic execution root take its place. It is a non-recording context, not an exported span.
+- **Workflow span** — one logical span per durable execution, joining the execution trace with a stable span ID derived from the ARN. Exported only on the terminal invocation (SUCCEEDED/FAILED).
+- **Invocation span** — one per Lambda invocation, parented to the ambient span only when it is on the execution trace, otherwise to the execution ancestor
 - **Operation span** — one per durable operation, named after your step/wait names
 - **Attempt span** — one per user function execution (retries produce additional attempt spans)
+
+Operation and attempt spans link to the Workflow span. `ExecutionOtelPlugin` reverses that relationship: operations are children of Workflow and link to the current Invocation span.
+
+### Sampling
+
+The plugin decides sampling once per invocation and applies that single decision to every durable span (Workflow, Invocation, operation, attempt), so the configured sampler is not re-invoked per span and the full decision — including `RECORD_ONLY` — is preserved. The decision follows this precedence, highest first:
+
+1. **Backend decision** — `Sampled=1` / `Sampled=0` in the propagated header is authoritative and always preserved, regardless of the configured sampler.
+2. **Same-trace ambient span** — when the header carries no usable `Sampled` value but a valid ambient span (for example an auto-instrumentation Lambda handler span) is already on the execution's trace, the plugin follows that span's decision: sampled → sampled; unsampled but still recording → `RECORD_ONLY`; unsampled and not recording → dropped.
+3. **Configured sampler (application-owned provider)** — when you pass a `SdkTracerProvider` to the plugin, its sampler is read directly and evaluated once with the trace ID, span name, and attributes. A trace-ID-ratio sampler therefore produces a stable decision across reinvocations (the trace ID is stable).
+4. **Installed sampler (Java-agent path)** — when the agent owns the provider, it is behind a classloader boundary and its *effective* sampler (which another agent extension may have wrapped or replaced) cannot be reliably read at decision time. Rather than guess, the plugin **defers**: it installs a delegating sampler through the agent's autoconfiguration and lets that wrapper consult the agent's real sampler. The delegate's decision is honored in full — if your configured policy is `always_off`, a rate limiter, or a remote sampler (`xray`, `jaeger_remote`) that returns drop, the durable spans are dropped; they are **not** force-sampled. To avoid consuming a stateful or quota-based sampler once per span, the wrapper consults the delegate once per execution (keyed by trace ID) and reuses that decision for the execution's remaining durable spans within the invocation.
+
+For precise, provider-independent control, set an explicit `Sampled` value upstream (for example by enabling X-Ray active tracing) — that backend decision takes precedence over everything else.
 
 ## Span Attributes
 
@@ -203,7 +229,7 @@ Invocation
 | `durable.operation.type` | Parent operation type |
 | `durable.operation.name` | Parent operation name |
 | `durable.attempt.number` | 1-based attempt number |
-| `durable.attempt.outcome` | SUCCEEDED or FAILED |
+| `durable.attempt.outcome` | SUCCEEDED (span status `OK`), FAILED (`ERROR`), or INCOMPLETE (`UNSET`) |
 
 ## Log Correlation (MDC)
 
@@ -211,11 +237,11 @@ When `enableMdc` is true (default), the plugin injects these fields into SLF4J M
 
 | MDC Key | Description |
 |---------|-------------|
-| `trace_id` | W3C trace ID (32 hex chars) |
-| `span_id` | Current span ID (16 hex chars) |
-| `traceSampled` | Whether the trace is sampled (true/false) |
+| `traceId` | W3C trace ID (32 hex chars) |
+| `spanId` | Current span ID (16 hex chars) |
+| `otelTraceSampled` | Whether the trace is sampled (true/false) |
 
-The `trace_id` is also injected at invocation start so handler-level logs (between steps) include it.
+The `traceId` is also injected at invocation start so handler-level logs (between steps) include it.
 
 Configure your logging framework (e.g., Log4j2) to include MDC fields in the output. For example, using `JsonLayout`:
 
@@ -255,8 +281,9 @@ new InvocationOtelPlugin(
 
 ### ExecutionOtelPlugin
 
-The `ExecutionOtelPlugin` renders the Workflow span as the trace root with operations as siblings of the invocation
-span. It takes the same `(SdkTracerProviderBuilder, OtelPluginConfig)` constructor:
+The `ExecutionOtelPlugin` renders the Workflow span as the durable trace root with operations beneath it. Invocation
+spans remain in the ambient Lambda trace, and operations link to the Invocation that ran them. It takes the same
+`(SdkTracerProviderBuilder, OtelPluginConfig)` constructor:
 
 ```java
 // Default: ADOT Java agent global provider, X-Ray context extraction, MDC enabled
@@ -279,13 +306,14 @@ new ExecutionOtelPlugin(
 | Builder method | Description | Default |
 |-----------|-------------|---------|
 | `contextExtractor(...)` | Extracts parent trace context from the Lambda environment | `new XRayContextExtractor()` |
-| `enableMdc(...)` | If true, injects `trace_id`/`span_id`/`traceSampled` into SLF4J MDC | `true` |
+| `enableMdc(...)` | If true, injects `traceId`/`spanId`/`otelTraceSampled` into SLF4J MDC | `true` |
 | `workflowSpanName(...)` | Name for the Workflow span | `"Workflow"` |
 | `instrumentationName(...)` | Instrumentation scope name registered with the tracer | `"aws-durable-execution-sdk-java"` |
 
 > The `tracerProviderBuilder` argument is not used by the no-arg `new InvocationOtelPlugin()` /
-> `new ExecutionOtelPlugin()` constructors; those use the ADOT Java agent's global provider. A `null` passed to any
-> `OtelPluginConfig` builder setter falls back to that option's default.
+> `new ExecutionOtelPlugin()` constructors; those resolve the ADOT Java agent's global provider at invocation start.
+> If it is not ready, all telemetry is disabled for that invocation and resolution is retried on the next invocation.
+> A `null` passed to any `OtelPluginConfig` builder setter falls back to that option's default.
 
 ## Known Limitations
 
@@ -295,7 +323,7 @@ The plugin's spans do not appear as nested subsegments of the Lambda platform se
 
 ### Workflow Span
 
-The Workflow span appears as a separate root segment in the X-Ray trace because it uses `setNoParent()` with a deterministic span ID. This is expected — it serves as a correlation anchor across invocations.
+The Workflow span joins the execution trace by parenting onto the execution ancestor: the propagated remote server span when one is valid, otherwise a synthetic execution root. Either way it shares the execution trace ID and keeps its stable, ARN-derived span ID.
 
 ## Verification
 
@@ -304,10 +332,10 @@ After deploying your function with the plugin configured:
 1. **Invoke your durable function** — trigger at least one execution that includes multiple steps or a wait/resume cycle.
 
 2. **Check CloudWatch console** — Navigate to CloudWatch > Traces. Enable "Group by nodes" to see:
-   - A Workflow span covering the entire execution
-   - An Invocation span per Lambda invocation
+   - One execution trace covering the whole execution, with the Workflow span and each Invocation span sharing its trace ID
+   - One Invocation span per Lambda invocation
    - Child spans for each durable operation (named after your step names)
-   - All invocations of the same execution grouped under one trace ID
+   - Links between durable Workflow/operation spans and Invocation spans
 
 3. **Check log correlation** — Verify that the Logs section at the bottom of the trace view shows both platform logs and application logs correlated with the trace.
 
@@ -316,7 +344,7 @@ After deploying your function with the plugin configured:
 | Symptom | Likely Cause |
 |---------|-------------|
 | No traces appear | ADOT layer not added, or `AWS_LAMBDA_EXEC_WRAPPER` not set |
-| Traces appear but are fragmented | X-Ray active tracing not enabled on the Lambda function |
+| Invocation spans are not parented to Lambda | X-Ray active tracing not enabled on the Lambda function |
 | Missing spans for some operations | Sampling is configured below 1.0 |
 | `_X_AMZN_TRACE_ID` not populated | X-Ray active tracing not enabled |
 | Plugin spans missing but Lambda/runtime spans appear | Plugin jar not configured in `OTEL_JAVAAGENT_EXTENSIONS` |
@@ -338,7 +366,7 @@ var otelPlugin = new InvocationOtelPlugin(
 
 - Java 17+
 - AWS Durable Execution SDK for Java 2.0.0+
-- OpenTelemetry SDK 1.64.0+ (only for custom TracerProvider path)
+- OpenTelemetry SDK 1.65.0+ (only for custom TracerProvider path)
 - ADOT Lambda Layer `AWSOpenTelemetryDistroJava` (for the no-arg constructor path)
 
 ## License

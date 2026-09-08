@@ -65,7 +65,7 @@ public class PluginParallelBranchHooks extends DurableHandler<Object, List<Strin
             if (!PluginSupport.isBranch(info.subType())) {
                 return;
             }
-            String outcome = info.succeeded() ? "SUCCEEDED" : "FAILED";
+            String outcome = info.outcome().name();
             System.out.println(String.format(
                     "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"fn-end\", \"op\": \"%s\", \"parent\": \"%s\", "
                             + "\"outcome\": \"%s\"%s}",

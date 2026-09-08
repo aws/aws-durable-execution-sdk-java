@@ -5,14 +5,26 @@ package software.amazon.lambda.durable.otel;
 import io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizer;
 import io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvider;
 
-/** Installs the durable-execution ID generator when the OpenTelemetry Java agent auto-configures the SDK. */
+/**
+ * Wraps the Java agent's configured ID generator with scoped durable-execution overrides so durable spans get
+ * deterministic IDs.
+ */
 public final class OtelPluginAutoConfigurationCustomizerProvider implements AutoConfigurationCustomizerProvider {
-
-    private static final DeterministicIdGenerator ID_GENERATOR = new DeterministicIdGenerator();
 
     @Override
     public void customize(AutoConfigurationCustomizer autoConfiguration) {
         OtelPluginAutoConfigurationState.markInstalled();
-        autoConfiguration.addTracerProviderCustomizer((builder, config) -> builder.setIdGenerator(ID_GENERATOR));
+        autoConfiguration.addTracerProviderCustomizer((builder, config) -> {
+            DeterministicIdGenerator.installOn(builder);
+            return builder;
+        });
+        // Wrap the agent-configured sampler so durable spans use the execution's single precomputed decision, applied
+        // through the durable span's parent context, instead of re-invoking the configured sampler per span.
+        autoConfiguration.addSamplerCustomizer((sampler, config) -> DurableSampler.wrap(sampler));
+    }
+
+    @Override
+    public int order() {
+        return Integer.MAX_VALUE;
     }
 }

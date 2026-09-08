@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Durable Execution Conformance Test Examples - Java (OTel, long-running suite).
+  Ported from the otel-long-running examples in aws/aws-durable-execution-conformance-tests.
+  otel-conformance-tests.yml only ever runs this in "short" mode (a real but brief 60-second
+  delay checked within one job, matching the same short-mode PR behavior JS/Python get from
+  the hosted orchestrator) -- not the full ~23-hour launch/check cycle used by the daily
+  scheduled run in that repo.
+
+Parameters:
+  LambdaExecutionRoleArn:
+    Type: String
+    Description: Pre-created execution role for the test functions
+  OtelLayerArn:
+    Type: String
+    Description: AWS Distro for OpenTelemetry Java Lambda layer
+  OtelExecWrapper:
+    Type: String
+    Default: /opt/otel-instrument
+    Description: OpenTelemetry Java agent execution wrapper
+  OtelServiceName:
+    Type: String
+    Default: durable-execution-conformance
+    Description: OpenTelemetry resource service name
+  OtelView:
+    Type: String
+    Default: invocation
+    AllowedValues:
+      - invocation
+      - execution
+    Description: OpenTelemetry plugin view used by the long-running functions
+  OtelTracesExporter:
+    Type: String
+    Default: otlp
+    Description: OpenTelemetry traces exporter selected by the runner
+
+Globals:
+  Function:
+    Runtime: java21
+    Architectures:
+      - x86_64
+    Timeout: 60
+    MemorySize: 1024
+    Tracing: Active
+    Layers:
+      - !Ref OtelLayerArn
+    DurableConfig:
+      ExecutionTimeout: 180000
+      RetentionPeriodInDays: 3
+    Environment:
+      Variables:
+        AWS_LAMBDA_EXEC_WRAPPER: !Ref OtelExecWrapper
+        JAVA_TOOL_OPTIONS: "-Dotel.javaagent.extensions=/var/task/lib/otel-plugin-extension.jar"
+        OTEL_JAVAAGENT_EXTENSIONS: /var/task/lib/otel-plugin-extension.jar
+        OTEL_SERVICE_NAME: !Ref OtelServiceName
+        OTEL_PLUGIN_MODE: !Ref OtelView
+        OTEL_TRACES_EXPORTER: !Ref OtelTracesExporter
+        OTEL_PROPAGATORS: xray
+
+Resources:
+  OtelLongRunning1Wait:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-long-running-1
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.OtelLongRunning1Wait
+      Role: !Ref LambdaExecutionRoleArn
+
+  OtelLongRunning2Retry:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-long-running-2
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.OtelLongRunning2Retry
+      Role: !Ref LambdaExecutionRoleArn
+
+  OtelLongRunning3Callback:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-long-running-3
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.OtelLongRunning3Callback
+      Role: !Ref LambdaExecutionRoleArn
+
+  OtelLongRunning4ChainedInvoke:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-long-running-4
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.OtelLongRunning4ChainedInvoke
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_INVOKE_TARGET_FUNCTION_NAME: !Sub "${OtelLongRunning4InvokeTarget.Arn}:$LATEST"
+
+  OtelLongRunning4InvokeTarget:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.OtelLongRunning4InvokeTarget
+      Role: !Ref LambdaExecutionRoleArn

@@ -547,7 +547,7 @@ class DurableConfigTest {
 
         config.getPluginRunner()
                 .onInvocationStart(new software.amazon.lambda.durable.plugin.InvocationInfo(
-                        "req-1", "arn:test", true, java.time.Instant.now()));
+                        "req-1", "arn:test", true, java.time.Instant.now(), java.util.Map.of(), java.util.Map.of()));
 
         assertEquals(List.of("p1:onInvocationStart", "p2:onInvocationStart"), calls);
     }
@@ -567,7 +567,7 @@ class DurableConfigTest {
 
         config.getPluginRunner()
                 .onInvocationStart(new software.amazon.lambda.durable.plugin.InvocationInfo(
-                        "req-1", "arn:test", true, java.time.Instant.now()));
+                        "req-1", "arn:test", true, java.time.Instant.now(), java.util.Map.of(), java.util.Map.of()));
 
         assertEquals(List.of("p2:onInvocationStart", "p3:onInvocationStart"), calls);
     }

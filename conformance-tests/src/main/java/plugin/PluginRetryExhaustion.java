@@ -67,7 +67,7 @@ public class PluginRetryExhaustion extends DurableHandler<Object, String> {
             if (!PluginSupport.isStep(info.type()) || info.attempt() == null) {
                 return;
             }
-            String outcome = info.succeeded() ? "SUCCEEDED" : "FAILED";
+            String outcome = info.outcome().name();
             System.out.println(String.format(
                     "{\"plugin\": \"CONFPLUGIN\", \"hook\": \"attempt-end\", \"n\": %d, \"outcome\": \"%s\", "
                             + "\"op\": \"%s\"%s}",

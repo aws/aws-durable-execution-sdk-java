@@ -4,11 +4,16 @@ package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -19,7 +24,10 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 import software.amazon.lambda.durable.plugin.*;
 import software.amazon.lambda.durable.retry.RetryStrategies;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /** Integration tests verifying plugin hooks fire correctly during durable execution lifecycle. */
 class PluginIntegrationTest {
@@ -96,6 +104,68 @@ class PluginIntegrationTest {
     }
 
     @Test
+    void plugin_invocationSnapshots_trackReplayAcrossSuspension() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.runInChildContext("child", String.class, child -> {
+                    child.wait("pause", Duration.ofMinutes(1));
+                    return "done";
+                }),
+                config);
+
+        var firstResult = runner.run("input");
+        assertEquals(ExecutionStatus.PENDING, firstResult.getStatus());
+
+        assertEquals(1, plugin.invocationStarts.size());
+        assertEquals(1, plugin.invocationEnds.size());
+        var firstStart = plugin.invocationStarts.get(0);
+        assertTrue(firstStart.isFirstInvocation());
+        assertEquals(1, firstStart.operations().size(), "first invocation starts with only the execution operation");
+        assertTrue(firstStart.updatedOperations().isEmpty());
+
+        var firstEnd = plugin.invocationEnds.get(0);
+        assertEquals(InvocationStatus.PENDING, firstEnd.invocationStatus());
+        assertTrue(firstEnd.operations().values().stream().anyMatch(op -> "child".equals(op.name())));
+        assertTrue(firstEnd.operations().values().stream().anyMatch(op -> "pause".equals(op.name())));
+
+        runner.advanceTime();
+        var secondResult = runner.run("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, secondResult.getStatus());
+
+        assertEquals(2, plugin.invocationStarts.size());
+        assertEquals(2, plugin.invocationEnds.size());
+        var secondStart = plugin.invocationStarts.get(1);
+        assertFalse(secondStart.isFirstInvocation());
+        var replayedChild = secondStart.operations().values().stream()
+                .filter(op -> "child".equals(op.name()))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(replayedChild.isReplay());
+        assertEquals(1, secondStart.updatedOperations().size());
+        var updatedPause = secondStart.updatedOperations().values().iterator().next();
+        assertEquals("pause", updatedPause.name());
+        assertEquals(OperationStatus.SUCCEEDED, updatedPause.status());
+        assertTrue(updatedPause.isReplay());
+
+        var secondEnd = plugin.invocationEnds.get(1);
+        assertEquals(InvocationStatus.SUCCEEDED, secondEnd.invocationStatus());
+        assertTrue(secondEnd.operations().values().stream()
+                .anyMatch(op -> "child".equals(op.name()) && op.status() == OperationStatus.SUCCEEDED));
+        assertTrue(secondEnd.operations().values().stream()
+                .anyMatch(op -> "pause".equals(op.name()) && op.status() == OperationStatus.SUCCEEDED));
+
+        var childStarts = plugin.userFunctionStarts.stream()
+                .filter(info -> "child".equals(info.name()))
+                .toList();
+        assertEquals(2, childStarts.size());
+        assertFalse(childStarts.get(0).isReplay());
+        assertTrue(childStarts.get(1).isReplay());
+    }
+
+    @Test
     void plugin_receivesInvocationEnd_withFailedStatus_onError() {
         var plugin = new RecordingPlugin();
         var config = DurableConfig.builder().withPlugins(plugin).build();
@@ -120,6 +190,167 @@ class PluginIntegrationTest {
         assertEquals(1, plugin.invocationEnds.size());
         assertEquals(InvocationStatus.FAILED, plugin.invocationEnds.get(0).invocationStatus());
         assertNotNull(plugin.invocationEnds.get(0).executionError());
+    }
+
+    @Test
+    void plugin_invocationHooks_carryExecutionInputAndResult_onSuccess() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step("greet", String.class, stepCtx -> "Hello " + input),
+                config);
+
+        var result = runner.runUntilComplete("World");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        // The deserialized handler input reaches the start hook ...
+        assertEquals("World", plugin.invocationStarts.get(0).executionInput());
+        // ... and the end hook, alongside the value the handler returned.
+        var end = plugin.invocationEnds.get(0);
+        assertEquals("World", end.executionInput());
+        assertEquals("Hello World", end.executionResult());
+    }
+
+    @Test
+    void plugin_invocationEnd_omitsExecutionResult_onFailure() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step(
+                        "failing",
+                        String.class,
+                        stepCtx -> {
+                            throw new RuntimeException("boom");
+                        },
+                        StepConfig.builder()
+                                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                                .build()),
+                config);
+
+        var result = runner.run("input");
+
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+
+        var end = plugin.invocationEnds.get(0);
+        assertEquals("input", end.executionInput());
+        assertNull(end.executionResult(), "a failed execution produced no result");
+    }
+
+    @Test
+    void plugin_invocationEnd_omitsExecutionResult_onSuspension() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    context.wait("pause", Duration.ofMinutes(5));
+                    return "complete";
+                },
+                config);
+
+        var result = runner.run("input");
+
+        assertEquals(ExecutionStatus.PENDING, result.getStatus());
+
+        var end = plugin.invocationEnds.get(0);
+        assertEquals(InvocationStatus.PENDING, end.invocationStatus());
+        assertEquals("input", end.executionInput());
+        assertNull(end.executionResult(), "a suspended invocation has not produced a result yet");
+    }
+
+    @Test
+    void plugin_executionInput_isDeserializedOnce_andSharedWithHandler() {
+        var serDes = new CountingSerDes();
+        var plugin = new RecordingPlugin();
+        var config =
+                DurableConfig.builder().withPlugins(plugin).withSerDes(serDes).build();
+        var handlerInput = new AtomicReference<Object>();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    handlerInput.set(input);
+                    return context.step("greet", String.class, stepCtx -> "Hello " + input);
+                },
+                config);
+
+        var result = runner.runUntilComplete("World");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        // The handler input is deserialized once and that same instance reaches the hooks — a second
+        // deserialization would double the cost and re-run side effects in a stateful SerDes.
+        assertEquals(1, serDes.inputDeserializations("World"));
+        assertSame(handlerInput.get(), plugin.invocationStarts.get(0).executionInput());
+        assertSame(handlerInput.get(), plugin.invocationEnds.get(0).executionInput());
+    }
+
+    /** SerDes that counts how many times each payload is deserialized. */
+    static class CountingSerDes implements SerDes {
+        private final JacksonSerDes delegate = new JacksonSerDes();
+        private final Map<String, AtomicInteger> deserializations = new ConcurrentHashMap<>();
+
+        @Override
+        public String serialize(Object value) {
+            return delegate.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            deserializations
+                    .computeIfAbsent(data, ignored -> new AtomicInteger())
+                    .incrementAndGet();
+            return delegate.deserialize(data, typeToken);
+        }
+
+        int inputDeserializations(String value) {
+            var counter = deserializations.get(delegate.serialize(value));
+            return counter == null ? 0 : counter.get();
+        }
+    }
+
+    @Test
+    void plugin_hooksStayPaired_whenSerDesSneakyThrowsCheckedException() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder()
+                .withPlugins(plugin)
+                .withSerDes(new SneakyThrowingSerDes())
+                .build();
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> "unreachable", config);
+
+        var result = runner.run("input");
+
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        // SerDes.deserialize declares no checked exceptions, so an implementation can sneaky-throw one. The start
+        // hook must still fire, otherwise a plugin keying state on it sees an end with no start.
+        assertEquals(1, plugin.invocationStarts.size(), "onInvocationStart must fire before the failure surfaces");
+        assertNull(plugin.invocationStarts.get(0).executionInput(), "input could not be deserialized");
+        assertEquals(1, plugin.invocationEnds.size());
+        assertEquals(InvocationStatus.FAILED, plugin.invocationEnds.get(0).invocationStatus());
+    }
+
+    /**
+     * SerDes that sneaky-throws a checked exception from deserialize, as DurableInputOutputSerDes does on IO errors.
+     */
+    static class SneakyThrowingSerDes implements SerDes {
+        private final JacksonSerDes delegate = new JacksonSerDes();
+
+        @Override
+        public String serialize(Object value) {
+            return delegate.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            ExceptionHelper.sneakyThrow(new IOException("sneaky checked failure"));
+            return null;
+        }
     }
 
     // ─── Operation-level hooks ───────────────────────────────────────────
@@ -357,6 +588,25 @@ class PluginIntegrationTest {
     }
 
     @Test
+    void plugin_operationEnd_includesResult_whenStepSucceeds() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class, (input, context) -> context.step("my-step", String.class, stepCtx -> "task-a"), config);
+
+        runner.runUntilComplete("input");
+
+        var stepEnd = plugin.operationEnds.stream()
+                .filter(info -> "my-step".equals(info.name()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(stepEnd, "onOperationEnd should fire for successful step");
+        assertNotNull(stepEnd.result(), "result should be present for successful step");
+        assertEquals("\"task-a\"", stepEnd.result(), "result should contain the serialized step output");
+    }
+
+    @Test
     void plugin_operationStartAndEnd_balanced_forEmptyMap() {
         var plugin = new RecordingPlugin();
         // withCheckpointEmptyMap is a temporary flag expected to be removed in a future major version.
@@ -461,17 +711,19 @@ class PluginIntegrationTest {
                 plugin.userFunctionStarts.stream().anyMatch(info -> "compute".equals(info.name())),
                 "Should have onUserFunctionStart for 'compute'");
         assertTrue(
-                plugin.userFunctionEnds.stream().anyMatch(info -> "compute".equals(info.name()) && info.succeeded()),
+                plugin.userFunctionEnds.stream()
+                        .anyMatch(info ->
+                                "compute".equals(info.name()) && info.outcome() == UserFunctionOutcome.SUCCEEDED),
                 "Should have successful onUserFunctionEnd for 'compute'");
     }
 
     @Test
-    void plugin_userFunctionEnd_succeeded_false_whenStepFails() {
+    void plugin_userFunctionEnd_reportsFailed_whenStepFails() {
         var plugin = new RecordingPlugin();
         var config = DurableConfig.builder().withPlugins(plugin).build();
 
         // When a step's user function throws, the exception propagates through the user-function hook
-        // boundary, so onUserFunctionEnd reports succeeded=false with the error. Retry/checkpoint
+        // boundary, so onUserFunctionEnd reports FAILED with the error. Retry/checkpoint
         // handling happens outside that boundary.
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -501,7 +753,7 @@ class PluginIntegrationTest {
                 .filter(info -> "fail-step".equals(info.name()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("Should have user function end for 'fail-step'"));
-        assertFalse(failStepEnd.succeeded(), "Failed step should report succeeded=false");
+        assertEquals(UserFunctionOutcome.FAILED, failStepEnd.outcome());
         assertNotNull(failStepEnd.error());
         assertTrue(failStepEnd.error().getMessage().contains("step failed"));
     }
@@ -673,7 +925,7 @@ class PluginIntegrationTest {
                 .filter(info -> info.attempt() == 1)
                 .findFirst()
                 .orElseThrow();
-        assertFalse(firstAttempt.succeeded());
+        assertEquals(UserFunctionOutcome.FAILED, firstAttempt.outcome());
         assertNotNull(firstAttempt.error());
 
         // Retry attempt succeeded.
@@ -681,7 +933,7 @@ class PluginIntegrationTest {
                 .filter(info -> info.attempt() == 2)
                 .findFirst()
                 .orElseThrow();
-        assertTrue(secondAttempt.succeeded());
+        assertEquals(UserFunctionOutcome.SUCCEEDED, secondAttempt.outcome());
         assertNull(secondAttempt.error());
 
         // The operation end reports the terminal attempt number = total attempts that ran. The step
@@ -694,12 +946,12 @@ class PluginIntegrationTest {
     }
 
     @Test
-    void plugin_userFunctionEnd_reportsSuspension_asNotSucceeded() {
+    void plugin_userFunctionEnd_reportsSuspension_asIncomplete() {
         var plugin = new RecordingPlugin();
         var config = DurableConfig.builder().withPlugins(plugin).build();
 
         // A child context whose body suspends (on a wait) throws SuspendExecutionException through the
-        // user-function boundary, so onUserFunctionEnd fires with succeeded=false and the suspend exception.
+        // user-function boundary, so onUserFunctionEnd fires with INCOMPLETE and the suspend exception.
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> context.runInChildContext("child", TypeToken.get(String.class), child -> {
@@ -715,10 +967,34 @@ class PluginIntegrationTest {
                 .filter(info -> "child".equals(info.name()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("onUserFunctionEnd should fire for the suspended child context"));
-        assertFalse(childEnd.succeeded(), "A suspended user function must not report succeeded=true");
+        assertEquals(UserFunctionOutcome.INCOMPLETE, childEnd.outcome());
         assertTrue(
                 childEnd.error() instanceof SuspendExecutionException,
                 "Suspension should surface the SuspendExecutionException, not a user error");
+    }
+
+    @Test
+    void plugin_userFunctionEnd_unwrapsCompletionExceptionForSuspension() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var suspension = new SuspendExecutionException();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.step("wrapped-suspension", String.class, step -> {
+                    throw new CompletionException(suspension);
+                }),
+                config);
+
+        var result = runner.run("input");
+        assertEquals(ExecutionStatus.PENDING, result.getStatus());
+
+        var stepEnd = plugin.userFunctionEnds.stream()
+                .filter(info -> "wrapped-suspension".equals(info.name()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("onUserFunctionEnd should fire for the suspended step"));
+        assertEquals(UserFunctionOutcome.INCOMPLETE, stepEnd.outcome());
+        assertSame(suspension, stepEnd.error(), "The event should expose the unwrapped suspension");
     }
 
     @Test

@@ -1,0 +1,79 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package plugin;
+
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.DurableHandler;
+import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.plugin.OperationEndInfo;
+import software.amazon.lambda.durable.retry.RetryStrategies;
+
+/**
+ * 10-14: Operation-end info carries the checkpointed result on success and the error on failure.
+ *
+ * <p>Step A returns the constant "task-a" and succeeds; step B always throws "boom" with no retries, so the execution
+ * fails. The plugin, filtering to step-type operations, logs operation-end with the operation's status, its
+ * checkpointed serialized result, and its error message.
+ *
+ * <p>{@link OperationEndInfo#result()} contains the serialized result, so the log record stores it as a JSON string
+ * without parsing or otherwise changing the checkpointed value.
+ */
+@SuppressWarnings("deprecation")
+public class PluginTerminalPayloads extends DurableHandler<Object, String> {
+
+    @Override
+    protected DurableConfig createConfiguration() {
+        return DurableConfig.builder().withPlugins(new PayloadPlugin()).build();
+    }
+
+    @Override
+    public String handleRequest(Object input, DurableContext context) {
+        context.step("step-a", String.class, stepCtx -> "task-a");
+        return context.step(
+                "step-b",
+                String.class,
+                stepCtx -> {
+                    throw new RuntimeException("boom");
+                },
+                StepConfig.builder()
+                        .retryStrategy(RetryStrategies.Presets.NO_RETRY)
+                        .build());
+    }
+
+    private static final class PayloadPlugin implements DurableExecutionPlugin {
+        private volatile String executionArn;
+
+        @Override
+        public void onInvocationStart(InvocationInfo info) {
+            this.executionArn = info.durableExecutionArn();
+        }
+
+        @Override
+        public void onOperationEnd(OperationEndInfo info) {
+            if (!PluginSupport.isStep(info.type())) {
+                return;
+            }
+            String result = info.result() != null ? info.result() : "NONE";
+            String error = info.error() != null && info.error().getMessage() != null
+                    ? info.error().getMessage()
+                    : "NONE";
+            ObjectNode record = JsonNodeFactory.instance
+                    .objectNode()
+                    .put("plugin", "CONFPLUGIN")
+                    .put("hook", "operation-end")
+                    .put("op", info.id())
+                    .put("status", info.status())
+                    .put("result", result)
+                    .put("error", error);
+            if (executionArn != null) {
+                record.put("durableExecutionArn", executionArn);
+            }
+            System.out.println(record);
+        }
+    }
+}

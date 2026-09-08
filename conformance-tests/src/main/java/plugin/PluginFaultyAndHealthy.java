@@ -141,7 +141,7 @@ public class PluginFaultyAndHealthy extends DurableHandler<String, String> {
             System.out.println(String.format(
                     "{\"plugin\": \"CONFPLUGIN-HEALTHY\", \"hook\": \"attempt-end\", \"op\": \"%s\", "
                             + "\"outcome\": \"%s\"%s}",
-                    info.id(), info.succeeded() ? "SUCCEEDED" : "FAILED", PluginSupport.arnField(executionArn)));
+                    info.id(), info.outcome().name(), PluginSupport.arnField(executionArn)));
         }
 
         @Override

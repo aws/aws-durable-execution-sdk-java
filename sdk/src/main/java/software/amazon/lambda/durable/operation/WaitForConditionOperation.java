@@ -54,7 +54,10 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
 
     @Override
     protected void start() {
-        executeCheckLogic(config.initialState(), FIRST_ATTEMPT);
+        // Round-trip through SerDes so the first check observes the same shape as every subsequent
+        // check, which always deserializes state from a checkpoint (see resumeCheckLoop below).
+        var initialState = serializeAndDeserializeResult(config.initialState()).deserialized();
+        executeCheckLogic(initialState, FIRST_ATTEMPT);
     }
 
     @Override

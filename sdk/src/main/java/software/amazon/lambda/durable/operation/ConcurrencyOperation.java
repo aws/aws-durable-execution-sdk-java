@@ -9,11 +9,10 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,10 +40,11 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  * <p>Key design points:
  *
  * <ul>
- *   <li>Does NOT register its own thread — child context threads handle all suspension
- *   <li>Uses a pending queue + running counter for concurrency control
+ *   <li>A single coordinator owns scheduling state and completion counters
+ *   <li>Child threads publish completion events through a blocking queue
+ *   <li>Uses a FIFO pending queue for deterministic branch admission
  *   <li>Completion is determined by {@link CompletionConfig#completionDecisionFunction()}
- *   <li>When a child suspends, the running count is NOT decremented
+ *   <li>When a child suspends, its concurrency slot is retained
  * </ul>
  *
  * @param <T> the result type of this operation
@@ -52,6 +52,26 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
 public abstract class ConcurrencyOperation<T> extends SerializableDurableOperation<T> {
 
     protected record ExpectedCompletionStatus(int completed, CompletionConfig.CompletionDecision completionDecision) {}
+
+    private record CoordinatorEvent(ChildContextOperation<?> completedChild, Throwable failure) {
+        private static CoordinatorEvent stateChanged() {
+            return new CoordinatorEvent(null, null);
+        }
+
+        private static CoordinatorEvent childCompleted(ChildContextOperation<?> child, Throwable failure) {
+            return new CoordinatorEvent(child, failure);
+        }
+
+        private static CoordinatorEvent failed(Throwable failure) {
+            return new CoordinatorEvent(null, failure);
+        }
+    }
+
+    private static final class CoordinatorState {
+        private final Set<ChildContextOperation<?>> runningChildren = new HashSet<>();
+        private int succeededCount;
+        private int failedCount;
+    }
 
     private static final Logger logger = LoggerFactory.getLogger(ConcurrencyOperation.class);
 
@@ -61,17 +81,21 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
     private final DurableContextImpl rootContext;
     private final NestingType nestingType;
 
-    // access by context thread only
+    // added by the context thread and read by the coordinator and result aggregation
     private final List<ChildContextOperation<?>> branches = Collections.synchronizedList(new ArrayList<>());
 
-    // put only by context thread and consume only by consumer thread
-    private final Queue<ChildContextOperation<?>> pendingQueue = new ConcurrentLinkedDeque<>();
+    // produced by the context thread and consumed by the coordinator
+    private final Queue<ChildContextOperation<?>> pendingQueue = new ConcurrentLinkedQueue<>();
+
+    // workers publish events; only the coordinator consumes them and mutates scheduling state
+    private final BlockingQueue<CoordinatorEvent> coordinatorEvents = new LinkedBlockingQueue<>();
+
+    // guarded by completionFuture
+    private boolean stateChangedQueued;
+    private boolean coordinatorWaiting;
 
     // set by context thread and used by consumer thread
     protected final AtomicBoolean isJoined = new AtomicBoolean(false);
-
-    // used to wake up consumer thread for either new items or checking completion condition (isJoined changed)
-    private final AtomicReference<CompletableFuture<BaseDurableOperation>> consumerThreadListener;
 
     protected ConcurrencyOperation(
             OperationIdentifier operationIdentifier,
@@ -87,8 +111,12 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
         this.operationIdGenerator = new OperationIdGenerator(getOperationId());
         // root context of the concurrency operation is always non-virtual
         this.rootContext = durableContext.createChildContext(getOperationId(), getName(), false);
-        this.consumerThreadListener = new AtomicReference<>(new CompletableFuture<>());
         this.nestingType = nestingType;
+        completionFuture.whenComplete((ignored, failure) -> {
+            if (failure != null) {
+                publishCoordinatorEvent(CoordinatorEvent.failed(failure));
+            }
+        });
     }
 
     // ========== Template methods for subclasses ==========
@@ -147,14 +175,32 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
             logger.debug("Item enqueued {}", name);
             pendingQueue.add(childOp);
         }
-        // notify the consumer thread a new item is available
-        notifyConsumerThread();
+        notifyCoordinatorStateChanged();
         return childOp;
     }
 
-    private void notifyConsumerThread() {
+    private void notifyCoordinatorStateChanged() {
         synchronized (completionFuture) {
-            consumerThreadListener.get().complete(null);
+            if (!stateChangedQueued) {
+                stateChangedQueued = true;
+                publishCoordinatorEventLocked(CoordinatorEvent.stateChanged());
+            }
+        }
+    }
+
+    private void publishCoordinatorEvent(CoordinatorEvent event) {
+        synchronized (completionFuture) {
+            publishCoordinatorEventLocked(event);
+        }
+    }
+
+    private void publishCoordinatorEventLocked(CoordinatorEvent event) {
+        coordinatorEvents.add(event);
+        if (coordinatorWaiting) {
+            coordinatorWaiting = false;
+            if (event.failure() == null) {
+                registerActiveThread(getOperationId());
+            }
         }
     }
 
@@ -165,65 +211,75 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
 
     /** Starts execution of all enqueued items until the expectedCompletionStatus is met. */
     protected void executeItems(ExpectedCompletionStatus expectedCompletionStatus) {
-        // variables accessed only by the consumer thread. Put them here to avoid accidentally used by other threads
-        Set<BaseDurableOperation> runningChildren = new HashSet<>();
-        AtomicInteger succeededCount = new AtomicInteger(0);
-        AtomicInteger failedCount = new AtomicInteger(0);
-
-        Runnable consumer = () -> {
-            try {
-                while (true) {
-                    // Set a new future if it's completed so that it will be able to receive a notification of
-                    // new items when the thread is checking completion condition and processing
-                    // the queued items below.
-                    synchronized (completionFuture) {
-                        if (consumerThreadListener.get() != null
-                                && consumerThreadListener.get().isDone()) {
-                            consumerThreadListener.set(new CompletableFuture<>());
-                        }
-                    }
-
-                    // Process completion condition. Quit the loop if the condition is met.
-                    if (isOperationCompleted()) {
-                        return;
-                    }
-                    var completionDecision = canComplete(succeededCount, failedCount, expectedCompletionStatus);
-                    if (completionDecision != null) {
-                        handleCompletion(completionDecision);
-                        return;
-                    }
-
-                    // process new items in the queue
-                    while (runningChildren.size() < maxConcurrency && !pendingQueue.isEmpty()) {
-                        var next = pendingQueue.poll();
-                        runningChildren.add(next);
-                        logger.debug("Executing operation {}", next.getName());
-                        next.execute();
-                    }
-
-                    // If consumerThreadListener has been completed when processing above, waitForChildCompletion will
-                    // immediately return null and repeat the above again
-                    var child = waitForChildCompletion(
-                            succeededCount, failedCount, runningChildren, expectedCompletionStatus);
-
-                    // child may be null if the consumer thread is woken up due to new items added or completion
-                    // condition
-                    // changed
-                    if (child != null) {
-                        if (runningChildren.contains(child)) {
-                            runningChildren.remove(child);
-                            onItemComplete(succeededCount, failedCount, (ChildContextOperation<?>) child);
-                        } else {
-                            throw new IllegalStateException("Unexpected completion: " + child);
-                        }
-                    }
-                }
-            } catch (Throwable ex) {
-                handleException(ex);
-            }
-        };
         // run consumer in the user thread pool, although it's not a real user thread
-        runUserHandler(consumer, ThreadType.CONTEXT);
+        runUserHandler(() -> runCoordinator(expectedCompletionStatus), ThreadType.CONTEXT);
+    }
+
+    private void runCoordinator(ExpectedCompletionStatus expectedCompletionStatus) {
+        var state = new CoordinatorState();
+
+        try {
+            while (!isOperationCompleted()) {
+                var completionDecision = canComplete(state.succeededCount, state.failedCount, expectedCompletionStatus);
+                if (completionDecision != null) {
+                    handleCompletion(completionDecision);
+                    return;
+                }
+                startPendingItems(state);
+                processCoordinatorEvent(waitForCoordinatorEvent(), state);
+            }
+        } catch (Throwable ex) {
+            handleException(ex);
+        }
+    }
+
+    private void startPendingItems(CoordinatorState state) {
+        ChildContextOperation<?> next;
+        while (state.runningChildren.size() < maxConcurrency && (next = pendingQueue.poll()) != null) {
+            var child = next;
+            state.runningChildren.add(child);
+            child.getCompletionFuture()
+                    .whenComplete((ignored, failure) ->
+                            publishCoordinatorEvent(CoordinatorEvent.childCompleted(child, failure)));
+            logger.debug("Executing operation {}", child.getName());
+            child.execute();
+        }
+    }
+
+    private void processCoordinatorEvent(CoordinatorEvent event, CoordinatorState state) {
+        if (event.failure() != null) {
+            ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(event.failure()));
+        }
+        var child = event.completedChild();
+        if (child == null) {
+            synchronized (completionFuture) {
+                stateChangedQueued = false;
+            }
+            return;
+        }
+        if (!state.runningChildren.remove(child)) {
+            throw new IllegalStateException("Unexpected completion: " + child);
+        }
+        onItemComplete(state, child);
+    }
+
+    private CoordinatorEvent waitForCoordinatorEvent() {
+        var threadContext = getCurrentThreadContext();
+        synchronized (completionFuture) {
+            var event = coordinatorEvents.poll();
+            if (event != null || isOperationCompleted()) {
+                return event != null ? event : CoordinatorEvent.stateChanged();
+            }
+            coordinatorWaiting = true;
+            deregisterActiveThread(threadContext.threadId());
+        }
+
+        try {
+            return coordinatorEvents.take();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Concurrency coordinator interrupted", e);
+        }
     }
 
     private void handleException(Throwable ex) {
@@ -240,70 +296,22 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
                 String.format("Unexpected exception in concurrency operation: %s", throwable));
     }
 
-    private BaseDurableOperation waitForChildCompletion(
-            AtomicInteger succeededCount,
-            AtomicInteger failedCount,
-            Set<BaseDurableOperation> runningChildren,
-            ExpectedCompletionStatus expectedCompletionStatus) {
-        var threadContext = getCurrentThreadContext();
-        CompletableFuture<Object> future;
-
-        synchronized (completionFuture) {
-            // check again in synchronized block to prevent race conditions
-            if (isOperationCompleted()) {
-                return null;
-            }
-            var completionDecision = canComplete(succeededCount, failedCount, expectedCompletionStatus);
-            if (completionDecision != null) {
-                return null;
-            }
-            ArrayList<CompletableFuture<BaseDurableOperation>> futures;
-            futures = new ArrayList<>(runningChildren.stream()
-                    .map(BaseDurableOperation::getCompletionFuture)
-                    .toList());
-            if (futures.size() < maxConcurrency) {
-                // add a future to listen to the new items if there is a vacancy
-                consumerThreadListener.compareAndSet(null, new CompletableFuture<>());
-                futures.add(consumerThreadListener.get());
-            }
-
-            // future will be completed immediately if any future of the list is already completed
-            future = CompletableFuture.anyOf(futures.toArray(CompletableFuture[]::new));
-            // skip deregistering the current thread if there is more completed future to process
-            if (!future.isDone()) {
-                future = future.thenApply(o -> {
-                    registerActiveThread(threadContext.threadId());
-                    return o;
-                });
-                // Deregister the current thread to allow suspension
-                deregisterActiveThread(threadContext.threadId());
-            }
-        }
-        try {
-            return future.thenApply(o -> (BaseDurableOperation) o).join();
-        } catch (Throwable throwable) {
-            ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
-            throw throwable;
-        }
-    }
-
     /**
      * Called by a ChildContextOperation BEFORE it closes its child context. Updates counters, checks completion
      * criteria, and either triggers the next queued item or completes the operation.
      *
      * @param child the child operation that completed
      */
-    private void onItemComplete(
-            AtomicInteger succeededCount, AtomicInteger failedCount, ChildContextOperation<?> child) {
+    private void onItemComplete(CoordinatorState state, ChildContextOperation<?> child) {
         // Evaluate child result outside the lock — child.get() may block waiting for a checkpoint response.
         logger.debug("OnItemComplete called by {}, Id: {}", child.getName(), child.getOperationId());
         try {
             child.get();
             logger.debug("Result succeeded - {}", child.getName());
-            succeededCount.incrementAndGet();
+            state.succeededCount++;
         } catch (Throwable e) {
             logger.debug("Child operation {} failed: {}", child.getOperationId(), e.getMessage());
-            failedCount.incrementAndGet();
+            state.failedCount++;
         }
     }
 
@@ -314,12 +322,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
      * @return the completion status if the operation is complete, or null if it should continue
      */
     private CompletionConfig.CompletionDecision canComplete(
-            AtomicInteger succeededCount,
-            AtomicInteger failedCount,
-            ExpectedCompletionStatus expectedCompletionStatus) {
-        int succeeded = succeededCount.get();
-        int failed = failedCount.get();
-
+            int succeeded, int failed, ExpectedCompletionStatus expectedCompletionStatus) {
         if (expectedCompletionStatus != null) {
             if (succeeded + failed >= expectedCompletionStatus.completed) {
                 return expectedCompletionStatus.completionDecision;
@@ -351,9 +354,7 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
     protected void join() {
         isJoined.set(true);
 
-        // Notify the consumer thread this concurrency operation is joined. Consumer thread need to check the
-        // completion condition again.
-        notifyConsumerThread();
+        notifyCoordinatorStateChanged();
         waitForOperationCompletion();
     }
 

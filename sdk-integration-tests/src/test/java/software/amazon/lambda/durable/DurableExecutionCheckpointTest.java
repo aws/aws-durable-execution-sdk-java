@@ -4,12 +4,14 @@ package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 
 /** Integration tests that verify checkpoint behavior using LocalMemoryExecutionClient */
@@ -18,6 +20,7 @@ class DurableExecutionCheckpointTest {
     private static final String EXECUTION_OP_ID = "01234567-0123-0123-0123-012345678901";
     private static final String EXECUTION_ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/"
             + EXECUTION_NAME + "/" + EXECUTION_OP_ID;
+    private static final Instant EXECUTION_START_TIME = Instant.parse("2026-08-15T00:00:00Z");
 
     private DurableConfig configWithMockClient(LocalMemoryExecutionClient client) {
         return DurableConfig.builder().withDurableExecutionClient(client).build();
@@ -30,6 +33,7 @@ class DurableExecutionCheckpointTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .executionDetails(ExecutionDetails.builder()
                         .inputPayload("\"test-input\"")
                         .build())
@@ -70,6 +74,7 @@ class DurableExecutionCheckpointTest {
                 .id(EXECUTION_OP_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
                 .executionDetails(ExecutionDetails.builder()
                         .inputPayload("\"test-input\"")
                         .build())
@@ -100,5 +105,25 @@ class DurableExecutionCheckpointTest {
                 .filter(u -> u.type() == OperationType.EXECUTION)
                 .toList();
         assertTrue(executionUpdates.isEmpty());
+    }
+
+    @Test
+    void testLargeResultCanReplayWithoutDuplicateExecutionOperation() {
+        // A >6MB result checkpoints a SUCCEEDED EXECUTION operation into storage. Because the EXECUTION operation ID is
+        // stable across reinvocations, a second run must not collide the stored EXECUTION operation with the fresh one
+        // when ExecutionManager builds its ID-keyed operation map. Regression for the large-result replay path.
+        var largeString = "x".repeat(7 * 1024 * 1024); // 7MB string, exceeds the Lambda response limit
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> largeString);
+
+        // First run checkpoints the large EXECUTION result and stores the EXECUTION operation.
+        var first = runner.runUntilComplete("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, first.getStatus());
+        assertEquals(largeString, first.getResult(String.class));
+
+        // Second run replays over the stored state; it must not throw a duplicate-key error while collecting
+        // operations, and the completed large result must still be recoverable on replay.
+        var second = runner.runUntilComplete("input");
+        assertEquals(ExecutionStatus.SUCCEEDED, second.getStatus());
+        assertEquals(largeString, second.getResult(String.class));
     }
 }

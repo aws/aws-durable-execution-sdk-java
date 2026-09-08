@@ -1,0 +1,602 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Durable Execution Conformance Test Examples - Java (OTel, invocation + execution views,
+  all backends). Ported from the otel-invocation/otel-execution examples in
+  aws/aws-durable-execution-conformance-tests: full suite (view) and backend parity with the
+  upstream Java example project (X-Ray, Dash0, Datadog, S3 collector), deployed as one stack
+  per backend by otel-conformance-tests.yml.
+
+Parameters:
+  LambdaExecutionRoleArn:
+    Type: String
+    Description: Pre-created execution role for the test functions
+  OtelLayerArn:
+    Type: String
+    Description: OpenTelemetry Lambda layer ARN (ADOT for X-Ray, community layer for Dash0/Datadog/collector)
+  OtelCollectorLayerArn:
+    Type: String
+    Default: ""
+    Description: Optional OpenTelemetry Collector Lambda extension layer (S3 collector backend only)
+  OtelCollectorBucket:
+    Type: String
+    Default: ""
+    Description: S3 bucket where the collector writes OTLP trace objects
+  OtelCollectorPrefix:
+    Type: String
+    Default: ""
+    Description: S3 key prefix where the collector writes OTLP trace objects
+  OtelExecWrapper:
+    Type: String
+    Default: /opt/otel-instrument
+    Description: OpenTelemetry Java agent execution wrapper
+  OtelServiceName:
+    Type: String
+    Default: durable-execution-conformance
+    Description: OpenTelemetry resource service name
+  OtelTracesExporter:
+    Type: String
+    Default: otlp
+    Description: OpenTelemetry traces exporter selected by the runner
+  OtelExporterEndpoint:
+    Type: String
+    Default: ""
+    Description: Non-secret OTLP endpoint used by community exporters (Dash0/Datadog/collector)
+  OtelExporterHeaders:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Secret OTLP exporter headers supplied by the runner (Dash0/Datadog)
+
+Conditions:
+  HasOtelCollectorLayer: !Not [!Equals [!Ref OtelCollectorLayerArn, ""]]
+  HasOtelExporterEndpoint: !Not [!Equals [!Ref OtelExporterEndpoint, ""]]
+  HasOtelExporterHeaders: !Not [!Equals [!Ref OtelExporterHeaders, ""]]
+
+Globals:
+  Function:
+    Runtime: java21
+    Architectures:
+      - x86_64
+    Timeout: 60
+    MemorySize: 1024
+    Tracing: Active
+    Layers: !If
+      - HasOtelCollectorLayer
+      - [!Ref OtelLayerArn, !Ref OtelCollectorLayerArn]
+      - [!Ref OtelLayerArn]
+    DurableConfig:
+      ExecutionTimeout: 300
+      RetentionPeriodInDays: 1
+    Environment:
+      Variables:
+        AWS_LAMBDA_EXEC_WRAPPER: !Ref OtelExecWrapper
+        JAVA_TOOL_OPTIONS: "-Dotel.javaagent.extensions=/var/task/lib/otel-plugin-extension.jar"
+        OTEL_JAVAAGENT_EXTENSIONS: /var/task/lib/otel-plugin-extension.jar
+        OTEL_SERVICE_NAME: !Ref OtelServiceName
+        OTEL_TRACES_EXPORTER: !Ref OtelTracesExporter
+        OTEL_EXPORTER_OTLP_ENDPOINT: !If
+          - HasOtelExporterEndpoint
+          - !Ref OtelExporterEndpoint
+          - !Ref "AWS::NoValue"
+        OTEL_EXPORTER_OTLP_HEADERS: !If
+          - HasOtelExporterHeaders
+          - !Ref OtelExporterHeaders
+          - !Ref "AWS::NoValue"
+        OTEL_EXPORTER_OTLP_PROTOCOL: !If [HasOtelExporterEndpoint, http/protobuf, grpc]
+        OTEL_PROPAGATORS: xray
+        OTEL_S3_BUCKET: !Ref OtelCollectorBucket
+        OTEL_S3_PREFIX: !Ref OtelCollectorPrefix
+        OPENTELEMETRY_COLLECTOR_CONFIG_URI: !If
+          - HasOtelCollectorLayer
+          - /opt/collector-config/config-s3.yaml
+          - !Ref "AWS::NoValue"
+
+Resources:
+  Otel1Success:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-1
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel1Success
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel2WaitResume:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-2
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel2WaitResume
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel3Retry:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-3
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel3Retry
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel4TerminalFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-4
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel4TerminalFailure
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel5ChildContext:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-5
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel5ChildContext
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel6Parallel:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-6
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel6Parallel
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel7Map:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-7
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel7Map
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel8HandledFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-8
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel8HandledFailure
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel9WaitForCondition:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-9
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel9WaitForCondition
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel10WaitForCallback:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-10
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel10WaitForCallback
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel11ChainedInvoke:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-11
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel11ChainedInvoke
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_INVOKE_TARGET_FUNCTION_NAME: !Sub "${Otel11InvokeTarget.Arn}:$LATEST"
+
+  Otel11InvokeTarget:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel11InvokeTarget
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel12ChildContextFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-12
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel12ChildContextFailure
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel13ParallelFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-13
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel13ParallelFailure
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel14MapFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-14
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel14MapFailure
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel15WaitInterrupted:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-15
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel15WaitInterrupted
+      Role: !Ref LambdaExecutionRoleArn
+      DurableConfig:
+        ExecutionTimeout: 15
+        RetentionPeriodInDays: 1
+
+  Otel16WaitForConditionFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-16
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel16WaitForConditionFailure
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel17WaitForCallbackFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-17
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel17WaitForCallbackFailure
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel18ChainedInvokeFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-18
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel18ChainedInvokeFailure
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_INVOKE_TARGET_FUNCTION_NAME: !Sub "${Otel18InvokeTarget.Arn}:$LATEST"
+
+  Otel18InvokeTarget:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel18InvokeTarget
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel19ExecutionFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-19
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel19ExecutionFailure
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel20VirtualContext:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-20
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel20VirtualContext
+      Role: !Ref LambdaExecutionRoleArn
+
+  OtelExecution1Success:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-1
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel1Success
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution2WaitResume:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-2
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel2WaitResume
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution3Retry:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-3
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel3Retry
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution4TerminalFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-4
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel4TerminalFailure
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution5ChildContext:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-5
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel5ChildContext
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution6Parallel:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-6
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel6Parallel
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution7Map:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-7
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel7Map
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution8HandledFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-8
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel8HandledFailure
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution9WaitForCondition:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-9
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel9WaitForCondition
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution10WaitForCallback:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-10
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel10WaitForCallback
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution11ChainedInvoke:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-11
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel11ChainedInvoke
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+          OTEL_INVOKE_TARGET_FUNCTION_NAME: !Sub "${OtelExecution11InvokeTarget.Arn}:$LATEST"
+
+  OtelExecution11InvokeTarget:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel11InvokeTarget
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution12ChildContextFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-12
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel12ChildContextFailure
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution13ParallelFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-13
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel13ParallelFailure
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution14MapFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-14
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel14MapFailure
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution15WaitInterrupted:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-15
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel15WaitInterrupted
+      Role: !Ref LambdaExecutionRoleArn
+      DurableConfig:
+        ExecutionTimeout: 15
+        RetentionPeriodInDays: 1
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution16WaitForConditionFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-16
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel16WaitForConditionFailure
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution17WaitForCallbackFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-17
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel17WaitForCallbackFailure
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution18ChainedInvokeFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-18
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel18ChainedInvokeFailure
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+          OTEL_INVOKE_TARGET_FUNCTION_NAME: !Sub "${OtelExecution18InvokeTarget.Arn}:$LATEST"
+
+  OtelExecution18InvokeTarget:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel18InvokeTarget
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution19ExecutionFailure:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-19
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel19ExecutionFailure
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution20VirtualContext:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-20
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel20VirtualContext
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution

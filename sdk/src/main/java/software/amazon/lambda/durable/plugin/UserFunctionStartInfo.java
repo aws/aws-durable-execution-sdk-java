@@ -16,7 +16,7 @@ import java.time.Instant;
  * @param subType operation sub-type (Map, Parallel, WaitForCondition, etc.) — may be null
  * @param parentId parent operation ID (null for root-level operations)
  * @param startTimestamp when the user function started
- * @param isReplayingChildren true if child operations within this context are being replayed from checkpoints
+ * @param isReplay true if this operation was present in the checkpointed state delivered at invocation start
  * @param attempt 1-based attempt number for steps/waitForCondition, null for context operations
  */
 public record UserFunctionStartInfo(
@@ -26,5 +26,5 @@ public record UserFunctionStartInfo(
         String subType,
         String parentId,
         Instant startTimestamp,
-        boolean isReplayingChildren,
+        boolean isReplay,
         Integer attempt) {}

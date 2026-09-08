@@ -4,11 +4,28 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.trace.SpanContext;
+import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.sdk.trace.IdGenerator;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.data.LinkData;
+import io.opentelemetry.sdk.trace.samplers.Sampler;
+import io.opentelemetry.sdk.trace.samplers.SamplingResult;
+import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class DeterministicIdGeneratorTest {
+
+    private static final Instant EXECUTION_START_TIME = Instant.parse("2026-08-15T00:00:00Z");
 
     private DeterministicIdGenerator generator;
 
@@ -32,6 +49,159 @@ class DeterministicIdGeneratorTest {
         assertEquals(32, id1.length());
         // Random IDs should differ (extremely unlikely to collide)
         assertNotEquals(id1, id2);
+    }
+
+    @Test
+    void scopedIds_delegateOutsideScope() {
+        var providerGenerator = new DeterministicIdGenerator();
+        try (var provider =
+                SdkTracerProvider.builder().setIdGenerator(providerGenerator).build()) {
+            var pluginTracer = provider.get("durable-plugin");
+            var unrelatedTracer = provider.get("unrelated-library");
+
+            var before = unrelatedTracer.spanBuilder("before").setNoParent().startSpan();
+            var workflowTraceId = generator.generateTraceIdForExecution("arn:exec1", EXECUTION_START_TIME);
+            var workflowSpanId = generator.generateWorkflowSpanId("arn:exec1");
+            var workflow = generator.startSpan(
+                    pluginTracer.spanBuilder("Workflow").setNoParent(), workflowTraceId, workflowSpanId);
+            var during = unrelatedTracer.spanBuilder("during").setNoParent().startSpan();
+            var after = unrelatedTracer.spanBuilder("after").setNoParent().startSpan();
+
+            assertEquals(workflowTraceId, workflow.getSpanContext().getTraceId());
+            assertEquals(workflowSpanId, workflow.getSpanContext().getSpanId());
+            assertAllFreshRoots(
+                    workflow.getSpanContext(),
+                    before.getSpanContext(),
+                    during.getSpanContext(),
+                    after.getSpanContext());
+
+            before.end();
+            workflow.end();
+            during.end();
+            after.end();
+        }
+    }
+
+    @Test
+    void scopedIds_bridgeAcrossGeneratorInstances() {
+        var agentGenerator = new DeterministicIdGenerator();
+        try (var provider =
+                SdkTracerProvider.builder().setIdGenerator(agentGenerator).build()) {
+            var workflowTraceId = generator.generateTraceIdForExecution("arn:exec1", EXECUTION_START_TIME);
+            var workflowSpanId = generator.generateWorkflowSpanId("arn:exec1");
+            var workflow = generator.startSpan(
+                    provider.get("durable-plugin").spanBuilder("Workflow").setNoParent(),
+                    workflowTraceId,
+                    workflowSpanId);
+
+            assertEquals(workflowTraceId, workflow.getSpanContext().getTraceId());
+            assertEquals(workflowSpanId, workflow.getSpanContext().getSpanId());
+            assertNotEquals(workflowTraceId, agentGenerator.generateTraceId());
+            workflow.end();
+        }
+    }
+
+    @Test
+    void scopedTraceId_isConsumedBeforeSamplerStartsNestedRoot() {
+        var fallbackTraceId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        var fallbackSpanId = "cccccccccccccccc";
+        var agentGenerator = new DeterministicIdGenerator(fixedIds(fallbackTraceId, fallbackSpanId));
+        var tracerReference = new AtomicReference<Tracer>();
+        var nestedSpanContext = new AtomicReference<SpanContext>();
+        var sampler = nestedRootSampler(tracerReference, nestedSpanContext);
+        try (var provider = SdkTracerProvider.builder()
+                .setIdGenerator(agentGenerator)
+                .setSampler(sampler)
+                .build()) {
+            var tracer = provider.get("durable-plugin");
+            tracerReference.set(tracer);
+            var workflowTraceId = generator.generateTraceIdForExecution("arn:exec1", EXECUTION_START_TIME);
+            var workflowSpanId = generator.generateWorkflowSpanId("arn:exec1");
+
+            var workflow =
+                    generator.startSpan(tracer.spanBuilder("Workflow").setNoParent(), workflowTraceId, workflowSpanId);
+
+            assertEquals(workflowTraceId, workflow.getSpanContext().getTraceId());
+            assertEquals(workflowSpanId, workflow.getSpanContext().getSpanId());
+            assertNotNull(nestedSpanContext.get());
+            assertEquals(fallbackTraceId, nestedSpanContext.get().getTraceId());
+            assertEquals(fallbackSpanId, nestedSpanContext.get().getSpanId());
+            workflow.end();
+        }
+    }
+
+    @Test
+    void concurrentScopedIds_doNotOverwriteEachOther() throws Exception {
+        var agentGenerator = new DeterministicIdGenerator();
+        var executor = Executors.newFixedThreadPool(2);
+        try (var provider =
+                SdkTracerProvider.builder().setIdGenerator(agentGenerator).build()) {
+            var tracer = provider.get("durable-plugin");
+            var barrier = new CyclicBarrier(2);
+            var traceId1 = generator.generateTraceIdForExecution("arn:exec1", EXECUTION_START_TIME);
+            var traceId2 = generator.generateTraceIdForExecution("arn:exec2", EXECUTION_START_TIME);
+            var spanId1 = generator.generateWorkflowSpanId("arn:exec1");
+            var spanId2 = generator.generateWorkflowSpanId("arn:exec2");
+
+            var first = executor.submit(() -> {
+                barrier.await();
+                return scopedSpanContext(tracer, new DeterministicIdGenerator(), traceId1, spanId1);
+            });
+            var second = executor.submit(() -> {
+                barrier.await();
+                return scopedSpanContext(tracer, new DeterministicIdGenerator(), traceId2, spanId2);
+            });
+
+            assertEquals(traceId1, first.get().getTraceId());
+            assertEquals(spanId1, first.get().getSpanId());
+            assertEquals(traceId2, second.get().getTraceId());
+            assertEquals(spanId2, second.get().getSpanId());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void installOn_preservesConfiguredFallbackGenerator() {
+        var fallbackTraceId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        var fallbackSpanId = "cccccccccccccccc";
+        var builder = SdkTracerProvider.builder().setIdGenerator(fixedIds(fallbackTraceId, fallbackSpanId));
+        var installedGenerator = DeterministicIdGenerator.installOn(builder);
+
+        try (var provider = builder.build()) {
+            var unrelated =
+                    provider.get("unrelated").spanBuilder("root").setNoParent().startSpan();
+            var workflowTraceId = generator.generateTraceIdForExecution("arn:exec1", EXECUTION_START_TIME);
+            var workflowSpanId = generator.generateWorkflowSpanId("arn:exec1");
+            var workflow = generator.startSpan(
+                    provider.get("durable").spanBuilder("Workflow").setNoParent(), workflowTraceId, workflowSpanId);
+
+            assertEquals(fallbackTraceId, unrelated.getSpanContext().getTraceId());
+            assertEquals(fallbackSpanId, unrelated.getSpanContext().getSpanId());
+            assertEquals(workflowTraceId, workflow.getSpanContext().getTraceId());
+            assertEquals(workflowSpanId, workflow.getSpanContext().getSpanId());
+            assertSame(installedGenerator, DeterministicIdGenerator.installOn(builder));
+
+            unrelated.end();
+            workflow.end();
+        }
+    }
+
+    @Test
+    void executionTraceId_usesStartTimestampAndArn() {
+        var traceId = generator.generateTraceIdForExecution("arn:exec1", EXECUTION_START_TIME);
+
+        assertEquals("6a7fac00", traceId.substring(0, 8));
+        assertEquals(traceId, generator.generateTraceIdForExecution("arn:exec1", EXECUTION_START_TIME));
+        assertNotEquals(traceId, generator.generateTraceIdForExecution("arn:exec2", EXECUTION_START_TIME));
+    }
+
+    @Test
+    void executionTraceId_requiresStartTimestamp() {
+        var exception = assertThrows(
+                NullPointerException.class, () -> generator.generateTraceIdForExecution("arn:exec1", null));
+
+        assertEquals("executionStartTime", exception.getMessage());
     }
 
     @Test
@@ -128,27 +298,17 @@ class DeterministicIdGeneratorTest {
     }
 
     @Test
-    void generatedIds_areSharedAcrossGeneratorInstances() {
+    void persistentIds_areIsolatedAcrossGeneratorInstances() {
         var pluginGenerator = new DeterministicIdGenerator();
-        var agentGenerator = new DeterministicIdGenerator();
+        var fallbackTraceId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        var fallbackSpanId = "cccccccccccccccc";
+        var agentGenerator = new DeterministicIdGenerator(fixedIds(fallbackTraceId, fallbackSpanId));
 
         pluginGenerator.setDurableExecutionArn("arn:exec1");
         pluginGenerator.setNextSpanOperationId("op-1");
 
-        assertEquals(pluginGenerator.generateTraceId(), agentGenerator.generateTraceId());
-        assertEquals(pluginGenerator.generateSpanIdForOperation("op-1"), agentGenerator.generateSpanId());
-    }
-
-    @Test
-    void rawSpanId_isSharedAcrossGeneratorInstances() {
-        var pluginGenerator = new DeterministicIdGenerator();
-        var agentGenerator = new DeterministicIdGenerator();
-
-        pluginGenerator.setDurableExecutionArn("arn:exec1");
-        var workflowSpanId = pluginGenerator.generateWorkflowSpanId();
-        pluginGenerator.setNextSpanId(workflowSpanId);
-
-        assertEquals(workflowSpanId, agentGenerator.generateSpanId());
+        assertEquals(fallbackTraceId, agentGenerator.generateTraceId());
+        assertEquals(fallbackSpanId, agentGenerator.generateSpanId());
     }
 
     @Test
@@ -284,5 +444,71 @@ class DeterministicIdGeneratorTest {
         var result = generator.generateTraceId();
         assertEquals(xrayTraceId, result);
         assertTrue(result.matches("[0-9a-f]{32}"));
+    }
+
+    private static Sampler nestedRootSampler(
+            AtomicReference<Tracer> tracerReference, AtomicReference<SpanContext> nestedSpanContext) {
+        return new Sampler() {
+            @Override
+            public SamplingResult shouldSample(
+                    Context parentContext,
+                    String traceId,
+                    String name,
+                    SpanKind spanKind,
+                    Attributes attributes,
+                    List<LinkData> parentLinks) {
+                if ("Workflow".equals(name)) {
+                    var nested = tracerReference
+                            .get()
+                            .spanBuilder("nested-root")
+                            .setNoParent()
+                            .startSpan();
+                    nestedSpanContext.set(nested.getSpanContext());
+                    nested.end();
+                }
+                return SamplingResult.recordAndSample();
+            }
+
+            @Override
+            public String getDescription() {
+                return "NestedRootSampler";
+            }
+        };
+    }
+
+    private static SpanContext scopedSpanContext(
+            io.opentelemetry.api.trace.Tracer tracer,
+            DeterministicIdGenerator pluginGenerator,
+            String traceId,
+            String spanId) {
+        var span = pluginGenerator.startSpan(tracer.spanBuilder("Workflow").setNoParent(), traceId, spanId);
+        var spanContext = span.getSpanContext();
+        span.end();
+        return spanContext;
+    }
+
+    private static void assertAllFreshRoots(SpanContext workflow, SpanContext... unrelated) {
+        for (var spanContext : unrelated) {
+            assertNotEquals(workflow.getTraceId(), spanContext.getTraceId());
+        }
+        for (var left = 0; left < unrelated.length; left++) {
+            for (var right = left + 1; right < unrelated.length; right++) {
+                assertNotEquals(unrelated[left].getTraceId(), unrelated[right].getTraceId());
+            }
+        }
+    }
+
+    private static IdGenerator fixedIds(String traceId, String spanId) {
+        return new IdGenerator() {
+            @Override
+            public String generateSpanId() {
+                return spanId;
+            }
+
+            @Override
+            public String generateTraceId() {
+                return traceId;
+            }
+        };
     }
 }

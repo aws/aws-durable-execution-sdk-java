@@ -17,10 +17,10 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * @param parentId parent operation ID (null for root-level operations)
  * @param startTimestamp when the user function started
  * @param endTimestamp when the user function ended
- * @param isReplayingChildren true if child operations within this context are being replayed from checkpoints
+ * @param isReplay true if this operation was present in the checkpointed state delivered at invocation start
  * @param attempt 1-based attempt number for steps/waitForCondition, null for context operations
- * @param succeeded true if the user function completed without error
- * @param error non-null if the user function failed; this component is experimental
+ * @param outcome the user function outcome
+ * @param error non-null if the user function failed or exited incompletely; this component is experimental
  */
 public record UserFunctionEndInfo(
         String id,
@@ -30,7 +30,7 @@ public record UserFunctionEndInfo(
         String parentId,
         Instant startTimestamp,
         Instant endTimestamp,
-        boolean isReplayingChildren,
+        boolean isReplay,
         Integer attempt,
-        boolean succeeded,
+        UserFunctionOutcome outcome,
         @Experimental Throwable error) {}

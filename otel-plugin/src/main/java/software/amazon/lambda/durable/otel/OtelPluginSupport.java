@@ -5,16 +5,15 @@ package software.amazon.lambda.durable.otel;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
-import io.opentelemetry.exporter.otlp.http.trace.OtlpHttpSpanExporter;
-import io.opentelemetry.sdk.resources.Resource;
+import io.opentelemetry.context.Context;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
-import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
-import io.opentelemetry.sdk.trace.samplers.Sampler;
-import io.opentelemetry.semconv.ServiceAttributes;
+import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,177 +24,166 @@ final class OtelPluginSupport {
 
     private OtelPluginSupport() {}
 
-    /** Gets the global TracerProvider after validating the SPI was installed. */
-    static TracerProvider getDefaultTracerProvider(String pluginName) {
-        validateAutoConfigurationCustomizerProviderInstalled(pluginName);
-
-        var globalTracerProvider = GlobalOpenTelemetry.getTracerProvider();
-        if (globalTracerProvider == TracerProvider.noop()) {
-            throw new IllegalStateException(pluginName + "() requires GlobalOpenTelemetry to be initialized by "
-                    + "OtelPluginAutoConfigurationCustomizerProvider through the OpenTelemetry Java agent.");
-        }
-        logger.info(
-                "{} initialized from existing GlobalOpenTelemetry tracer provider {}; assuming "
-                        + "deterministic span IDs were installed through AutoConfigurationCustomizerProvider",
-                pluginName,
-                globalTracerProvider.getClass().getName());
-        return globalTracerProvider;
-    }
-
     /** Creates a new DeterministicIdGenerator for the application-side state bridge. */
     static DeterministicIdGenerator createDefaultIdGenerator() {
         return new DeterministicIdGenerator();
     }
 
     /**
-     * Builds a plugin-owned {@link SdkTracerProvider} that exports over OTLP/HTTP (the {@link ProviderSource#AUTO_OTLP}
-     * default). Mirrors the auto-configured provider in the JavaScript and Python SDK plugins: an OTLP/HTTP exporter, a
-     * batch span processor, an env-driven sampler, Lambda resource attributes, and the deterministic ID generator.
+     * Resolves the durable execution's sampling decision for one invocation as a full {@link SamplingResult}, evaluated
+     * exactly once. The decision is applied to every durable span of the invocation (Workflow, Invocation, operation,
+     * attempt) via {@link DurableSampler}, so the configured sampler is not re-invoked per span and the three-way
+     * decision — including {@code RECORD_ONLY} — is preserved rather than reduced to a boolean.
      *
-     * @param config the plugin configuration (endpoint + headers)
-     * @param idGenerator the deterministic ID generator to install
-     * @param additionalResource extra resource attributes to merge (e.g. ExecutionOtelPlugin's service.name), or null
+     * <p>Sampling precedence, highest first:
+     *
+     * <ol>
+     *   <li><b>Explicit upstream {@code Sampled}</b> on the propagated header ({@code Sampled=1} /{@code Sampled=0}).
+     *       An authoritative backend decision is preserved regardless of the configured sampler;
+     *   <li><b>Same-trace ambient span.</b> When no explicit {@code Sampled} is present but a valid ambient span (an
+     *       auto-instrumentation Lambda handler span, {@code Span.current()}) is already on the canonical execution
+     *       trace, its established decision is followed. The ambient span is a same-trace descendant of the propagated
+     *       parent, so its decision is representative of this trace. Its full three-way decision is preserved: a
+     *       sampled span yields {@code RECORD_AND_SAMPLE}; an unsampled but recording span yields {@code RECORD_ONLY}
+     *       (its spans still reach processors); only an unsampled, non-recording span yields {@code DROP};
+     *   <li><b>Application-owned provider: configured sampler, once.</b> When the tracer provider is reachable (the
+     *       two-argument constructor path), its sampler is read directly and evaluated a single time with
+     *       {@code ROOT_CONTEXT} (so a parent-based sampler applies its root policy), the canonical trace ID, span
+     *       name, and attributes, and its full result is returned;
+     *   <li><b>Java-agent path: defer to the installed sampler.</b> When the provider is not visible
+     *       ({@code sdkTracerProvider == null}), this returns {@code null} to defer. It does <em>not</em> reconstruct
+     *       the sampler from environment settings: the agent's effective sampler is whatever its autoconfiguration
+     *       pipeline finally installs, and another extension's customizer can wrap or replace a recognized configured
+     *       sampler, so a reconstruction could disagree with the real delegate. Deferring routes the decision to the
+     *       agent-installed {@link DurableSampler}, which consults its actual delegate once per execution, caches the
+     *       result by trace ID, and reuses it for the execution's remaining durable spans (see
+     *       {@link DurableSampler#shouldSample}). The delegate's decision is honored in full — including a
+     *       {@code DROP}/rate-limited outcome — so durable spans are not force-sampled.
+     * </ol>
+     *
+     * <p>For the app-path branches, nothing is persisted across invocations: each invocation recomputes the decision
+     * from stable inputs (the canonical trace ID and the upstream {@code Sampled} value), so deterministic samplers
+     * reach the same decision on every reinvocation. The ambient-span branch is inherently per-invocation because the
+     * ambient span is recreated each invocation, which the shared spec accepts for same-trace ambient membership. On
+     * the agent path the delegate is consulted once per execution within a process and cached; the delegate itself (for
+     * example a ratio sampler) governs cross-invocation consistency.
+     *
+     * @param sdkTracerProvider the resolved provider, or null when it is not visible to the application (agent path)
+     * @param extracted the context parsed from the propagated header, or null when none is present
+     * @param ambientSpan the current ambient span ({@code Span.current()}); its context may be invalid and its
+     *     recording state distinguishes RECORD_ONLY from DROP for an unsampled same-trace parent
+     * @param canonicalTraceId the canonical execution trace ID (used for the ambient same-trace check and the sampler)
+     * @param spanName the span name passed to the sampler
+     * @param attributes the attributes the span is started with
+     * @return the resolved {@link SamplingResult}, or {@code null} when the decision is deferred to the agent-side
+     *     {@link DurableSampler}'s own delegate
      */
-    static SdkTracerProvider buildAutoOtlpProvider(
-            OtelPluginConfig config, DeterministicIdGenerator idGenerator, Resource additionalResource) {
-        var exporterBuilder = OtlpHttpSpanExporter.builder();
-        var endpoint = resolveOtlpEndpoint(config);
-        if (endpoint != null) {
-            exporterBuilder.setEndpoint(endpoint);
-        }
-        for (var header : config.otlpHeaders().entrySet()) {
-            exporterBuilder.addHeader(header.getKey(), header.getValue());
-        }
-
-        var resource = buildLambdaResource();
-        if (additionalResource != null) {
-            resource = resource.merge(additionalResource);
-        }
-
-        return SdkTracerProvider.builder()
-                .setIdGenerator(idGenerator)
-                .setSampler(resolveSampler())
-                .setResource(resource)
-                .addSpanProcessor(
-                        BatchSpanProcessor.builder(exporterBuilder.build()).build())
-                .build();
-    }
-
-    /**
-     * The tracer provider, tracer, and ID generator resolved for a config-only plugin constructor, plus the
-     * {@link ProviderSource} that produced them.
-     */
-    record ProviderSetup(
-            ProviderSource source,
+    static SamplingResult resolveSamplingResult(
             SdkTracerProvider sdkTracerProvider,
-            Tracer tracer,
-            DeterministicIdGenerator idGenerator) {}
-
-    /**
-     * Resolves the tracer provider for the config-only plugin constructors from
-     * {@link OtelPluginConfig#providerSource()}, centralizing the {@link ProviderSource} branching shared by
-     * {@link InvocationOtelPlugin} and {@link ExecutionOtelPlugin}:
-     *
-     * <ul>
-     *   <li>{@link ProviderSource#GLOBAL} — binds to the ADOT/global provider (not plugin-owned); the deterministic ID
-     *       generator is created for the application-side state bridge.
-     *   <li>{@link ProviderSource#AUTO_OTLP} — builds a plugin-owned OTLP/HTTP provider (see
-     *       {@link #buildAutoOtlpProvider}).
-     *   <li>{@link ProviderSource#EXPLICIT} — rejected: an explicit provider requires the
-     *       {@code (SdkTracerProviderBuilder, OtelPluginConfig)} constructor.
-     * </ul>
-     *
-     * @param config the plugin configuration
-     * @param pluginName the plugin name used in diagnostics/flush logging
-     * @return the resolved provider, tracer, ID generator, and source
-     * @throws IllegalArgumentException if {@code config.providerSource()} is {@link ProviderSource#EXPLICIT}
-     */
-    static ProviderSetup resolveConfiguredProvider(OtelPluginConfig config, String pluginName) {
-        return switch (config.providerSource()) {
-            case GLOBAL -> {
-                var idGenerator = createDefaultIdGenerator();
-                var tracerProvider = getDefaultTracerProvider(pluginName);
-                yield new ProviderSetup(
-                        ProviderSource.GLOBAL,
-                        getSdkTracerProviderForFlush(tracerProvider, pluginName),
-                        tracerProvider.get(config.instrumentationName()),
-                        idGenerator);
+            ExtractedContext extracted,
+            Span ambientSpan,
+            String canonicalTraceId,
+            String spanName,
+            Attributes attributes) {
+        // 1. An explicit upstream decision is authoritative.
+        if (extracted != null) {
+            switch (extracted.sampling()) {
+                case SAMPLED:
+                    return SamplingResult.recordAndSample();
+                case NOT_SAMPLED:
+                    return SamplingResult.drop();
+                case UNDECIDED:
+                    break;
             }
-            case AUTO_OTLP -> {
-                var idGenerator = new DeterministicIdGenerator();
-                var sdkTracerProvider = buildAutoOtlpProvider(config, idGenerator, null);
-                yield new ProviderSetup(
-                        ProviderSource.AUTO_OTLP,
-                        sdkTracerProvider,
-                        sdkTracerProvider.get(config.instrumentationName()),
-                        idGenerator);
+        }
+        // 2. No explicit decision: follow a valid same-trace ambient span's established decision. The sampled bit alone
+        // cannot distinguish RECORD_ONLY (recording, unsampled) from DROP (not recording, unsampled), so a sampled bit
+        // maps to RECORD_AND_SAMPLE, an unsampled-but-recording span maps to RECORD_ONLY (its spans still reach
+        // processors), and only an unsampled, non-recording span maps to DROP.
+        var ambient = ambientSpan != null ? ambientSpan.getSpanContext() : null;
+        if (ambient != null && ambient.isValid() && ambient.getTraceId().equals(canonicalTraceId)) {
+            if (ambient.getTraceFlags().isSampled()) {
+                return SamplingResult.recordAndSample();
             }
-            case EXPLICIT ->
-                throw new IllegalArgumentException(
-                        "OtelPluginConfig.providerSource(EXPLICIT) requires a caller-supplied SdkTracerProviderBuilder; "
-                                + "use the (SdkTracerProviderBuilder, OtelPluginConfig) constructor.");
-        };
-    }
-
-    /** Resolves the OTLP/HTTP traces endpoint (config -> env -> exporter default), appending the signal path. */
-    private static String resolveOtlpEndpoint(OtelPluginConfig config) {
-        if (config.otlpEndpoint() != null && !config.otlpEndpoint().isBlank()) {
-            return config.otlpEndpoint();
+            return ambientSpan.isRecording() ? SamplingResult.recordOnly() : SamplingResult.drop();
         }
-        var envEndpoint = System.getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
-        if (envEndpoint != null && !envEndpoint.isBlank()) {
-            var base = envEndpoint.endsWith("/") ? envEndpoint.substring(0, envEndpoint.length() - 1) : envEndpoint;
-            return base.endsWith("/v1/traces") ? base : base + "/v1/traces";
+        // 3. An application-owned provider exposes the real sampler: evaluate it once, preserving its full result.
+        if (sdkTracerProvider != null) {
+            return sdkTracerProvider
+                    .getSampler()
+                    .shouldSample(
+                            Context.root(),
+                            canonicalTraceId,
+                            spanName,
+                            SpanKind.INTERNAL,
+                            attributes,
+                            Collections.emptyList());
         }
-        // null -> the OTLP/HTTP exporter's own default (http://localhost:4318/v1/traces)
+        // 4. Agent path (provider not visible from the application class loader): defer. The agent's effective sampler
+        // is whatever the autoconfiguration pipeline finally installs — a recognized configured sampler can be wrapped
+        // or replaced by another extension's customizer, so it cannot be reliably reconstructed from environment
+        // settings here. Return null so the agent-installed DurableSampler consults its actual delegate once per
+        // execution and caches the result, honoring the customer's effective policy (including drop/rate-limit).
         return null;
     }
 
-    /** Builds the sampler from {@code OTEL_DURABLE_SAMPLING_RATIO}, falling back to always-on. */
-    private static Sampler resolveSampler() {
-        var raw = System.getenv("OTEL_DURABLE_SAMPLING_RATIO");
-        if (raw != null) {
-            try {
-                var ratio = Double.parseDouble(raw);
-                if (ratio >= 0.0 && ratio <= 1.0) {
-                    return Sampler.traceIdRatioBased(ratio);
-                }
-            } catch (NumberFormatException ignored) {
-                // fall through to always-on
-            }
-        }
-        return Sampler.alwaysOn();
+    /**
+     * True when the decision records and samples, used to derive the (never-exported) execution-ancestor trace flags. A
+     * {@code null} decision is unresolved (deferred to the agent-side sampler); it defaults the ancestor flag to
+     * sampled so a parent-based delegate is not biased toward dropping, while the agent-side {@link DurableSampler}
+     * still makes the authoritative per-span decision from its real delegate.
+     */
+    static boolean isSampled(SamplingResult samplingResult) {
+        return samplingResult == null
+                || samplingResult.getDecision()
+                        == io.opentelemetry.sdk.trace.samplers.SamplingDecision.RECORD_AND_SAMPLE;
     }
 
-    /** Builds Lambda resource attributes from AWS_* env vars, merged onto the default resource. */
-    private static Resource buildLambdaResource() {
-        var functionName = System.getenv("AWS_LAMBDA_FUNCTION_NAME");
-        if (functionName == null || functionName.isBlank()) {
-            return Resource.getDefault();
-        }
-        var attributes = Attributes.builder()
-                .put(ServiceAttributes.SERVICE_NAME, functionName)
-                .put("faas.name", functionName)
-                .put("cloud.provider", "aws")
-                .put("cloud.platform", "aws_lambda");
-        var region = System.getenv("AWS_REGION");
-        if (region != null && !region.isBlank()) {
-            attributes.put("cloud.region", region);
-        }
-        var version = System.getenv("AWS_LAMBDA_FUNCTION_VERSION");
-        if (version != null && !version.isBlank()) {
-            attributes.put("faas.version", version);
-        }
-        return Resource.getDefault().merge(Resource.create(attributes.build()));
-    }
+    /** The tracer provider and tracer resolved from the global OpenTelemetry instance. */
+    record ProviderSetup(SdkTracerProvider sdkTracerProvider, Tracer tracer) {}
 
-    /** Extracts trace context from the current OTel span (fallback when X-Ray header is unavailable). */
-    static ExtractedContext extractCurrentSpanContext() {
-        var spanContext = Span.current().getSpanContext();
-        if (!spanContext.isValid()) {
+    /**
+     * Tries to resolve the ADOT/global tracer provider without installing OpenTelemetry's no-op global. This is called
+     * at invocation start so a plugin constructed before the Java agent finishes initialization can bind later.
+     *
+     * @param instrumentationName the instrumentation scope name
+     * @param pluginName the plugin name used in diagnostics/flush logging
+     * @return the resolved provider and tracer, or {@code null} when telemetry must be disabled for this invocation
+     */
+    static ProviderSetup tryResolveGlobalProvider(String instrumentationName, String pluginName) {
+        if (!OtelPluginAutoConfigurationState.isInstalled()) {
+            logger.warn(
+                    "{} telemetry is disabled for this invocation because "
+                            + "OtelPluginAutoConfigurationCustomizerProvider is not installed yet. Provider resolution "
+                            + "will be retried on the next invocation. {}",
+                    pluginName,
+                    javaAgentExtensionsDiagnostic());
             return null;
         }
-        return new ExtractedContext(spanContext.getTraceId(), spanContext.getSpanId());
+        if (!GlobalOpenTelemetry.isSet()) {
+            logger.warn(
+                    "{} telemetry is disabled for this invocation because GlobalOpenTelemetry is not initialized yet. "
+                            + "Provider resolution will be retried on the next invocation.",
+                    pluginName);
+            return null;
+        }
+
+        var tracerProvider = GlobalOpenTelemetry.getOrNoop().getTracerProvider();
+        if (tracerProvider == TracerProvider.noop()) {
+            logger.warn(
+                    "{} telemetry is disabled for this invocation because GlobalOpenTelemetry contains a no-op tracer "
+                            + "provider. Provider resolution will be retried on the next invocation.",
+                    pluginName);
+            return null;
+        }
+
+        logger.info(
+                "{} initialized from existing GlobalOpenTelemetry tracer provider {}; assuming "
+                        + "deterministic span IDs were installed through AutoConfigurationCustomizerProvider",
+                pluginName,
+                tracerProvider.getClass().getName());
+        return new ProviderSetup(
+                getSdkTracerProviderForFlush(tracerProvider, pluginName), tracerProvider.get(instrumentationName));
     }
 
     /** Returns the SdkTracerProvider for flushing, or null if the provider is wrapped by the agent classloader. */
@@ -210,18 +198,6 @@ final class OtelPluginSupport {
                 pluginName,
                 tracerProvider.getClass().getName());
         return null;
-    }
-
-    private static void validateAutoConfigurationCustomizerProviderInstalled(String pluginName) {
-        if (OtelPluginAutoConfigurationState.isInstalled()) {
-            return;
-        }
-        throw new IllegalStateException(
-                pluginName + "() requires OtelPluginAutoConfigurationCustomizerProvider to be installed by the "
-                        + "OpenTelemetry Java agent. Package this plugin jar as an agent extension and set "
-                        + "OTEL_JAVAAGENT_EXTENSIONS or -Dotel.javaagent.extensions to that jar before constructing "
-                        + pluginName + "(). "
-                        + javaAgentExtensionsDiagnostic());
     }
 
     private static String javaAgentExtensionsDiagnostic() {

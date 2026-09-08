@@ -17,12 +17,17 @@ import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import io.opentelemetry.sdk.trace.samplers.Sampler;
 import java.time.Instant;
+import java.util.List;
 import java.util.ServiceLoader;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.plugin.*;
 
 class ExecutionOtelPluginTest {
@@ -37,6 +42,7 @@ class ExecutionOtelPluginTest {
     @BeforeEach
     void setUp() {
         DeterministicIdGenerator.clearSharedStateForTest();
+        DurableSamplingDecision.clearSharedStateForTest();
         OtelPluginAutoConfigurationState.resetInstalledForTest();
         spanExporter = InMemorySpanExporter.create();
         var resource = Resource.create(Attributes.of(SERVICE_NAME, CONFIGURED_SERVICE_NAME));
@@ -55,6 +61,7 @@ class ExecutionOtelPluginTest {
     void tearDown() {
         GlobalOpenTelemetry.resetForTest();
         DeterministicIdGenerator.clearSharedStateForTest();
+        DurableSamplingDecision.clearSharedStateForTest();
         OtelPluginAutoConfigurationState.resetInstalledForTest();
     }
 
@@ -82,74 +89,91 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void configOnlyConstructor_defaultsToGlobalProvider() {
+    void defaultConstructor_retriesGlobalProviderBindingOnNextInvocation() {
+        GlobalOpenTelemetry.resetForTest();
         OtelPluginAutoConfigurationState.markInstalled();
-        GlobalOpenTelemetry.resetForTest();
-        OpenTelemetrySdk.builder()
-                .setTracerProvider(SdkTracerProvider.builder().build())
-                .buildAndRegisterGlobal();
 
-        var plugin = new ExecutionOtelPlugin(OtelPluginConfig.defaults());
-        assertEquals(ProviderSource.GLOBAL, plugin.providerSource());
-    }
+        var defaultPlugin = new ExecutionOtelPlugin();
+        defaultPlugin.onInvocationStart(new InvocationInfo("req-disabled", "arn:disabled", true, Instant.now()));
+        defaultPlugin.onOperationStart(new OperationInfo(
+                "op-disabled", "disabled-step", "STEP", "Step", null, Instant.now(), null, null, false));
+        defaultPlugin.onOperationEnd(new OperationEndInfo(
+                "op-disabled",
+                "disabled-step",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
+        defaultPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-disabled", "arn:disabled", true, InvocationStatus.SUCCEEDED, null));
 
-    @Test
-    void configWithAutoOtlp_buildsPluginOwnedProvider() {
-        var plugin = new ExecutionOtelPlugin(OtelPluginConfig.builder()
-                .providerSource(ProviderSource.AUTO_OTLP)
-                .build());
-        assertEquals(ProviderSource.AUTO_OTLP, plugin.providerSource());
-    }
+        assertFalse(GlobalOpenTelemetry.isSet(), "An unavailable provider must not install the no-op global");
 
-    @Test
-    void builderConstructor_isExplicitSource() {
-        var plugin = new ExecutionOtelPlugin(SdkTracerProvider.builder(), OtelPluginConfig.defaults());
-        assertEquals(ProviderSource.EXPLICIT, plugin.providerSource());
-    }
-
-    @Test
-    void configProviderSource_defaultsToGlobalAndHonorsAutoOtlp() {
-        assertEquals(ProviderSource.GLOBAL, OtelPluginConfig.defaults().providerSource());
-        assertEquals(
-                ProviderSource.AUTO_OTLP,
-                OtelPluginConfig.builder()
-                        .providerSource(ProviderSource.AUTO_OTLP)
-                        .build()
-                        .providerSource());
-    }
-
-    @Test
-    void configOnlyConstructor_rejectsExplicitProviderSource() {
-        var config = OtelPluginConfig.builder()
-                .providerSource(ProviderSource.EXPLICIT)
-                .build();
-        var error = assertThrows(IllegalArgumentException.class, () -> new ExecutionOtelPlugin(config));
-        assertTrue(error.getMessage().contains("SdkTracerProviderBuilder"));
-    }
-
-    @Test
-    void defaultConstructor_throwsWhenAutoConfigurationCustomizerProviderIsNotInstalled() {
-        GlobalOpenTelemetry.resetForTest();
-        var error = assertThrows(IllegalStateException.class, ExecutionOtelPlugin::new);
-        assertTrue(error.getMessage().contains("OtelPluginAutoConfigurationCustomizerProvider"));
-    }
-
-    @Test
-    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
-        OtelPluginAutoConfigurationState.markInstalled();
-        GlobalOpenTelemetry.resetForTest();
         var globalExporter = InMemorySpanExporter.create();
         var globalTracerProvider = SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
                 .build();
         OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
 
+        defaultPlugin.onInvocationStart(new InvocationInfo("req-enabled", "arn:enabled", true, Instant.now()));
+        defaultPlugin.onOperationStart(new OperationInfo(
+                "op-enabled", "enabled-step", "STEP", "Step", null, Instant.now(), null, null, false));
+        defaultPlugin.onOperationEnd(new OperationEndInfo(
+                "op-enabled",
+                "enabled-step",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
+        defaultPlugin.onInvocationEnd(
+                new InvocationEndInfo("req-enabled", "arn:enabled", true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = globalExporter.getFinishedSpanItems();
+        assertEquals(3, spans.size());
+        assertTrue(spans.stream().anyMatch(span -> span.getName().equals("enabled-step")));
+        assertFalse(spans.stream().anyMatch(span -> span.getName().equals("disabled-step")));
+    }
+
+    @Test
+    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
         var defaultPlugin = new ExecutionOtelPlugin();
+        assertFalse(GlobalOpenTelemetry.isSet());
+
+        OtelPluginAutoConfigurationState.markInstalled();
+        var globalExporter = InMemorySpanExporter.create();
+        var globalTracerProvider = SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
+                .build();
+        OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
+
         defaultPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         defaultPlugin.onOperationStart(
                 new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, null, false));
         defaultPlugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "step",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         defaultPlugin.onInvocationEnd(
                 new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
@@ -229,7 +253,7 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void workflowAndInvocationSpans_areIndependentRoots_withoutAmbientContext() {
+    void workflowAndInvocationSpans_shareExecutionTrace_withoutAmbientContext() {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
@@ -237,27 +261,139 @@ class ExecutionOtelPluginTest {
         var workflowSpan = spanByName(spans, "Workflow");
         var invocationSpan = spanByName(spans, "Invocation");
 
-        assertFalse(workflowSpan.getParentSpanContext().isValid(), "Workflow span must be a root");
-        assertFalse(invocationSpan.getParentSpanContext().isValid(), "Invocation span must be a root");
-        assertEquals(workflowSpan.getTraceId(), invocationSpan.getTraceId());
+        // With no propagated context, a synthetic execution root anchors the trace and both spans parent onto it.
+        assertEquals(
+                workflowSpan.getTraceId(),
+                invocationSpan.getTraceId(),
+                "Workflow and Invocation spans share the execution trace");
+        assertTrue(workflowSpan.getParentSpanContext().isValid(), "Workflow span parents onto the execution ancestor");
+        assertTrue(
+                invocationSpan.getParentSpanContext().isValid(), "Invocation span parents onto the execution ancestor");
+        assertEquals(
+                workflowSpan.getParentSpanId(),
+                invocationSpan.getParentSpanId(),
+                "Both spans share the same synthetic execution root as parent");
         assertEquals(SpanKind.INTERNAL, invocationSpan.getKind());
     }
 
     @Test
-    void invocationStart_usesCurrentSpanContext_whenExtractorReturnsNull() {
-        var traceId = "5759e988bd862e3fe1be46a994272793";
-        var parentSpanId = "53995c3f42cd8ad8";
-        var parentSpanContext =
-                SpanContext.create(traceId, parentSpanId, TraceFlags.getSampled(), TraceState.getDefault());
+    void invocationStart_joinsAmbientTrace_whenAmbientIsOnExecutionTrace() {
+        // Drive an invocation to learn the canonical execution trace ID, then start a fresh invocation with an ambient
+        // span on that same trace: the Invocation span joins the ambient span directly.
+        plugin.onInvocationStart(new InvocationInfo("req-0", ARN, true, Instant.now()));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-0", ARN, true, InvocationStatus.SUCCEEDED, null));
+        var canonicalTraceId =
+                spanByName(spanExporter.getFinishedSpanItems(), "Workflow").getTraceId();
+        spanExporter.reset();
 
-        try (var ignored = Span.wrap(parentSpanContext).makeCurrent()) {
+        var ambientSpanId = "53995c3f42cd8ad8";
+        var ambient =
+                SpanContext.create(canonicalTraceId, ambientSpanId, TraceFlags.getSampled(), TraceState.getDefault());
+        try (var ignored = Span.wrap(ambient).makeCurrent()) {
+            plugin.onInvocationStart(new InvocationInfo("req-1", ARN, false, Instant.now()));
+        }
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, false, InvocationStatus.SUCCEEDED, null));
+
+        var invocationSpan = spanByName(spanExporter.getFinishedSpanItems(), "Invocation");
+        assertEquals(canonicalTraceId, invocationSpan.getTraceId());
+        assertEquals(ambientSpanId, invocationSpan.getParentSpanId(), "Invocation joins the ambient span on its trace");
+    }
+
+    @Test
+    void invocationStart_staysOnExecutionTrace_withoutLinkingAmbientSpan() {
+        // With no backend execution context (null extractor) but a valid ambient span on a different trace (for
+        // example a per-invocation Lambda/agent span or a custom-propagated parent), the durable spans must stay on the
+        // stable ARN-derived execution trace and must NOT link the ambient span: the conformance contract requires the
+        // Invocation span to have no links, and the ambient span on a foreign trace is not modeled as a link.
+        var ambientTraceId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        var ambientSpanId = "1111111111111111";
+        var ambient =
+                SpanContext.create(ambientTraceId, ambientSpanId, TraceFlags.getSampled(), TraceState.getDefault());
+        try (var ignored = Span.wrap(ambient).makeCurrent()) {
             plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         }
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
-        var invocationSpan = spanByName(spanExporter.getFinishedSpanItems(), "Invocation");
-        assertEquals(traceId, invocationSpan.getTraceId());
-        assertEquals(parentSpanId, invocationSpan.getParentSpanId());
+        var spans = spanExporter.getFinishedSpanItems();
+        var workflowSpan = spanByName(spans, "Workflow");
+        var invocationSpan = spanByName(spans, "Invocation");
+        assertNotEquals(ambientTraceId, workflowSpan.getTraceId(), "Workflow stays on the execution trace");
+        assertEquals(workflowSpan.getTraceId(), invocationSpan.getTraceId(), "Invocation shares the execution trace");
+        assertTrue(invocationSpan.getLinks().isEmpty(), "Invocation span carries no ambient link");
+    }
+
+    @Test
+    void contextExtractor_isInvokedEveryInvocation_evenWithAmbientSpan_andBackendContextWins() {
+        // Contract: the extractor is consulted on every invocation, unconditionally — including when a valid ambient
+        // span is active — and a valid extracted backend context anchors the execution trace over the ambient span.
+        var backendTraceId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        var backendParentId = "2222222222222222";
+        var extractCalls = new AtomicInteger();
+        var exporter = InMemorySpanExporter.create();
+        var extractorPlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> {
+                            extractCalls.incrementAndGet();
+                            return new ExtractedContext(
+                                    backendTraceId, backendParentId, ExtractedContext.Sampling.SAMPLED);
+                        })
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
+
+        var ambient = SpanContext.create(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "1111111111111111",
+                TraceFlags.getSampled(),
+                TraceState.getDefault());
+        try (var ignored = Span.wrap(ambient).makeCurrent()) {
+            extractorPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        }
+        extractorPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        assertEquals(1, extractCalls.get(), "Extractor is invoked even when a valid ambient span is active");
+        var spans = exporter.getFinishedSpanItems();
+        var workflowSpan = spanByName(spans, "Workflow");
+        assertEquals(backendTraceId, workflowSpan.getTraceId(), "Extracted backend context anchors the trace");
+        assertEquals(backendParentId, workflowSpan.getParentSpanId(), "Workflow parents onto the backend span");
+    }
+
+    @Test
+    void executionTrace_isStableAcrossReinvocations_withDifferentAmbientTraces() {
+        // Reinvocation regression: the same durable execution keeps one trace ID across invocations even when the
+        // ambient span differs on each invocation (as a per-invocation Lambda/agent span would).
+        var ambientA = SpanContext.create(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "1111111111111111",
+                TraceFlags.getSampled(),
+                TraceState.getDefault());
+        var ambientB = SpanContext.create(
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "2222222222222222",
+                TraceFlags.getSampled(),
+                TraceState.getDefault());
+        var startTime = Instant.now();
+
+        try (var ignored = Span.wrap(ambientA).makeCurrent()) {
+            plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, startTime));
+        }
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+        var firstInvocationTrace =
+                spanByName(spanExporter.getFinishedSpanItems(), "Invocation").getTraceId();
+        spanExporter.reset();
+
+        try (var ignored = Span.wrap(ambientB).makeCurrent()) {
+            plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, startTime));
+        }
+        plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
+        var secondInvocationTrace =
+                spanByName(spanExporter.getFinishedSpanItems(), "Invocation").getTraceId();
+
+        assertEquals(
+                firstInvocationTrace,
+                secondInvocationTrace,
+                "The execution trace is stable across reinvocations despite different ambient traces");
     }
 
     @Test
@@ -330,7 +466,18 @@ class ExecutionOtelPluginTest {
         plugin.onOperationStart(
                 new OperationInfo("op-1", "flaky", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "flaky", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", 3, false, null));
+                "op-1",
+                "flaky",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                3,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "flaky");
@@ -347,7 +494,18 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
         // No matching onOperationStart in this invocation — continuation branch.
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "flaky", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", 2, false, null));
+                "op-1",
+                "flaky",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                2,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "flaky");
@@ -366,7 +524,7 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(new OperationInfo("op-1", "step-a", "STEP", "Step", null, opStart, null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-a", "STEP", "Step", null, opStart, opEnd, "SUCCEEDED", null, false, null));
+                "op-1", "step-a", "STEP", "Step", null, opStart, opEnd, "SUCCEEDED", null, false, null, null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "step-a");
@@ -382,7 +540,18 @@ class ExecutionOtelPluginTest {
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "step-a",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -408,9 +577,30 @@ class ExecutionOtelPluginTest {
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1",
+                "compute",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "compute",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -438,7 +628,17 @@ class ExecutionOtelPluginTest {
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "process-order", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "process-order", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1",
+                "process-order",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var attemptSpan = spanExporter.getFinishedSpanItems().stream()
@@ -469,6 +669,7 @@ class ExecutionOtelPluginTest {
                 "SUCCEEDED",
                 null,
                 false,
+                null,
                 null));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-parent",
@@ -481,6 +682,7 @@ class ExecutionOtelPluginTest {
                 "SUCCEEDED",
                 null,
                 false,
+                null,
                 null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
@@ -491,6 +693,64 @@ class ExecutionOtelPluginTest {
                 parentSpan.getSpanId(),
                 childSpan.getParentSpanId(),
                 "Child operation should be parented to its parent operation span");
+    }
+
+    @Test
+    void contextOperation_currentContextCarriesResolvedFlags_withAlwaysOffSampler() {
+        // The operation span is deferred to onOperationEnd, so the context made current during a CONTEXT operation is a
+        // non-recording placeholder. Its trace flags must come from the Invocation span (already run through
+        // DurableSampler), so descendants inherit the resolved decision. With always_off the resolved decision is
+        // unsampled, so the current context inside the context body must be unsampled — not a provisional sampled bit.
+        var exporter = InMemorySpanExporter.create();
+        var offPlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder()
+                        .setSampler(Sampler.alwaysOff())
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
+
+        offPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        offPlugin.onOperationStart(
+                new OperationInfo("ctx-1", "my-ctx", "CONTEXT", "Context", null, Instant.now(), null, null, false));
+        offPlugin.onUserFunctionStart(
+                new UserFunctionStartInfo("ctx-1", "my-ctx", "CONTEXT", "Context", null, Instant.now(), false, 1));
+
+        var current = Span.current().getSpanContext();
+        assertTrue(current.isValid(), "A context is made current inside a context operation body");
+        assertFalse(
+                current.getTraceFlags().isSampled(),
+                "The current context must carry the always_off delegate's resolved unsampled flags (from the "
+                        + "Invocation span), not a provisional sampled bit that would let descendants bypass the "
+                        + "drop policy");
+
+        offPlugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "ctx-1",
+                "my-ctx",
+                "CONTEXT",
+                "Context",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
+        offPlugin.onOperationEnd(new OperationEndInfo(
+                "ctx-1",
+                "my-ctx",
+                "CONTEXT",
+                "Context",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null));
+        offPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
     }
 
     // ─── Failure propagation ─────────────────────────────────────────────
@@ -510,7 +770,7 @@ class ExecutionOtelPluginTest {
                 Instant.now(),
                 false,
                 1,
-                false,
+                UserFunctionOutcome.FAILED,
                 new RuntimeException("step failed")));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.FAILED, null));
 
@@ -527,7 +787,17 @@ class ExecutionOtelPluginTest {
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
-                "op-1", "compute", "STEP", "Step", null, Instant.now(), Instant.now(), false, 1, true, null));
+                "op-1",
+                "compute",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var attemptSpan = spanExporter.getFinishedSpanItems().stream()
@@ -538,12 +808,48 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
+    void userFunctionIncomplete_leavesAttemptSpanUnset() {
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "waiting", "STEP", "Step", null, Instant.now(), false, 1));
+        plugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1",
+                "waiting",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.INCOMPLETE,
+                new SuspendExecutionException()));
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+
+        var attemptSpan = spanByName(spanExporter.getFinishedSpanItems(), "waiting attempt 1");
+        assertEquals(StatusCode.UNSET, attemptSpan.getStatus().getStatusCode());
+        assertEquals("INCOMPLETE", attemptSpan.getAttributes().get(AttributeKey.stringKey("durable.attempt.outcome")));
+        assertTrue(attemptSpan.getEvents().isEmpty());
+    }
+
+    @Test
     void operationSuccess_setsOkOnOperationSpan() {
         plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-ok", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-ok", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "step-ok",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "step-ok");
@@ -569,6 +875,7 @@ class ExecutionOtelPluginTest {
                 "CANCELLED",
                 null,
                 false,
+                null,
                 null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
@@ -592,6 +899,7 @@ class ExecutionOtelPluginTest {
                 "TIMED_OUT",
                 null,
                 false,
+                null,
                 null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
 
@@ -607,7 +915,18 @@ class ExecutionOtelPluginTest {
         plugin.onOperationStart(
                 new OperationInfo("op-ctx", "my-ctx", "CONTEXT", null, null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-ctx", "my-ctx", "CONTEXT", null, null, Instant.now(), Instant.now(), null, null, false, null));
+                "op-ctx",
+                "my-ctx",
+                "CONTEXT",
+                null,
+                null,
+                Instant.now(),
+                Instant.now(),
+                null,
+                null,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var operationSpan = spanByName(spanExporter.getFinishedSpanItems(), "my-ctx");
@@ -622,13 +941,97 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        // Only the invocation span is exported. The still-open operation span is NOT force-ended (no PENDING
-        // span here), and the Workflow span is not exported on a non-terminal invocation.
+        // Only the invocation span is exported. A still-open operation has no recording span (creation is deferred to
+        // onOperationEnd), so there is nothing to abandon, and the Workflow span is not exported on a non-terminal
+        // invocation.
         assertEquals(1, spans.size());
         assertEquals("Invocation", spans.get(0).getName());
         assertTrue(
                 spans.stream().noneMatch(s -> s.getName().equals("my-wait")),
                 "An operation still open at invocation end must not be ended/exported in onInvocationEnd");
+    }
+
+    @Test
+    void openAttemptSpan_isEndedAtInvocationEnd_notAbandoned() {
+        // A user function that starts but never ends (e.g. the execution suspends mid-attempt) must not leave a
+        // recording span abandoned: onInvocationEnd force-ends it so it is exported.
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "stuck", "STEP", "Step", null, Instant.now(), false, 1));
+        // No onUserFunctionEnd — the invocation suspends.
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+
+        var attemptSpan = spanExporter.getFinishedSpanItems().stream()
+                .filter(s -> s.getName().contains("stuck"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Open attempt span must be ended and exported, not abandoned"));
+        assertTrue(attemptSpan.hasEnded(), "Attempt span must be ended");
+    }
+
+    @Test
+    void everyRecordingSpanIsEnded_onNonTerminalInvocation() {
+        // No recording span may be left un-ended when the execution returns a non-terminal status.
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        plugin.onOperationStart(
+                new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
+        plugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
+        // Suspend mid-attempt: neither onUserFunctionEnd nor onOperationEnd fires.
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+
+        // Whatever spans were exported this invocation must all be ended (InMemorySpanExporter only records ended
+        // spans, so an abandoned recording span would simply be missing — assert the attempt span made it out ended).
+        var spans = spanExporter.getFinishedSpanItems();
+        assertTrue(spans.stream().allMatch(SpanData::hasEnded), "All exported spans are ended");
+        assertTrue(
+                spans.stream().anyMatch(s -> s.getName().contains("step-a")),
+                "The open attempt span is force-ended and exported rather than abandoned");
+    }
+
+    @Test
+    void noRecordingSpanIsLeftOpen_onPending_trackedByLifecycleProcessor() {
+        assertNoOpenSpansOnNonTerminal(InvocationStatus.PENDING);
+    }
+
+    @Test
+    void noRecordingSpanIsLeftOpen_onRetrying_trackedByLifecycleProcessor() {
+        assertNoOpenSpansOnNonTerminal(InvocationStatus.RETRYING);
+    }
+
+    /**
+     * Drives an invocation that suspends mid-attempt and ends with the given non-terminal status, using a lifecycle
+     * processor that observes onStart/onEnd. Unlike an exporter (which only receives ended spans), this catches a span
+     * that started but was abandoned un-ended. Asserts nothing is left open, that the attempt span was actually started
+     * (so the check is not vacuous), and that the deferred Workflow span never started.
+     */
+    private void assertNoOpenSpansOnNonTerminal(InvocationStatus status) {
+        var lifecycle = new LifecycleTrackingSpanProcessor();
+        var trackingPlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(lifecycle),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
+
+        trackingPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        trackingPlugin.onOperationStart(
+                new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
+        trackingPlugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), false, 1));
+        // Suspend mid-attempt: neither onUserFunctionEnd nor onOperationEnd fires.
+        trackingPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, status, null));
+
+        assertTrue(
+                lifecycle.startedSpanNames().stream().anyMatch(n -> n.contains("step-a")),
+                "The attempt span must have started, so the no-open-spans assertion is meaningful");
+        assertEquals(
+                List.of(),
+                lifecycle.openSpanNames(),
+                "No recording span may be left open on a " + status + " invocation");
+        assertFalse(
+                lifecycle.startedSpanNames().contains("Workflow"),
+                "The deferred Workflow span must not start on a non-terminal invocation");
     }
 
     @Test
@@ -647,7 +1050,18 @@ class ExecutionOtelPluginTest {
         // Invocation 2: the operation completes → materialized once via onOperationEnd, linked to this invocation.
         plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "my-wait",
+                "WAIT",
+                "Wait",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -664,23 +1078,40 @@ class ExecutionOtelPluginTest {
     // ─── Cross-invocation stitching ──────────────────────────────────────
 
     @Test
-    void allSpansShareTraceId_acrossInvocations() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+    void executionTraceIsStableAcrossInvocations_andSharedByInvocationSpans() {
+        var executionStartTime = Instant.parse("2026-08-15T00:00:00Z");
+        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, executionStartTime));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-1", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-1", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "step-1",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
-        var firstTraceId = spanExporter.getFinishedSpanItems().get(0).getTraceId();
+        var firstSpans = spanExporter.getFinishedSpanItems();
+        var executionTraceId = spanByName(firstSpans, "step-1").getTraceId();
+        var firstInvocationTraceId = spanByName(firstSpans, "Invocation").getTraceId();
         spanExporter.reset();
 
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, executionStartTime));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
         var secondSpans = spanExporter.getFinishedSpanItems();
+        var workflowSpan = spanByName(secondSpans, "Workflow");
+        var secondInvocationSpan = spanByName(secondSpans, "Invocation");
 
-        assertTrue(
-                secondSpans.stream().allMatch(s -> s.getTraceId().equals(firstTraceId)),
-                "All spans of one execution must share the same trace ID");
+        // The whole execution shares one trace ID, stable across invocations.
+        assertEquals(executionTraceId, workflowSpan.getTraceId());
+        assertEquals(executionTraceId, firstInvocationTraceId);
+        assertEquals(executionTraceId, secondInvocationSpan.getTraceId());
     }
 
     @Test
@@ -698,6 +1129,7 @@ class ExecutionOtelPluginTest {
                 "SUCCEEDED",
                 null,
                 false,
+                null,
                 null));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
 
@@ -761,13 +1193,19 @@ class ExecutionOtelPluginTest {
     // ─── X-Ray trace ID ──────────────────────────────────────────────────
 
     @Test
-    void xrayExtraction_allSpansShareExtractedTraceId() {
+    void xrayExtraction_undecidedSampling_remoteParentIsAncestor_flagUnset() {
         var xrayTraceId = "aabbccddee112233445566778899aabb";
+        var parentSpanId = "53995c3f42cd8ad8";
         var exporter = InMemorySpanExporter.create();
+        // Two-arg context → UNDECIDED sampling: the valid remote parent is still the authoritative ancestor. A
+        // non-parent-based alwaysOn sampler exports the spans so the topology is observable (a plain parent-based
+        // sampler would drop them, since the remote parent's sampled flag is left unset).
         var xrayPlugin = new ExecutionOtelPlugin(
-                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                SdkTracerProvider.builder()
+                        .setSampler(Sampler.alwaysOn())
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
                 OtelPluginConfig.builder()
-                        .contextExtractor(() -> new ExtractedContext(xrayTraceId, null))
+                        .contextExtractor(() -> new ExtractedContext(xrayTraceId, parentSpanId))
                         .enableMdc(false)
                         .workflowSpanName("Workflow")
                         .build());
@@ -775,25 +1213,100 @@ class ExecutionOtelPluginTest {
         xrayPlugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
         xrayPlugin.onOperationEnd(new OperationEndInfo(
-                "op-1", "step-a", "STEP", "Step", null, Instant.now(), Instant.now(), "SUCCEEDED", null, false, null));
+                "op-1",
+                "step-a",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                "SUCCEEDED",
+                null,
+                false,
+                null,
+                null));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = exporter.getFinishedSpanItems();
         assertTrue(spans.size() >= 3, "Workflow + invocation + operation spans expected");
-        assertTrue(
-                spans.stream().allMatch(s -> s.getTraceId().equals(xrayTraceId)),
-                "All spans must share the extracted X-Ray trace ID");
+        var workflowSpan = spanByName(spans, "Workflow");
+        var invocationSpan = spanByName(spans, "Invocation");
+        var operationSpan = spanByName(spans, "step-a");
+        // The remote parent is the ancestor: Workflow and Invocation both parent onto it, on the remote trace.
+        assertEquals(xrayTraceId, workflowSpan.getTraceId());
+        assertEquals(xrayTraceId, invocationSpan.getTraceId());
+        assertEquals(xrayTraceId, operationSpan.getTraceId());
+        assertEquals(parentSpanId, workflowSpan.getParentSpanId(), "Workflow parents onto the remote span");
+        assertEquals(parentSpanId, invocationSpan.getParentSpanId(), "Invocation parents onto the remote span");
+        assertTrue(workflowSpan.getLinks().isEmpty(), "No remote-parent link when the remote context is the ancestor");
     }
 
     @Test
-    void xrayExtraction_withParentSpanId_invocationSpanHasCorrectParent() {
-        var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
+    void xrayExtraction_undecidedSampling_parentBasedSampler_defersToSamplerAndExports() {
+        // With a ParentBased(root=alwaysOn) sampler and no explicit upstream Sampled, the undecided decision is
+        // resolved from the configured sampler (sampled here) rather than forced unsampled. The remote parent is
+        // therefore built sampled, so the execution trace is exported instead of dropped.
+        var xrayTraceId = "aabbccddee112233445566778899aabb";
         var parentSpanId = "53995c3f42cd8ad8";
         var exporter = InMemorySpanExporter.create();
         var xrayPlugin = new ExecutionOtelPlugin(
-                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                SdkTracerProvider.builder()
+                        .setSampler(Sampler.parentBased(Sampler.alwaysOn()))
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
                 OtelPluginConfig.builder()
                         .contextExtractor(() -> new ExtractedContext(xrayTraceId, parentSpanId))
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        var spans = exporter.getFinishedSpanItems();
+        assertFalse(
+                spans.isEmpty(),
+                "Undecided upstream defers to the configured sampler (alwaysOn), so spans are exported");
+        var workflowSpan = spanByName(spans, "Workflow");
+        assertEquals(xrayTraceId, workflowSpan.getTraceId());
+        assertEquals(parentSpanId, workflowSpan.getParentSpanId(), "Workflow parents onto the remote span");
+        assertTrue(workflowSpan.getSpanContext().isSampled(), "Resolved from the sampler, the trace is sampled");
+    }
+
+    @Test
+    void xrayExtraction_undecidedSampling_parentBasedNeverSampler_dropsExecutionTrace() {
+        // Symmetric case: when the configured sampler's root decision is "drop" (ParentBased(root=alwaysOff)) and the
+        // upstream is undecided, the resolved decision is not-sampled, so nothing is exported. This confirms the
+        // undecided path follows the sampler in both directions rather than being hardcoded.
+        var xrayTraceId = "aabbccddee112233445566778899aabb";
+        var parentSpanId = "53995c3f42cd8ad8";
+        var exporter = InMemorySpanExporter.create();
+        var xrayPlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder()
+                        .setSampler(Sampler.parentBased(Sampler.alwaysOff()))
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> new ExtractedContext(xrayTraceId, parentSpanId))
+                        .enableMdc(false)
+                        .workflowSpanName("Workflow")
+                        .build());
+        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+
+        assertTrue(
+                exporter.getFinishedSpanItems().isEmpty(),
+                "An undecided upstream with a drop-sampler resolves to not-sampled");
+    }
+
+    @Test
+    void xrayExtraction_explicitSampled_remoteParentIsExecutionAncestor() {
+        var xrayTraceId = "5759e988bd862e3fe1be46a994272793";
+        var parentSpanId = "53995c3f42cd8ad8";
+        var exporter = InMemorySpanExporter.create();
+        // Explicit Sampled=1 with a complete parent → the remote context is the execution ancestor directly.
+        var xrayPlugin = new ExecutionOtelPlugin(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() ->
+                                new ExtractedContext(xrayTraceId, parentSpanId, ExtractedContext.Sampling.SAMPLED))
                         .enableMdc(false)
                         .workflowSpanName("Workflow")
                         .build());
@@ -804,9 +1317,12 @@ class ExecutionOtelPluginTest {
         var spans = exporter.getFinishedSpanItems();
         var workflowSpan = spanByName(spans, "Workflow");
         var invocationSpan = spanByName(spans, "Invocation");
-        assertFalse(workflowSpan.getParentSpanContext().isValid(), "Workflow span must remain an independent root");
+        assertEquals(xrayTraceId, workflowSpan.getTraceId());
         assertEquals(xrayTraceId, invocationSpan.getTraceId());
-        assertEquals(parentSpanId, invocationSpan.getParentSpanId());
+        assertEquals(parentSpanId, workflowSpan.getParentSpanId(), "Workflow parents onto the remote span directly");
+        assertEquals(
+                parentSpanId, invocationSpan.getParentSpanId(), "Invocation parents onto the remote span directly");
+        assertTrue(workflowSpan.getLinks().isEmpty(), "No remote-parent link when the remote context is the ancestor");
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────

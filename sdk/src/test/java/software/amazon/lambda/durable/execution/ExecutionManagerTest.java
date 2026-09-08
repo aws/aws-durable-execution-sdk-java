@@ -8,6 +8,11 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
@@ -17,7 +22,11 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
 class ExecutionManagerTest {
     private static final String EXECUTION_OP_ID = "01234567-0123-0123-0123-012345678901";
@@ -198,5 +207,112 @@ class ExecutionManagerTest {
         assertTrue(manager.isOperationUpdatedSinceLastInvocation("2"));
         assertTrue(manager.isOperationUpdatedSinceLastInvocation("3"));
         assertFalse(manager.isOperationUpdatedSinceLastInvocation("4"));
+    }
+
+    @Test
+    void checkpointStateIsNotPublishedBeforeOperationCompletion() throws Exception {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        var durableContext = mock(DurableContextImpl.class);
+        when(durableContext.getExecutionManager()).thenReturn(manager);
+
+        class TestOperation extends BaseDurableOperation {
+            TestOperation() {
+                super(OperationIdentifier.of("step", "step", OperationSubType.STEP), durableContext, null);
+            }
+
+            @Override
+            protected void start() {}
+
+            @Override
+            protected void replay(Operation existing) {}
+
+            CompletableFuture<BaseDurableOperation> completionLock() {
+                return completionFuture;
+            }
+        }
+
+        var operation = new TestOperation();
+        var checkpointStarted = new CountDownLatch(1);
+        CompletableFuture<Void> checkpoint;
+        synchronized (operation.completionLock()) {
+            checkpoint = CompletableFuture.runAsync(() -> {
+                checkpointStarted.countDown();
+                manager.onCheckpointComplete(List.of(stepOp("step", OperationStatus.SUCCEEDED)));
+            });
+            assertTrue(checkpointStarted.await(5, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> checkpoint.get(500, TimeUnit.MILLISECONDS));
+            assertEquals(
+                    OperationStatus.PENDING,
+                    manager.getOperationAndUpdateReplayState("step").status());
+        }
+
+        checkpoint.get(5, TimeUnit.SECONDS);
+        assertTrue(operation.getCompletionFuture().isDone());
+        assertEquals(
+                OperationStatus.SUCCEEDED,
+                manager.getOperationAndUpdateReplayState("step").status());
+    }
+
+    @Test
+    void deferredSuspensionOccursWhenCheckpointFinishesWithoutReactivatingThread() {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        manager.registerActiveThread("root");
+        assertTrue(manager.tryStartCheckpointProcessing());
+
+        manager.deregisterActiveThread("root");
+        assertFalse(manager.isExecutionCompletedExceptionally());
+
+        manager.finishCheckpointProcessing();
+        assertTrue(manager.isExecutionCompletedExceptionally());
+    }
+
+    @Test
+    void checkpointDeliveryIsAtomicWithOperationRegistration() throws Exception {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        var durableContext = mock(DurableContextImpl.class);
+        when(durableContext.getExecutionManager()).thenReturn(manager);
+        var publicationReached = new CountDownLatch(1);
+        var allowPublication = new CountDownLatch(1);
+        var idCalls = new AtomicInteger();
+        var terminalOperation = mock(Operation.class);
+        when(terminalOperation.id()).thenAnswer(invocation -> {
+            if (idCalls.incrementAndGet() == 3) {
+                publicationReached.countDown();
+                assertTrue(allowPublication.await(5, TimeUnit.SECONDS));
+            }
+            return "step";
+        });
+        when(terminalOperation.name()).thenReturn("step");
+        when(terminalOperation.type()).thenReturn(OperationType.STEP);
+        when(terminalOperation.subType()).thenReturn(OperationSubType.STEP.getValue());
+        when(terminalOperation.status()).thenReturn(OperationStatus.SUCCEEDED);
+
+        class TestOperation extends BaseDurableOperation {
+            TestOperation() {
+                super(OperationIdentifier.of("step", "step", OperationSubType.STEP), durableContext, null);
+            }
+
+            @Override
+            protected void start() {}
+
+            @Override
+            protected void replay(Operation existing) {
+                markAlreadyCompleted();
+            }
+        }
+
+        var checkpoint = CompletableFuture.runAsync(() -> manager.onCheckpointComplete(List.of(terminalOperation)));
+        assertTrue(publicationReached.await(5, TimeUnit.SECONDS));
+        var registration = CompletableFuture.supplyAsync(TestOperation::new);
+        try {
+            assertThrows(TimeoutException.class, () -> registration.get(500, TimeUnit.MILLISECONDS));
+        } finally {
+            allowPublication.countDown();
+        }
+
+        checkpoint.get(5, TimeUnit.SECONDS);
+        var operation = registration.get(5, TimeUnit.SECONDS);
+        operation.execute();
+        assertTrue(operation.getCompletionFuture().isDone());
     }
 }

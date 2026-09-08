@@ -46,6 +46,33 @@ class XRayContextExtractorTest {
         assertNull(extractor.extract());
     }
 
+    @Test
+    void extract_returnsNull_whenRootIsAllZero() {
+        // An all-zero Root is well-formed hex but an invalid trace ID; it must not be surfaced as usable context.
+        var traceHeader = "Root=1-00000000-000000000000000000000000;Parent=53995c3f42cd8ad8;Sampled=1";
+        System.setProperty("com.amazonaws.xray.traceHeader", traceHeader);
+        try {
+            assertNull(new XRayContextExtractor().extract(), "An all-zero Root must yield no extracted context");
+        } finally {
+            System.clearProperty("com.amazonaws.xray.traceHeader");
+        }
+    }
+
+    @Test
+    void extract_dropsAllZeroParent_keepsValidRoot() {
+        // A valid Root with an all-zero Parent keeps the trace ID but treats the parent as absent.
+        var traceHeader = "Root=1-6a43574f-2cf3140a69b0c8fe165f9503;Parent=0000000000000000;Sampled=1";
+        System.setProperty("com.amazonaws.xray.traceHeader", traceHeader);
+        try {
+            var context = new XRayContextExtractor().extract();
+            assertNotNull(context);
+            assertEquals("6a43574f2cf3140a69b0c8fe165f9503", context.traceId());
+            assertNull(context.parentSpanId(), "An all-zero Parent must be treated as absent");
+        } finally {
+            System.clearProperty("com.amazonaws.xray.traceHeader");
+        }
+    }
+
     // ─── xrayRootToOtelTraceId: valid inputs ────────────────────────────
 
     @Test

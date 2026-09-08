@@ -76,6 +76,23 @@ class CheckpointManagerTest {
     }
 
     @Test
+    void checkpoint_skipsApiCallWhenExecutionAlreadyCompleted() throws Exception {
+        var finishCheckpointProcessing = mock(Runnable.class);
+        var guardedBatcher = new CheckpointManager(
+                config, "arn:test", "token-1", callbackOperations::addAll, () -> false, finishCheckpointProcessing);
+        var update = OperationUpdate.builder()
+                .id("op-1")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build();
+
+        guardedBatcher.checkpoint(update).get(200, TimeUnit.MILLISECONDS);
+
+        verifyNoInteractions(client);
+        verify(finishCheckpointProcessing, never()).run();
+    }
+
+    @Test
     void pollForUpdate_completesWhenOperationReturned() throws Exception {
         var operation = Operation.builder()
                 .id("op-1")
