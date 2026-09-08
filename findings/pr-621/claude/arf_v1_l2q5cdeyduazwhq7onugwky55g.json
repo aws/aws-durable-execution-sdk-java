@@ -1,0 +1,1 @@
+{"finding_digest":"5ea1d10c981d019b1e1f73686b2b1de99bab5f5b7f92a46854cb59f2f91b9b81","finding_id":"arf_v1_l2q5cdeyduazwhq7onugwky55g","identity_key":"workflows/lambda-layer-publish.yml::publish-layer-version::missing-stderr-capture","pull_request_number":621,"repository":{"full_name":"aws/aws-durable-execution-sdk-java","id":1124528661},"reviewer":"claude","schema_version":1}
