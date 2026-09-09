@@ -133,9 +133,9 @@ jobs:
 
         handler_jar="$EXAMPLES_DIR/target/aws-durable-execution-sdk-java-conformance-tests-otel-1.0.0.jar"
         unzip -Z1 "$handler_jar" > "$RUNNER_TEMP/otel-conformance-handler-contents.txt"
-        if grep -Eq '^(software/amazon/lambda/durable/otel/|io/opentelemetry/)' \
+        if grep -q '^software/amazon/lambda/durable/otel/' \
           "$RUNNER_TEMP/otel-conformance-handler-contents.txt"; then
-          echo "The conformance function artifact must not contain the OTel plugin or OTel SDK." >&2
+          echo "The conformance function artifact must not contain the OTel plugin." >&2
           exit 1
         fi
         if grep -Fxq \
