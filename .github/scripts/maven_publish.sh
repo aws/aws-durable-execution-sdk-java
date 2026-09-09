@@ -45,5 +45,6 @@ echo "=== Step 3: Upload to Sonatype Central Portal ==="
 mvn clean deploy -s "${SETTINGS_FILE}" -pl sdk -P publishing -DskipTests --no-transfer-progress
 mvn clean deploy -s "${SETTINGS_FILE}" -pl sdk-testing -P publishing -DskipTests --no-transfer-progress
 mvn clean deploy -s "${SETTINGS_FILE}" -pl otel-plugin -P publishing -DskipTests --no-transfer-progress
+mvn clean deploy -s "${SETTINGS_FILE}" -pl insight-plugin -P publishing -DskipTests --no-transfer-progress
 
 echo "=== Release ${RELEASE_VERSION} uploaded successfully; review and publish it in Sonatype Central Portal. ==="
