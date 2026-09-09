@@ -6,26 +6,16 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.examples.types.GreetingRequest;
-import software.amazon.lambda.durable.insight.ContentConfig;
 import software.amazon.lambda.durable.insight.WorkflowInsight;
 import software.amazon.lambda.durable.insight.WorkflowInsightConfig;
-import software.amazon.lambda.durable.insight.exporters.LambdaLogExporter;
 
 /**
- * Example demonstrating the Workflow Insight plugin with zero extra infrastructure.
+ * Example demonstrating the Workflow Insight plugin with zero extra infrastructure and its default configuration.
  *
- * <p>The plugin is registered in {@link #createConfiguration()} with a {@link LambdaLogExporter}, which writes one
- * curated {@code WorkflowInsight} JSON record to {@code stdout} at the end of each execution. On Lambda, {@code stdout}
- * is captured to the function's own CloudWatch Logs group, so no bucket, extra log group, or additional IAM permission
- * is required — the managed function log group is the destination.
- *
- * <p>Configuration used here:
- *
- * <ul>
- *   <li>{@code ON_COMPLETE} — emit exactly one record when the execution reaches a terminal state.
- *   <li>{@code TOP_LEVEL} — include only top-level operations (no nested child/map/parallel entries).
- *   <li>input, output, and errors all included in the record.
- * </ul>
+ * <p>The empty {@link WorkflowInsightConfig} uses the default Lambda log exporter, which writes one curated
+ * {@code WorkflowInsight} JSON record to {@code stdout} when the execution completes. It includes top-level operations,
+ * input, output, and errors. On Lambda, {@code stdout} is captured by the function's own CloudWatch Logs group, so no
+ * bucket, extra log group, or additional IAM permission is required.
  *
  * <p>The handler itself runs two named steps ({@code create-greeting} and {@code transform}) and returns a
  * {@code HELLO, <NAME>!} greeting.
@@ -34,21 +24,8 @@ public class WorkflowInsightExample extends DurableHandler<GreetingRequest, Stri
 
     @Override
     protected DurableConfig createConfiguration() {
-        var insight = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                // Write the record to stdout -> the function's own CloudWatch Logs group (no extra infrastructure).
-                .addExporter(new LambdaLogExporter())
-                // Emit a single record when the execution completes.
-                .emitMode(WorkflowInsightConfig.EmitMode.ON_COMPLETE)
-                // Summarize only top-level operations.
-                .operationDetail(WorkflowInsightConfig.OperationDetail.TOP_LEVEL)
-                // Include the execution input, output, and any errors in the record.
-                .content(ContentConfig.builder()
-                        .input(true)
-                        .output(true)
-                        .includeErrors(true)
-                        .build())
-                .build());
-
+        var insight =
+                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder().build());
         return DurableConfig.builder().withPlugins(insight).build();
     }
 
