@@ -60,7 +60,119 @@ on:
 permissions: {}
 
 jobs:
+  publish-test-layer:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.base_ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      layer_arn: ${{ steps.publish.outputs.layer_arn }}
+      layer_name: ${{ steps.publish.outputs.layer_name }}
+      layer_version: ${{ steps.publish.outputs.layer_version }}
+    env:
+      AWS_REGION: ${{ inputs.aws_region || 'us-west-2' }}
+
+    steps:
+      - name: Check out SDK
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: corretto
+          java-version: '17'
+          cache: maven
+
+      - name: Build test layer
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sdk_version="$(mvn -q help:evaluate -Dexpression=project.version -DforceStdout)"
+          source_date_epoch="$(git show -s --format=%ct HEAD)"
+          source_sha="$(git rev-parse HEAD)"
+          layer_zip="$RUNNER_TEMP/aws-durable-execution-sdk-java-otel-plugin.zip"
+          .github/scripts/build_otel_plugin_layer.sh \
+            "$layer_zip" \
+            "$sdk_version" \
+            "$source_date_epoch"
+
+          unzip -Z1 "$layer_zip" > "$RUNNER_TEMP/otel-plugin-layer-contents.txt"
+          grep -Fx LICENSE "$RUNNER_TEMP/otel-plugin-layer-contents.txt"
+          grep -Fx NOTICE "$RUNNER_TEMP/otel-plugin-layer-contents.txt"
+          mapfile -t plugin_entries < <(
+            grep -E '^java/lib/[^/]+\.jar$' "$RUNNER_TEMP/otel-plugin-layer-contents.txt"
+          )
+          if [ "${#plugin_entries[@]}" -ne 1 ]; then
+            echo "Expected exactly one plugin JAR in the test layer." >&2
+            exit 1
+          fi
+
+          plugin_jar="$RUNNER_TEMP/otel-plugin.jar"
+          unzip -p "$layer_zip" "${plugin_entries[0]}" > "$plugin_jar"
+          unzip -p "$plugin_jar" \
+            META-INF/services/software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider |
+            grep -Fx software.amazon.lambda.durable.otel.InvocationOtelPluginProvider
+          unzip -p "$plugin_jar" \
+            META-INF/services/software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider |
+            grep -Fx software.amazon.lambda.durable.otel.ExecutionOtelPluginProvider
+          unzip -p "$plugin_jar" \
+            META-INF/services/io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvider |
+            grep -Fx software.amazon.lambda.durable.otel.OtelPluginAutoConfigurationCustomizerProvider
+
+          {
+            echo "layer_zip=$layer_zip"
+            echo "sdk_version=$sdk_version"
+            echo "source_sha=$source_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.TEST_ROLE_ARN }}
+          role-session-name: java-otel-layer-test
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
+
+      - name: Publish private test layer
+        id: publish
+        env:
+          LAYER_ZIP: ${{ steps.build.outputs.layer_zip }}
+          SDK_VERSION: ${{ steps.build.outputs.sdk_version }}
+          SOURCE_SHA: ${{ steps.build.outputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          layer_name="dex-java-otel-conformance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          read -r layer_arn layer_version < <(
+            aws lambda publish-layer-version \
+              --layer-name "$layer_name" \
+              --description "Java OTel conformance layer ${SDK_VERSION} source:${SOURCE_SHA}" \
+              --zip-file "fileb://${LAYER_ZIP}" \
+              --compatible-runtimes java21 \
+              --compatible-architectures x86_64 \
+              --license-info Apache-2.0 \
+              --region "$AWS_REGION" \
+              --query '[LayerVersionArn,Version]' \
+              --output text
+          )
+          echo "Published private test layer $layer_arn"
+          {
+            echo "layer_arn=$layer_arn"
+            echo "layer_name=$layer_name"
+            echo "layer_version=$layer_version"
+          } >> "$GITHUB_OUTPUT"
+
   opentelemetry:
+    needs: publish-test-layer
     permissions:
       actions: write
       contents: read
@@ -94,15 +206,11 @@ jobs:
             -DforceStdout \
             help:evaluate
         )
-        SOURCE_DATE_EPOCH=$(git -C "$SDK_CHECKOUT" show -s --format=%ct "$SDK_REF")
-        LAYER_ZIP="$RUNNER_TEMP/aws-durable-execution-sdk-java-otel-plugin.zip"
-        "$SDK_CHECKOUT/.github/scripts/build_otel_plugin_layer.sh" \
-          "$LAYER_ZIP" \
-          "$JAVA_SDK_VERSION" \
-          "$SOURCE_DATE_EPOCH"
-        rm -rf "$EXAMPLES_DIR/layer"
-        mkdir -p "$EXAMPLES_DIR/layer"
-        unzip -q "$LAYER_ZIP" -d "$EXAMPLES_DIR/layer"
+        plugin_layer_arn="${{ needs.publish-test-layer.outputs.layer_arn }}"
+        for template in "$EXAMPLES_DIR/template.yaml" "$EXAMPLES_DIR/template-long-running.yaml"; do
+          grep -Fq __DURABLE_OTEL_PLUGIN_LAYER_ARN__ "$template"
+          sed -i "s|__DURABLE_OTEL_PLUGIN_LAYER_ARN__|$plugin_layer_arn|g" "$template"
+        done
 
         mvn -B -q \
           --file "$SDK_CHECKOUT/pom.xml" \
@@ -115,21 +223,6 @@ jobs:
         mvn -B -q -DskipTests package \
           -Ddurable.sdk.version="$JAVA_SDK_VERSION" \
           --file "$EXAMPLES_DIR/pom.xml"
-
-        mapfile -t plugin_jars < <(find "$EXAMPLES_DIR/layer/java/lib" -maxdepth 1 -type f -name '*.jar')
-        if [ "${#plugin_jars[@]}" -ne 1 ]; then
-          echo "Expected exactly one plugin JAR in the test layer." >&2
-          exit 1
-        fi
-        unzip -p "${plugin_jars[0]}" \
-          META-INF/services/software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider |
-          grep -Fx software.amazon.lambda.durable.otel.InvocationOtelPluginProvider
-        unzip -p "${plugin_jars[0]}" \
-          META-INF/services/software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider |
-          grep -Fx software.amazon.lambda.durable.otel.ExecutionOtelPluginProvider
-        unzip -p "${plugin_jars[0]}" \
-          META-INF/services/io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvider |
-          grep -Fx software.amazon.lambda.durable.otel.OtelPluginAutoConfigurationCustomizerProvider
 
         handler_jar="$EXAMPLES_DIR/target/aws-durable-execution-sdk-java-conformance-tests-otel-1.0.0.jar"
         unzip -Z1 "$handler_jar" > "$RUNNER_TEMP/otel-conformance-handler-contents.txt"
@@ -158,3 +251,34 @@ jobs:
       DATADOG_ACCESS_TOKEN: ${{ secrets.DATADOG_ACCESS_TOKEN }}
       DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
       DATADOG_APPLICATION_KEY: ${{ secrets.DATADOG_APPLICATION_KEY }}
+
+  cleanup-test-layer:
+    if: ${{ always() && needs.publish-test-layer.result == 'success' }}
+    needs:
+      - publish-test-layer
+      - opentelemetry
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: ${{ inputs.aws_region || 'us-west-2' }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.TEST_ROLE_ARN }}
+          role-session-name: java-otel-layer-cleanup
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
+
+      - name: Delete private test layer
+        env:
+          LAYER_NAME: ${{ needs.publish-test-layer.outputs.layer_name }}
+          LAYER_VERSION: ${{ needs.publish-test-layer.outputs.layer_version }}
+        run: |
+          aws lambda delete-layer-version \
+            --layer-name "$LAYER_NAME" \
+            --version-number "$LAYER_VERSION" \
+            --region "$AWS_REGION"
