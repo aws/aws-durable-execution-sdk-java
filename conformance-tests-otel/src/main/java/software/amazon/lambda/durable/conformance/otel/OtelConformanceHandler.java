@@ -4,35 +4,20 @@ package software.amazon.lambda.durable.conformance.otel;
 
 import java.math.BigDecimal;
 import java.util.Map;
-import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
-import software.amazon.lambda.durable.otel.ExecutionOtelPlugin;
-import software.amazon.lambda.durable.otel.InvocationOtelPlugin;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 
 /**
  * Shared base for the OTel conformance suite's handlers. Ported from the otel-invocation/otel-execution examples in
  * aws/aws-durable-execution-conformance-tests. Each handler is deployed twice (see template.yaml): once for the
- * otel-invocation suite (default, loads {@link InvocationOtelPlugin}) and once for the otel-execution suite (loads
- * {@link ExecutionOtelPlugin} via the {@code OTEL_PLUGIN_MODE=execution} environment variable), against the X-Ray
- * backend only.
+ * otel-invocation suite and once for the otel-execution suite. Both plugins are discovered from the deployed Lambda
+ * layer through {@code DURABLE_EXECUTION_PLUGINS}; the function artifact does not contain or explicitly register the
+ * OTel plugin.
  */
 abstract class OtelConformanceHandler<O> extends DurableHandler<Map<String, Object>, O> {
 
     protected OtelConformanceHandler() {
         super(new TypeToken<Map<String, Object>>() {});
-    }
-
-    @Override
-    protected final DurableConfig createConfiguration() {
-        return DurableConfig.builder().withPlugins(createPlugin()).build();
-    }
-
-    private DurableExecutionPlugin createPlugin() {
-        return "execution".equals(System.getenv("OTEL_PLUGIN_MODE"))
-                ? new ExecutionOtelPlugin()
-                : new InvocationOtelPlugin();
     }
 
     protected final void requireScenario(Map<String, Object> event, String expected) {

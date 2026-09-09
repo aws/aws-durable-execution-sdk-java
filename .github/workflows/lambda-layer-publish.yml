@@ -152,21 +152,10 @@ jobs:
           build_layer() {
             local output_zip=$1
 
-            mvn -B -q -pl otel-plugin -am clean package \
-              -DskipTests \
-              -Dproject.build.outputTimestamp="$SOURCE_DATE_EPOCH" \
-              --no-transfer-progress
-            rm -rf layer
-            rm -f "$output_zip"
-            mkdir -p layer/java/lib "$(dirname "$output_zip")"
-            cp "otel-plugin/target/aws-durable-execution-sdk-java-plugin-otel-${SDK_VERSION}.jar" \
-              layer/java/lib/
-            cp LICENSE NOTICE layer/
-            find layer -exec touch -d "@${SOURCE_DATE_EPOCH}" {} +
-            (
-              cd layer
-              find . -type f -print | LC_ALL=C sort | zip -X -q "$GITHUB_WORKSPACE/$output_zip" -@
-            )
+            .github/scripts/build_otel_plugin_layer.sh \
+              "$output_zip" \
+              "$SDK_VERSION" \
+              "$SOURCE_DATE_EPOCH"
           }
 
           rebuild_zip="${LAYER_ZIP%.zip}-rebuild.zip"

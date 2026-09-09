@@ -15,6 +15,8 @@ on:
       - "sdk/**"
       - "otel-plugin/**"
       - "conformance-tests-otel/**"
+      - ".github/scripts/build_otel_plugin_layer.sh"
+      - ".github/workflows/lambda-layer-publish.yml"
       - "pom.xml"
       - ".github/workflows/otel-conformance-tests.yml"
   push:
@@ -23,6 +25,8 @@ on:
       - "sdk/**"
       - "otel-plugin/**"
       - "conformance-tests-otel/**"
+      - ".github/scripts/build_otel_plugin_layer.sh"
+      - ".github/workflows/lambda-layer-publish.yml"
       - "pom.xml"
       - ".github/workflows/otel-conformance-tests.yml"
   schedule:
@@ -90,9 +94,19 @@ jobs:
             -DforceStdout \
             help:evaluate
         )
+        SOURCE_DATE_EPOCH=$(git -C "$SDK_CHECKOUT" show -s --format=%ct "$SDK_REF")
+        LAYER_ZIP="$RUNNER_TEMP/aws-durable-execution-sdk-java-otel-plugin.zip"
+        "$SDK_CHECKOUT/.github/scripts/build_otel_plugin_layer.sh" \
+          "$LAYER_ZIP" \
+          "$JAVA_SDK_VERSION" \
+          "$SOURCE_DATE_EPOCH"
+        rm -rf "$EXAMPLES_DIR/layer"
+        mkdir -p "$EXAMPLES_DIR/layer"
+        unzip -q "$LAYER_ZIP" -d "$EXAMPLES_DIR/layer"
+
         mvn -B -q \
           --file "$SDK_CHECKOUT/pom.xml" \
-          --projects sdk,otel-plugin \
+          --projects sdk \
           --also-make \
           -DskipTests \
           install
@@ -101,6 +115,35 @@ jobs:
         mvn -B -q -DskipTests package \
           -Ddurable.sdk.version="$JAVA_SDK_VERSION" \
           --file "$EXAMPLES_DIR/pom.xml"
+
+        mapfile -t plugin_jars < <(find "$EXAMPLES_DIR/layer/java/lib" -maxdepth 1 -type f -name '*.jar')
+        if [ "${#plugin_jars[@]}" -ne 1 ]; then
+          echo "Expected exactly one plugin JAR in the test layer." >&2
+          exit 1
+        fi
+        unzip -p "${plugin_jars[0]}" \
+          META-INF/services/software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider |
+          grep -Fx software.amazon.lambda.durable.otel.InvocationOtelPluginProvider
+        unzip -p "${plugin_jars[0]}" \
+          META-INF/services/software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider |
+          grep -Fx software.amazon.lambda.durable.otel.ExecutionOtelPluginProvider
+        unzip -p "${plugin_jars[0]}" \
+          META-INF/services/io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvider |
+          grep -Fx software.amazon.lambda.durable.otel.OtelPluginAutoConfigurationCustomizerProvider
+
+        handler_jar="$EXAMPLES_DIR/target/aws-durable-execution-sdk-java-conformance-tests-otel-1.0.0.jar"
+        unzip -Z1 "$handler_jar" > "$RUNNER_TEMP/otel-conformance-handler-contents.txt"
+        if grep -Eq '^(software/amazon/lambda/durable/otel/|io/opentelemetry/)' \
+          "$RUNNER_TEMP/otel-conformance-handler-contents.txt"; then
+          echo "The conformance function artifact must not contain the OTel plugin or OTel SDK." >&2
+          exit 1
+        fi
+        if grep -Fxq \
+          META-INF/services/software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider \
+          "$RUNNER_TEMP/otel-conformance-handler-contents.txt"; then
+          echo "The conformance function artifact must not contain a dynamic plugin provider." >&2
+          exit 1
+        fi
       adot_release_repository: aws-observability/aws-otel-java-instrumentation
       collector_compatible_runtime: java21
       collector_otlp_endpoint: http://localhost:4318

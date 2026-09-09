@@ -63,16 +63,17 @@ Globals:
     Tracing: Active
     Layers: !If
       - HasOtelCollectorLayer
-      - [!Ref OtelLayerArn, !Ref OtelCollectorLayerArn]
-      - [!Ref OtelLayerArn]
+      - [!Ref OtelLayerArn, !Ref DurableOtelPluginLayer, !Ref OtelCollectorLayerArn]
+      - [!Ref OtelLayerArn, !Ref DurableOtelPluginLayer]
     DurableConfig:
       ExecutionTimeout: 300
       RetentionPeriodInDays: 1
     Environment:
       Variables:
         AWS_LAMBDA_EXEC_WRAPPER: !Ref OtelExecWrapper
-        JAVA_TOOL_OPTIONS: "-Dotel.javaagent.extensions=/var/task/lib/otel-plugin-extension.jar"
-        OTEL_JAVAAGENT_EXTENSIONS: /var/task/lib/otel-plugin-extension.jar
+        JAVA_TOOL_OPTIONS: "-Dotel.javaagent.extensions=/opt/java/lib"
+        OTEL_JAVAAGENT_EXTENSIONS: /opt/java/lib
+        DURABLE_EXECUTION_PLUGINS: otel-invocation
         OTEL_SERVICE_NAME: !Ref OtelServiceName
         OTEL_TRACES_EXPORTER: !Ref OtelTracesExporter
         OTEL_EXPORTER_OTLP_ENDPOINT: !If
@@ -93,6 +94,18 @@ Globals:
           - !Ref "AWS::NoValue"
 
 Resources:
+  DurableOtelPluginLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      ContentUri: layer/
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - java21
+      Description: OTel plugin layer under test
+      LicenseInfo: Apache-2.0
+      RetentionPolicy: Delete
+
   Otel1Success:
     Type: AWS::Serverless::Function
     TestingMetadata:
@@ -327,7 +340,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution2WaitResume:
     Type: AWS::Serverless::Function
@@ -340,7 +353,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution3Retry:
     Type: AWS::Serverless::Function
@@ -353,7 +366,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution4TerminalFailure:
     Type: AWS::Serverless::Function
@@ -366,7 +379,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution5ChildContext:
     Type: AWS::Serverless::Function
@@ -379,7 +392,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution6Parallel:
     Type: AWS::Serverless::Function
@@ -392,7 +405,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution7Map:
     Type: AWS::Serverless::Function
@@ -405,7 +418,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution8HandledFailure:
     Type: AWS::Serverless::Function
@@ -418,7 +431,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution9WaitForCondition:
     Type: AWS::Serverless::Function
@@ -431,7 +444,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution10WaitForCallback:
     Type: AWS::Serverless::Function
@@ -444,7 +457,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution11ChainedInvoke:
     Type: AWS::Serverless::Function
@@ -457,7 +470,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
           OTEL_INVOKE_TARGET_FUNCTION_NAME: !Sub "${OtelExecution11InvokeTarget.Arn}:$LATEST"
 
   OtelExecution11InvokeTarget:
@@ -468,7 +481,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution12ChildContextFailure:
     Type: AWS::Serverless::Function
@@ -481,7 +494,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution13ParallelFailure:
     Type: AWS::Serverless::Function
@@ -494,7 +507,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution14MapFailure:
     Type: AWS::Serverless::Function
@@ -507,7 +520,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution15WaitInterrupted:
     Type: AWS::Serverless::Function
@@ -523,7 +536,7 @@ Resources:
         RetentionPeriodInDays: 1
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution16WaitForConditionFailure:
     Type: AWS::Serverless::Function
@@ -536,7 +549,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution17WaitForCallbackFailure:
     Type: AWS::Serverless::Function
@@ -549,7 +562,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution18ChainedInvokeFailure:
     Type: AWS::Serverless::Function
@@ -562,7 +575,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
           OTEL_INVOKE_TARGET_FUNCTION_NAME: !Sub "${OtelExecution18InvokeTarget.Arn}:$LATEST"
 
   OtelExecution18InvokeTarget:
@@ -573,7 +586,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution19ExecutionFailure:
     Type: AWS::Serverless::Function
@@ -586,7 +599,7 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution
 
   OtelExecution20VirtualContext:
     Type: AWS::Serverless::Function
@@ -599,4 +612,4 @@ Resources:
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
-          OTEL_PLUGIN_MODE: execution
+          DURABLE_EXECUTION_PLUGINS: otel-execution

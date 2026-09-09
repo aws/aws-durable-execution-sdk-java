@@ -45,20 +45,33 @@ Globals:
     Tracing: Active
     Layers:
       - !Ref OtelLayerArn
+      - !Ref DurableOtelPluginLayer
     DurableConfig:
       ExecutionTimeout: 180000
       RetentionPeriodInDays: 3
     Environment:
       Variables:
         AWS_LAMBDA_EXEC_WRAPPER: !Ref OtelExecWrapper
-        JAVA_TOOL_OPTIONS: "-Dotel.javaagent.extensions=/var/task/lib/otel-plugin-extension.jar"
-        OTEL_JAVAAGENT_EXTENSIONS: /var/task/lib/otel-plugin-extension.jar
+        JAVA_TOOL_OPTIONS: "-Dotel.javaagent.extensions=/opt/java/lib"
+        OTEL_JAVAAGENT_EXTENSIONS: /opt/java/lib
+        DURABLE_EXECUTION_PLUGINS: !Sub "otel-${OtelView}"
         OTEL_SERVICE_NAME: !Ref OtelServiceName
-        OTEL_PLUGIN_MODE: !Ref OtelView
         OTEL_TRACES_EXPORTER: !Ref OtelTracesExporter
         OTEL_PROPAGATORS: xray
 
 Resources:
+  DurableOtelPluginLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      ContentUri: layer/
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - java21
+      Description: OTel plugin layer under test
+      LicenseInfo: Apache-2.0
+      RetentionPolicy: Delete
+
   OtelLongRunning1Wait:
     Type: AWS::Serverless::Function
     TestingMetadata:

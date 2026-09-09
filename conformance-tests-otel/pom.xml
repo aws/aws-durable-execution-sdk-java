@@ -8,8 +8,8 @@
       Standalone project (NOT part of the SDK reactor): the OpenTelemetry conformance workflow
       builds this module against an SDK already installed to the local repository, passing the SDK
       version through the durable.sdk.version property, and SAM builds the same pom during deploy.
-      It depends on the SDK and OTel-plugin artifacts by version, not as a reactor sibling,
-      mirroring the examples/java project in aws-durable-execution-conformance-tests.
+      It depends on the SDK artifact by version, not as a reactor sibling. The OTel plugin is
+      supplied only through the Lambda layer assembled by the conformance workflow.
     -->
     <groupId>software.amazon.lambda.durable</groupId>
     <artifactId>aws-durable-execution-sdk-java-conformance-tests-otel</artifactId>
@@ -30,7 +30,6 @@
         <maven.compiler.release>17</maven.compiler.release>
         <!-- Supplied by the conformance workflow (JAVA_SDK_VERSION), resolved from the built SDK. -->
         <durable.sdk.version>${env.JAVA_SDK_VERSION}</durable.sdk.version>
-        <opentelemetry.version>1.65.0</opentelemetry.version>
         <aws.lambda.java.core.version>1.4.0</aws.lambda.java.core.version>
     </properties>
 
@@ -39,16 +38,6 @@
             <groupId>software.amazon.lambda.durable</groupId>
             <artifactId>aws-durable-execution-sdk-java</artifactId>
             <version>${durable.sdk.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>software.amazon.lambda.durable</groupId>
-            <artifactId>aws-durable-execution-sdk-java-plugin-otel</artifactId>
-            <version>${durable.sdk.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>io.opentelemetry</groupId>
-            <artifactId>opentelemetry-sdk</artifactId>
-            <version>${opentelemetry.version}</version>
         </dependency>
         <dependency>
             <groupId>com.amazonaws</groupId>
@@ -63,34 +52,6 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.15.0</version>
-            </plugin>
-
-            <!-- Copy the OTel plugin JAR next to the handlers so it can be loaded as a Java agent
-                 extension via OTEL_JAVAAGENT_EXTENSIONS (see template.yaml). -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-dependency-plugin</artifactId>
-                <version>3.11.0</version>
-                <executions>
-                    <execution>
-                        <id>copy-otel-javaagent-extension</id>
-                        <phase>prepare-package</phase>
-                        <goals>
-                            <goal>copy</goal>
-                        </goals>
-                        <configuration>
-                            <artifactItems>
-                                <artifactItem>
-                                    <groupId>software.amazon.lambda.durable</groupId>
-                                    <artifactId>aws-durable-execution-sdk-java-plugin-otel</artifactId>
-                                    <version>${durable.sdk.version}</version>
-                                    <outputDirectory>${project.build.outputDirectory}/lib</outputDirectory>
-                                    <destFileName>otel-plugin-extension.jar</destFileName>
-                                </artifactItem>
-                            </artifactItems>
-                        </configuration>
-                    </execution>
-                </executions>
             </plugin>
 
             <!-- Shaded (uber) JAR so each Lambda deploys as a single artifact. -->
