@@ -11,10 +11,14 @@ Parameters:
   LambdaExecutionRoleArn:
     Type: String
     Description: Pre-created execution role for the test functions
-  DurableOtelPluginLayerArn:
+  DurableOtelPluginLayerName:
     Type: String
-    Default: __DURABLE_OTEL_PLUGIN_LAYER_ARN__
-    Description: Private OTel plugin layer published for this conformance run
+    Default: __DURABLE_OTEL_PLUGIN_LAYER_NAME__
+    Description: Name of the private OTel plugin layer published for this conformance run
+  DurableOtelPluginLayerVersion:
+    Type: String
+    Default: __DURABLE_OTEL_PLUGIN_LAYER_VERSION__
+    Description: Version of the private OTel plugin layer published for this conformance run
   OtelLayerArn:
     Type: String
     Description: OpenTelemetry Lambda layer ARN (ADOT for X-Ray, community layer for Dash0/Datadog/collector)
@@ -67,8 +71,11 @@ Globals:
     Tracing: Active
     Layers: !If
       - HasOtelCollectorLayer
-      - [!Ref OtelLayerArn, !Ref DurableOtelPluginLayerArn, !Ref OtelCollectorLayerArn]
-      - [!Ref OtelLayerArn, !Ref DurableOtelPluginLayerArn]
+      - - !Ref OtelLayerArn
+        - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:layer:${DurableOtelPluginLayerName}:${DurableOtelPluginLayerVersion}"
+        - !Ref OtelCollectorLayerArn
+      - - !Ref OtelLayerArn
+        - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:layer:${DurableOtelPluginLayerName}:${DurableOtelPluginLayerVersion}"
     DurableConfig:
       ExecutionTimeout: 300
       RetentionPeriodInDays: 1

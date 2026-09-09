@@ -12,10 +12,14 @@ Parameters:
   LambdaExecutionRoleArn:
     Type: String
     Description: Pre-created execution role for the test functions
-  DurableOtelPluginLayerArn:
+  DurableOtelPluginLayerName:
     Type: String
-    Default: __DURABLE_OTEL_PLUGIN_LAYER_ARN__
-    Description: Private OTel plugin layer published for this conformance run
+    Default: __DURABLE_OTEL_PLUGIN_LAYER_NAME__
+    Description: Name of the private OTel plugin layer published for this conformance run
+  DurableOtelPluginLayerVersion:
+    Type: String
+    Default: __DURABLE_OTEL_PLUGIN_LAYER_VERSION__
+    Description: Version of the private OTel plugin layer published for this conformance run
   OtelLayerArn:
     Type: String
     Description: AWS Distro for OpenTelemetry Java Lambda layer
@@ -49,7 +53,7 @@ Globals:
     Tracing: Active
     Layers:
       - !Ref OtelLayerArn
-      - !Ref DurableOtelPluginLayerArn
+      - !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:layer:${DurableOtelPluginLayerName}:${DurableOtelPluginLayerVersion}"
     DurableConfig:
       ExecutionTimeout: 180000
       RetentionPeriodInDays: 3

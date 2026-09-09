@@ -69,7 +69,6 @@ jobs:
       contents: read
       id-token: write
     outputs:
-      layer_arn: ${{ steps.publish.outputs.layer_arn }}
       layer_name: ${{ steps.publish.outputs.layer_name }}
       layer_version: ${{ steps.publish.outputs.layer_version }}
     env:
@@ -166,7 +165,6 @@ jobs:
           )
           echo "Published private test layer $layer_arn"
           {
-            echo "layer_arn=$layer_arn"
             echo "layer_name=$layer_name"
             echo "layer_version=$layer_version"
           } >> "$GITHUB_OUTPUT"
@@ -206,10 +204,13 @@ jobs:
             -DforceStdout \
             help:evaluate
         )
-        plugin_layer_arn="${{ needs.publish-test-layer.outputs.layer_arn }}"
+        plugin_layer_name="${{ needs.publish-test-layer.outputs.layer_name }}"
+        plugin_layer_version="${{ needs.publish-test-layer.outputs.layer_version }}"
         for template in "$EXAMPLES_DIR/template.yaml" "$EXAMPLES_DIR/template-long-running.yaml"; do
-          grep -Fq __DURABLE_OTEL_PLUGIN_LAYER_ARN__ "$template"
-          sed -i "s|__DURABLE_OTEL_PLUGIN_LAYER_ARN__|$plugin_layer_arn|g" "$template"
+          grep -Fq __DURABLE_OTEL_PLUGIN_LAYER_NAME__ "$template"
+          grep -Fq __DURABLE_OTEL_PLUGIN_LAYER_VERSION__ "$template"
+          sed -i "s|__DURABLE_OTEL_PLUGIN_LAYER_NAME__|$plugin_layer_name|g" "$template"
+          sed -i "s|__DURABLE_OTEL_PLUGIN_LAYER_VERSION__|$plugin_layer_version|g" "$template"
         done
 
         mvn -B -q \
