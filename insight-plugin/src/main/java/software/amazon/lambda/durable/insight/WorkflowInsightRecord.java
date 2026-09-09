@@ -49,6 +49,10 @@ public final class WorkflowInsightRecord {
         operations.add(operation);
     }
 
+    public String emittedAt() {
+        return emittedAt;
+    }
+
     public String executionArn() {
         return executionArn;
     }
@@ -203,5 +207,29 @@ public final class WorkflowInsightRecord {
         data.put("operationsByName", byName);
         putTruncationMarkers(data);
         return data;
+    }
+
+    /**
+     * Combined wire map mirroring the JS {@code applyOperationsFormat(record, "both")} shape: the canonical
+     * {@code operations} array plus an added {@code operationsByName} map. Field order matches the canonical map with
+     * {@code operationsByName} appended after {@code operations}.
+     */
+    public Map<String, Object> toBothWireMap() {
+        Map<String, Object> data = toWireMap();
+        Map<String, Object> byName = new LinkedHashMap<>();
+        for (Map.Entry<String, OperationSummary> e :
+                OperationsIndex.buildOperationsByName(operations).entrySet()) {
+            byName.put(e.getKey(), e.getValue().toWireMap());
+        }
+        // Insert operationsByName immediately after operations, before the truncation markers, to match the JS spread
+        // order ({...record, operationsByName}).
+        Map<String, Object> ordered = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : data.entrySet()) {
+            ordered.put(e.getKey(), e.getValue());
+            if ("operations".equals(e.getKey())) {
+                ordered.put("operationsByName", byName);
+            }
+        }
+        return ordered;
     }
 }

@@ -3,6 +3,8 @@
 package software.amazon.lambda.durable.insight;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.util.DefaultIndenter;
+import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -23,11 +25,32 @@ public final class Json {
             .registerModule(new JavaTimeModule())
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
+    // 2-space indentation with "\n" line breaks, matching JS JSON.stringify(x, null, 2) (LF, no CR). The
+    // DefaultPrettyPrinter is stateful, so build a fresh instance per write via createInstance().
+    private static final DefaultPrettyPrinter PRETTY_PRINTER = buildPrettyPrinter();
+
+    private static DefaultPrettyPrinter buildPrettyPrinter() {
+        DefaultIndenter indenter = new DefaultIndenter("  ", "\n");
+        DefaultPrettyPrinter pp = new DefaultPrettyPrinter();
+        pp.indentObjectsWith(indenter);
+        pp.indentArraysWith(indenter);
+        return pp;
+    }
+
     private Json() {}
 
     public static String stringify(Object value) {
         try {
             return MAPPER.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("failed to serialize insight record", e);
+        }
+    }
+
+    /** Pretty-prints with 2-space indentation (matches the JS {@code JSON.stringify(x, null, 2)} file output). */
+    public static String stringifyPretty(Object value) {
+        try {
+            return MAPPER.writer(PRETTY_PRINTER).writeValueAsString(value);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("failed to serialize insight record", e);
         }
