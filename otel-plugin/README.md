@@ -23,7 +23,18 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 </dependency>
 ```
 
-For the no-arg constructor (`new InvocationOtelPlugin()`), no additional OpenTelemetry dependencies are needed — the ADOT Java agent layer provides them.
+When the function directly depends on this plugin artifact, its OpenTelemetry SDK dependencies are available transitively.
+When the plugin JAR is supplied only through a Lambda layer and selected with `DURABLE_EXECUTION_PLUGINS`, add
+`opentelemetry-sdk` to the function artifact. The Java agent's SDK implementation is isolated in the agent classloader
+and is not visible to the application-side plugin loaded through `ServiceLoader`.
+
+```xml
+<dependency>
+    <groupId>io.opentelemetry</groupId>
+    <artifactId>opentelemetry-sdk</artifactId>
+    <version>1.65.0</version>
+</dependency>
+```
 
 If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK and an exporter:
 
@@ -88,7 +99,7 @@ aws lambda update-function-configuration \
   --environment "Variables={AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument,OTEL_JAVAAGENT_EXTENSIONS=/opt/java/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar,DURABLE_EXECUTION_PLUGINS=otel-invocation}"
 ```
 
-Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar`. Lambda adds JARs in this directory to the Java class path. Set `OTEL_JAVAAGENT_EXTENSIONS` to the deployed JAR so the ADOT Java agent also loads its `AutoConfigurationCustomizerProvider`, and set `DURABLE_EXECUTION_PLUGINS=otel-invocation` so the Durable Execution SDK loads its `InvocationOtelPluginProvider`.
+Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar`. Lambda adds JARs in this directory to the Java class path. Set `OTEL_JAVAAGENT_EXTENSIONS` to the deployed JAR so the ADOT Java agent also loads its `AutoConfigurationCustomizerProvider`, and set `DURABLE_EXECUTION_PLUGINS=otel-invocation` so the Durable Execution SDK loads its `InvocationOtelPluginProvider`. The function artifact must also include `opentelemetry-sdk` as shown in the installation section.
 
 ### 2. AWS X-Ray Active Tracing
 
@@ -107,7 +118,7 @@ MyFunction:
 
 ### 3. Plugin Registration
 
-With the layer and `DURABLE_EXECUTION_PLUGINS=otel-invocation` configured above, no OTel plugin dependency or registration code is required in the function artifact. The function can use its existing `DurableConfig`.
+With the layer, application-side OTel SDK dependency, and `DURABLE_EXECUTION_PLUGINS=otel-invocation` configured above, no OTel plugin dependency or registration code is required in the function artifact. The function can use its existing `DurableConfig`.
 
 The OTel plugin JAR exposes two dynamic provider names:
 
@@ -366,7 +377,7 @@ var otelPlugin = new InvocationOtelPlugin(
 
 - Java 17+
 - AWS Durable Execution SDK for Java 2.0.0+
-- OpenTelemetry SDK 1.65.0+ (only for custom TracerProvider path)
+- OpenTelemetry SDK 1.65.0+ (for Lambda-layer dynamic loading and custom TracerProvider paths)
 - ADOT Lambda Layer `AWSOpenTelemetryDistroJava` (for the no-arg constructor path)
 
 ## License
