@@ -18,7 +18,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
 
 /**
@@ -115,7 +117,6 @@ class MutableNumberIsolationTest {
         };
         var good = new CapturingExporter();
         DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
                 .addExporter(mutating)
                 .addExporter(good)
                 .build());
@@ -129,9 +130,11 @@ class MutableNumberIsolationTest {
         input.put("custom", new MutableNumber(99));
 
         plugin.onInvocationStart(new InvocationInfo("req", ARN, true, START, input, ops(), Map.of()));
-        // Mutate all originals after emission; isolated copies must be unaffected.
+        // Mutate all originals after snapshotting; the later terminal export must use the detached values.
         topLevel.set(-1);
         ((AtomicLong) list.get(0)).set(-1L);
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req", ARN, true, START, ops(), InvocationStatus.SUCCEEDED, null, input, null));
 
         assertEquals(1, good.records.size());
         var emitted = assertInstanceOf(Map.class, good.records.get(0).input);

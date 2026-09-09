@@ -14,7 +14,9 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
 
 /**
@@ -71,7 +73,6 @@ class ExporterIsolationTest {
         var mutating = new MutatingExporter();
         var good = new CapturingExporter();
         DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
                 .content(ContentConfig.builder()
                         .addOverride(OperationOverride.withResult("compute", r -> r))
                         .build())
@@ -99,6 +100,8 @@ class ExporterIsolationTest {
                         null,
                         "{\"x\":1}"));
         plugin.onInvocationStart(new InvocationInfo("req", ARN, true, START, input, ops, Map.of()));
+        plugin.onInvocationEnd(
+                new InvocationEndInfo("req", ARN, true, START, ops, InvocationStatus.SUCCEEDED, null, input, null));
 
         assertEquals(1, good.records.size());
         var rec = good.records.get(0);

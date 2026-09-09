@@ -69,6 +69,13 @@ application:
 - **Emission modes.** `ON_COMPLETE` emits one terminal record; `ON_FAILURE` emits only on terminal
   failure; `ON_CHANGE` emits at invocation start, on every operation change, and at invocation end
   (matching JS). Non-terminal statuses map to `RUNNING`.
+- **Bounded `ON_CHANGE` delivery.** Start and operation-change hooks enqueue complete snapshots
+  without waiting for exporter I/O. Each invocation keeps a FIFO of up to 16 waiting snapshots plus
+  one in-flight export. When that bound is reached, only the oldest waiting `RUNNING` snapshot is
+  dropped; normal bursts are preserved rather than unconditionally coalesced. Invocation end seals
+  the queue, reserves the final snapshot, drains records in order, and flushes each exporter once
+  before Lambda can freeze the environment. A late `RUNNING` snapshot cannot follow or overwrite
+  the invocation-final record.
 - **Operation filtering** mirrors JS: the `EXECUTION` pseudo-operation and unnamed operations are
   dropped; `TOP_LEVEL` detail drops any operation with a `parentId`; an `OperationOverride.exclude`
   drops by name. Operation `result` is included only when an `OperationOverride.withResult`
