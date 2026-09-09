@@ -13,7 +13,7 @@ import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 class WorkflowInsightExampleTest {
 
     @Test
-    void emitsInsightAndReturnsGreeting() {
+    void returnsGreetingAndRecordsOperations() {
         var handler = new WorkflowInsightExample();
         var runner = LocalDurableTestRunner.create(GreetingRequest.class, handler);
 

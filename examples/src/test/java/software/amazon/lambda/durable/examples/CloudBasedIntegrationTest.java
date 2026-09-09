@@ -874,7 +874,7 @@ class CloudBasedIntegrationTest {
     @Test
     void testWorkflowInsightExample() {
         // Unique alphanumeric token so we match THIS execution's insight record by input.name, never by a broad
-        // time-only window that would race with concurrent CI runs (Java 17/21/25) writing to the same log group.
+        // time-only window that could select a stale record from an earlier run against the same deployed function.
         var uniqueName = "insight" + UUID.randomUUID().toString().replace("-", "");
 
         var runner = CloudDurableTestRunner.create(
