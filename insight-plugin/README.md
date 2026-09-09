@@ -31,6 +31,27 @@ CloudWatch), `S3Exporter` (canonical `operations` array, one object per executio
 `CloudWatchLogsExporter` (PutLogEvents to a specific log group, `operationsByName` map). Implement
 `InsightExporter` for custom sinks.
 
+`LambdaLogExporter` needs no extra dependency. The AWS SDK service modules used by the remote
+exporters are optional so applications that use only Lambda logs do not package them. Add the module
+for each remote exporter you configure, using the AWS SDK for Java 2.x version managed by your
+application:
+
+```xml
+<!-- Required only for S3Exporter -->
+<dependency>
+    <groupId>software.amazon.awssdk</groupId>
+    <artifactId>s3</artifactId>
+    <version>AWS_SDK_VERSION</version>
+</dependency>
+
+<!-- Required only for CloudWatchLogsExporter -->
+<dependency>
+    <groupId>software.amazon.awssdk</groupId>
+    <artifactId>cloudwatchlogs</artifactId>
+    <version>AWS_SDK_VERSION</version>
+</dependency>
+```
+
 ## Design
 
 - **Snapshot-based, not accumulated.** Each record is built directly from the current-invocation
@@ -39,10 +60,10 @@ CloudWatch), `S3Exporter` (canonical `operations` array, one object per executio
   `InvocationInfo.executionInput()` / `InvocationEndInfo.executionResult()`, and per-operation
   results from `OperationChangeItemInfo.result()` (all surfaced by SDK PR #618). There is no global
   "current ARN" or cross-hook operation accumulation.
-- **Per-execution state keyed by execution ARN** holds only the stable start time, parsed ARN,
-  cached input, and the one-time deterministic sampling decision. State is **preserved across
-  non-terminal (PENDING/RETRYING) invocations** so suspend/resume keeps a single stable start time
-  and correct duration, and is removed **only** once the execution is terminal.
+- **Per-execution state keyed by execution ARN** holds the stable start time, parsed ARN, cached
+  input, and deterministic sampling decision for the current invocation. State is removed after
+  every invocation end, including PENDING/RETRYING, and recreated from stable hook data when the
+  execution resumes.
 - **Deterministic sampling.** FNV-1a-32 over the execution ARN mapped into `[0,1)`, identical to
   the JS implementation, so a resumed execution always reaches the same in/out decision.
 - **Emission modes.** `ON_COMPLETE` emits one terminal record; `ON_FAILURE` emits only on terminal
