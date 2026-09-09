@@ -28,13 +28,14 @@ DurableConfig config = DurableConfig.builder()
 
 Exporters: `LambdaLogExporter` (default; writes the `operationsByName` map to stdout →
 CloudWatch), `S3Exporter` (canonical `operations` array, one object per execution),
-`CloudWatchLogsExporter` (PutLogEvents to a specific log group, `operationsByName` map). Implement
-`InsightExporter` for custom sinks.
+`CloudWatchLogsExporter` (PutLogEvents to a specific log group, `operationsByName` map),
+`HttpExporter` (POST/PUT each record to any HTTP(S) endpoint or webhook, choice of operations shape).
+Implement `InsightExporter` for custom sinks.
 
-`LambdaLogExporter` needs no extra dependency. The AWS SDK service modules used by the remote
-exporters are optional so applications that use only Lambda logs do not package them. Add the module
-for each remote exporter you configure, using the AWS SDK for Java 2.x version managed by your
-application:
+`LambdaLogExporter` and `HttpExporter` need no extra dependency — the HTTP exporter uses the JDK's own
+HTTP client. The AWS SDK service modules used by the remote exporters are optional so applications
+that use only Lambda logs or HTTP do not package them. Add the module for each remote exporter you
+configure, using the AWS SDK for Java 2.x version managed by your application:
 
 ```xml
 <!-- Required only for S3Exporter -->
@@ -51,6 +52,42 @@ application:
     <version>AWS_SDK_VERSION</version>
 </dependency>
 ```
+
+### HttpExporter
+
+`HttpExporter` POSTs (or PUTs) each record to any HTTP(S) endpoint or webhook as a JSON body with
+`Content-Type: application/json`. It uses the JDK's built-in HTTP client, so it adds **no dependency**.
+It mirrors the JS `HttpExporter`.
+
+```java
+.addExporter(HttpExporter.builder()
+    .url("https://collector.example.com/workflow-insight")   // required, absolute http/https URL
+    .method(HttpExporter.Method.POST)                        // POST (default) or PUT
+    .addHeader("Authorization", "Bearer " + token)           // optional auth / API-key headers
+    .timeoutMs(10_000)                                       // per-request timeout, default 10s
+    .operationsFormat(HttpExporter.OperationsFormat.ARRAY)   // ARRAY (default) | BY_NAME | BOTH
+    .build())
+```
+
+Behavior:
+
+- **Endpoint / method / headers.** Records are sent to `url` with `method` (POST or PUT — use PUT for
+  endpoints that upsert by URL path). Your headers are merged on top of the fixed
+  `Content-Type: application/json`.
+- **Auth.** There is no built-in auth scheme; pass whatever your endpoint expects as a header
+  (`Authorization: Bearer …`, `x-api-key: …`, etc.) via `addHeader`/`headers`.
+- **Timeout.** `timeoutMs` (default 10000) bounds the whole request; a slow or unreachable endpoint
+  fails fast instead of stalling the invocation. As with every exporter, a failure here is logged and
+  isolated — it never disrupts the durable execution or the other exporters.
+- **Success / failure.** A 2xx response is success; any other status throws (and is contained by the
+  plugin), so a misconfigured endpoint is visible in logs.
+- **Operations shape.** `operationsFormat` selects what the body carries: `ARRAY` (the canonical
+  `operations` array, default), `BY_NAME` (the name-keyed `operationsByName` map), or `BOTH`.
+- **Size cap.** `maxRecordSizeBytes` has no default — a generic HTTP endpoint has no known limit. Set
+  it only if your endpoint caps request size; truncation is then measured against the shape actually
+  sent.
+- **Testing seam.** For unit tests you can inject an `HttpSender` via `.sender(...)` instead of making
+  a real network call, or point `url` at a local in-process server.
 
 ## Design
 
