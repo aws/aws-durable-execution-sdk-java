@@ -77,16 +77,26 @@ on the target queue.
 - **`queueUrl`** (required) — the target queue URL. A URL ending in `.fifo` is treated as a FIFO
   queue.
 - **`messageGroupId`** (optional, FIFO only) — defaults to the record's `executionArn`, so all
-  messages for one execution stay ordered together. Ignored for standard queues.
+  messages for one execution stay ordered together. Bounded to SQS's 128-character limit (hashed
+  when longer; see FIFO behavior below). Ignored for standard queues.
 - **`region`** (optional) — region for the created client; ignored when a client is injected.
 - **`operationsFormat`** (optional) — `ARRAY` (canonical `operations` array, default), `BY_NAME`
   (the `operationsByName` map replacing the array), or `BOTH` (the array plus the map).
-- **`maxRecordSizeBytes`** (optional) — defaults to `256_000` (SQS's 256 KB message limit).
+- **`maxRecordSizeBytes`** (optional) — defaults to `256_000` (SQS's 256 KB message limit). Must be
+  positive; a non-positive value is rejected at build time. This bounds the rendered JSON **body**
+  only. SQS counts message attributes toward the same 256 KB message quota, so the default is not
+  set to the exact quota — leave headroom below the quota for the `status` and `functionName`
+  attributes when tuning it.
 
 **FIFO behavior:** on a `.fifo` queue the exporter sets `MessageGroupId` (see above) and a
-`MessageDeduplicationId` of `executionArn:emittedAt`, so a redelivery of the same emission is
-de-duplicated while a later update to the same execution is delivered. Every message carries
-`status` and `functionName` string message attributes for consumer-side filtering.
+`MessageDeduplicationId`. SQS caps both ids at 128 characters. The group id is used verbatim when
+it already fits and is otherwise replaced by a deterministic SHA-256 hex digest of the raw value,
+so grouping stays stable per execution. The deduplication id is a SHA-256 hex digest over the
+execution ARN, the emitted timestamp, and the rendered body: an exact redelivery of the same
+emission produces the same id and is de-duplicated, while two distinct rapid `ON_CHANGE` snapshots
+of the same execution produce different ids and are not silently dropped inside SQS's 5-minute
+dedup window. Hashing uses only the JDK (`java.security.MessageDigest`), no extra dependency. Every
+message carries `status` and `functionName` string message attributes for consumer-side filtering.
 
 **Queue setup:**
 

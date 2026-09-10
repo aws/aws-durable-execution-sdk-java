@@ -4,14 +4,19 @@ package software.amazon.lambda.durable.insight;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import software.amazon.awssdk.services.sqs.SqsClient;
@@ -56,6 +61,27 @@ class SQSExporterTest {
         return req.getValue();
     }
 
+    private static List<SendMessageRequest> captureAll(SqsClient client, int count) {
+        ArgumentCaptor<SendMessageRequest> req = ArgumentCaptor.forClass(SendMessageRequest.class);
+        verify(client, times(count)).sendMessage(req.capture());
+        return req.getAllValues();
+    }
+
+    /** Mirrors the exporter's dedup/group hashing so tests can pin the exact value it must emit. */
+    private static String sha256Hex(String input) {
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(input.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                sb.append(Character.forDigit((b >> 4) & 0xF, 16));
+                sb.append(Character.forDigit(b & 0xF, 16));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     @Test
     void standardQueueSendsAttributesAndArrayBodyWithoutFifoFields() {
         SqsClient client = mockClient();
@@ -77,7 +103,7 @@ class SQSExporterTest {
     }
 
     @Test
-    void fifoQueueDefaultsGroupIdToExecutionArnAndDerivesDedupId() {
+    void fifoQueueDefaultsGroupIdToExecutionArnAndDerivesHashedDedupId() {
         SqsClient client = mockClient();
         SQSExporter exporter =
                 SQSExporter.builder().queueUrl(FIFO_URL).client(client).build();
@@ -85,8 +111,95 @@ class SQSExporterTest {
         exporter.export(sampleRecord());
 
         SendMessageRequest req = capture(client);
-        assertEquals(EXEC_ARN, req.messageGroupId());
-        assertEquals(EXEC_ARN + ":2026-08-05T00:00:01Z", req.messageDeduplicationId());
+        assertEquals(EXEC_ARN, req.messageGroupId(), "a group id within 128 chars is used verbatim");
+        String expected = sha256Hex(EXEC_ARN + '\u0000' + "2026-08-05T00:00:01Z" + '\u0000' + req.messageBody());
+        assertEquals(expected, req.messageDeduplicationId(), "dedup id folds in arn, emittedAt, and body");
+        assertEquals(64, req.messageDeduplicationId().length(), "sha-256 hex is 64 chars, within SQS's 128 limit");
+    }
+
+    @Test
+    void fifoBoundsLongGroupIdToSqsLimitWithDeterministicHash() {
+        SqsClient client = mockClient();
+        SQSExporter exporter =
+                SQSExporter.builder().queueUrl(FIFO_URL).client(client).build();
+
+        WorkflowInsightRecord record = sampleRecord();
+        String longArn = "arn:aws:lambda:us-east-1:123456789012:function:fn:$LATEST/durable-execution/"
+                + "e".repeat(200) + "/invocation-1";
+        assertTrue(longArn.length() > 128, "precondition: raw group id exceeds the SQS limit");
+        record.executionArn = longArn;
+
+        exporter.export(record);
+
+        SendMessageRequest req = capture(client);
+        assertEquals(64, req.messageGroupId().length(), "an over-long group id is replaced by a 64-char digest");
+        assertTrue(req.messageGroupId().length() <= 128, "group id is within the SQS 128-char limit");
+        assertEquals(sha256Hex(longArn), req.messageGroupId(), "group id hash is deterministic for the execution");
+    }
+
+    @Test
+    void fifoRapidSnapshotsWithSameTimestampGetDistinctDedupIdsButRetriesDeduplicate() {
+        SqsClient client = mockClient();
+        SQSExporter exporter =
+                SQSExporter.builder().queueUrl(FIFO_URL).client(client).build();
+
+        WorkflowInsightRecord first = sampleRecord();
+        WorkflowInsightRecord second = sampleRecord();
+        // Same execution and same emittedAt, but a distinct ON_CHANGE snapshot (an extra operation).
+        second.addOperation(new OperationRecord()
+                .id("op-2")
+                .name("verify")
+                .type("STEP")
+                .subType("Step")
+                .status("SUCCEEDED"));
+
+        exporter.export(first);
+        exporter.export(first); // exact retry of the first snapshot
+        exporter.export(second);
+
+        List<SendMessageRequest> reqs = captureAll(client, 3);
+        assertEquals(
+                reqs.get(0).messageDeduplicationId(),
+                reqs.get(1).messageDeduplicationId(),
+                "an exact retry produces the same dedup id so SQS de-duplicates it");
+        assertNotEquals(
+                reqs.get(0).messageDeduplicationId(),
+                reqs.get(2).messageDeduplicationId(),
+                "a distinct snapshot at the same timestamp produces a different dedup id");
+    }
+
+    @Test
+    void fifoByNameFormatStillDerivesBoundedDedupIdFromEmittedAt() {
+        SqsClient client = mockClient();
+        SQSExporter exporter = SQSExporter.builder()
+                .queueUrl(FIFO_URL)
+                .operationsFormat(SQSExporter.OperationsFormat.BY_NAME)
+                .client(client)
+                .build();
+
+        exporter.export(sampleRecord());
+
+        SendMessageRequest req = capture(client);
+        assertTrue(req.messageBody().contains("operationsByName"), "precondition: by-name shape is rendered");
+        String expected = sha256Hex(EXEC_ARN + '\u0000' + "2026-08-05T00:00:01Z" + '\u0000' + req.messageBody());
+        assertEquals(expected, req.messageDeduplicationId(), "emittedAt extraction is pinned across the by-name shape");
+    }
+
+    @Test
+    void fifoBothFormatStillDerivesBoundedDedupIdFromEmittedAt() {
+        SqsClient client = mockClient();
+        SQSExporter exporter = SQSExporter.builder()
+                .queueUrl(FIFO_URL)
+                .operationsFormat(SQSExporter.OperationsFormat.BOTH)
+                .client(client)
+                .build();
+
+        exporter.export(sampleRecord());
+
+        SendMessageRequest req = capture(client);
+        assertTrue(req.messageBody().contains("operationsByName"), "precondition: both shape is rendered");
+        String expected = sha256Hex(EXEC_ARN + '\u0000' + "2026-08-05T00:00:01Z" + '\u0000' + req.messageBody());
+        assertEquals(expected, req.messageDeduplicationId(), "emittedAt extraction is pinned across the both shape");
     }
 
     @Test
@@ -152,6 +265,20 @@ class SQSExporterTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> SQSExporter.builder().queueUrl("").client(mockClient()).build());
+    }
+
+    @Test
+    void builderRejectsNonPositiveMaxRecordSizeBytes() {
+        assertThrows(IllegalArgumentException.class, () -> SQSExporter.builder()
+                .queueUrl(STANDARD_URL)
+                .maxRecordSizeBytes(0)
+                .client(mockClient())
+                .build());
+        assertThrows(IllegalArgumentException.class, () -> SQSExporter.builder()
+                .queueUrl(STANDARD_URL)
+                .maxRecordSizeBytes(-1)
+                .client(mockClient())
+                .build());
     }
 
     @Test
