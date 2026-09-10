@@ -61,10 +61,38 @@ public final class WorkflowInsight {
         final boolean sampledIn;
         volatile Object cachedInput;
 
+        /**
+         * Set once invocation end begins; guarded by {@code this}. A checkpoint that completes while the end record is
+         * being drained still delivers an operation-change hook, and that RUNNING snapshot must not supersede the final
+         * record.
+         */
+        boolean closed;
+
         ExecutionState(Instant startTime, ArnParser arn, boolean sampledIn) {
             this.startTime = startTime;
             this.arn = arn;
             this.sampledIn = sampledIn;
+        }
+
+        /** Schedules the record unless the invocation has already ended; the check and the hand-off are atomic. */
+        boolean scheduleIfOpen(ExportScheduler scheduler, WorkflowInsightRecord record) {
+            synchronized (this) {
+                if (closed) {
+                    return false;
+                }
+                scheduler.schedule(record);
+                return true;
+            }
+        }
+
+        /** Marks the invocation ended and, when given a record, schedules it as the last one for this execution. */
+        void closeAndSchedule(ExportScheduler scheduler, WorkflowInsightRecord finalRecord) {
+            synchronized (this) {
+                closed = true;
+                if (finalRecord != null) {
+                    scheduler.schedule(finalRecord);
+                }
+            }
         }
     }
 
@@ -156,15 +184,17 @@ public final class WorkflowInsight {
                 if (state == null || !state.sampledIn) {
                     return;
                 }
-                scheduler.schedule(buildRecord(
-                        state,
-                        info.durableExecutionArn(),
-                        "RUNNING",
-                        info.operations(),
-                        null,
-                        state.cachedInput,
-                        null,
-                        null));
+                state.scheduleIfOpen(
+                        scheduler,
+                        buildRecord(
+                                state,
+                                info.durableExecutionArn(),
+                                "RUNNING",
+                                info.operations(),
+                                null,
+                                state.cachedInput,
+                                null,
+                                null));
             } catch (Throwable t) {
                 logSafely("onOperationChange failed", t);
             }
@@ -195,8 +225,9 @@ public final class WorkflowInsight {
                         break;
                 }
 
+                WorkflowInsightRecord finalRecord = null;
                 if (state.sampledIn && shouldEmit) {
-                    scheduler.schedule(buildRecord(
+                    finalRecord = buildRecord(
                             state,
                             info.durableExecutionArn(),
                             status,
@@ -204,13 +235,21 @@ public final class WorkflowInsight {
                             Instant.now(),
                             state.cachedInput,
                             info.executionResult(),
-                            info.executionError()));
+                            info.executionError());
                 }
+                // Close before the drain below: an operation-change hook arriving from a checkpoint that completes
+                // during the drain is rejected, so no RUNNING snapshot can follow (or replace) the final record.
+                state.closeAndSchedule(scheduler, finalRecord);
             } catch (Throwable t) {
                 // A plugin failure at end-of-invocation (record construction, transforms, truncation, export/flush,
                 // or optional exporter class linkage) must never disrupt durable execution.
                 logSafely("onInvocationEnd failed", t);
             } finally {
+                // If record construction failed above, the state is still open: close it so a late change hook cannot
+                // schedule into the drain. Idempotent when already closed.
+                if (state != null) {
+                    state.closeAndSchedule(scheduler, null);
+                }
                 // Sampled-out executions never schedule a record, so there is nothing to drain or flush. If the state
                 // lookup itself failed, drain anyway: it is a no-op when idle and otherwise delivers what is pending.
                 if (state == null || state.sampledIn) {
@@ -228,19 +267,17 @@ public final class WorkflowInsight {
             }
         }
 
-        /** Waits for every scheduled record to reach the exporters, then flushes each exporter once. */
+        /** Waits for every scheduled record to reach the exporters, then flushes each exporter once, concurrently. */
         private void drainAndFlush() {
             try {
                 scheduler.drain();
             } catch (Throwable t) {
                 logSafely("failed to drain export scheduler", t);
             }
-            for (InsightExporter exporter : exporters) {
-                try {
-                    exporter.flush();
-                } catch (Throwable t) {
-                    logSafely("exporter flush failed", t);
-                }
+            try {
+                scheduler.flushAll();
+            } catch (Throwable t) {
+                logSafely("exporter flush failed", t);
             }
         }
 

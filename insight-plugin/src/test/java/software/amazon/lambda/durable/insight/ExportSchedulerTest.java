@@ -260,6 +260,108 @@ class ExportSchedulerTest {
         assertEquals(1, exporter.records.size());
     }
 
+    @Test
+    void aDrainThatObservedTheHandleBeforeTheWorkerWasRejectedStillCompletesInline() throws Exception {
+        var submitted = new CountDownLatch(1);
+        var proceed = new CountDownLatch(1);
+        Executor blockingRejector = command -> {
+            submitted.countDown();
+            await(proceed);
+            throw new RejectedExecutionException("no worker");
+        };
+        var failures = new CopyOnWriteArrayList<Throwable>();
+        var exporter = new CapturingExporter();
+        var scheduler = scheduler(blockingRejector, failures, exporter);
+
+        var scheduling = new Thread(() -> scheduler.schedule(record("final")), "scheduling");
+        scheduling.start();
+        assertTrue(submitted.await(5, TimeUnit.SECONDS), "the pump handle is published before execute rejects");
+
+        var drained = new CountDownLatch(1);
+        var drainer = new Thread(
+                () -> {
+                    scheduler.drain();
+                    drained.countDown();
+                },
+                "drainer");
+        drainer.start();
+        Thread.sleep(100); // let the drainer observe the in-flight handle and block on it
+
+        proceed.countDown();
+        scheduling.join(5_000);
+        assertTrue(drained.await(5, TimeUnit.SECONDS), "the rejected handle is completed, so the drainer wakes up");
+        assertEquals(List.of("final"), statuses(exporter));
+        assertEquals("drainer", exporter.threads.get(0).getName(), "the drainer exports the pending record inline");
+        assertEquals(1, failures.size());
+    }
+
+    @Test
+    void flushAllRunsExporterFlushesConcurrentlySoASlowFlushDoesNotDelayTheOthers() throws Exception {
+        var release = new CountDownLatch(1);
+        var fastFlushed = new CountDownLatch(1);
+        var slow = new InsightExporter() {
+            @Override
+            public void export(WorkflowInsightRecord record) {}
+
+            @Override
+            public void flush() {
+                await(release);
+            }
+        };
+        var fast = new InsightExporter() {
+            @Override
+            public void export(WorkflowInsightRecord record) {}
+
+            @Override
+            public void flush() {
+                fastFlushed.countDown();
+            }
+        };
+        var scheduler = scheduler(sharedWorkers(), new ArrayList<>(), slow, fast);
+
+        var flushed = new CountDownLatch(1);
+        new Thread(() -> {
+                    scheduler.flushAll();
+                    flushed.countDown();
+                })
+                .start();
+
+        assertTrue(fastFlushed.await(5, TimeUnit.SECONDS), "fast exporter flushed while the slow one is blocked");
+        assertFalse(flushed.await(100, TimeUnit.MILLISECONDS), "flushAll waits for every exporter");
+        release.countDown();
+        assertTrue(flushed.await(5, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void flushAllIsolatesAFailingFlush() {
+        var failures = new CopyOnWriteArrayList<Throwable>();
+        var flushed = new CountDownLatch(1);
+        var bad = new InsightExporter() {
+            @Override
+            public void export(WorkflowInsightRecord record) {}
+
+            @Override
+            public void flush() {
+                throw new IllegalStateException("flush failed");
+            }
+        };
+        var good = new InsightExporter() {
+            @Override
+            public void export(WorkflowInsightRecord record) {}
+
+            @Override
+            public void flush() {
+                flushed.countDown();
+            }
+        };
+        var scheduler = scheduler(sharedWorkers(), failures, bad, good);
+
+        scheduler.flushAll();
+
+        assertEquals(0, flushed.getCount(), "the healthy exporter still flushed");
+        assertEquals(1, failures.size());
+    }
+
     private static List<String> statuses(CapturingExporter exporter) {
         List<String> out = new ArrayList<>();
         for (WorkflowInsightRecord r : exporter.records) {

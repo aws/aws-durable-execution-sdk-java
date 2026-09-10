@@ -82,12 +82,14 @@ final class ExportScheduler {
             executor.execute(() -> pump(handle));
         } catch (Throwable t) {
             // No worker could be started. Keep the pending record and return to idle so a later schedule() retries,
-            // and drain() runs whatever is still pending on the calling thread before the invocation returns.
+            // and drain() runs whatever is still pending on the calling thread before the invocation returns. Complete
+            // the handle too: a drain() that already observed it must wake up and take that inline path.
             synchronized (this) {
                 if (inFlight == handle) {
                     inFlight = null;
                 }
             }
+            handle.complete(null);
             reportFailure(t);
         }
     }
@@ -148,17 +150,30 @@ final class ExportScheduler {
     }
 
     /**
+     * Flushes every exporter, each on its own worker, and waits for all of them to settle. A slow or failing flush on
+     * one exporter never delays or fails the others.
+     */
+    void flushAll() {
+        forEachExporterSettled(InsightExporter::flush);
+    }
+
+    /**
      * Exports one record to every exporter, each on its own worker, and waits for all of them to settle. One failing or
      * slow exporter never blocks or fails the others, and an export error never propagates into the execution.
      */
     private void exportToAll(WorkflowInsightRecord record) {
+        forEachExporterSettled(exporter -> exportOne.accept(record, exporter));
+    }
+
+    /** Runs the action for every exporter concurrently and returns once all have settled, reporting each failure. */
+    private void forEachExporterSettled(Consumer<InsightExporter> action) {
         if (exporters.size() == 1) {
-            runSafely(() -> exportOne.accept(record, exporters.get(0)));
+            runSafely(() -> action.accept(exporters.get(0)));
             return;
         }
         List<CompletableFuture<Void>> settled = new ArrayList<>(exporters.size());
         for (InsightExporter exporter : exporters) {
-            Runnable task = () -> runSafely(() -> exportOne.accept(record, exporter));
+            Runnable task = () -> runSafely(() -> action.accept(exporter));
             try {
                 settled.add(CompletableFuture.runAsync(task, executor));
             } catch (Throwable t) {

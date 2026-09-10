@@ -11,6 +11,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
@@ -31,7 +33,7 @@ class WorkflowInsightHookTest {
             "arn:aws:lambda:us-west-2:1:function:f:$LATEST/durable-execution/exec-1/invocation-1";
     private static final Instant START = Instant.parse("2026-08-05T00:00:00Z");
 
-    private static final class CapturingExporter implements InsightExporter {
+    private static class CapturingExporter implements InsightExporter {
         final List<WorkflowInsightRecord> records = new CopyOnWriteArrayList<>();
         final List<Thread> threads = new CopyOnWriteArrayList<>();
         volatile int flushes;
@@ -114,6 +116,49 @@ class WorkflowInsightHookTest {
         assertTrue(exporter.records.subList(0, exporter.records.size() - 1).stream()
                 .allMatch(r -> "RUNNING".equals(r.status())));
         assertTrue(exporter.threads.stream().noneMatch(t -> t == Thread.currentThread()));
+        assertEquals(1, exporter.flushes);
+    }
+
+    @Test
+    void changeHookArrivingWhileTheEndRecordDrainsCannotFollowOrReplaceIt() throws Exception {
+        var exportingFinal = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var exporter = new CapturingExporter() {
+            @Override
+            public void export(WorkflowInsightRecord record) {
+                super.export(record);
+                if ("SUCCEEDED".equals(record.status())) {
+                    exportingFinal.countDown();
+                    try {
+                        assertTrue(release.await(5, TimeUnit.SECONDS));
+                    } catch (InterruptedException e) {
+                        throw new AssertionError(e);
+                    }
+                }
+            }
+        };
+        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
+                .addExporter(exporter)
+                .build());
+
+        plugin.onInvocationStart(start(true));
+        plugin.drainExports();
+
+        // The end hook blocks in its drain while the final record is being exported; the change hook arrives then,
+        // as it does when a checkpoint for an unawaited asynchronous operation completes during invocation end.
+        var ending = new Thread(() -> plugin.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null)));
+        ending.start();
+        assertTrue(exportingFinal.await(5, TimeUnit.SECONDS));
+        plugin.onOperationChange(new OperationChangeInfo(
+                "req", ARN, ops("greet", OperationStatus.SUCCEEDED), ops("greet", OperationStatus.SUCCEEDED)));
+        release.countDown();
+        ending.join(5_000);
+        assertFalse(ending.isAlive());
+
+        assertEquals(2, exporter.records.size(), "start snapshot + final record; the late change is dropped");
+        assertEquals("RUNNING", exporter.records.get(0).status());
+        assertEquals("SUCCEEDED", exporter.records.get(1).status());
         assertEquals(1, exporter.flushes);
     }
 
