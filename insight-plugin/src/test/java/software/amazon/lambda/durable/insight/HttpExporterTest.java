@@ -11,12 +11,17 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.insight.exporters.HttpExporter;
@@ -99,6 +104,29 @@ class HttpExporterTest {
         assertEquals("PUT", sender.method);
         assertEquals("Bearer token123", sender.headers.get("Authorization"));
         assertEquals("application/json", sender.headers.get("Content-Type"));
+    }
+
+    @Test
+    void callerContentTypeOverridesDefaultCaseInsensitivelyWithNoDuplicate() {
+        RecordingSender sender = new RecordingSender();
+        HttpExporter exporter = HttpExporter.builder()
+                .url("https://hook.example/insight")
+                .addHeader("content-type", "application/json; charset=utf-8")
+                .sender(sender)
+                .build();
+
+        exporter.export(sampleRecord());
+
+        int contentTypeCount = 0;
+        String contentTypeValue = null;
+        for (Map.Entry<String, String> h : sender.headers.entrySet()) {
+            if (h.getKey().equalsIgnoreCase("content-type")) {
+                contentTypeCount++;
+                contentTypeValue = h.getValue();
+            }
+        }
+        assertEquals(1, contentTypeCount, "exactly one content-type header regardless of casing: " + sender.headers);
+        assertEquals("application/json; charset=utf-8", contentTypeValue, "caller value overrides the default");
     }
 
     @Test
@@ -263,6 +291,97 @@ class HttpExporterTest {
             assertEquals("PUT", method.get());
             assertEquals(List.of("Bearer abc"), auth);
         } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void realLocalServerReceivesSingleContentTypeWhenCallerOverridesCasing() throws Exception {
+        List<String> contentTypes = new CopyOnWriteArrayList<>();
+        HttpServer server = startServer(exchange -> {
+            List<String> received = exchange.getRequestHeaders().get("Content-Type");
+            if (received != null) {
+                contentTypes.addAll(received);
+            }
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        try {
+            HttpExporter exporter = HttpExporter.builder()
+                    .url("http://" + authority(server) + "/insight")
+                    .addHeader("content-type", "application/json")
+                    .build();
+
+            exporter.export(sampleRecord());
+
+            assertEquals(1, contentTypes.size(), "exactly one Content-Type header on the wire: " + contentTypes);
+            assertEquals("application/json", contentTypes.get(0));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void defaultSenderThrowsIllegalStateExceptionWhenConnectionRefused() throws Exception {
+        // Reserve then release a loopback port so nothing is listening on it: connecting is refused deterministically.
+        int deadPort;
+        try (ServerSocket socket = new ServerSocket(0, 0, InetAddress.getByName("127.0.0.1"))) {
+            deadPort = socket.getLocalPort();
+        }
+        HttpExporter exporter = HttpExporter.builder()
+                .url("http://127.0.0.1:" + deadPort + "/insight")
+                .timeoutMs(2_000) // bounded so a stray listener could never hang the test
+                .build();
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> exporter.export(sampleRecord()));
+        assertTrue(ex.getMessage().contains("failed"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("127.0.0.1:" + deadPort), ex.getMessage());
+    }
+
+    @Test
+    void defaultSenderThrowsAndPreservesInterruptWhenExportingThreadInterrupted() throws Exception {
+        CountDownLatch requestReceived = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        // Handler blocks without responding, so the client stays parked waiting for the response headers.
+        HttpServer server = startServer(exchange -> {
+            requestReceived.countDown();
+            try {
+                release.await(30, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        try {
+            HttpExporter exporter = HttpExporter.builder()
+                    .url("http://" + authority(server) + "/insight")
+                    .timeoutMs(30_000)
+                    .build();
+
+            AtomicReference<Throwable> thrown = new AtomicReference<>();
+            AtomicBoolean interruptPreserved = new AtomicBoolean();
+            Thread worker = new Thread(() -> {
+                try {
+                    exporter.export(sampleRecord());
+                } catch (Throwable t) {
+                    thrown.set(t);
+                    interruptPreserved.set(Thread.currentThread().isInterrupted());
+                }
+            });
+            worker.start();
+
+            assertTrue(requestReceived.await(10, TimeUnit.SECONDS), "server should receive the request first");
+            worker.interrupt();
+            worker.join(TimeUnit.SECONDS.toMillis(10));
+
+            assertFalse(worker.isAlive(), "worker should return after interruption");
+            Throwable t = thrown.get();
+            assertTrue(t instanceof IllegalStateException, "expected IllegalStateException, got " + t);
+            assertTrue(t.getMessage().contains("interrupted"), t.getMessage());
+            assertTrue(interruptPreserved.get(), "interrupt flag must be preserved after interruption");
+        } finally {
+            release.countDown();
             server.stop(0);
         }
     }

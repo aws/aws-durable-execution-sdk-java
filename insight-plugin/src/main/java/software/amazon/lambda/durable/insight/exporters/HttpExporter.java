@@ -17,9 +17,10 @@ import software.amazon.lambda.durable.insight.WorkflowInsightRecord;
 
 /**
  * Exports workflow insight records to any HTTP(S) endpoint via {@code POST} (or {@code PUT}). Each record is sent as a
- * JSON body with {@code Content-Type: application/json}; the endpoint must return a 2xx status or the export throws.
- * Mirrors the JS {@code HttpExporter} contract (URL, method, custom headers, request timeout, operations format, and
- * optional size cap). Uses the JDK's own HTTP client, so it needs no extra dependency.
+ * JSON body with a default {@code Content-Type: application/json} header that a caller may override; the endpoint must
+ * return a 2xx status or the export throws. Mirrors the JS {@code HttpExporter} contract (URL, method, custom headers,
+ * request timeout, operations format, and optional size cap). Uses the JDK's own HTTP client, so it needs no extra
+ * dependency.
  */
 @Experimental
 public final class HttpExporter implements InsightExporter {
@@ -111,15 +112,29 @@ public final class HttpExporter implements InsightExporter {
     @Override
     public void export(WorkflowInsightRecord record) {
         String body = Json.stringify(render(record));
-        Map<String, String> requestHeaders = new LinkedHashMap<>();
-        requestHeaders.put("Content-Type", "application/json");
-        requestHeaders.putAll(headers);
-        HttpSender.Response response = sender.send(url, method.name(), requestHeaders, body, timeout);
+        HttpSender.Response response = sender.send(url, method.name(), mergeHeaders(), body, timeout);
         int status = response.statusCode();
         if (status < 200 || status >= 300) {
             throw new IllegalStateException(
                     "HttpExporter: endpoint returned " + status + " " + response.reasonPhrase());
         }
+    }
+
+    /**
+     * Builds the request headers: the default {@code Content-Type: application/json} with the caller's headers layered
+     * on top. Header names are matched case-insensitively (HTTP header names are case-insensitive), so a caller header
+     * of any casing — {@code content-type}, {@code CONTENT-TYPE}, {@code Content-Type} — replaces an earlier entry
+     * instead of adding a duplicate. The result carries exactly one header per name, and any caller-supplied
+     * {@code Content-Type} overrides the default.
+     */
+    private Map<String, String> mergeHeaders() {
+        Map<String, String> merged = new LinkedHashMap<>();
+        merged.put("Content-Type", "application/json");
+        for (Map.Entry<String, String> e : headers.entrySet()) {
+            merged.keySet().removeIf(existing -> existing.equalsIgnoreCase(e.getKey()));
+            merged.put(e.getKey(), e.getValue());
+        }
+        return merged;
     }
 
     /** Builder for {@link HttpExporter}. */
@@ -144,13 +159,20 @@ public final class HttpExporter implements InsightExporter {
             return this;
         }
 
-        /** Additional request headers (for example an {@code Authorization} token or API key). Copied defensively. */
+        /**
+         * Additional request headers (for example an {@code Authorization} token or API key). Copied defensively.
+         * Header names are matched case-insensitively, and a header named {@code Content-Type} (any casing) overrides
+         * the exporter's default {@code application/json}.
+         */
         public Builder headers(Map<String, String> headers) {
             this.headers = headers;
             return this;
         }
 
-        /** Adds a single request header; convenient for one auth header without building a map. */
+        /**
+         * Adds a single request header; convenient for one auth header without building a map. Follows the same
+         * case-insensitive, default-overriding rules as {@link #headers(Map)}.
+         */
         public Builder addHeader(String name, String value) {
             if (this.headers == null) {
                 this.headers = new LinkedHashMap<>();

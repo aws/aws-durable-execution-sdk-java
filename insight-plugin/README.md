@@ -55,9 +55,9 @@ configure, using the AWS SDK for Java 2.x version managed by your application:
 
 ### HttpExporter
 
-`HttpExporter` POSTs (or PUTs) each record to any HTTP(S) endpoint or webhook as a JSON body with
-`Content-Type: application/json`. It uses the JDK's built-in HTTP client, so it adds **no dependency**.
-It mirrors the JS `HttpExporter`.
+`HttpExporter` POSTs (or PUTs) each record to any HTTP(S) endpoint or webhook as a JSON body with a
+default `Content-Type: application/json` header that a caller may override. It uses the JDK's built-in
+HTTP client, so it adds **no dependency**. It mirrors the JS `HttpExporter`.
 
 ```java
 .addExporter(HttpExporter.builder()
@@ -72,8 +72,9 @@ It mirrors the JS `HttpExporter`.
 Behavior:
 
 - **Endpoint / method / headers.** Records are sent to `url` with `method` (POST or PUT — use PUT for
-  endpoints that upsert by URL path). Your headers are merged on top of the fixed
-  `Content-Type: application/json`.
+  endpoints that upsert by URL path). Your headers are layered on top of the default
+  `Content-Type: application/json`. Header names are matched case-insensitively, so a caller-supplied
+  `Content-Type` (any casing) overrides the default and never produces a duplicate header.
 - **Auth.** There is no built-in auth scheme; pass whatever your endpoint expects as a header
   (`Authorization: Bearer …`, `x-api-key: …`, etc.) via `addHeader`/`headers`.
 - **Timeout.** `timeoutMs` (default 10000) bounds the whole request; a slow or unreachable endpoint
