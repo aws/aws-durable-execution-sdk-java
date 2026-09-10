@@ -7,9 +7,17 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import software.amazon.lambda.durable.insight.exporters.FileExporter;
@@ -182,5 +190,63 @@ class FileExporterTest {
     void flushIsNoOpAndDoesNotThrow(@TempDir Path dir) {
         FileExporter exporter = FileExporter.builder().directory(dir).build();
         exporter.flush();
+    }
+
+    @Test
+    void traversalShapedEmittedAtIsRejectedByResolveChild(@TempDir Path dir) {
+        // The NDJSON partition is emittedAt.substring(0, 10), so a traversal-shaped emittedAt drives a file name
+        // containing path separators and "..". resolveChild must reject it rather than write outside `directory`.
+        WorkflowInsightRecord r = sampleRecord();
+        r.emittedAt = "../../etc/passwd";
+        FileExporter exporter = FileExporter.builder().directory(dir).build();
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> exporter.export(r));
+        assertTrue(
+                ex.getMessage().contains("escapes the configured directory"),
+                "resolveChild should reject an escape attempt");
+        // Nothing was written outside the configured directory: substring(0,10) of the emittedAt is "../../etc/",
+        // so the attempted target would be dir/../../etc/.ndjson.
+        assertFalse(Files.exists(dir.getParent().getParent().resolve("etc/.ndjson")));
+    }
+
+    @Test
+    void concurrentNdjsonAppendsWriteCompleteParseableLines(@TempDir Path dir) throws Exception {
+        // Real filesystem, real threads: each export must land as exactly one complete, parseable NDJSON line.
+        FileExporter exporter = FileExporter.builder().directory(dir).build();
+        int threads = 8;
+        int perThread = 25;
+        int total = threads * perThread;
+
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<?>> futures = new ArrayList<>();
+        for (int t = 0; t < threads; t++) {
+            futures.add(pool.submit(() -> {
+                start.await();
+                for (int i = 0; i < perThread; i++) {
+                    exporter.export(sampleRecord());
+                }
+                return null;
+            }));
+        }
+        start.countDown();
+        for (Future<?> f : futures) {
+            f.get();
+        }
+        pool.shutdown();
+        assertTrue(pool.awaitTermination(30, TimeUnit.SECONDS));
+
+        Path file = dir.resolve("2026-08-05.ndjson");
+        assertTrue(Files.exists(file));
+        List<String> lines = Files.readAllLines(file);
+        assertEquals(total, lines.size(), "each export appends exactly one line");
+        ObjectMapper mapper = new ObjectMapper();
+        for (String line : lines) {
+            assertFalse(line.isBlank(), "no blank/partial lines");
+            // Each line parses as a complete JSON object (no interleaving/truncation).
+            JsonNode node = mapper.readTree(line);
+            assertTrue(node.isObject(), "each line is a complete JSON object");
+            assertEquals("WorkflowInsight", node.get("recordType").asText());
+        }
     }
 }

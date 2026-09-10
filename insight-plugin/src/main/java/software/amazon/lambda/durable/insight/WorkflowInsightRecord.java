@@ -211,8 +211,10 @@ public final class WorkflowInsightRecord {
 
     /**
      * Combined wire map mirroring the JS {@code applyOperationsFormat(record, "both")} shape: the canonical
-     * {@code operations} array plus an added {@code operationsByName} map. Field order matches the canonical map with
-     * {@code operationsByName} appended after {@code operations}.
+     * {@code operations} array plus an added {@code operationsByName} map. JS spreads the whole record and then adds
+     * the key ({@code {...record, operationsByName}}), so {@code operationsByName} is the LAST key — after every record
+     * field and any truncation markers. This method preserves that order by starting from the canonical map (which
+     * already ends with the truncation markers) and appending {@code operationsByName} last.
      */
     public Map<String, Object> toBothWireMap() {
         Map<String, Object> data = toWireMap();
@@ -221,15 +223,7 @@ public final class WorkflowInsightRecord {
                 OperationsIndex.buildOperationsByName(operations).entrySet()) {
             byName.put(e.getKey(), e.getValue().toWireMap());
         }
-        // Insert operationsByName immediately after operations, before the truncation markers, to match the JS spread
-        // order ({...record, operationsByName}).
-        Map<String, Object> ordered = new LinkedHashMap<>();
-        for (Map.Entry<String, Object> e : data.entrySet()) {
-            ordered.put(e.getKey(), e.getValue());
-            if ("operations".equals(e.getKey())) {
-                ordered.put("operationsByName", byName);
-            }
-        }
-        return ordered;
+        data.put("operationsByName", byName);
+        return data;
     }
 }

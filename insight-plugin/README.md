@@ -84,6 +84,13 @@ an S3 File Gateway path, or `/tmp` for local testing. Two modes:
   before it is written.
 - On `/tmp` (ephemeral, per-container) files do not survive a cold start; use an EFS mount to persist
   across invocations and containers.
+- **Concurrent NDJSON append is not atomic on shared filesystems.** NDJSON mode uses `Files.write(..., APPEND)`.
+  A single writer on a local disk (`/tmp`) appends one whole line at a time, so lines never interleave. On a
+  **shared NFS/EFS mount written by more than one Lambda environment at once**, the append is not guaranteed
+  atomic: concurrent writers can interleave partial lines or overwrite each other, producing malformed or lost
+  records. If multiple execution environments may write to the same directory, prefer **JSON mode** (one file per
+  execution, keyed by name/ARN — no shared append) or ensure a **single writer** per NDJSON file (for example, a
+  per-environment subdirectory).
 
 ## Design
 
