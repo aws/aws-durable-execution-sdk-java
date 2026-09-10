@@ -76,12 +76,18 @@ public final class WorkflowInsight {
         private final ContentConfig content;
         private final Map<String, OperationOverride> overridesByName = new LinkedHashMap<>();
         private final List<InsightExporter> exporters;
+        private final ExportScheduler scheduler;
 
         private final Map<String, ExecutionState> byArn = new ConcurrentHashMap<>();
 
         /** Test seam: number of live per-execution state entries retained across invocations. */
         int retainedStateCount() {
             return byArn.size();
+        }
+
+        /** Test seam: waits until every scheduled record has been handed to the exporters. */
+        void drainExports() {
+            scheduler.drain();
         }
 
         InsightPlugin(WorkflowInsightConfig config) {
@@ -97,6 +103,8 @@ public final class WorkflowInsight {
             }
             this.exporters =
                     config.exporters().isEmpty() ? List.of(new LambdaLogExporter()) : List.copyOf(config.exporters());
+            this.scheduler =
+                    new ExportScheduler(exporters, this::exportRecord, t -> logSafely("export scheduling failed", t));
         }
 
         private ExecutionState getState(String arn, Instant startTime) {
@@ -123,7 +131,7 @@ public final class WorkflowInsight {
                     state.cachedInput = null;
                 }
                 if (emitMode == WorkflowInsightConfig.EmitMode.ON_CHANGE) {
-                    emit(buildRecord(
+                    scheduler.schedule(buildRecord(
                             state,
                             info.durableExecutionArn(),
                             "RUNNING",
@@ -148,7 +156,7 @@ public final class WorkflowInsight {
                 if (state == null || !state.sampledIn) {
                     return;
                 }
-                emit(buildRecord(
+                scheduler.schedule(buildRecord(
                         state,
                         info.durableExecutionArn(),
                         "RUNNING",
@@ -162,10 +170,14 @@ public final class WorkflowInsight {
             }
         }
 
+        // onInvocationEnd is the hook the SDK awaits, so it is where the export queue is drained before the invocation
+        // returns; this guarantees the final record (scheduled above the drain) is delivered. The drain and flush run
+        // in finally so they also cover the paths where record construction fails.
         @Override
         public void onInvocationEnd(InvocationEndInfo info) {
+            ExecutionState state = null;
             try {
-                ExecutionState state = getState(info.durableExecutionArn(), info.executionStartTime());
+                state = getState(info.durableExecutionArn(), info.executionStartTime());
                 String status = mapStatus(info.invocationStatus());
                 boolean isTerminal = "SUCCEEDED".equals(status) || "FAILED".equals(status);
                 boolean isFailure = "FAILED".equals(status);
@@ -184,7 +196,7 @@ public final class WorkflowInsight {
                 }
 
                 if (state.sampledIn && shouldEmit) {
-                    emit(buildRecord(
+                    scheduler.schedule(buildRecord(
                             state,
                             info.durableExecutionArn(),
                             status,
@@ -199,6 +211,11 @@ public final class WorkflowInsight {
                 // or optional exporter class linkage) must never disrupt durable execution.
                 logSafely("onInvocationEnd failed", t);
             } finally {
+                // Sampled-out executions never schedule a record, so there is nothing to drain or flush. If the state
+                // lookup itself failed, drain anyway: it is a no-op when idle and otherwise delivers what is pending.
+                if (state == null || state.sampledIn) {
+                    drainAndFlush();
+                }
                 // Remove per-execution state on EVERY invocation end, including non-terminal PENDING/RETRYING suspends,
                 // once any emission work above is done. Nothing durable is lost: the next invocation's onInvocation
                 // start recreates the stable startTime from InvocationInfo.executionStartTime() (stable across
@@ -211,25 +228,38 @@ public final class WorkflowInsight {
             }
         }
 
-        /** Serializes each record to every exporter, isolating failures so one exporter never blocks the others. */
-        private void emit(WorkflowInsightRecord record) {
+        /** Waits for every scheduled record to reach the exporters, then flushes each exporter once. */
+        private void drainAndFlush() {
+            try {
+                scheduler.drain();
+            } catch (Throwable t) {
+                logSafely("failed to drain export scheduler", t);
+            }
             for (InsightExporter exporter : exporters) {
                 try {
-                    // Give each exporter its own deep copy: truncation returns the original record when it already
-                    // fits, so without this a custom exporter that mutates operations or nested content would corrupt
-                    // every exporter that runs after it.
-                    WorkflowInsightRecord isolated = record.deepCopy();
-                    WorkflowInsightRecord shaped =
-                            Truncation.truncateRecord(isolated, exporter.maxRecordSizeBytes(), exporter::render);
-                    exporter.export(shaped);
                     exporter.flush();
                 } catch (Throwable t) {
-                    // Catch Throwable, not just RuntimeException: deep copy, truncation, an exporter's render/export/
-                    // flush, or the linkage of an optional exporter class (a NoClassDefFoundError when the S3 /
-                    // CloudWatch SDK is absent) can each fail with an Error. Isolating every Throwable here guarantees
-                    // one failing exporter cannot block the exporters that run after it, nor disrupt the execution.
-                    logSafely("exporter failed", t);
+                    logSafely("exporter flush failed", t);
                 }
+            }
+        }
+
+        /** Shapes and exports one record to one exporter; runs on a scheduler worker, never on an SDK hook thread. */
+        private void exportRecord(WorkflowInsightRecord record, InsightExporter exporter) {
+            try {
+                // Give each exporter its own deep copy: truncation returns the original record when it already fits,
+                // so without this a custom exporter that mutates operations or nested content would corrupt every
+                // other exporter's view of the same record.
+                WorkflowInsightRecord isolated = record.deepCopy();
+                WorkflowInsightRecord shaped =
+                        Truncation.truncateRecord(isolated, exporter.maxRecordSizeBytes(), exporter::render);
+                exporter.export(shaped);
+            } catch (Throwable t) {
+                // Catch Throwable, not just RuntimeException: deep copy, truncation, an exporter's render/export, or
+                // the linkage of an optional exporter class (a NoClassDefFoundError when the S3 / CloudWatch SDK is
+                // absent) can each fail with an Error. Isolating every Throwable here guarantees one failing exporter
+                // cannot affect the others, nor disrupt the execution.
+                logSafely("exporter failed", t);
             }
         }
 

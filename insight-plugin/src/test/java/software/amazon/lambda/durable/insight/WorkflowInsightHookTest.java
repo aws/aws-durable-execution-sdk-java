@@ -7,10 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
@@ -32,12 +32,14 @@ class WorkflowInsightHookTest {
     private static final Instant START = Instant.parse("2026-08-05T00:00:00Z");
 
     private static final class CapturingExporter implements InsightExporter {
-        final List<WorkflowInsightRecord> records = new ArrayList<>();
-        int flushes;
+        final List<WorkflowInsightRecord> records = new CopyOnWriteArrayList<>();
+        final List<Thread> threads = new CopyOnWriteArrayList<>();
+        volatile int flushes;
 
         @Override
         public void export(WorkflowInsightRecord record) {
             records.add(record);
+            threads.add(Thread.currentThread());
         }
 
         @Override
@@ -67,20 +69,65 @@ class WorkflowInsightHookTest {
     @Test
     void onChangeEmitsAtStartChangeAndEnd() {
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
                 .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
                 .addExporter(exporter)
                 .build());
 
+        // Let each scheduled export land before the next hook so all three snapshots are observable; back-to-back
+        // hooks may otherwise coalesce into the latest record (covered separately below).
         plugin.onInvocationStart(start(true));
+        plugin.drainExports();
         plugin.onOperationChange(new OperationChangeInfo(
                 "req", ARN, ops("greet", OperationStatus.SUCCEEDED), ops("greet", OperationStatus.SUCCEEDED)));
+        plugin.drainExports();
         plugin.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null));
 
         assertEquals(3, exporter.records.size());
         assertEquals("RUNNING", exporter.records.get(0).status());
         assertEquals("RUNNING", exporter.records.get(1).status());
         assertEquals("SUCCEEDED", exporter.records.get(2).status());
+        assertEquals(1, exporter.flushes, "exporters are flushed once, at invocation end");
+    }
+
+    @Test
+    void onChangeExportsOffTheHookThreadAndCoalescesBurstsIntoTheLatestRecord() {
+        var exporter = new CapturingExporter();
+        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
+                .addExporter(exporter)
+                .build());
+
+        plugin.onInvocationStart(start(true));
+        for (int i = 0; i < 20; i++) {
+            plugin.onOperationChange(new OperationChangeInfo(
+                    "req", ARN, ops("greet", OperationStatus.SUCCEEDED), ops("greet", OperationStatus.SUCCEEDED)));
+        }
+        plugin.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null));
+
+        // Intermediate RUNNING snapshots may be superseded while an export is in flight, but the final record is always
+        // delivered, always last, and no export ever ran on the thread that delivered the hooks.
+        assertFalse(exporter.records.isEmpty());
+        assertTrue(exporter.records.size() <= 22, "no duplicate exports");
+        var last = exporter.records.get(exporter.records.size() - 1);
+        assertEquals("SUCCEEDED", last.status());
+        assertTrue(exporter.records.subList(0, exporter.records.size() - 1).stream()
+                .allMatch(r -> "RUNNING".equals(r.status())));
+        assertTrue(exporter.threads.stream().noneMatch(t -> t == Thread.currentThread()));
+        assertEquals(1, exporter.flushes);
+    }
+
+    @Test
+    void invocationEndFlushesExportersEvenWhenNothingWasEmitted() {
+        var exporter = new CapturingExporter();
+        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(
+                WorkflowInsightConfig.builder().addExporter(exporter).build());
+
+        plugin.onInvocationStart(start(true));
+        plugin.onInvocationEnd(end(InvocationStatus.PENDING, null, null));
+
+        assertTrue(exporter.records.isEmpty(), "on-complete emits nothing for a suspend");
+        assertEquals(1, exporter.flushes, "the invocation boundary still flushes buffered exporters");
     }
 
     @Test
@@ -107,8 +154,10 @@ class WorkflowInsightHookTest {
                 .build());
 
         plugin.onInvocationStart(start(true)); // first invocation
+        plugin.drainExports();
         plugin.onInvocationEnd(end(InvocationStatus.PENDING, null, null)); // suspend -> state removed
         plugin.onInvocationStart(start(false)); // resume invocation re-seeds state
+        plugin.drainExports();
         plugin.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null)); // resume + terminal
 
         // start(RUNNING) + pending(RUNNING) + resume-start(RUNNING) + terminal(SUCCEEDED); all share the stable

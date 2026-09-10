@@ -13,7 +13,6 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
 
@@ -56,7 +55,7 @@ class JsonJavaTimeTest {
     @Test
     void pluginOutputWithInstantInInputSerializesInsteadOfDropping() {
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
                 .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
                 .addExporter(exporter)
                 .build());
@@ -80,6 +79,7 @@ class JsonJavaTimeTest {
                         null,
                         null));
         plugin.onInvocationStart(new InvocationInfo("req", ARN, true, START, input, ops, Map.of()));
+        plugin.drainExports();
 
         assertEquals(1, exporter.records.size());
         var rec = exporter.records.get(0);

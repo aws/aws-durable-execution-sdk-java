@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
 
@@ -45,11 +44,12 @@ class OperationOrderingTest {
 
     private WorkflowInsightRecord emitStart(Map<String, OperationChangeItemInfo> ops) {
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
                 .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
                 .addExporter(exporter)
                 .build());
         plugin.onInvocationStart(new InvocationInfo("req", ARN, true, START, "in", ops, Map.of()));
+        plugin.drainExports();
         return exporter.records.get(0);
     }
 
