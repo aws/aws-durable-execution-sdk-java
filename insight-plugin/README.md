@@ -26,31 +26,140 @@ DurableConfig config = DurableConfig.builder()
     .build();
 ```
 
-Exporters: `LambdaLogExporter` (default; writes the `operationsByName` map to stdout →
-CloudWatch), `S3Exporter` (canonical `operations` array, one object per execution),
-`CloudWatchLogsExporter` (PutLogEvents to a specific log group, `operationsByName` map). Implement
-`InsightExporter` for custom sinks.
+## Exporters
 
-`LambdaLogExporter` needs no extra dependency. The AWS SDK service modules used by the remote
-exporters are optional so applications that use only Lambda logs do not package them. Add the module
-for each remote exporter you configure, using the AWS SDK for Java 2.x version managed by your
-application:
+Implement `InsightExporter` for custom sinks. Every exporter has a builder with one setter per option and a
+`maxRecordSizeBytes` override; records over the limit are truncated before export.
+
+| Exporter | Destination | Operations rendering | Default size limit | Artifact (optional) |
+|---|---|---|---|---|
+| `LambdaLogExporter` | Function log group (stdout) | `operationsByName` | 256 KB | none |
+| `CloudWatchLogsExporter` | Any log group, PutLogEvents | `operationsByName` | 256 KB | `cloudwatchlogs` |
+| `S3Exporter` | One object per execution | `operations` array | 5 MB | `s3` |
+| `DynamoDBExporter` | One item per record (or per execution) | `operationsByName` | 400 KB | `dynamodb` |
+| `AuroraExporter` | One row per execution, RDS Data API | `operations` array | 1 MB | `rdsdata` |
+| `RedshiftExporter` | One row per execution, Redshift Data API | `operations` array | 1 MB | `redshiftdata` |
+| `OpenSearchExporter` | One document per execution | `operations` array | 10 MB | `http-auth-aws`, `auth` |
+| `FirehoseExporter` | One NDJSON record, PutRecord | `operationsFormat` | 1 MB | `firehose` |
+| `EventBridgeExporter` | One event, PutEvents | `operationsFormat` | 256 KB | `eventbridge` |
+| `SQSExporter` | One message, SendMessage | `operationsFormat` | 256 KB | `sqs` |
+| `OTelExporter` | OTLP/HTTP JSON log record | `operationsFormat` (body) | 1 MB | none |
+| `HttpExporter` | POST or PUT JSON to a URL | `operationsFormat` | none | none |
+| `FileExporter` | NDJSON or JSON files in a directory | `operationsFormat` | none | none |
+
+`operationsFormat` is `ARRAY` (default), `BY_NAME`, or `BOTH`.
+
+Artifacts are `software.amazon.awssdk` modules and are optional: add only the ones for the exporters you configure,
+at the AWS SDK for Java 2.x version your application manages. A configured exporter whose artifact is missing fails
+at first export with a message naming the artifact; the plugin logs it and continues with the other exporters.
 
 ```xml
-<!-- Required only for S3Exporter -->
 <dependency>
     <groupId>software.amazon.awssdk</groupId>
-    <artifactId>s3</artifactId>
-    <version>AWS_SDK_VERSION</version>
-</dependency>
-
-<!-- Required only for CloudWatchLogsExporter -->
-<dependency>
-    <groupId>software.amazon.awssdk</groupId>
-    <artifactId>cloudwatchlogs</artifactId>
+    <artifactId>dynamodb</artifactId> <!-- or s3, cloudwatchlogs, rdsdata, redshiftdata, firehose, eventbridge, sqs -->
     <version>AWS_SDK_VERSION</version>
 </dependency>
 ```
+
+### DynamoDBExporter
+
+Table keyed by `pk` (string), optionally with sort key `sk`. IAM: `dynamodb:PutItem`.
+
+```java
+DynamoDBExporter.builder().tableName("workflow-insight").build()          // history: pk = ARN, sk = emittedAt
+DynamoDBExporter.builder().tableName("workflow-insight").sortKey("").build() // upsert: pk only
+```
+
+### AuroraExporter
+
+Cluster with the Data API enabled. Time values are bound as ISO-8601 strings. Table columns: `execution_arn
+VARCHAR(512) PRIMARY KEY`, `execution_name VARCHAR(256)`, `function_name VARCHAR(128)`, `status VARCHAR(20)`,
+`start_time VARCHAR(30)`, `end_time VARCHAR(30)`, `duration_ms BIGINT`, `record_json` (`JSONB` on PostgreSQL,
+`LONGTEXT` on MySQL), `emitted_at VARCHAR(30)`. On PostgreSQL the time columns may instead be `TIMESTAMPTZ`; the
+statement casts the values. IAM: `rds-data:ExecuteStatement`, `secretsmanager:GetSecretValue`.
+
+```java
+AuroraExporter.builder()
+    .resourceArn(clusterArn).secretArn(secretArn).database("insight")
+    .engine(AuroraExporter.Engine.POSTGRESQL)   // or MYSQL
+    .build()
+```
+
+### RedshiftExporter
+
+Serverless workgroup or provisioned cluster. Same columns as Aurora with `record_json SUPER` and `TIMESTAMPTZ` time
+columns; rows are upserted with `MERGE`. IAM: `redshift-data:ExecuteStatement` plus `redshift-serverless:GetCredentials`
+(Serverless) or `secretsmanager:GetSecretValue` / `redshift:GetClusterCredentialsWithIAM` (provisioned).
+
+```java
+RedshiftExporter.builder().workgroupName("insight").database("dev").build()
+RedshiftExporter.builder().clusterIdentifier("my-cluster").database("dev").secretArn(secretArn).build()
+```
+
+### OpenSearchExporter
+
+Domain endpoint; the index is created on first write. The document id is the execution ARN. IAM (SigV4):
+`es:ESHttpPut` on `domain/<name>/workflow-insight/*`.
+
+```java
+OpenSearchExporter.builder().endpoint("https://my-domain.us-east-1.es.amazonaws.com").region("us-east-1").build()
+OpenSearchExporter.builder().endpoint(url).auth(OpenSearchExporter.Auth.BASIC).username(u).password(p).build()
+```
+
+### FirehoseExporter
+
+Delivery stream with any destination. IAM: `firehose:PutRecord`.
+
+```java
+FirehoseExporter.builder().deliveryStreamName("workflow-insight").build()
+```
+
+### EventBridgeExporter
+
+Default bus or a custom bus. `DetailType` is the record status, so rules can match `FAILED`. IAM: `events:PutEvents`.
+
+```java
+EventBridgeExporter.builder().build()                        // default bus, source aws.durable-execution.insight
+EventBridgeExporter.builder().eventBusName("insight-bus").build()
+```
+
+### SQSExporter
+
+Standard or FIFO queue; FIFO queues receive a group id (execution ARN) and a deduplication id. IAM: `sqs:SendMessage`.
+
+```java
+SQSExporter.builder().queueUrl("https://sqs.us-east-1.amazonaws.com/123456789012/insight.fifo").build()
+```
+
+### OTelExporter
+
+Any OTLP/HTTP logs endpoint; authenticate with headers. `http/protobuf` is not supported. No IAM.
+
+```java
+OTelExporter.builder().endpoint("https://otlp.example.com/v1/logs").headers(Map.of("x-api-key", key)).build()
+```
+
+### HttpExporter
+
+Any endpoint accepting JSON. `timeoutMs` defaults to 10000. No IAM.
+
+```java
+HttpExporter.builder().url("https://hooks.example.com/insight").method(HttpExporter.Method.PUT).build()
+```
+
+### FileExporter
+
+A writable directory such as an EFS mount or `/tmp`. `NDJSON` appends `{date}.ndjson`; `JSON` writes
+`{executionName}.json`.
+
+```java
+FileExporter.builder().directory("/mnt/efs/workflow-insight").mode(FileExporter.Mode.JSON).build()
+```
+
+### S3Exporter and CloudWatchLogsExporter
+
+`S3Exporter` writes `{prefix}{partition}{executionName}.json` (IAM: `s3:PutObject`). `CloudWatchLogsExporter` writes
+one event per record to `{logStreamPrefix}YYYY/MM/DD` (IAM: `logs:CreateLogStream`, `logs:PutLogEvents`).
 
 ## Design
 

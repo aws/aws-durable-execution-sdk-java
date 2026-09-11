@@ -3,9 +3,7 @@
 package software.amazon.lambda.durable.insight.exporters;
 
 import software.amazon.awssdk.core.sync.RequestBody;
-import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.insight.InsightExporter;
@@ -32,18 +30,14 @@ public final class S3Exporter implements InsightExporter {
     private final String prefix;
     private final Partitioning partitioning;
     private final Integer maxRecordSizeBytes;
-    private final S3Client client;
+    private final LazyClient<S3Client> client;
 
     private S3Exporter(Builder b) {
         this.bucket = b.bucket;
         this.prefix = b.prefix != null ? b.prefix : "workflow-insight/";
         this.partitioning = b.partitioning != null ? b.partitioning : Partitioning.DATE;
         this.maxRecordSizeBytes = b.maxRecordSizeBytes != null ? b.maxRecordSizeBytes : 5_000_000;
-        S3ClientBuilder cb = S3Client.builder();
-        if (b.region != null) {
-            cb = cb.region(Region.of(b.region));
-        }
-        this.client = b.client != null ? b.client : cb.build();
+        this.client = LazyClient.forSdkClient(b.client, "s3", "software.amazon.awssdk.services.s3.S3Client", b.region);
     }
 
     public static Builder builder() {
@@ -59,13 +53,14 @@ public final class S3Exporter implements InsightExporter {
     public void export(WorkflowInsightRecord record) {
         String key = buildKey(record);
         String body = Json.stringify(record.toWireMap());
-        client.putObject(
-                PutObjectRequest.builder()
-                        .bucket(bucket)
-                        .key(key)
-                        .contentType("application/json")
-                        .build(),
-                RequestBody.fromString(body));
+        client.get()
+                .putObject(
+                        PutObjectRequest.builder()
+                                .bucket(bucket)
+                                .key(key)
+                                .contentType("application/json")
+                                .build(),
+                        RequestBody.fromString(body));
     }
 
     private String buildKey(WorkflowInsightRecord record) {

@@ -3,6 +3,9 @@
 package software.amazon.lambda.durable.insight;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.util.DefaultIndenter;
+import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
+import com.fasterxml.jackson.core.util.Separators;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -23,6 +26,14 @@ public final class Json {
             .registerModule(new JavaTimeModule())
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
+    private static final DefaultPrettyPrinter PRETTY_PRINTER = new DefaultPrettyPrinter()
+            .withObjectIndenter(new DefaultIndenter("  ", "\n"))
+            .withArrayIndenter(new DefaultIndenter("  ", "\n"))
+            .withSeparators(Separators.createDefaultInstance()
+                    .withObjectFieldValueSpacing(Separators.Spacing.AFTER)
+                    .withObjectEmptySeparator("")
+                    .withArrayEmptySeparator(""));
+
     private Json() {}
 
     public static String stringify(Object value) {
@@ -31,6 +42,25 @@ public final class Json {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("failed to serialize insight record", e);
         }
+    }
+
+    /**
+     * Serializes with two-space indentation, {@code ": "} between name and value, and {@code []}/{@code {}} when empty.
+     */
+    public static String prettyStringify(Object value) {
+        try {
+            return MAPPER.writer(PRETTY_PRINTER).writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("failed to serialize insight record", e);
+        }
+    }
+
+    /**
+     * Converts a value to its JSON-compatible form: maps, lists, strings, numbers, booleans, or {@code null}. Used by
+     * exporters that marshal the record into a destination's native document type instead of a JSON string.
+     */
+    public static Object toJsonValue(Object value) {
+        return deepCopyContent(value);
     }
 
     /** UTF-8 byte length of the value's JSON, or {@code null} if it can't be serialized. */
