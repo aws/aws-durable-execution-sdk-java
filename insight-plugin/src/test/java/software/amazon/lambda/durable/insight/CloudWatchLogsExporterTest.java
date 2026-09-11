@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.insight;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeast;
@@ -22,11 +23,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
 import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
 import software.amazon.awssdk.services.cloudwatchlogs.model.CreateLogStreamRequest;
 import software.amazon.awssdk.services.cloudwatchlogs.model.CreateLogStreamResponse;
 import software.amazon.awssdk.services.cloudwatchlogs.model.PutLogEventsRequest;
 import software.amazon.awssdk.services.cloudwatchlogs.model.PutLogEventsResponse;
+import software.amazon.awssdk.services.cloudwatchlogs.model.ResourceAlreadyExistsException;
+import software.amazon.awssdk.services.cloudwatchlogs.model.ResourceNotFoundException;
 import software.amazon.lambda.durable.insight.exporters.CloudWatchLogsExporter;
 
 class CloudWatchLogsExporterTest {
@@ -71,6 +75,38 @@ class CloudWatchLogsExporterTest {
         String message = req.logEvents().get(0).message();
         assertTrue(message.contains("operationsByName"), "CloudWatch emits the by-name map");
         assertTrue(!message.contains("\"operations\""), "CloudWatch must not emit the canonical array");
+    }
+
+    @Test
+    void toleratesAnExistingStreamButPropagatesOtherErrors() {
+        CloudWatchLogsClient client = mock(CloudWatchLogsClient.class);
+        when(client.createLogStream(any(CreateLogStreamRequest.class)))
+                .thenThrow(ResourceAlreadyExistsException.builder()
+                        .awsErrorDetails(AwsErrorDetails.builder()
+                                .errorCode("ResourceAlreadyExistsException")
+                                .build())
+                        .build())
+                .thenThrow(ResourceNotFoundException.builder()
+                        .awsErrorDetails(AwsErrorDetails.builder()
+                                .errorCode("ResourceNotFoundException")
+                                .build())
+                        .build());
+        when(client.putLogEvents(any(PutLogEventsRequest.class)))
+                .thenReturn(PutLogEventsResponse.builder().build());
+
+        CloudWatchLogsExporter existing = CloudWatchLogsExporter.builder()
+                .logGroupName("/my/group")
+                .client(client)
+                .build();
+        existing.export(sampleRecord());
+        verify(client, times(1)).putLogEvents(any(PutLogEventsRequest.class));
+
+        CloudWatchLogsExporter missingGroup = CloudWatchLogsExporter.builder()
+                .logGroupName("/missing/group")
+                .client(client)
+                .build();
+        assertThrows(ResourceNotFoundException.class, () -> missingGroup.export(sampleRecord()));
+        verify(client, times(1)).putLogEvents(any(PutLogEventsRequest.class));
     }
 
     @Test
