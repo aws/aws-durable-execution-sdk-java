@@ -49,6 +49,10 @@ public final class WorkflowInsightRecord {
         operations.add(operation);
     }
 
+    public String emittedAt() {
+        return emittedAt;
+    }
+
     public String executionArn() {
         return executionArn;
     }
@@ -202,6 +206,24 @@ public final class WorkflowInsightRecord {
         }
         data.put("operationsByName", byName);
         putTruncationMarkers(data);
+        return data;
+    }
+
+    /**
+     * Combined wire map mirroring the JS {@code applyOperationsFormat(record, "both")} shape: the canonical
+     * {@code operations} array plus an added {@code operationsByName} map. JS spreads the whole record and then adds
+     * the key ({@code {...record, operationsByName}}), so {@code operationsByName} is the LAST key — after every record
+     * field and any truncation markers. This method preserves that order by starting from the canonical map (which
+     * already ends with the truncation markers) and appending {@code operationsByName} last.
+     */
+    public Map<String, Object> toBothWireMap() {
+        Map<String, Object> data = toWireMap();
+        Map<String, Object> byName = new LinkedHashMap<>();
+        for (Map.Entry<String, OperationSummary> e :
+                OperationsIndex.buildOperationsByName(operations).entrySet()) {
+            byName.put(e.getKey(), e.getValue().toWireMap());
+        }
+        data.put("operationsByName", byName);
         return data;
     }
 }

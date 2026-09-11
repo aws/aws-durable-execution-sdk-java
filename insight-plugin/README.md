@@ -28,11 +28,13 @@ DurableConfig config = DurableConfig.builder()
 
 Exporters: `LambdaLogExporter` (default; writes the `operationsByName` map to stdout →
 CloudWatch), `S3Exporter` (canonical `operations` array, one object per execution),
-`CloudWatchLogsExporter` (PutLogEvents to a specific log group, `operationsByName` map). Implement
-`InsightExporter` for custom sinks.
+`CloudWatchLogsExporter` (PutLogEvents to a specific log group, `operationsByName` map),
+`FileExporter` (writes to the local filesystem — an EFS mount, an S3 File Gateway path, or `/tmp`).
+Implement `InsightExporter` for custom sinks.
 
-`LambdaLogExporter` needs no extra dependency. The AWS SDK service modules used by the remote
-exporters are optional so applications that use only Lambda logs do not package them. Add the module
+`LambdaLogExporter` and `FileExporter` need no extra dependency (`FileExporter` uses only
+`java.nio.file`). The AWS SDK service modules used by the remote exporters are optional so
+applications that use only Lambda logs or the filesystem do not package them. Add the module
 for each remote exporter you configure, using the AWS SDK for Java 2.x version managed by your
 application:
 
@@ -51,6 +53,44 @@ application:
     <version>AWS_SDK_VERSION</version>
 </dependency>
 ```
+
+### FileExporter
+
+Writes records to any writable directory — a Lambda [EFS mount](https://docs.aws.amazon.com/lambda/latest/dg/services-efs.html),
+an S3 File Gateway path, or `/tmp` for local testing. Two modes:
+
+```java
+// NDJSON (default): append one compact JSON line per emission to a date-partitioned file,
+//   {directory}/{YYYY-MM-DD}.ndjson   (date is the record's emittedAt day, UTC)
+.addExporter(FileExporter.builder()
+    .directory("/mnt/efs/workflow-insight")
+    .build())
+
+// JSON: one pretty-printed file per execution, overwritten on each update,
+//   {directory}/{executionName}.json
+.addExporter(FileExporter.builder()
+    .directory("/mnt/efs/workflow-insight")
+    .mode(FileExporter.Mode.JSON)
+    .operationsFormat(FileExporter.OperationsFormat.BOTH) // ARRAY (default) | BY_NAME | BOTH
+    .build())
+```
+
+- **`directory`** is required; the exporter creates it (recursively) on first write.
+- **File names are deterministic and safe.** NDJSON files are named only by UTC date; JSON files use
+  the execution name (falling back to the ARN), with every character outside `[a-zA-Z0-9._-]`
+  replaced by `_`, so a name can never contain a path separator or `..`.
+- **`maxRecordSizeBytes`** has no default — the filesystem has no practical per-record limit. Set it
+  only if you want smaller files; the plugin then truncates each record (oldest results first) to fit
+  before it is written.
+- On `/tmp` (ephemeral, per-container) files do not survive a cold start; use an EFS mount to persist
+  across invocations and containers.
+- **Concurrent NDJSON append is not atomic on shared filesystems.** NDJSON mode uses `Files.write(..., APPEND)`.
+  A single writer on a local disk (`/tmp`) appends one whole line at a time, so lines never interleave. On a
+  **shared NFS/EFS mount written by more than one Lambda environment at once**, the append is not guaranteed
+  atomic: concurrent writers can interleave partial lines or overwrite each other, producing malformed or lost
+  records. If multiple execution environments may write to the same directory, prefer **JSON mode** (one file per
+  execution, keyed by name/ARN — no shared append) or ensure a **single writer** per NDJSON file (for example, a
+  per-environment subdirectory).
 
 ## Design
 
