@@ -99,7 +99,7 @@ class InputSnapshotTest {
             return v;
         };
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
                 .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
                 .content(ContentConfig.builder()
                         .inputTransform(mutatingTransform)
@@ -113,7 +113,9 @@ class InputSnapshotTest {
         input.put("items", items);
 
         plugin.onInvocationStart(new InvocationInfo("req", ARN, true, START, input, ops(), Map.of()));
+        plugin.drainExports();
         plugin.onOperationChange(new OperationChangeInfo("req", ARN, ops(), ops()));
+        plugin.drainExports();
         plugin.onInvocationEnd(
                 new InvocationEndInfo("req", ARN, true, START, ops(), InvocationStatus.SUCCEEDED, null, input, "out"));
 
