@@ -28,7 +28,8 @@ DurableConfig config = DurableConfig.builder()
 
 Exporters: `LambdaLogExporter` (default; writes the `operationsByName` map to stdout →
 CloudWatch), `S3Exporter` (canonical `operations` array, one object per execution),
-`CloudWatchLogsExporter` (PutLogEvents to a specific log group, `operationsByName` map). Implement
+`CloudWatchLogsExporter` (PutLogEvents to a specific log group, `operationsByName` map),
+`SQSExporter` (one `SendMessage` per emission; standard or FIFO queue). Implement
 `InsightExporter` for custom sinks.
 
 `LambdaLogExporter` needs no extra dependency. The AWS SDK service modules used by the remote
@@ -50,6 +51,72 @@ application:
     <artifactId>cloudwatchlogs</artifactId>
     <version>AWS_SDK_VERSION</version>
 </dependency>
+
+<!-- Required only for SQSExporter -->
+<dependency>
+    <groupId>software.amazon.awssdk</groupId>
+    <artifactId>sqs</artifactId>
+    <version>AWS_SDK_VERSION</version>
+</dependency>
+```
+
+## SQSExporter
+
+Sends one SQS `SendMessage` per emission, with the full record JSON as the message body. Works with
+standard and FIFO queues. **Resource:** an SQS queue (standard or FIFO). **IAM:** `sqs:SendMessage`
+on the target queue.
+
+```java
+.addExporter(SQSExporter.builder()
+    .queueUrl("https://sqs.us-east-1.amazonaws.com/123456789012/workflow-insight")
+    .region("us-east-1")                                  // optional; defaults to the SDK chain
+    .operationsFormat(SQSExporter.OperationsFormat.ARRAY) // ARRAY (default) | BY_NAME | BOTH
+    .build())
+```
+
+- **`queueUrl`** (required) — the target queue URL. A URL ending in `.fifo` is treated as a FIFO
+  queue.
+- **`messageGroupId`** (optional, FIFO only) — defaults to the record's `executionArn`, so all
+  messages for one execution stay ordered together. Bounded to SQS's 128-character limit (hashed
+  when longer; see FIFO behavior below). Ignored for standard queues.
+- **`region`** (optional) — region for the created client; ignored when a client is injected.
+- **`operationsFormat`** (optional) — `ARRAY` (canonical `operations` array, default), `BY_NAME`
+  (the `operationsByName` map replacing the array), or `BOTH` (the array plus the map).
+- **`maxRecordSizeBytes`** (optional) — defaults to `256_000` (SQS's 256 KB message limit). Must be
+  positive; a non-positive value is rejected at build time. This bounds the rendered JSON **body**
+  only. SQS counts message attributes toward the same 256 KB message quota, so the default is not
+  set to the exact quota — leave headroom below the quota for the `status` and `functionName`
+  attributes when tuning it.
+
+**FIFO behavior:** on a `.fifo` queue the exporter sets `MessageGroupId` (see above) and a
+`MessageDeduplicationId`. SQS caps both ids at 128 characters. The group id is used verbatim when
+it already fits and is otherwise replaced by a deterministic SHA-256 hex digest of the raw value,
+so grouping stays stable per execution. The deduplication id is a SHA-256 hex digest over the
+execution ARN, the emitted timestamp, and the rendered body: an exact redelivery of the same
+emission produces the same id and is de-duplicated, while two distinct rapid `ON_CHANGE` snapshots
+of the same execution produce different ids and are not silently dropped inside SQS's 5-minute
+dedup window. Hashing uses only the JDK (`java.security.MessageDigest`), no extra dependency. Every
+message carries `status` and `functionName` string message attributes for consumer-side filtering.
+
+**Queue setup:**
+
+```bash
+# Standard queue
+aws sqs create-queue --queue-name workflow-insight-queue
+
+# FIFO queue (content-based dedup off — the exporter supplies dedup ids)
+aws sqs create-queue --queue-name workflow-insight-queue.fifo \
+  --attributes FifoQueue=true,ContentBasedDeduplication=false
+```
+
+**IAM policy:**
+
+```json
+{
+    "Effect": "Allow",
+    "Action": "sqs:SendMessage",
+    "Resource": "arn:aws:sqs:*:*:workflow-insight-queue*"
+}
 ```
 
 ## Design
