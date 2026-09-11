@@ -5,11 +5,16 @@ package software.amazon.lambda.durable.examples;
 import static org.junit.jupiter.api.Assertions.*;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledForJreRange;
@@ -19,6 +24,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
+import software.amazon.awssdk.services.cloudwatchlogs.model.FilterLogEventsRequest;
+import software.amazon.awssdk.services.cloudwatchlogs.model.ResourceNotFoundException;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -43,6 +51,10 @@ class CloudBasedIntegrationTest {
     private static String region;
     private static String functionNamePrefix;
     private static LambdaClient lambdaClient;
+    private static CloudWatchLogsClient logsClient;
+
+    /** Reused for parsing insight records out of CloudWatch log messages; ObjectMapper is thread-safe for reads. */
+    private static final ObjectMapper INSIGHT_MAPPER = new ObjectMapper();
 
     static boolean isEnabled() {
         var enabled = "true".equals(System.getProperty("test.cloud.enabled"));
@@ -73,6 +85,11 @@ class CloudBasedIntegrationTest {
         }
 
         lambdaClient = LambdaClient.builder()
+                .credentialsProvider(DefaultCredentialsProvider.builder().build())
+                .region(Region.of(region))
+                .build();
+
+        logsClient = CloudWatchLogsClient.builder()
                 .credentialsProvider(DefaultCredentialsProvider.builder().build())
                 .region(Region.of(region))
                 .build();
@@ -852,5 +869,147 @@ class CloudBasedIntegrationTest {
         // Verify operations were tracked
         assertNotNull(runner.getOperation("create-greeting"));
         assertNotNull(runner.getOperation("transform"));
+    }
+
+    @Test
+    void testWorkflowInsightExample() {
+        // Unique alphanumeric token so we match THIS execution's insight record by input.name, never by a broad
+        // time-only window that could select a stale record from an earlier run against the same deployed function.
+        var uniqueName = "insight" + UUID.randomUUID().toString().replace("-", "");
+
+        var runner = CloudDurableTestRunner.create(
+                arn("workflow-insight-example"), GreetingRequest.class, String.class, lambdaClient);
+
+        // Bound the log query window to just before this invocation (minus a small skew for clock/ingestion).
+        var queryStartMillis =
+                System.currentTimeMillis() - Duration.ofMinutes(1).toMillis();
+
+        var result = runner.run(new GreetingRequest(uniqueName));
+
+        // 1) Execution-level assertions from the durable history.
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        var expectedOutput = "HELLO, " + uniqueName.toUpperCase() + "!";
+        assertEquals(expectedOutput, result.getResult());
+        assertNotNull(runner.getOperation("create-greeting"));
+        assertNotNull(runner.getOperation("transform"));
+
+        // 2) Insight-record assertions from the managed function log group (LambdaLogExporter -> stdout -> CW Logs).
+        var logGroup = "/aws/lambda/" + functionNamePrefix + "workflow-insight-example";
+        var record = pollForInsightRecord(logGroup, uniqueName, queryStartMillis);
+        assertTrue(
+                record.isPresent(), "No WorkflowInsight record found in " + logGroup + " for input.name=" + uniqueName);
+
+        var node = record.get();
+        assertEquals("WorkflowInsight", node.path("recordType").asText());
+        assertEquals("1.0", node.path("schemaVersion").asText());
+        assertEquals("SUCCEEDED", node.path("status").asText());
+        assertEquals(uniqueName, node.path("input").path("name").asText());
+        assertEquals(expectedOutput, node.path("output").asText());
+
+        var byName = node.path("operationsByName");
+        assertTrue(byName.has("create-greeting"), "operationsByName missing create-greeting");
+        assertTrue(byName.has("transform"), "operationsByName missing transform");
+        assertEquals("SUCCEEDED", byName.path("create-greeting").path("status").asText());
+        assertEquals("SUCCEEDED", byName.path("transform").path("status").asText());
+        assertEquals(1, byName.path("create-greeting").path("count").asInt());
+        assertEquals(1, byName.path("transform").path("count").asInt());
+    }
+
+    /**
+     * Polls the managed function log group for the WorkflowInsight record whose {@code input.name} equals
+     * {@code uniqueName}. Bounded by a wall-clock deadline and uses {@link LockSupport#parkNanos(long)} (never
+     * {@code Thread.sleep}) to absorb CloudWatch Logs ingestion lag. Deterministic across JREs: the loop terminates on
+     * either a match or the deadline, and a final attempt runs after the last park so the deadline edge is not a lost
+     * poll.
+     */
+    private static Optional<JsonNode> pollForInsightRecord(String logGroup, String uniqueName, long queryStartMillis) {
+        var deadline = System.nanoTime() + Duration.ofSeconds(120).toNanos();
+        while (System.nanoTime() < deadline) {
+            var found = queryInsightRecordOnce(logGroup, uniqueName, queryStartMillis);
+            if (found.isPresent()) {
+                return found;
+            }
+            LockSupport.parkNanos(Duration.ofSeconds(3).toNanos());
+        }
+        return queryInsightRecordOnce(logGroup, uniqueName, queryStartMillis);
+    }
+
+    /**
+     * One bounded pass over the log group: a server-side {@code filterPattern} narrows to events containing the unique
+     * token, and pagination is followed up to a fixed page cap so a single pass cannot run unbounded. A missing log
+     * group (not yet created) is treated as "not found yet" so the caller retries.
+     */
+    private static Optional<JsonNode> queryInsightRecordOnce(
+            String logGroup, String uniqueName, long queryStartMillis) {
+        String nextToken = null;
+        var pages = 0;
+        try {
+            do {
+                var req = FilterLogEventsRequest.builder()
+                        .logGroupName(logGroup)
+                        .startTime(queryStartMillis)
+                        // Quoted term match narrows server-side to events containing the unique token, keeping the
+                        // scanned set small regardless of other executions writing to the same group.
+                        .filterPattern("\"" + uniqueName + "\"")
+                        .limit(100)
+                        .nextToken(nextToken)
+                        .build();
+                var resp = logsClient.filterLogEvents(req);
+                for (var event : resp.events()) {
+                    var parsed = parseInsightMessage(event.message(), uniqueName);
+                    if (parsed.isPresent()) {
+                        return parsed;
+                    }
+                }
+                nextToken = resp.nextToken();
+                pages++;
+            } while (nextToken != null && pages < 20);
+        } catch (ResourceNotFoundException e) {
+            // Managed log group / stream not created yet — let the caller retry within the deadline.
+            return Optional.empty();
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Parses one CloudWatch log message into a matching WorkflowInsight record node. Handles both a raw top-level JSON
+     * record (the {@code System.out} line LambdaLogExporter writes) and a Lambda structured-logging envelope whose
+     * {@code message} field carries the insight JSON as a string. Only a record whose {@code input.name} equals
+     * {@code uniqueName} is returned.
+     */
+    private static Optional<JsonNode> parseInsightMessage(String message, String uniqueName) {
+        if (message == null || message.isEmpty()) {
+            return Optional.empty();
+        }
+        var node = tryParseJson(message);
+        if (node == null) {
+            return Optional.empty();
+        }
+        // Case 1: raw top-level insight record.
+        if (isMatchingInsight(node, uniqueName)) {
+            return Optional.of(node);
+        }
+        // Case 2: Lambda structured-logging envelope: {"timestamp":...,"message":"<insight json string>",...}.
+        var inner = node.get("message");
+        if (inner != null && inner.isTextual()) {
+            var innerNode = tryParseJson(inner.asText());
+            if (innerNode != null && isMatchingInsight(innerNode, uniqueName)) {
+                return Optional.of(innerNode);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static boolean isMatchingInsight(JsonNode node, String uniqueName) {
+        return "WorkflowInsight".equals(node.path("recordType").asText(null))
+                && uniqueName.equals(node.path("input").path("name").asText(null));
+    }
+
+    private static JsonNode tryParseJson(String text) {
+        try {
+            return INSIGHT_MAPPER.readTree(text);
+        } catch (Exception e) {
+            return null;
+        }
     }
 }
