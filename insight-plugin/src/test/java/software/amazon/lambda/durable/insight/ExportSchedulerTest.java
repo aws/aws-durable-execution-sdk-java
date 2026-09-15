@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -17,6 +18,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 /** Contract tests for {@link ExportScheduler}: serial exports, latest-wins coalescing, drain, and exporter fan-out. */
@@ -421,6 +424,109 @@ class ExportSchedulerTest {
 
         assertEquals(0, flushed.getCount(), "the healthy exporter still flushed");
         assertEquals(1, failures.size());
+    }
+
+    @Test
+    void drainReturnsAfterTheWaitWhenAnExportHangsAndTheExportStillCompletesLater() throws Exception {
+        var release = new CountDownLatch(1);
+        var exported = new CountDownLatch(1);
+        var flushes = new AtomicInteger();
+        var failures = new CopyOnWriteArrayList<Throwable>();
+        var hanging = new InsightExporter() {
+            @Override
+            public void export(WorkflowInsightRecord record) {
+                await(release);
+                exported.countDown();
+            }
+
+            @Override
+            public void flush() {
+                flushes.incrementAndGet();
+            }
+        };
+        var scheduler = new ExportScheduler(
+                List.of(hanging),
+                (rec, exp) -> exp.export(rec),
+                failures::add,
+                sharedWorkers(),
+                Duration.ofMillis(200));
+
+        scheduler.schedule(record("final"));
+        long start = System.nanoTime();
+        scheduler.drain();
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+        assertTrue(elapsedMillis < 4_000, "drain returned after the bound, not after the export: " + elapsedMillis);
+        assertEquals(1, failures.size(), "the abandoned wait is reported");
+        assertTrue(failures.get(0) instanceof TimeoutException, failures.get(0).toString());
+        assertEquals(1, exported.getCount(), "the export is still running on its worker");
+
+        scheduler.flushAll();
+        assertEquals(0, flushes.get(), "flush never overlaps the exporter's own in-flight export");
+        assertEquals(2, failures.size(), "the skipped flush is reported");
+
+        release.countDown();
+        assertTrue(exported.await(5, TimeUnit.SECONDS), "the record is still delivered once the destination answers");
+        scheduler.drain();
+        scheduler.flushAll();
+        assertEquals(1, flushes.get(), "flush runs once the export has settled");
+    }
+
+    @Test
+    void drainWithinTheWaitDeliversEverythingAndReportsNothing() {
+        var exporter = new CapturingExporter();
+        var failures = new CopyOnWriteArrayList<Throwable>();
+        var scheduler = new ExportScheduler(
+                List.of(exporter),
+                (rec, exp) -> exp.export(rec),
+                failures::add,
+                sharedWorkers(),
+                Duration.ofSeconds(5));
+
+        scheduler.schedule(record("a"));
+        scheduler.schedule(record("arn:exec-b", "b"));
+        scheduler.drain();
+
+        assertEquals(2, exporter.records.size());
+        assertTrue(failures.isEmpty());
+    }
+
+    @Test
+    void flushAllReturnsAfterTheWaitWhenOneFlushHangs() throws Exception {
+        var release = new CountDownLatch(1);
+        var fastFlushed = new CountDownLatch(1);
+        var failures = new CopyOnWriteArrayList<Throwable>();
+        var slow = new InsightExporter() {
+            @Override
+            public void export(WorkflowInsightRecord record) {}
+
+            @Override
+            public void flush() {
+                await(release);
+            }
+        };
+        var fast = new InsightExporter() {
+            @Override
+            public void export(WorkflowInsightRecord record) {}
+
+            @Override
+            public void flush() {
+                fastFlushed.countDown();
+            }
+        };
+        var scheduler = new ExportScheduler(
+                List.of(slow, fast),
+                (rec, exp) -> exp.export(rec),
+                failures::add,
+                sharedWorkers(),
+                Duration.ofMillis(200));
+
+        scheduler.flushAll();
+
+        assertEquals(0, fastFlushed.getCount(), "the healthy exporter flushed");
+        assertEquals(1, failures.size(), "only the hanging flush is reported");
+        assertTrue(failures.get(0) instanceof TimeoutException, failures.get(0).toString());
+        release.countDown();
     }
 
     private static List<String> statuses(CapturingExporter exporter) {
