@@ -11,10 +11,10 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Loopback HTTP server that records every request and answers with a configurable status. */
-final class LocalHttpServer implements AutoCloseable {
+public final class LocalHttpServer implements AutoCloseable {
 
     /** One captured request. */
-    static final class Captured {
+    public static final class Captured {
         final String method;
         final String path;
         final Headers headers;
@@ -29,11 +29,11 @@ final class LocalHttpServer implements AutoCloseable {
     }
 
     private final HttpServer server;
-    final List<Captured> requests = new CopyOnWriteArrayList<>();
+    public final List<Captured> requests = new CopyOnWriteArrayList<>();
     volatile int status = 200;
     volatile long delayMillis = 0;
 
-    LocalHttpServer() throws IOException {
+    public LocalHttpServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
@@ -57,7 +57,7 @@ final class LocalHttpServer implements AutoCloseable {
         server.start();
     }
 
-    String url(String path) {
+    public String url(String path) {
         return "http://127.0.0.1:" + server.getAddress().getPort() + path;
     }
 
