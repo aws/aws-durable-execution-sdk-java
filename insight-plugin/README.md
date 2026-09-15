@@ -96,8 +96,9 @@ application:
   limit; a failing or slow exporter is logged and never blocks the others or the execution.
 - **Export scheduling.** Exporter I/O never runs on the SDK threads that deliver plugin hooks.
   Records are handed to a background worker that exports at most one record at a time; each
-  record is a complete snapshot, so while an export is in flight newer updates coalesce into a
-  single pending slot and only the latest is exported next. At invocation end the plugin waits
+  record is a complete snapshot of its execution, so while an export is in flight newer updates for
+  the same execution coalesce into that execution's pending slot and only the latest is exported
+  next; records of different executions never displace each other. At invocation end the plugin waits
   for the queue to drain and then flushes every exporter once, so the final record is always
   delivered before the invocation returns.
 
