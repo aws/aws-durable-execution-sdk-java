@@ -93,8 +93,11 @@ public final class OpenSearchExporter implements InsightExporter {
             requireNonNull(username, "username is required for basic auth");
             requireNonNull(password, "password is required for basic auth");
         }
-        AwsCredentialsProvider credentials = b.credentialsProvider;
-        this.signer = new LazyClient<>(null, "http-auth-aws", () -> new Signer(credentials));
+        // Held as Object: naming the provider type here would make the JVM load it while the exporter is built, even
+        // for basic auth. Only Signer, created on first SigV4 export, links the auth artifact.
+        Object credentials = b.credentialsProvider;
+        this.signer =
+                new LazyClient<>(null, "http-auth-aws and software.amazon.awssdk:auth", () -> new Signer(credentials));
     }
 
     public static Builder builder() {
@@ -161,8 +164,9 @@ public final class OpenSearchExporter implements InsightExporter {
         private final AwsV4HttpSigner v4 = AwsV4HttpSigner.create();
         private final AwsCredentialsProvider credentials;
 
-        Signer(AwsCredentialsProvider credentials) {
-            this.credentials = credentials != null ? credentials : DefaultCredentialsProvider.create();
+        Signer(Object credentials) {
+            this.credentials =
+                    credentials != null ? (AwsCredentialsProvider) credentials : DefaultCredentialsProvider.create();
         }
 
         Map<String, List<String>> sign(URI url, String body) {

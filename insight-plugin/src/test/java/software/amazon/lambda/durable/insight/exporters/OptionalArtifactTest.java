@@ -11,11 +11,13 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Path;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import software.amazon.lambda.durable.insight.InsightExporter;
+import software.amazon.lambda.durable.insight.LocalHttpServer;
 import software.amazon.lambda.durable.insight.RecordFactory;
 
 /**
@@ -26,13 +28,17 @@ class OptionalArtifactTest {
 
     /** Builds one exporter and exports one record; loaded into the isolated class loader so it links there. */
     public static final class Scenario implements Supplier<String> {
-        private final String exporter;
+        static final String EXPORTED = "exported";
 
-        public Scenario(String exporter) {
+        private final String exporter;
+        private final String endpoint;
+
+        public Scenario(String exporter, String endpoint) {
             this.exporter = exporter;
+            this.endpoint = endpoint;
         }
 
-        /** Returns the export failure message, or throws if build or export did not behave as required. */
+        /** Returns the export failure message, or {@link #EXPORTED} when the record was delivered. */
         @Override
         public String get() {
             InsightExporter built = build();
@@ -41,11 +47,23 @@ class OptionalArtifactTest {
             } catch (IllegalStateException e) {
                 return e.getMessage();
             }
-            throw new AssertionError(exporter + " exported without its artifact");
+            return EXPORTED;
         }
 
         private InsightExporter build() {
             switch (exporter) {
+                case "OpenSearchExporter:sigv4":
+                    return OpenSearchExporter.builder()
+                            .endpoint(endpoint)
+                            .region("us-east-1")
+                            .build();
+                case "OpenSearchExporter:basic":
+                    return OpenSearchExporter.builder()
+                            .endpoint(endpoint)
+                            .auth(OpenSearchExporter.Auth.BASIC)
+                            .username("u")
+                            .password("p")
+                            .build();
                 case "DynamoDBExporter":
                     return DynamoDBExporter.builder().tableName("t").build();
                 case "FirehoseExporter":
@@ -78,35 +96,82 @@ class OptionalArtifactTest {
         }
     }
 
+    private static final String SERVICES = "software.amazon.awssdk.services.";
+    private static final String OPTIONAL_AUTH = "software.amazon.awssdk:http-auth-aws and software.amazon.awssdk:auth";
+
     static Stream<Arguments> exporters() {
         return Stream.of(
-                Arguments.of("DynamoDBExporter", "dynamodb", "DynamoDbClient"),
-                Arguments.of("FirehoseExporter", "firehose", "FirehoseClient"),
-                Arguments.of("EventBridgeExporter", "eventbridge", "EventBridgeClient"),
-                Arguments.of("SQSExporter", "sqs", "SqsClient"),
-                Arguments.of("RedshiftExporter", "redshiftdata", "RedshiftDataClient"),
-                Arguments.of("AuroraExporter", "rdsdata", "RdsDataClient"),
-                Arguments.of("S3Exporter", "s3", "S3Client"),
-                Arguments.of("CloudWatchLogsExporter", "cloudwatchlogs", "CloudWatchLogsClient"));
+                Arguments.of(
+                        "DynamoDBExporter",
+                        "dynamodb",
+                        SERVICES + "dynamodb.DynamoDbClient",
+                        "software.amazon.awssdk:dynamodb"),
+                Arguments.of(
+                        "FirehoseExporter",
+                        "firehose",
+                        SERVICES + "firehose.FirehoseClient",
+                        "software.amazon.awssdk:firehose"),
+                Arguments.of(
+                        "EventBridgeExporter",
+                        "eventbridge",
+                        SERVICES + "eventbridge.EventBridgeClient",
+                        "software.amazon.awssdk:eventbridge"),
+                Arguments.of("SQSExporter", "sqs", SERVICES + "sqs.SqsClient", "software.amazon.awssdk:sqs"),
+                Arguments.of(
+                        "RedshiftExporter",
+                        "redshiftdata",
+                        SERVICES + "redshiftdata.RedshiftDataClient",
+                        "software.amazon.awssdk:redshiftdata"),
+                Arguments.of(
+                        "AuroraExporter",
+                        "rdsdata",
+                        SERVICES + "rdsdata.RdsDataClient",
+                        "software.amazon.awssdk:rdsdata"),
+                Arguments.of("S3Exporter", "s3", SERVICES + "s3.S3Client", "software.amazon.awssdk:s3"),
+                Arguments.of(
+                        "CloudWatchLogsExporter",
+                        "cloudwatchlogs",
+                        SERVICES + "cloudwatchlogs.CloudWatchLogsClient",
+                        "software.amazon.awssdk:cloudwatchlogs"),
+                Arguments.of(
+                        "OpenSearchExporter:sigv4",
+                        "http-auth-aws",
+                        "software.amazon.awssdk.http.auth.aws.signer.AwsV4HttpSigner",
+                        OPTIONAL_AUTH),
+                Arguments.of(
+                        "OpenSearchExporter:sigv4",
+                        "auth",
+                        "software.amazon.awssdk.auth.credentials.AwsCredentialsProvider",
+                        OPTIONAL_AUTH),
+                Arguments.of(
+                        "OpenSearchExporter:basic",
+                        "auth",
+                        "software.amazon.awssdk.auth.credentials.AwsCredentialsProvider",
+                        Scenario.EXPORTED));
     }
 
-    @ParameterizedTest(name = "{0} builds without {1} and fails at export naming it")
+    @ParameterizedTest(name = "{0} builds without {1}; export outcome: {3}")
     @MethodSource("exporters")
     @SuppressWarnings("unchecked")
-    void buildsWithoutTheArtifactAndFailsAtExport(String exporter, String artifact, String clientSimpleName)
+    void buildsWithoutTheArtifact(String exporter, String artifact, String hiddenClass, String expected)
             throws Exception {
-        try (URLClassLoader loader = loaderWithout(artifact)) {
-            String client = "software.amazon.awssdk.services." + artifact + "." + clientSimpleName;
+        try (URLClassLoader loader = loaderWithout(artifact);
+                LocalHttpServer server = new LocalHttpServer()) {
             assertThrows(
                     ClassNotFoundException.class,
-                    () -> Class.forName(client, false, loader),
-                    "the " + artifact + " client must be hidden from this loader");
+                    () -> Class.forName(hiddenClass, false, loader),
+                    hiddenClass + " must be hidden from this loader");
 
             Supplier<String> scenario = (Supplier<String>) loader.loadClass(Scenario.class.getName())
-                    .getConstructor(String.class)
-                    .newInstance(exporter);
-            String message = scenario.get();
-            assertTrue(message.contains("software.amazon.awssdk:" + artifact), message);
+                    .getConstructor(String.class, String.class)
+                    .newInstance(exporter, server.url(""));
+            String outcome = scenario.get();
+            assertTrue(outcome.contains(expected), outcome);
+            if (Scenario.EXPORTED.equals(expected)) {
+                assertEquals(1, server.requests.size(), "the record reached the endpoint");
+            } else {
+                assertEquals(0, server.requests.size(), "nothing was sent");
+            }
         }
     }
 
@@ -115,10 +180,10 @@ class OptionalArtifactTest {
      * defined by this loader (not the parent) and cannot see that service's client.
      */
     private static URLClassLoader loaderWithout(String artifact) throws Exception {
-        String prefix = File.separator + artifact + "-";
+        Pattern jar = Pattern.compile(Pattern.quote(File.separator + artifact + "-") + "\\d.*\\.jar$");
         String classPath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
         URL[] urls = Stream.of(classPath.split(File.pathSeparator))
-                .filter(p -> !p.contains(prefix))
+                .filter(p -> !jar.matcher(p).find())
                 .map(p -> {
                     try {
                         return Path.of(p).toUri().toURL();
@@ -128,10 +193,14 @@ class OptionalArtifactTest {
                 })
                 .toArray(URL[]::new);
         assertEquals(classPath.split(File.pathSeparator).length - 1, urls.length, "exactly one artifact jar removed");
-        return new URLClassLoader(urls, null) {
+        return new URLClassLoader(urls, ClassLoader.getPlatformClassLoader()) {
             @Override
             protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-                if (name.startsWith("java.") || name.startsWith("javax.") || name.startsWith("jdk.")) {
+                if (name.startsWith("java.")
+                        || name.startsWith("javax.")
+                        || name.startsWith("jdk.")
+                        || name.startsWith("com.sun.")
+                        || name.startsWith("sun.")) {
                     return super.loadClass(name, resolve);
                 }
                 synchronized (getClassLoadingLock(name)) {
