@@ -86,10 +86,11 @@ class ExportSchedulerReentrantFlushTest {
         holder.set(scheduler);
 
         var drainReturned = new CountDownLatch(1);
+        var firstExecution = Executions.plugin(scheduler, arn(0));
         var invocation = new Thread(
                 () -> {
-                    scheduler.schedule(arn(0), record(arn(0), "SUCCEEDED"));
-                    scheduler.drain(arn(0));
+                    scheduler.schedule(firstExecution, record(arn(0), "SUCCEEDED"));
+                    scheduler.drain(firstExecution);
                     drainReturned.countDown();
                 },
                 "reentrant-flush-invocation");
@@ -118,8 +119,9 @@ class ExportSchedulerReentrantFlushTest {
         // Still usable: the next invocation's record is exported and its flush — from a thread that is not the pump —
         // is
         // served exactly as before.
-        scheduler.schedule(arn(1), record(arn(1), "SUCCEEDED"));
-        scheduler.drain(arn(1));
+        var secondExecution = Executions.plugin(scheduler, arn(1));
+        scheduler.schedule(secondExecution, record(arn(1), "SUCCEEDED"));
+        scheduler.drain(secondExecution);
         scheduler.flush();
 
         assertEquals(2, exporter.exports.get(), "both records reached the exporter");

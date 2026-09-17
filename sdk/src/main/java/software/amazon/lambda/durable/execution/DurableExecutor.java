@@ -55,8 +55,10 @@ public class DurableExecutor {
             TypeToken<I> inputType,
             BiFunction<I, DurableContext, O> handler,
             DurableConfig config) {
-        var pluginRunner = config.getPluginRunner();
         try (var executionManager = new ExecutionManager(input, config, lambdaContext)) {
+            // Scoped to this invocation: the runner creates this invocation's plugin instances from the configured
+            // factories when onInvocationStart fires below, and releases them when the manager closes.
+            var pluginRunner = executionManager.getPluginRunner();
             var isFirstInvocation = !executionManager.isReplaying();
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             var executionArn = input.durableExecutionArn();

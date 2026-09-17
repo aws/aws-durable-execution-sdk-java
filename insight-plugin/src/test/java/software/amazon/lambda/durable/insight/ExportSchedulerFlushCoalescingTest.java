@@ -92,9 +92,10 @@ class ExportSchedulerFlushCoalescingTest {
         var done = new CountDownLatch(executions);
         for (int i = 0; i < executions; i++) {
             String executionArn = arn(i);
+            InsightPlugin execution = Executions.plugin(scheduler, executionArn);
             start("end-" + i, () -> {
-                scheduler.schedule(executionArn, record(executionArn, "SUCCEEDED"));
-                scheduler.drain(executionArn);
+                scheduler.schedule(execution, record(executionArn, "SUCCEEDED"));
+                scheduler.drain(execution);
                 awaitBarrier(recordsDelivered);
                 long began = System.nanoTime();
                 scheduler.flush();
@@ -136,11 +137,12 @@ class ExportSchedulerFlushCoalescingTest {
         var done = new CountDownLatch(executions);
         for (int i = 0; i < executions; i++) {
             String executionArn = arn(i);
+            InsightPlugin execution = Executions.plugin(scheduler, executionArn);
             start("drain-and-flush-" + i, () -> {
                 awaitBarrier(barrier);
                 long began = System.nanoTime();
-                scheduler.schedule(executionArn, record(executionArn, "SUCCEEDED"));
-                scheduler.drain(executionArn);
+                scheduler.schedule(execution, record(executionArn, "SUCCEEDED"));
+                scheduler.drain(execution);
                 scheduler.flush();
                 durations.add((System.nanoTime() - began) / 1_000_000L);
                 done.countDown();
@@ -247,9 +249,10 @@ class ExportSchedulerFlushCoalescingTest {
         var violations = new CopyOnWriteArrayList<String>();
         for (int i = 0; i < requests; i++) {
             String executionArn = arn(i);
+            InsightPlugin execution = Executions.plugin(scheduler, executionArn);
             start("load-flusher-" + i, () -> {
-                scheduler.schedule(executionArn, record(executionArn, "SUCCEEDED"));
-                scheduler.drain(executionArn);
+                scheduler.schedule(execution, record(executionArn, "SUCCEEDED"));
+                scheduler.drain(execution);
                 int startsBefore = flushStarts.get();
                 scheduler.flush();
                 if (flushCompletions.get() <= startsBefore) {

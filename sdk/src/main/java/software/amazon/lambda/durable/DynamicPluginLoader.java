@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -10,7 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
 
 final class DynamicPluginLoader {
@@ -18,38 +17,39 @@ final class DynamicPluginLoader {
 
     private DynamicPluginLoader() {}
 
-    static List<DurableExecutionPlugin> loadConfiguredPlugins(List<DurableExecutionPlugin> explicitPlugins) {
+    static List<DurableExecutionPluginFactory> loadConfiguredPluginFactories(
+            List<DurableExecutionPluginFactory> explicitFactories) {
         var configuredNames = System.getenv(PLUGINS_ENVIRONMENT_VARIABLE);
         if (configuredNames == null || configuredNames.isBlank()) {
-            return List.copyOf(explicitPlugins);
+            return List.copyOf(explicitFactories);
         }
 
         var classLoader = Thread.currentThread().getContextClassLoader();
         if (classLoader == null) {
             classLoader = DurableExecutionPluginProvider.class.getClassLoader();
         }
-        return loadConfiguredPlugins(
+        return loadConfiguredPluginFactories(
                 configuredNames,
                 ServiceLoader.load(DurableExecutionPluginProvider.class, classLoader),
-                explicitPlugins);
+                explicitFactories);
     }
 
-    static List<DurableExecutionPlugin> loadConfiguredPlugins(
+    static List<DurableExecutionPluginFactory> loadConfiguredPluginFactories(
             String configuredNames,
             Iterable<DurableExecutionPluginProvider> providers,
-            List<DurableExecutionPlugin> explicitPlugins) {
+            List<DurableExecutionPluginFactory> explicitFactories) {
         if (configuredNames == null || configuredNames.isBlank()) {
-            return List.copyOf(explicitPlugins);
+            return List.copyOf(explicitFactories);
         }
 
         var requestedNames = parseProviderNames(configuredNames);
         var providersByName = indexProviders(providers);
-        var plugins = new ArrayList<DurableExecutionPlugin>();
+        var factories = new ArrayList<DurableExecutionPluginFactory>();
         for (var name : requestedNames) {
-            addPlugin(name, getProvider(name, providersByName), plugins);
+            factories.add(getProvider(name, providersByName));
         }
-        plugins.addAll(explicitPlugins);
-        return List.copyOf(plugins);
+        factories.addAll(explicitFactories);
+        return List.copyOf(factories);
     }
 
     private static List<String> parseProviderNames(String configuredNames) {
@@ -119,58 +119,6 @@ final class DynamicPluginLoader {
                     + "' was found on the application class path. Available providers: " + available);
         }
         return provider;
-    }
-
-    private static void addPlugin(
-            String name, DurableExecutionPluginProvider provider, List<DurableExecutionPlugin> plugins) {
-        var pluginType = validateProvider(name, provider);
-        var plugin = createPlugin(name, provider);
-        if (!pluginType.isInstance(plugin)) {
-            throw configurationError("Plugin provider '" + name + "' declared type '" + pluginType.getName()
-                    + "' but created '" + plugin.getClass().getName() + "'");
-        }
-        plugins.add(plugin);
-    }
-
-    private static Class<? extends DurableExecutionPlugin> validateProvider(
-            String name, DurableExecutionPluginProvider provider) {
-        int apiVersion;
-        Class<? extends DurableExecutionPlugin> pluginType;
-        try {
-            apiVersion = provider.getApiVersion();
-            pluginType = provider.getPluginType();
-        } catch (RuntimeException | LinkageError e) {
-            throw configurationError(
-                    "Plugin provider '" + name + "' is not compatible with this Durable Execution SDK version", e);
-        }
-        if (apiVersion != DurableExecutionPluginProvider.API_VERSION) {
-            throw configurationError("Plugin provider '" + name + "' uses provider API version " + apiVersion
-                    + ", but this SDK requires version " + DurableExecutionPluginProvider.API_VERSION);
-        }
-        if (pluginType == null
-                || pluginType.isInterface()
-                || Modifier.isAbstract(pluginType.getModifiers())
-                || !DurableExecutionPlugin.class.isAssignableFrom(pluginType)) {
-            throw configurationError(
-                    "Plugin provider '" + name + "' must declare a concrete DurableExecutionPlugin type");
-        }
-        return pluginType;
-    }
-
-    private static DurableExecutionPlugin createPlugin(String name, DurableExecutionPluginProvider provider) {
-        DurableExecutionPlugin plugin;
-        try {
-            plugin = provider.createPlugin();
-        } catch (RuntimeException | LinkageError e) {
-            throw configurationError(
-                    "Plugin provider '" + name + "' failed to create its plugin. "
-                            + "Verify its settings and compatibility with this Durable Execution SDK version",
-                    e);
-        }
-        if (plugin == null) {
-            throw configurationError("Plugin provider '" + name + "' returned a null plugin");
-        }
-        return plugin;
     }
 
     private static IllegalStateException configurationError(String message) {

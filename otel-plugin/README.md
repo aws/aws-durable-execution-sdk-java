@@ -10,7 +10,7 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **Span-per-Operation**: Each durable operation (step, wait, map, etc.) gets its own span with accurate timing
 - **Attempt Spans**: Each user function execution (step attempt, child context run) gets a span, including retries
 - **Log Correlation**: Injects `traceId`, `spanId`, and `otelTraceSampled` into SLF4J MDC for end-to-end observability
-- **ADOT Java Agent Integration**: `new InvocationOtelPlugin()` late-binds the ADOT Java agent's global provider with no handler-side OpenTelemetry initialization
+- **ADOT Java Agent Integration**: `InvocationOtelPlugin.factory()` binds the ADOT Java agent's global provider on first use, with no handler-side OpenTelemetry initialization
 - **Lambda Layer Discovery**: `DURABLE_EXECUTION_PLUGINS` loads either OTel plugin from a JAR under a layer's `java/lib` directory
 
 ## Installation
@@ -23,7 +23,7 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 </dependency>
 ```
 
-For the no-arg constructor (`new InvocationOtelPlugin()`), no additional OpenTelemetry dependencies are needed — the ADOT Java agent layer provides them.
+For the agent path (`InvocationOtelPlugin.factory()`), no additional OpenTelemetry dependencies are needed — the ADOT Java agent layer provides them.
 
 If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK and an exporter:
 
@@ -50,7 +50,7 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 
 ### 1. ADOT Lambda Layer
 
-This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. The `new InvocationOtelPlugin()` constructor resolves the global provider initialized by the ADOT Java agent at invocation start, with deterministic span ID generation installed through the plugin's `AutoConfigurationCustomizerProvider` SPI. If the provider is not ready, the plugin emits no telemetry for that invocation and retries provider resolution on the next invocation.
+This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. `InvocationOtelPlugin.factory()` resolves the global provider initialized by the ADOT Java agent when the first invocation's plugin instance is created, with deterministic span ID generation installed through the plugin's `AutoConfigurationCustomizerProvider` SPI. If the provider is not ready, that invocation's instance emits no telemetry and the next invocation's instance resolves the provider again.
 
 The layer ARN follows the format:
 
@@ -130,7 +130,8 @@ public class MyHandler extends DurableHandler<MyInput, MyOutput> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder().withPlugins(new InvocationOtelPlugin()).build();
+        // A factory, not a plugin instance: the SDK creates one plugin instance per invocation from it.
+        return DurableConfig.builder().withPlugins(InvocationOtelPlugin.factory()).build();
     }
 
     @Override
@@ -193,7 +194,7 @@ The plugin decides sampling once per invocation and applies that single decision
 
 1. **Backend decision** — `Sampled=1` / `Sampled=0` in the propagated header is authoritative and always preserved, regardless of the configured sampler.
 2. **Same-trace ambient span** — when the header carries no usable `Sampled` value but a valid ambient span (for example an auto-instrumentation Lambda handler span) is already on the execution's trace, the plugin follows that span's decision: sampled → sampled; unsampled but still recording → `RECORD_ONLY`; unsampled and not recording → dropped.
-3. **Configured sampler (application-owned provider)** — when you pass a `SdkTracerProvider` to the plugin, its sampler is read directly and evaluated once with the trace ID, span name, and attributes. A trace-ID-ratio sampler therefore produces a stable decision across reinvocations (the trace ID is stable).
+3. **Configured sampler (application-owned provider)** — when you pass a `SdkTracerProviderBuilder` to `factory(...)`, the sampler of the provider it builds is read directly and evaluated once with the trace ID, span name, and attributes. A trace-ID-ratio sampler therefore produces a stable decision across reinvocations (the trace ID is stable).
 4. **Installed sampler (Java-agent path)** — when the agent owns the provider, it is behind a classloader boundary and its *effective* sampler (which another agent extension may have wrapped or replaced) cannot be reliably read at decision time. Rather than guess, the plugin **defers**: it installs a delegating sampler through the agent's autoconfiguration and lets that wrapper consult the agent's real sampler. The delegate's decision is honored in full — if your configured policy is `always_off`, a rate limiter, or a remote sampler (`xray`, `jaeger_remote`) that returns drop, the durable spans are dropped; they are **not** force-sampled. To avoid consuming a stateful or quota-based sampler once per span, the wrapper consults the delegate once per execution (keyed by trace ID) and reuses that decision for the execution's remaining durable spans within the invocation.
 
 For precise, provider-independent control, set an explicit `Sampled` value upstream (for example by enabling X-Ray active tracing) — that backend decision takes precedence over everything else.
@@ -255,21 +256,27 @@ With Lambda's `LoggingConfig: JSON` (required for durable functions), CloudWatch
 
 ## Configuration
 
-Both plugins take a required `SdkTracerProviderBuilder` (your exporter/processor pipeline) plus an optional
-`OtelPluginConfig` built with a named-field builder. This replaces the older telescoping constructors, giving readable,
-type-safe call sites, and matches the `OtelPluginConfig` object in the JavaScript and Python SDKs.
+Each plugin is registered as a `DurableExecutionPluginFactory` obtained from its static `factory(...)` methods, because
+a plugin instance serves exactly one invocation: the SDK calls the factory once per invocation and drops the instance
+when the invocation returns. The factory holds what belongs to the execution environment — your tracer provider (built
+once) or the ADOT global provider binding, plus the deterministic ID generator — while each instance holds only its own
+invocation's spans.
+
+The `factory(...)` overloads take an optional `SdkTracerProviderBuilder` (your exporter/processor pipeline) plus an
+optional `OtelPluginConfig` built with a named-field builder, which matches the `OtelPluginConfig` object in the
+JavaScript and Python SDKs.
 
 ### InvocationOtelPlugin
 
 ```java
 // Default: ADOT Java agent global provider, X-Ray context extraction, MDC enabled
-new InvocationOtelPlugin();
+InvocationOtelPlugin.factory();
 
 // Custom tracer provider pipeline, all other options defaulted
-new InvocationOtelPlugin(tracerProviderBuilder);
+InvocationOtelPlugin.factory(tracerProviderBuilder);
 
 // Full configuration via the builder
-new InvocationOtelPlugin(
+InvocationOtelPlugin.factory(
     tracerProviderBuilder,
     OtelPluginConfig.builder()
         .contextExtractor(new XRayContextExtractor())
@@ -282,18 +289,18 @@ new InvocationOtelPlugin(
 ### ExecutionOtelPlugin
 
 The `ExecutionOtelPlugin` renders the Workflow span as the durable trace root with operations beneath it. Invocation
-spans remain in the ambient Lambda trace, and operations link to the Invocation that ran them. It takes the same
-`(SdkTracerProviderBuilder, OtelPluginConfig)` constructor:
+spans remain in the ambient Lambda trace, and operations link to the Invocation that ran them. It exposes the same
+`factory(SdkTracerProviderBuilder, OtelPluginConfig)` methods:
 
 ```java
 // Default: ADOT Java agent global provider, X-Ray context extraction, MDC enabled
-new ExecutionOtelPlugin();
+ExecutionOtelPlugin.factory();
 
 // Custom tracer provider pipeline, all other options defaulted
-new ExecutionOtelPlugin(tracerProviderBuilder);
+ExecutionOtelPlugin.factory(tracerProviderBuilder);
 
 // Full configuration via the builder
-new ExecutionOtelPlugin(
+ExecutionOtelPlugin.factory(
     tracerProviderBuilder,
     OtelPluginConfig.builder()
         .enableMdc(false)
@@ -310,9 +317,9 @@ new ExecutionOtelPlugin(
 | `workflowSpanName(...)` | Name for the Workflow span | `"Workflow"` |
 | `instrumentationName(...)` | Instrumentation scope name registered with the tracer | `"aws-durable-execution-sdk-java"` |
 
-> The `tracerProviderBuilder` argument is not used by the no-arg `new InvocationOtelPlugin()` /
-> `new ExecutionOtelPlugin()` constructors; those resolve the ADOT Java agent's global provider at invocation start.
-> If it is not ready, all telemetry is disabled for that invocation and resolution is retried on the next invocation.
+> The no-builder `InvocationOtelPlugin.factory()` / `ExecutionOtelPlugin.factory()` forms resolve the ADOT Java agent's
+> global provider instead, when the first invocation's instance needs it. If it is not ready, all telemetry is disabled
+> for that invocation and the next invocation's instance resolves it again.
 > A `null` passed to any `OtelPluginConfig` builder setter falls back to that option's default.
 
 ## Known Limitations
@@ -357,7 +364,7 @@ For local testing, use a logging exporter to print spans to stdout:
 ```java
 import io.opentelemetry.exporter.logging.LoggingSpanExporter;
 
-var otelPlugin = new InvocationOtelPlugin(
+var otelPluginFactory = InvocationOtelPlugin.factory(
         SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(LoggingSpanExporter.create())));
 ```
@@ -367,7 +374,7 @@ var otelPlugin = new InvocationOtelPlugin(
 - Java 17+
 - AWS Durable Execution SDK for Java 2.0.0+
 - OpenTelemetry SDK 1.65.0+ (only for custom TracerProvider path)
-- ADOT Lambda Layer `AWSOpenTelemetryDistroJava` (for the no-arg constructor path)
+- ADOT Lambda Layer `AWSOpenTelemetryDistroJava` (for the agent path, `factory()` without a builder)
 
 ## License
 

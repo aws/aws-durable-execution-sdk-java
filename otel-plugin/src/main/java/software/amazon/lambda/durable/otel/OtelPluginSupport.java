@@ -17,7 +17,7 @@ import java.util.Collections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Shared utilities for OTel plugin default constructor support (ADOT Java agent SPI path). */
+/** Shared utilities for the OTel plugins' ADOT Java agent SPI path. */
 final class OtelPluginSupport {
 
     private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);
@@ -47,7 +47,7 @@ final class OtelPluginSupport {
      *       sampled span yields {@code RECORD_AND_SAMPLE}; an unsampled but recording span yields {@code RECORD_ONLY}
      *       (its spans still reach processors); only an unsampled, non-recording span yields {@code DROP};
      *   <li><b>Application-owned provider: configured sampler, once.</b> When the tracer provider is reachable (the
-     *       two-argument constructor path), its sampler is read directly and evaluated a single time with
+     *       application-owned provider path), its sampler is read directly and evaluated a single time with
      *       {@code ROOT_CONTEXT} (so a parent-based sampler applies its root policy), the canonical trace ID, span
      *       name, and attributes, and its full result is returned;
      *   <li><b>Java-agent path: defer to the installed sampler.</b> When the provider is not visible

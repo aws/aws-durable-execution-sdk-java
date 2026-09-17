@@ -32,10 +32,11 @@ import software.amazon.lambda.durable.plugin.OperationChangeInfo;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
 
 /**
- * One plugin instance — and therefore one {@link ExportScheduler} — serves a whole execution environment, and an
- * environment can host several durable executions at once (routine under Lambda Managed Instances). These tests pin the
- * per-execution guarantees that concurrency demands: one execution's record never displaces another's, and each
- * execution's drain returns only after its own record reached the exporters.
+ * One {@link ExportScheduler} — created once by {@code workflowInsight()} and shared by every plugin instance the
+ * factory makes — serves a whole execution environment, and an environment can host several durable executions at once
+ * (routine under Lambda Managed Instances). These tests pin the per-execution guarantees that concurrency demands: one
+ * execution's record never displaces another's, and each execution's drain returns only after its own record reached
+ * the exporters.
  */
 class ConcurrentExecutionsExportTest {
 
@@ -120,15 +121,18 @@ class ConcurrentExecutionsExportTest {
         var threads = new ArrayList<Thread>();
         for (int i = 0; i < executions; i++) {
             String executionArn = arn(i);
+            // One plugin instance per execution, as the SDK creates one per invocation; the thread below holds it
+            // exactly as an invocation's hooks do.
+            InsightPlugin execution = Executions.plugin(scheduler, executionArn);
             var thread = new Thread(
                     () -> {
                         awaitBarrier(barrier);
                         for (int c = 0; c < changesEach; c++) {
-                            scheduler.schedule(executionArn, record(executionArn, "RUNNING"));
+                            scheduler.schedule(execution, record(executionArn, "RUNNING"));
                         }
                         WorkflowInsightRecord terminal = record(executionArn, "SUCCEEDED");
-                        scheduler.schedule(executionArn, terminal);
-                        scheduler.drain(executionArn);
+                        scheduler.schedule(execution, terminal);
+                        scheduler.drain(execution);
                         // This thread is the only one scheduling for this ARN, so no later record can supersede the
                         // terminal one: once drain returns, it must already have reached the exporter.
                         if (!exporter.exported(terminal)) {
@@ -185,15 +189,16 @@ class ConcurrentExecutionsExportTest {
                 executor);
 
         String executionArn = arn(1);
+        InsightPlugin execution = Executions.plugin(scheduler, executionArn);
         WorkflowInsightRecord terminal = record(executionArn, "SUCCEEDED");
-        scheduler.schedule(executionArn, terminal);
+        scheduler.schedule(execution, terminal);
         assertEquals(1, executor.parked.size(), "the pump task was parked, so the record is still queued");
 
         // A drainer picks the record up on the inline path and is now inside the exporter.
         var inlineDrained = new CountDownLatch(1);
         var inlineDrainer = new Thread(
                 () -> {
-                    scheduler.drain(executionArn);
+                    scheduler.drain(execution);
                     inlineDrained.countDown();
                 },
                 "inline-drainer");
@@ -208,7 +213,7 @@ class ConcurrentExecutionsExportTest {
         var secondDrained = new CountDownLatch(1);
         var secondDrainer = new Thread(
                 () -> {
-                    scheduler.drain(executionArn);
+                    scheduler.drain(execution);
                     secondDrained.countDown();
                 },
                 "second-drainer");
@@ -242,14 +247,16 @@ class ConcurrentExecutionsExportTest {
             }
         };
         var scheduler = scheduler(new CopyOnWriteArrayList<>(), exporter);
+        InsightPlugin slow = Executions.plugin(scheduler, slowExecution);
+        InsightPlugin other = Executions.plugin(scheduler, otherExecution);
 
         // One execution's export is in flight and blocked...
-        scheduler.schedule(slowExecution, record(slowExecution, "RUNNING"));
+        scheduler.schedule(slow, record(slowExecution, "RUNNING"));
         assertTrue(exporting.await(5, TimeUnit.SECONDS), "the first export is in flight");
         // ...while a second execution's terminal record is queued, followed by an update for the first execution.
         // The first execution's own update must coalesce only with its own slot, never over the second execution's.
-        scheduler.schedule(otherExecution, record(otherExecution, "SUCCEEDED"));
-        scheduler.schedule(slowExecution, record(slowExecution, "SUCCEEDED"));
+        scheduler.schedule(other, record(otherExecution, "SUCCEEDED"));
+        scheduler.schedule(slow, record(slowExecution, "SUCCEEDED"));
 
         var seenBySlowDrain = Collections.synchronizedList(new ArrayList<String>());
         var seenByOtherDrain = Collections.synchronizedList(new ArrayList<String>());
@@ -257,14 +264,14 @@ class ConcurrentExecutionsExportTest {
         var otherDrained = new CountDownLatch(1);
         var slowDrainer = new Thread(
                 () -> {
-                    scheduler.drain(slowExecution);
+                    scheduler.drain(slow);
                     seenBySlowDrain.addAll(terminalArns(exporter));
                     slowDrained.countDown();
                 },
                 "slow-drainer");
         var otherDrainer = new Thread(
                 () -> {
-                    scheduler.drain(otherExecution);
+                    scheduler.drain(other);
                     seenByOtherDrain.addAll(terminalArns(exporter));
                     otherDrained.countDown();
                 },
@@ -297,19 +304,25 @@ class ConcurrentExecutionsExportTest {
     void concurrentExecutionsDrivenThroughThePluginHooksAllDeliverTheirTerminalRecord() throws Exception {
         int executions = 5;
         var exporter = new CapturingExporter();
-        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+        // One factory — one environment, one scheduler, one set of exporters — and one plugin instance per invocation,
+        // which is how the SDK drives several concurrent executions through the same exporters.
+        var factory = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
                 .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
                 .addExporter(exporter)
                 .build());
 
         var barrier = new CyclicBarrier(executions);
+        var plugins = new ArrayList<InsightPlugin>();
         var threads = new ArrayList<Thread>();
         for (int i = 0; i < executions; i++) {
             String executionArn = arn(i);
+            InvocationInfo startInfo = start(executionArn);
+            var plugin = Executions.plugin(factory, startInfo);
+            plugins.add(plugin);
             var thread = new Thread(
                     () -> {
                         awaitBarrier(barrier);
-                        plugin.onInvocationStart(start(executionArn));
+                        plugin.onInvocationStart(startInfo);
                         for (int c = 0; c < 3; c++) {
                             plugin.onOperationChange(new OperationChangeInfo(
                                     "req",
@@ -335,7 +348,11 @@ class ConcurrentExecutionsExportTest {
         }
         assertEquals(expected, new HashSet<>(delivered), "every execution's terminal record arrived");
         assertEquals(executions, delivered.size(), "and none arrived twice");
-        assertEquals(0, plugin.retainedStateCount(), "no per-execution state retained after invocation end");
+        for (InsightPlugin plugin : plugins) {
+            assertFalse(
+                    Executions.outstanding(plugin),
+                    "the scheduler still owes this execution work after its invocation end: " + plugin);
+        }
     }
 
     private static Map<String, OperationChangeItemInfo> ops(OperationStatus status) {

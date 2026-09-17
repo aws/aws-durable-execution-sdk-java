@@ -3,9 +3,11 @@
 package software.amazon.lambda.durable.insight;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -53,7 +56,8 @@ class WorkflowInsightFlushCadenceTest {
         }
     }
 
-    private static WorkflowInsight.InsightPlugin plugin(
+    /** The environment: one factory, one scheduler, one set of exporters, however many invocations follow. */
+    private static DurableExecutionPluginFactory environment(
             WorkflowInsightConfig.EmitMode mode, Double samplingRate, CountingExporter... exporters) {
         var builder = WorkflowInsightConfig.builder().emitMode(mode);
         for (CountingExporter exporter : exporters) {
@@ -62,16 +66,16 @@ class WorkflowInsightFlushCadenceTest {
         if (samplingRate != null) {
             builder = builder.samplingRate(samplingRate);
         }
-        return (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(builder.build());
+        return WorkflowInsight.workflowInsight(builder.build());
     }
 
     @Test
     void anInvocationEndThatEmitsARecordFlushesEveryExporterExactlyOnce() {
         var first = new CountingExporter();
         var second = new CountingExporter();
-        var plugin = plugin(WorkflowInsightConfig.EmitMode.ON_COMPLETE, null, first, second);
+        var environment = environment(WorkflowInsightConfig.EmitMode.ON_COMPLETE, null, first, second);
 
-        plugin.onInvocationStart(start(arn(0)));
+        var plugin = Executions.started(environment, start(arn(0)));
         plugin.onInvocationEnd(end(arn(0), InvocationStatus.SUCCEEDED));
 
         for (CountingExporter exporter : List.of(first, second)) {
@@ -99,8 +103,7 @@ class WorkflowInsightFlushCadenceTest {
 
         for (Case scenario : cases) {
             var exporter = new CountingExporter();
-            var plugin = plugin(scenario.mode(), null, exporter);
-            plugin.onInvocationStart(start(arn(1)));
+            var plugin = Executions.started(environment(scenario.mode(), null, exporter), start(arn(1)));
             plugin.onInvocationEnd(end(arn(1), scenario.status()));
 
             assertEquals(List.of(), exporter.exported, scenario.name() + ": no record should be emitted");
@@ -111,11 +114,12 @@ class WorkflowInsightFlushCadenceTest {
     @Test
     void everyInvocationEndOfAWarmEnvironmentFlushesExactlyOnce() {
         var exporter = new CountingExporter();
-        var plugin = plugin(WorkflowInsightConfig.EmitMode.ON_CHANGE, null, exporter);
+        var environment = environment(WorkflowInsightConfig.EmitMode.ON_CHANGE, null, exporter);
 
         int invocations = 5;
         for (int i = 0; i < invocations; i++) {
-            plugin.onInvocationStart(start(arn(i)));
+            // A warm environment: each invocation is served by its own instance from the same factory.
+            var plugin = Executions.started(environment, start(arn(i)));
             plugin.onOperationChange(change(arn(i)));
             plugin.onInvocationEnd(end(arn(i), InvocationStatus.SUCCEEDED));
             // Sequential ends have nothing to share a flush with, so the cadence bound is tight here.
@@ -128,16 +132,16 @@ class WorkflowInsightFlushCadenceTest {
     @Test
     void invocationEndsThatOverlapMayShareAFlushButNoneIsLeftUnflushed() {
         var exporter = new CountingExporter();
-        var plugin = plugin(WorkflowInsightConfig.EmitMode.ON_COMPLETE, null, exporter);
+        var environment = environment(WorkflowInsightConfig.EmitMode.ON_COMPLETE, null, exporter);
 
         int executions = 8;
         var barrier = new CyclicBarrier(executions);
         var done = new CountDownLatch(executions);
         for (int i = 0; i < executions; i++) {
             String executionArn = arn(100 + i);
+            var plugin = Executions.started(environment, start(executionArn));
             var thread = new Thread(
                     () -> {
-                        plugin.onInvocationStart(start(executionArn));
                         try {
                             barrier.await(60, TimeUnit.SECONDS);
                         } catch (Exception e) {
@@ -175,17 +179,21 @@ class WorkflowInsightFlushCadenceTest {
         // Unchanged by the move of flush onto the export pump: a sampled-out end never schedules a record, so it
         // neither drains nor flushes.
         var exporter = new CountingExporter();
-        var plugin = plugin(WorkflowInsightConfig.EmitMode.ON_CHANGE, 0.0, exporter);
+        var environment = environment(WorkflowInsightConfig.EmitMode.ON_CHANGE, 0.0, exporter);
 
+        var plugins = new ArrayList<InsightPlugin>();
         for (int i = 0; i < 10; i++) {
-            plugin.onInvocationStart(start(arn(i)));
+            var plugin = Executions.started(environment, start(arn(i)));
+            plugins.add(plugin);
             plugin.onOperationChange(change(arn(i)));
             plugin.onInvocationEnd(end(arn(i), InvocationStatus.SUCCEEDED));
         }
 
         assertEquals(List.of(), exporter.exported);
         assertEquals(0, exporter.flushes.get(), "a sampled-out invocation end neither drains nor flushes");
-        assertEquals(0, plugin.retainedStateCount());
+        for (InsightPlugin plugin : plugins) {
+            assertFalse(Executions.outstanding(plugin), "a sampled-out invocation leaves the scheduler owing nothing");
+        }
     }
 
     private static Map<String, OperationChangeItemInfo> ops() {

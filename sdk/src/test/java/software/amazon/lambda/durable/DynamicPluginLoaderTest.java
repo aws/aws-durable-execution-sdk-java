@@ -8,92 +8,93 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.ArrayList;
+import java.time.Instant;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
 
 class DynamicPluginLoaderTest {
 
     @Test
-    void unsetConfigurationPreservesExplicitPluginsWithoutDiscoveringProviders() {
-        var explicitPlugin = new FirstPlugin();
+    void unsetConfigurationPreservesExplicitFactoriesWithoutDiscoveringProviders() {
+        DurableExecutionPluginFactory explicitFactory = info -> new FirstPlugin();
         Iterable<DurableExecutionPluginProvider> providers = () -> {
             throw new AssertionError("Providers should not be discovered");
         };
 
-        var plugins = DynamicPluginLoader.loadConfiguredPlugins(null, providers, List.of(explicitPlugin));
+        var factories = DynamicPluginLoader.loadConfiguredPluginFactories(null, providers, List.of(explicitFactory));
 
-        assertEquals(1, plugins.size());
-        assertSame(explicitPlugin, plugins.get(0));
+        assertEquals(1, factories.size());
+        assertSame(explicitFactory, factories.get(0));
     }
 
     @Test
-    void loadsRequestedProvidersBeforeExplicitPluginsInConfiguredOrder() {
-        var creationOrder = new ArrayList<String>();
-        var explicitPlugin = new ExplicitPlugin();
-        var firstProvider = provider("first", FirstPlugin.class, () -> {
-            creationOrder.add("first");
+    void loadsRequestedProvidersBeforeExplicitFactoriesInConfiguredOrder() {
+        DurableExecutionPluginFactory explicitFactory = info -> new ExplicitPlugin();
+        var firstProvider = provider("first", FirstPlugin::new);
+        var secondProvider = provider("second", SecondPlugin::new);
+
+        var factories = DynamicPluginLoader.loadConfiguredPluginFactories(
+                " second, first ", List.of(firstProvider, secondProvider), List.of(explicitFactory));
+
+        assertSame(secondProvider, factories.get(0));
+        assertSame(firstProvider, factories.get(1));
+        assertSame(explicitFactory, factories.get(2));
+    }
+
+    @Test
+    void doesNotCreatePluginsAtConfigurationTime() {
+        var creations = new AtomicInteger();
+        var requestedProvider = provider("requested", () -> {
+            creations.incrementAndGet();
             return new FirstPlugin();
         });
-        var secondProvider = provider("second", SecondPlugin.class, () -> {
-            creationOrder.add("second");
-            return new SecondPlugin();
-        });
 
-        var plugins = DynamicPluginLoader.loadConfiguredPlugins(
-                " second, first ", List.of(firstProvider, secondProvider), List.of(explicitPlugin));
+        var factories =
+                DynamicPluginLoader.loadConfiguredPluginFactories("requested", List.of(requestedProvider), List.of());
 
-        assertInstanceOf(SecondPlugin.class, plugins.get(0));
-        assertInstanceOf(FirstPlugin.class, plugins.get(1));
-        assertSame(explicitPlugin, plugins.get(2));
-        assertEquals(List.of("second", "first"), creationOrder);
+        // Plugins are created per invocation, not while configuration is resolved.
+        assertEquals(1, factories.size());
+        assertEquals(0, creations.get());
+        assertInstanceOf(FirstPlugin.class, factories.get(0).createPlugin(invocationInfo()));
+        assertEquals(1, creations.get());
     }
 
     @Test
-    void doesNotCreateProvidersOutsideTheAllowList() {
-        var unrequestedCreations = new AtomicInteger();
-        var requestedProvider = provider("requested", FirstPlugin.class, FirstPlugin::new);
-        var unrequestedProvider = provider("unrequested", SecondPlugin.class, () -> {
-            unrequestedCreations.incrementAndGet();
-            return new SecondPlugin();
-        });
+    void doesNotSelectProvidersOutsideTheAllowList() {
+        var requestedProvider = provider("requested", FirstPlugin::new);
+        var unrequestedProvider = provider("unrequested", SecondPlugin::new);
 
-        var plugins = DynamicPluginLoader.loadConfiguredPlugins(
+        var factories = DynamicPluginLoader.loadConfiguredPluginFactories(
                 "requested", List.of(requestedProvider, unrequestedProvider), List.of());
 
-        assertEquals(1, plugins.size());
-        assertEquals(0, unrequestedCreations.get());
+        assertEquals(List.of(requestedProvider), factories);
     }
 
     @Test
-    void loadsExplicitAndDynamicPluginsOfTheSameType() {
-        var creations = new AtomicInteger();
-        var explicitPlugin = new FirstPlugin();
-        var dynamicPlugin = new FirstPlugin();
-        var duplicateProvider = provider("first", FirstPlugin.class, () -> {
-            creations.incrementAndGet();
-            return dynamicPlugin;
-        });
+    void loadsExplicitAndDynamicFactoriesOfTheSameType() {
+        DurableExecutionPluginFactory explicitFactory = info -> new FirstPlugin();
+        var duplicateProvider = provider("first", FirstPlugin::new);
 
-        var plugins =
-                DynamicPluginLoader.loadConfiguredPlugins("first", List.of(duplicateProvider), List.of(explicitPlugin));
+        var factories = DynamicPluginLoader.loadConfiguredPluginFactories(
+                "first", List.of(duplicateProvider), List.of(explicitFactory));
 
-        assertEquals(2, plugins.size());
-        assertSame(dynamicPlugin, plugins.get(0));
-        assertSame(explicitPlugin, plugins.get(1));
-        assertEquals(1, creations.get());
+        assertEquals(2, factories.size());
+        assertSame(duplicateProvider, factories.get(0));
+        assertSame(explicitFactory, factories.get(1));
     }
 
     @Test
     void rejectsEmptyConfiguredProviderName() {
         var error = assertThrows(
                 IllegalStateException.class,
-                () -> DynamicPluginLoader.loadConfiguredPlugins("first,,second", List.of(), List.of()));
+                () -> DynamicPluginLoader.loadConfiguredPluginFactories("first,,second", List.of(), List.of()));
 
         assertTrue(error.getMessage().contains("must be non-empty"));
         assertTrue(error.getMessage().contains(DynamicPluginLoader.PLUGINS_ENVIRONMENT_VARIABLE));
@@ -103,18 +104,19 @@ class DynamicPluginLoaderTest {
     void rejectsDuplicateConfiguredProviderName() {
         var error = assertThrows(
                 IllegalStateException.class,
-                () -> DynamicPluginLoader.loadConfiguredPlugins("first,first", List.of(), List.of()));
+                () -> DynamicPluginLoader.loadConfiguredPluginFactories("first,first", List.of(), List.of()));
 
         assertTrue(error.getMessage().contains("listed more than once"));
     }
 
     @Test
     void rejectsUnknownProviderAndListsAvailableNames() {
-        var availableProvider = provider("available", FirstPlugin.class, FirstPlugin::new);
+        var availableProvider = provider("available", FirstPlugin::new);
 
         var error = assertThrows(
                 IllegalStateException.class,
-                () -> DynamicPluginLoader.loadConfiguredPlugins("missing", List.of(availableProvider), List.of()));
+                () -> DynamicPluginLoader.loadConfiguredPluginFactories(
+                        "missing", List.of(availableProvider), List.of()));
 
         assertTrue(error.getMessage().contains("No DurableExecutionPluginProvider named 'missing'"));
         assertTrue(error.getMessage().contains("available"));
@@ -122,12 +124,12 @@ class DynamicPluginLoaderTest {
 
     @Test
     void rejectsDuplicateDiscoveredProviderNames() {
-        var firstProvider = provider("duplicate", FirstPlugin.class, FirstPlugin::new);
-        var secondProvider = provider("duplicate", SecondPlugin.class, SecondPlugin::new);
+        var firstProvider = provider("duplicate", FirstPlugin::new);
+        var secondProvider = provider("duplicate", SecondPlugin::new);
 
         var error = assertThrows(
                 IllegalStateException.class,
-                () -> DynamicPluginLoader.loadConfiguredPlugins(
+                () -> DynamicPluginLoader.loadConfiguredPluginFactories(
                         "duplicate", List.of(firstProvider, secondProvider), List.of()));
 
         assertTrue(error.getMessage().contains("Multiple DurableExecutionPluginProvider implementations"));
@@ -135,38 +137,15 @@ class DynamicPluginLoaderTest {
     }
 
     @Test
-    void rejectsIncompatibleProviderApiVersion() {
-        var provider = new TestProvider("first", 2, FirstPlugin.class, FirstPlugin::new);
+    void rejectsProviderWithInvalidName() {
+        var blankNameProvider = provider(" ", FirstPlugin::new);
 
         var error = assertThrows(
                 IllegalStateException.class,
-                () -> DynamicPluginLoader.loadConfiguredPlugins("first", List.of(provider), List.of()));
+                () -> DynamicPluginLoader.loadConfiguredPluginFactories(
+                        "first", List.of(blankNameProvider), List.of()));
 
-        assertTrue(error.getMessage().contains("uses provider API version 2"));
-        assertTrue(error.getMessage().contains("requires version " + DurableExecutionPluginProvider.API_VERSION));
-    }
-
-    @Test
-    void rejectsInvalidDeclaredPluginType() {
-        var provider = provider("invalid", DurableExecutionPlugin.class, FirstPlugin::new);
-
-        var error = assertThrows(
-                IllegalStateException.class,
-                () -> DynamicPluginLoader.loadConfiguredPlugins("invalid", List.of(provider), List.of()));
-
-        assertTrue(error.getMessage().contains("must declare a concrete DurableExecutionPlugin type"));
-    }
-
-    @Test
-    void rejectsPluginThatDoesNotMatchDeclaredType() {
-        var provider = provider("first", FirstPlugin.class, SecondPlugin::new);
-
-        var error = assertThrows(
-                IllegalStateException.class,
-                () -> DynamicPluginLoader.loadConfiguredPlugins("first", List.of(provider), List.of()));
-
-        assertTrue(error.getMessage().contains("declared type"));
-        assertTrue(error.getMessage().contains(SecondPlugin.class.getName()));
+        assertTrue(error.getMessage().contains("returned an invalid name"));
     }
 
     @Test
@@ -185,38 +164,21 @@ class DynamicPluginLoaderTest {
 
         var error = assertThrows(
                 IllegalStateException.class,
-                () -> DynamicPluginLoader.loadConfiguredPlugins("first", providers, List.of()));
+                () -> DynamicPluginLoader.loadConfiguredPluginFactories("first", providers, List.of()));
 
         assertTrue(error.getMessage().contains("Failed to discover"));
         assertInstanceOf(LinkageError.class, error.getCause());
     }
 
-    @Test
-    void wrapsPluginCreationFailure() {
-        var provider = provider("first", FirstPlugin.class, () -> {
-            throw new IllegalArgumentException("bad settings");
-        });
-
-        var error = assertThrows(
-                IllegalStateException.class,
-                () -> DynamicPluginLoader.loadConfiguredPlugins("first", List.of(provider), List.of()));
-
-        assertTrue(error.getMessage().contains("failed to create its plugin"));
-        assertInstanceOf(IllegalArgumentException.class, error.getCause());
+    private static InvocationInfo invocationInfo() {
+        return new InvocationInfo("req-123", "arn:test", true, Instant.now());
     }
 
-    private static TestProvider provider(
-            String name,
-            Class<? extends DurableExecutionPlugin> pluginType,
-            Supplier<DurableExecutionPlugin> pluginSupplier) {
-        return new TestProvider(name, DurableExecutionPluginProvider.API_VERSION, pluginType, pluginSupplier);
+    private static TestProvider provider(String name, Supplier<DurableExecutionPlugin> pluginSupplier) {
+        return new TestProvider(name, pluginSupplier);
     }
 
-    private record TestProvider(
-            String name,
-            int apiVersion,
-            Class<? extends DurableExecutionPlugin> pluginType,
-            Supplier<DurableExecutionPlugin> pluginSupplier)
+    private record TestProvider(String name, Supplier<DurableExecutionPlugin> pluginSupplier)
             implements DurableExecutionPluginProvider {
 
         @Override
@@ -225,17 +187,7 @@ class DynamicPluginLoaderTest {
         }
 
         @Override
-        public int getApiVersion() {
-            return apiVersion;
-        }
-
-        @Override
-        public Class<? extends DurableExecutionPlugin> getPluginType() {
-            return pluginType;
-        }
-
-        @Override
-        public DurableExecutionPlugin createPlugin() {
+        public DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo) {
             return pluginSupplier.get();
         }
     }

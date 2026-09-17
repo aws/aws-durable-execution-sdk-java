@@ -26,7 +26,9 @@ public class PluginReplayFlags extends DurableHandler<Object, String> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder().withPlugins(new ReplayFlagPlugin()).build();
+        return DurableConfig.builder()
+                .withPlugins(info -> new ReplayFlagPlugin())
+                .build();
     }
 
     @Override

@@ -33,7 +33,7 @@ public class PluginExample extends DurableHandler<GreetingRequest, String> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder().withPlugins(new LoggingPlugin()).build();
+        return DurableConfig.builder().withPlugins(info -> new LoggingPlugin()).build();
     }
 
     @Override

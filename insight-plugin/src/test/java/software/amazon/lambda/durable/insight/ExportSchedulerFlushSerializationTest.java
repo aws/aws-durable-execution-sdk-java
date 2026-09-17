@@ -126,15 +126,16 @@ class ExportSchedulerFlushSerializationTest {
         var threads = new ArrayList<Thread>();
         for (int i = 0; i < executions; i++) {
             String executionArn = arn(i);
+            InsightPlugin execution = Executions.plugin(scheduler, executionArn);
             var thread = new Thread(
                     () -> {
                         awaitBarrier(barrier);
                         // What an invocation does: a few RUNNING snapshots, the terminal record, then drain + flush.
                         for (int change = 0; change < 3; change++) {
-                            scheduler.schedule(executionArn, record(executionArn, "RUNNING"));
+                            scheduler.schedule(execution, record(executionArn, "RUNNING"));
                         }
-                        scheduler.schedule(executionArn, record(executionArn, "SUCCEEDED"));
-                        scheduler.drain(executionArn);
+                        scheduler.schedule(execution, record(executionArn, "SUCCEEDED"));
+                        scheduler.drain(execution);
                         scheduler.flush();
                     },
                     "invocation-" + i);
@@ -185,7 +186,7 @@ class ExportSchedulerFlushSerializationTest {
         };
         var scheduler = scheduler(sharedWorkers(), new CopyOnWriteArrayList<>(), exporter);
 
-        scheduler.schedule(arn(0), record(arn(0), "SUCCEEDED"));
+        scheduler.schedule(Executions.plugin(scheduler, arn(0)), record(arn(0), "SUCCEEDED"));
         assertTrue(exporting.await(5, TimeUnit.SECONDS), "the pump is inside the exporter");
 
         var flushed = new CountDownLatch(2);
@@ -299,6 +300,10 @@ class ExportSchedulerFlushSerializationTest {
 
         // A producer that never lets the queue run dry: it keeps re-scheduling a fixed, rotating set of executions, so
         // `pending` stays non-empty (and bounded, since records coalesce per execution) for as long as it runs.
+        var rotation = new ArrayList<InsightPlugin>();
+        for (int i = 0; i < 50; i++) {
+            rotation.add(Executions.plugin(scheduler, arn(i)));
+        }
         var stop = new AtomicBoolean();
         var scheduled = new AtomicInteger();
         var producing = new CountDownLatch(1);
@@ -306,8 +311,8 @@ class ExportSchedulerFlushSerializationTest {
                 () -> {
                     int index = 0;
                     while (!stop.get()) {
-                        String executionArn = arn(index++ % 50);
-                        scheduler.schedule(executionArn, record(executionArn, "RUNNING"));
+                        InsightPlugin execution = rotation.get(index++ % rotation.size());
+                        scheduler.schedule(execution, record(execution.executionArn, "RUNNING"));
                         scheduled.incrementAndGet();
                         producing.countDown();
                     }

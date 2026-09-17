@@ -30,6 +30,7 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
+import software.amazon.lambda.durable.plugin.PluginRunner;
 
 /**
  * Central manager for durable execution coordination.
@@ -66,6 +67,11 @@ public class ExecutionManager implements SafeCloseable {
     private final Set<String> updatedOperationIdsSinceLastInvocation;
     private final Set<String> initialOperationIds;
 
+    // ===== Plugins =====
+    // Created per invocation, alongside this manager: the runner materializes one plugin instance per configured
+    // factory when the invocation starts, and releases them in close(), so instances never outlive the invocation.
+    private final PluginRunner pluginRunner;
+
     // ===== Thread Coordination =====
     private final Map<String, BaseDurableOperation> registeredOperations = new ConcurrentHashMap<>();
     private final Set<String> activeThreads = Collections.synchronizedSet(new HashSet<>());
@@ -79,6 +85,7 @@ public class ExecutionManager implements SafeCloseable {
 
     public ExecutionManager(DurableExecutionInput input, DurableConfig config, Context lambdaContext) {
         durableConfig = config;
+        this.pluginRunner = new PluginRunner(config.getPluginFactories());
         this.durableExecutionArn = input.durableExecutionArn();
         this.lambdaContext = lambdaContext;
 
@@ -123,6 +130,15 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     // ===== State Management =====
+
+    /**
+     * Returns this invocation's plugin dispatcher. Scoped to this manager, i.e. to this invocation.
+     *
+     * @return PluginRunner instance (never null)
+     */
+    public PluginRunner getPluginRunner() {
+        return pluginRunner;
+    }
 
     /** Returns the ARN of the durable execution being managed. */
     public String getDurableExecutionArn() {
@@ -217,14 +233,8 @@ public class ExecutionManager implements SafeCloseable {
         // Fire onOperationChange when a checkpoint response changed one or more operations
         if (!updatedOperations.isEmpty()) {
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
-            durableConfig
-                    .getPluginRunner()
-                    .onOperationChange(PluginInfoConverter.toOperationChangeInfo(
-                            requestId,
-                            durableExecutionArn,
-                            updatedOperations,
-                            operationStorage.values(),
-                            initialOperationIds));
+            pluginRunner.onOperationChange(PluginInfoConverter.toOperationChangeInfo(
+                    requestId, durableExecutionArn, updatedOperations, operationStorage.values(), initialOperationIds));
         }
     }
 
@@ -412,6 +422,9 @@ public class ExecutionManager implements SafeCloseable {
         validateRunningThreads();
 
         checkpointManager.shutdown();
+
+        // The invocation is over: drop this invocation's plugin instances so they cannot be reached again.
+        pluginRunner.releasePlugins();
     }
 
     private void validateRunningThreads() {

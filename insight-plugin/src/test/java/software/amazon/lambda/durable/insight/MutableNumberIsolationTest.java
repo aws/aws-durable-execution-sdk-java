@@ -113,11 +113,14 @@ class MutableNumberIsolationTest {
             }
         };
         var good = new CapturingExporter();
-        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
-                .addExporter(mutating)
-                .addExporter(good)
-                .build());
+        var plugin = Executions.plugin(
+                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                        .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
+                        .addExporter(mutating)
+                        .addExporter(good)
+                        .build()),
+                ARN,
+                START);
 
         AtomicInteger topLevel = new AtomicInteger(3);
         List<Object> list = new ArrayList<>();

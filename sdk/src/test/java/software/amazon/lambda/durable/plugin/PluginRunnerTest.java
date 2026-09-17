@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class PluginRunnerTest {
@@ -24,7 +25,7 @@ class PluginRunnerTest {
     }
 
     @Test
-    void emptyPluginList_behavesAsNoOp() {
+    void emptyFactoryList_behavesAsNoOp() {
         var runner = new PluginRunner(List.of());
 
         assertTrue(runner.isEmpty());
@@ -32,11 +33,143 @@ class PluginRunnerTest {
     }
 
     @Test
-    void nullPluginList_behavesAsNoOp() {
+    void nullFactoryList_behavesAsNoOp() {
         var runner = new PluginRunner(null);
 
         assertTrue(runner.isEmpty());
         assertDoesNotThrow(() -> runner.onOperationStart(operationInfo()));
+    }
+
+    // ─── Per-invocation lifetime ─────────────────────────────────────────
+
+    @Test
+    void invocationStart_createsOnePluginPerFactory_andPassesTheHookInfo() {
+        var calls = new ArrayList<String>();
+        var receivedByFactory = new ArrayList<InvocationInfo>();
+        var receivedByHook = new ArrayList<InvocationInfo>();
+        var runner = new PluginRunner(List.of(info -> {
+            receivedByFactory.add(info);
+            return new TestPlugin("p1", calls) {
+                @Override
+                public void onInvocationStart(InvocationInfo hookInfo) {
+                    receivedByHook.add(hookInfo);
+                    super.onInvocationStart(hookInfo);
+                }
+            };
+        }));
+        var info = invocationInfo();
+
+        runner.onInvocationStart(info);
+
+        assertEquals(List.of("p1:onInvocationStart"), calls);
+        assertEquals(1, receivedByFactory.size());
+        assertSame(info, receivedByFactory.get(0), "the factory must receive this invocation's info");
+        assertSame(info, receivedByHook.get(0), "the first hook must receive the same info instance");
+    }
+
+    @Test
+    void factoriesAreCalledOncePerInvocation_notPerHook() {
+        var creations = new AtomicInteger();
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(info -> {
+            creations.incrementAndGet();
+            return new TestPlugin("p", calls);
+        }));
+
+        runner.onInvocationStart(invocationInfo());
+        runner.onOperationStart(operationInfo());
+        runner.onOperationEnd(operationEndInfo());
+        runner.onInvocationEnd(invocationEndInfo());
+
+        assertEquals(1, creations.get());
+        assertEquals(
+                List.of("p:onInvocationStart", "p:onOperationStart", "p:onOperationEnd", "p:onInvocationEnd"), calls);
+    }
+
+    @Test
+    void eachInvocationGetsItsOwnPluginInstance() {
+        var instances = new ArrayList<DurableExecutionPlugin>();
+        DurableExecutionPluginFactory factory = info -> {
+            var plugin = new TestPlugin("p", new ArrayList<>());
+            instances.add(plugin);
+            return plugin;
+        };
+
+        // One runner per invocation, as the SDK creates one per ExecutionManager.
+        new PluginRunner(List.of(factory)).onInvocationStart(invocationInfo());
+        new PluginRunner(List.of(factory)).onInvocationStart(invocationInfo());
+
+        assertEquals(2, instances.size());
+        assertNotSame(instances.get(0), instances.get(1), "invocations must not share a plugin instance");
+    }
+
+    @Test
+    void hooksBeforeInvocationStart_dispatchToNothing() {
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(info -> new TestPlugin("p", calls)));
+
+        // Plugins only exist between onInvocationStart and the end of the invocation.
+        runner.onOperationStart(operationInfo());
+
+        assertTrue(calls.isEmpty());
+    }
+
+    @Test
+    void releasePlugins_dropsThisInvocationsInstances() {
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(info -> new TestPlugin("p", calls)));
+        runner.onInvocationStart(invocationInfo());
+        calls.clear();
+
+        runner.releasePlugins();
+        runner.onOperationStart(operationInfo());
+        runner.onInvocationEnd(invocationEndInfo());
+
+        assertTrue(calls.isEmpty(), "released plugin instances must not receive further hooks");
+    }
+
+    @Test
+    void factoryList_isCopiedAtConstruction() {
+        var calls = new ArrayList<String>();
+        var mutableList = new ArrayList<DurableExecutionPluginFactory>();
+        mutableList.add(info -> new TestPlugin("p1", calls));
+        var runner = new PluginRunner(mutableList);
+
+        // Modifying the original list should not affect the runner
+        mutableList.add(info -> new TestPlugin("p2", calls));
+
+        runner.onInvocationStart(invocationInfo());
+
+        // Only p1 should be called — p2 was added after construction
+        assertEquals(List.of("p1:onInvocationStart"), calls);
+    }
+
+    // ─── Factory error isolation ─────────────────────────────────────────
+
+    @Test
+    void throwingFactory_isContained_andRemainingPluginsStillRun() {
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(
+                info -> {
+                    throw new RuntimeException("boom");
+                },
+                info -> new TestPlugin("p2", calls)));
+
+        assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
+        runner.onInvocationEnd(invocationEndInfo());
+
+        assertEquals(List.of("p2:onInvocationStart", "p2:onInvocationEnd"), calls);
+    }
+
+    @Test
+    void nullReturningFactory_isContained_andRemainingPluginsStillRun() {
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(info -> null, info -> new TestPlugin("p2", calls)));
+
+        assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
+        runner.onOperationStart(operationInfo());
+
+        assertEquals(List.of("p2:onInvocationStart", "p2:onOperationStart"), calls);
     }
 
     // ─── Fire-and-forget event hooks ─────────────────────────────────────
@@ -44,9 +177,8 @@ class PluginRunnerTest {
     @Test
     void fireAndForget_callsAllPlugins() {
         var calls = new ArrayList<String>();
-        var plugin1 = new TestPlugin("p1", calls);
-        var plugin2 = new TestPlugin("p2", calls);
-        var runner = new PluginRunner(List.of(plugin1, plugin2));
+        var runner =
+                new PluginRunner(List.of(info -> new TestPlugin("p1", calls), info -> new TestPlugin("p2", calls)));
 
         runner.onInvocationStart(invocationInfo());
 
@@ -56,9 +188,7 @@ class PluginRunnerTest {
     @Test
     void fireAndForget_swallowsExceptions() {
         var calls = new ArrayList<String>();
-        var throwingPlugin = new ThrowingPlugin();
-        var normalPlugin = new TestPlugin("p2", calls);
-        var runner = new PluginRunner(List.of(throwingPlugin, normalPlugin));
+        var runner = new PluginRunner(List.of(info -> new ThrowingPlugin(), info -> new TestPlugin("p2", calls)));
 
         assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
         assertEquals(List.of("p2:onInvocationStart"), calls);
@@ -67,26 +197,25 @@ class PluginRunnerTest {
     @Test
     void fireAndForget_callsAllHookTypes() {
         var calls = new ArrayList<String>();
-        var plugin = new TestPlugin("p", calls);
-        var runner = new PluginRunner(List.of(plugin));
+        var runner = new PluginRunner(List.of(info -> new TestPlugin("p", calls)));
 
         runner.onInvocationStart(invocationInfo());
-        runner.onInvocationEnd(invocationEndInfo());
         runner.onOperationStart(operationInfo());
         runner.onOperationEnd(operationEndInfo());
         runner.onOperationChange(operationChangeInfo());
         runner.onUserFunctionStart(attemptInfo());
         runner.onUserFunctionEnd(attemptEndInfo());
+        runner.onInvocationEnd(invocationEndInfo());
 
         assertEquals(
                 List.of(
                         "p:onInvocationStart",
-                        "p:onInvocationEnd",
                         "p:onOperationStart",
                         "p:onOperationEnd",
                         "p:onOperationChange",
                         "p:onUserFunctionStart",
-                        "p:onUserFunctionEnd"),
+                        "p:onUserFunctionEnd",
+                        "p:onInvocationEnd"),
                 calls);
     }
 
@@ -95,9 +224,10 @@ class PluginRunnerTest {
     @Test
     void awaitedHooks_callAllPlugins() {
         var calls = new ArrayList<String>();
-        var plugin1 = new TestPlugin("p1", calls);
-        var plugin2 = new TestPlugin("p2", calls);
-        var runner = new PluginRunner(List.of(plugin1, plugin2));
+        var runner =
+                new PluginRunner(List.of(info -> new TestPlugin("p1", calls), info -> new TestPlugin("p2", calls)));
+        runner.onInvocationStart(invocationInfo());
+        calls.clear();
 
         runner.onInvocationEnd(invocationEndInfo());
 
@@ -107,30 +237,12 @@ class PluginRunnerTest {
     @Test
     void awaitedHooks_swallowExceptions_butCallRemainingPlugins() {
         var calls = new ArrayList<String>();
-        var throwingPlugin = new ThrowingPlugin();
-        var normalPlugin = new TestPlugin("p2", calls);
-        var runner = new PluginRunner(List.of(throwingPlugin, normalPlugin));
+        var runner = new PluginRunner(List.of(info -> new ThrowingPlugin(), info -> new TestPlugin("p2", calls)));
+        runner.onInvocationStart(invocationInfo());
+        calls.clear();
 
         assertDoesNotThrow(() -> runner.onInvocationEnd(invocationEndInfo()));
         assertEquals(List.of("p2:onInvocationEnd"), calls);
-    }
-
-    // ─── Thread safety (basic) ───────────────────────────────────────────
-
-    @Test
-    void pluginRunner_isImmutable() {
-        var calls = new ArrayList<String>();
-        var mutableList = new ArrayList<DurableExecutionPlugin>();
-        mutableList.add(new TestPlugin("p1", calls));
-        var runner = new PluginRunner(mutableList);
-
-        // Modifying the original list should not affect the runner
-        mutableList.add(new TestPlugin("p2", calls));
-
-        runner.onInvocationStart(invocationInfo());
-
-        // Only p1 should be called — p2 was added after construction
-        assertEquals(List.of("p1:onInvocationStart"), calls);
     }
 
     // ─── Execution input / result components ─────────────────────────────
