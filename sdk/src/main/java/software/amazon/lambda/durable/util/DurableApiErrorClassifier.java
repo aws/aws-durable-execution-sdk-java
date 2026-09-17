@@ -48,7 +48,7 @@ public final class DurableApiErrorClassifier {
      * Message prefix that distinguishes invalid checkpoint token errors from other
      * {@code InvalidParameterValueException} errors.
      */
-    private static final String INVALID_CHECKPOINT_TOKEN_MESSAGE_PREFIX = "Invalid Checkpoint Token";
+    private static final String INVALID_CHECKPOINT_TOKEN_MESSAGE_PREFIX = "Invalid checkpoint token";
 
     private DurableApiErrorClassifier() {}
 
@@ -62,7 +62,7 @@ public final class DurableApiErrorClassifier {
      *
      * <ul>
      *   <li>Error code in {@link #NON_RETRYABLE_ERROR_CODES} → non-retryable ({@code retryable=false})
-     *   <li>4xx + "Invalid Checkpoint Token" → retryable ({@code retryable=true}, stale token resolves on retry)
+     *   <li>4xx + "Invalid checkpoint token" → retryable ({@code retryable=true}, stale token resolves on retry)
      *   <li>4xx (non-429) → non-retryable ({@code retryable=false}, customer error)
      *   <li>429, 5xx, unknown → retryable ({@code retryable=true})
      * </ul>

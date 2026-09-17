@@ -6,13 +6,11 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
-import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClientBuilder;
 import software.amazon.awssdk.services.cloudwatchlogs.model.CreateLogStreamRequest;
 import software.amazon.awssdk.services.cloudwatchlogs.model.InputLogEvent;
 import software.amazon.awssdk.services.cloudwatchlogs.model.PutLogEventsRequest;
-import software.amazon.awssdk.services.cloudwatchlogs.model.ResourceAlreadyExistsException;
 import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.insight.InsightExporter;
 import software.amazon.lambda.durable.insight.Json;
@@ -28,7 +26,7 @@ public final class CloudWatchLogsExporter implements InsightExporter {
     private final String logGroupName;
     private final String logStreamPrefix;
     private final Integer maxRecordSizeBytes;
-    private final CloudWatchLogsClient client;
+    private final LazyClient<CloudWatchLogsClient> client;
     // Concurrent set: the plugin can emit from multiple threads (e.g. concurrent child-context branches), so the
     // create-once cache must be thread-safe. An unsynchronized HashSet could corrupt its internal table or spin under
     // concurrent structural modification.
@@ -38,11 +36,11 @@ public final class CloudWatchLogsExporter implements InsightExporter {
         this.logGroupName = b.logGroupName;
         this.logStreamPrefix = b.logStreamPrefix != null ? b.logStreamPrefix : "workflow-insight/";
         this.maxRecordSizeBytes = b.maxRecordSizeBytes != null ? b.maxRecordSizeBytes : 256_000;
-        CloudWatchLogsClientBuilder cb = CloudWatchLogsClient.builder();
-        if (b.region != null) {
-            cb = cb.region(Region.of(b.region));
-        }
-        this.client = b.client != null ? b.client : cb.build();
+        this.client = LazyClient.forSdkClient(
+                b.client,
+                "cloudwatchlogs",
+                "software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient",
+                b.region);
     }
 
     public static Builder builder() {
@@ -61,9 +59,10 @@ public final class CloudWatchLogsExporter implements InsightExporter {
 
     @Override
     public void export(WorkflowInsightRecord record) {
+        CloudWatchLogsClient logs = client.get();
         String streamName = buildStreamName();
-        ensureStream(streamName);
-        client.putLogEvents(PutLogEventsRequest.builder()
+        ensureStream(logs, streamName);
+        logs.putLogEvents(PutLogEventsRequest.builder()
                 .logGroupName(logGroupName)
                 .logStreamName(streamName)
                 .logEvents(List.of(InputLogEvent.builder()
@@ -78,16 +77,20 @@ public final class CloudWatchLogsExporter implements InsightExporter {
         return String.format("%s%d/%02d/%02d", logStreamPrefix, d.getYear(), d.getMonthValue(), d.getDayOfMonth());
     }
 
-    private void ensureStream(String streamName) {
+    private void ensureStream(CloudWatchLogsClient logs, String streamName) {
         if (createdStreams.contains(streamName)) {
             return;
         }
         try {
-            client.createLogStream(CreateLogStreamRequest.builder()
+            logs.createLogStream(CreateLogStreamRequest.builder()
                     .logGroupName(logGroupName)
                     .logStreamName(streamName)
                     .build());
-        } catch (ResourceAlreadyExistsException ignored) {
+        } catch (AwsServiceException e) {
+            // The catch names a core type so linking this class never needs the service artifact.
+            if (!"ResourceAlreadyExistsException".equals(e.awsErrorDetails().errorCode())) {
+                throw e;
+            }
             // stream already exists — fine
         }
         createdStreams.add(streamName);
