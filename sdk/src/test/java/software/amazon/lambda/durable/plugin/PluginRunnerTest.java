@@ -172,6 +172,85 @@ class PluginRunnerTest {
         assertEquals(List.of("p2:onInvocationStart", "p2:onOperationStart"), calls);
     }
 
+    // ─── Factory and hook linkage failures ───────────────────────────────
+    //
+    // A LinkageError is an Error, not an Exception, so a catch of Exception does not contain it. Both of the shapes
+    // below are reachable through the plugin contract rather than hypothetical: a provider JAR compiled against an
+    // earlier version of DurableExecutionPluginProvider throws AbstractMethodError the first time the SDK invokes the
+    // method it does not implement, and a provider whose optional dependency is absent from the deployment package
+    // throws NoClassDefFoundError when it first touches that class. Both must be contained, because the contract says a
+    // factory or hook failure is logged and skipped and never disrupts the execution.
+
+    @Test
+    void factoryThrowingAbstractMethodError_isContained_andRemainingPluginsStillRun() {
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(
+                info -> {
+                    // What a provider compiled against the previous interface throws when the new factory method is
+                    // invoked on it.
+                    throw new AbstractMethodError(
+                            "software.amazon.example.LegacyProvider.createPlugin(InvocationInfo)");
+                },
+                info -> new TestPlugin("p2", calls)));
+
+        assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
+        runner.onInvocationEnd(invocationEndInfo());
+
+        assertEquals(List.of("p2:onInvocationStart", "p2:onInvocationEnd"), calls);
+    }
+
+    @Test
+    void factoryThrowingNoClassDefFoundError_isContained_andRemainingPluginsStillRun() {
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(
+                info -> {
+                    // What a provider with a missing optional dependency throws while building its plugin.
+                    throw new NoClassDefFoundError("software/amazon/example/OptionalExporter");
+                },
+                info -> new TestPlugin("p2", calls)));
+
+        assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
+        runner.onInvocationEnd(invocationEndInfo());
+
+        assertEquals(List.of("p2:onInvocationStart", "p2:onInvocationEnd"), calls);
+    }
+
+    @Test
+    void hookThrowingLinkageError_isContained_andRemainingPluginsStillRun() {
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(
+                info -> new LinkageErrorPlugin(),
+                info -> new TestPlugin("p2", calls),
+                info -> new TestPlugin("p3", calls)));
+
+        assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
+        calls.clear();
+        assertDoesNotThrow(() -> runner.onOperationStart(operationInfo()));
+        assertDoesNotThrow(() -> runner.onInvocationEnd(invocationEndInfo()));
+
+        assertEquals(
+                List.of("p2:onOperationStart", "p3:onOperationStart", "p2:onInvocationEnd", "p3:onInvocationEnd"),
+                calls);
+    }
+
+    @Test
+    void factoryThrowingAJvmError_stillPropagates() {
+        // The containment is deliberately narrow: an Error that says the JVM itself is failing must not be swallowed as
+        // if it were a plugin defect, because the process cannot be assumed able to continue.
+        var runner = new PluginRunner(List.of(info -> {
+            throw new OutOfMemoryError("Java heap space");
+        }));
+
+        assertThrows(OutOfMemoryError.class, () -> runner.onInvocationStart(invocationInfo()));
+    }
+
+    @Test
+    void hookThrowingAJvmError_stillPropagates() {
+        var runner = new PluginRunner(List.of(info -> new StackOverflowPlugin()));
+
+        assertThrows(StackOverflowError.class, () -> runner.onInvocationStart(invocationInfo()));
+    }
+
     // ─── Fire-and-forget event hooks ─────────────────────────────────────
 
     @Test
@@ -426,6 +505,35 @@ class PluginRunnerTest {
         @Override
         public void onInvocationEnd(InvocationEndInfo info) {
             throw new RuntimeException("boom");
+        }
+    }
+
+    /**
+     * Plugin whose hooks fail to link, as a plugin compiled against a different SDK version or missing an optional
+     * dependency does.
+     */
+    private static class LinkageErrorPlugin implements DurableExecutionPlugin {
+        @Override
+        public void onInvocationStart(InvocationInfo info) {
+            throw new NoClassDefFoundError("software/amazon/example/OptionalExporter");
+        }
+
+        @Override
+        public void onOperationStart(OperationInfo info) {
+            throw new AbstractMethodError("software.amazon.example.LegacyPlugin.onOperationStart(OperationInfo)");
+        }
+
+        @Override
+        public void onInvocationEnd(InvocationEndInfo info) {
+            throw new IncompatibleClassChangeError("software.amazon.example.LegacyPlugin");
+        }
+    }
+
+    /** Plugin whose hook reports that the JVM itself is failing, which must not be contained. */
+    private static class StackOverflowPlugin implements DurableExecutionPlugin {
+        @Override
+        public void onInvocationStart(InvocationInfo info) {
+            throw new StackOverflowError();
         }
     }
 }

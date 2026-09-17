@@ -101,6 +101,24 @@ final class ExportScheduler {
     private final AtomicReference<Thread> pumpThread = new AtomicReference<>();
 
     /**
+     * Marks the thread currently running one exporter's share of a fan-out for <em>this</em> scheduler, so that a
+     * {@code flush()} or {@code drain()} re-entered from an exporter callback can tell that the pump is waiting for it.
+     *
+     * <p>With a single exporter the fan-out runs on the pump thread and {@link #pumpThread} already recognizes it. With
+     * two or more, {@link #forEachExporterSettled} submits one task per exporter and the pump then joins them all, so
+     * the callback runs on a thread that is not the pump but that the pump cannot outlive: a wait for the pump issued
+     * from there is the same wait-for cycle, two threads wide instead of one. The pump parks in the join, so it never
+     * reaches the point in its loop that would complete the future the worker is parked on.
+     *
+     * <p>An instance field rather than a static: a fan-out worker of one scheduler is not pump-dependent on any other
+     * scheduler, and refusing its waits there would be a false positive. Set and cleared around each callback by the
+     * thread that runs it, restoring whatever was there before rather than blindly removing, so a callback that the
+     * pump ran inline (the rejected-worker fallback, where the fan-out thread <em>is</em> the pump) cannot clear a mark
+     * an enclosing frame still needs.
+     */
+    private final ThreadLocal<Boolean> exporterFanOutThread = new ThreadLocal<>();
+
+    /**
      * The invocations with a record no pump has picked up yet, in the order they first queued work. Ordering only — the
      * record itself lives on the invocation's plugin instance. Guarded by {@code this}.
      *
@@ -276,13 +294,14 @@ final class ExportScheduler {
      * describe a different one. It tells the pump that this record gates an invocation return, so the pump exports it
      * before spending a flush fan-out. See {@link #exportRecordsADrainIsWaitingFor}.
      *
-     * <p>Called from the pump thread itself, the wait is refused and reported instead of made: see
-     * {@link #refuseWaitFromThePumpThread}.
+     * <p>Called from the pump thread itself, or from an exporter fan-out worker that pump is waiting for, the wait is
+     * refused and reported instead of made: see {@link #refuseWaitThatWouldBlockThePump}.
      */
     void drain(InsightPlugin execution) {
-        // Re-entered from the pump: this thread is the one that would settle the signal it is about to wait for. Refuse
-        // and return; the record stays queued and this same pump exports it when it resumes its loop.
-        if (refuseWaitFromThePumpThread("drain(execution)")) {
+        // Re-entered from a thread the pump's progress depends on: waiting here would park on a signal only that pump
+        // can settle. Refuse and return; the record stays queued and that same pump exports it once it resumes its
+        // loop.
+        if (refuseWaitThatWouldBlockThePump("drain(execution)")) {
             return;
         }
         synchronized (this) {
@@ -375,7 +394,7 @@ final class ExportScheduler {
     void drainAll() {
         // Every pass below is a drain, and each one would be refused; without this the loop spends all of its passes
         // reporting the same refusal.
-        if (refuseWaitFromThePumpThread("drainAll()")) {
+        if (refuseWaitThatWouldBlockThePump("drainAll()")) {
             return;
         }
         for (int pass = 0; pass < MAX_DRAIN_ALL_PASSES; pass++) {
@@ -409,6 +428,22 @@ final class ExportScheduler {
                 }
             }
         }
+    }
+
+    /**
+     * Test seam: how many invocations the scheduler still holds a reference to.
+     *
+     * <p>{@link #queue} is the only collection of per-invocation objects the scheduler has, so this is the whole of the
+     * per-invocation state the environment retains. Zero means the environment — which outlives every invocation —
+     * holds nothing belonging to any invocation it has served.
+     */
+    synchronized int retainedInvocationCount() {
+        return queue.size();
+    }
+
+    /** Test seam: whether the scheduler still holds a reference to one particular invocation. */
+    synchronized boolean retains(InsightPlugin execution) {
+        return queue.contains(execution);
     }
 
     /** Gives up one invocation's outstanding work: drops its queued record and releases every drain waiting on it. */
@@ -648,13 +683,15 @@ final class ExportScheduler {
      * <p>A queue that never runs dry cannot starve a request either: the pump alternates one record and one batch of
      * requests, so a flush waits at most one export fan-out.
      *
-     * <p>Called from the pump thread itself — which only something the pump invokes synchronously can do — the request
-     * is refused and reported instead of made: see {@link #refuseWaitFromThePumpThread}.
+     * <p>Called from the pump thread itself — or from an exporter fan-out worker that pump is waiting for, which is
+     * what a callback re-entering the scheduler does when two or more exporters are configured — the request is refused
+     * and reported instead of made: see {@link #refuseWaitThatWouldBlockThePump}.
      */
     void flush() {
-        // Re-entered from the pump: this thread is the only one that could serve the request it is about to make, so it
-        // must not make it. Refuse and return rather than enqueue a request nobody can serve.
-        if (refuseWaitFromThePumpThread("flush()")) {
+        // Re-entered from a thread the pump's progress depends on: the pump is the only thread that could serve the
+        // request, and it cannot while this caller has not returned. Refuse rather than enqueue a request nobody
+        // serves.
+        if (refuseWaitThatWouldBlockThePump("flush()")) {
             return;
         }
         CompletableFuture<Void> request = new CompletableFuture<>();
@@ -737,12 +774,15 @@ final class ExportScheduler {
     /** Runs the action for every exporter concurrently and returns once all have settled, reporting each failure. */
     private void forEachExporterSettled(Consumer<InsightExporter> action) {
         if (exporters.size() == 1) {
+            // On the pump thread itself, which the pump-thread check already refuses waits from.
             runSafely(() -> action.accept(exporters.get(0)));
             return;
         }
         List<CompletableFuture<Void>> settledExporters = new ArrayList<>(exporters.size());
         for (InsightExporter exporter : exporters) {
-            Runnable task = () -> runSafely(() -> action.accept(exporter));
+            // Marked as a fan-out task: the pump joins every one of these below, so a wait for the pump issued from
+            // inside one must be refused exactly as one issued from the pump itself.
+            Runnable task = () -> runSafely(() -> runAsExporterFanOut(() -> action.accept(exporter)));
             try {
                 settledExporters.add(CompletableFuture.runAsync(task, executor));
             } catch (Throwable t) {
@@ -752,6 +792,26 @@ final class ExportScheduler {
         }
         for (CompletableFuture<Void> task : settledExporters) {
             runSafely(task::join);
+        }
+    }
+
+    /**
+     * Runs one exporter's share of a fan-out with this thread marked pump-dependent, restoring the previous mark on the
+     * way out. The mark is what makes {@link #refuseWaitThatWouldBlockThePump} recognize a fan-out worker.
+     */
+    private void runAsExporterFanOut(Runnable action) {
+        Boolean previous = exporterFanOutThread.get();
+        exporterFanOutThread.set(Boolean.TRUE);
+        try {
+            action.run();
+        } finally {
+            if (previous == null) {
+                // Removed rather than set back to null: these run on a shared, process-wide pool, so a thread must not
+                // keep an entry for this scheduler after its task ends.
+                exporterFanOutThread.remove();
+            } else {
+                exporterFanOutThread.set(previous);
+            }
         }
     }
 
@@ -772,34 +832,48 @@ final class ExportScheduler {
     }
 
     /**
-     * Reports and refuses a wait for the pump that was issued <em>from</em> the pump. Returns whether the caller is the
-     * pump thread; when it is, the failure has already been reported and the caller must return without waiting.
+     * Reports and refuses a wait for the pump that was issued from a thread the pump's own progress depends on. Returns
+     * whether the caller is such a thread; when it is, the failure has already been reported and the caller must return
+     * without waiting.
      *
-     * <p>Invariant: the thread that waits for the pump is never the thread that serves it. {@link #flush()} waits for a
-     * request only a pump can complete, and a drain waits for a signal only a pump can complete or for the running
+     * <p>Invariant: the thread that waits for the pump is never a thread the pump waits for. {@link #flush()} waits for
+     * a request only a pump can complete, and a drain waits for a signal only a pump can complete or for the running
      * pump's own handle. All three are satisfied by the pump between records.
      *
-     * <p>Without this, a wait issued from the pump is a wait-for cycle one thread wide: the pump parks on the future it
-     * would itself have completed, so it never reaches the point in its loop that completes it, and no other thread may
-     * take over because {@code inFlight} is this pump's. The invocation never returns, and nothing reports it — a
-     * {@link CompletableFuture} park cycle is not a monitor deadlock, so the JVM's deadlock detection cannot see it.
-     * Reachable through anything the pump calls synchronously: with a single exporter the fan-out runs on the pump
-     * thread, so a customer exporter's {@code export()} that asks for a flush, or a non-conforming {@code exportOne},
-     * is enough. A conforming production {@code exportOne} does not re-enter the scheduler, so this is hardening.
+     * <p>Two threads qualify. The pump thread itself: a wait issued from there is a wait-for cycle one thread wide —
+     * the pump parks on the future it would itself have completed, so it never reaches the point in its loop that
+     * completes it, and no other thread may take over because {@code inFlight} is this pump's. And an exporter fan-out
+     * worker: with two or more exporters the pump submits one task per exporter and joins them all, so a wait issued
+     * from a callback running on one of those workers is the same cycle two threads wide — the worker parks on a future
+     * only the pump can complete, and the pump is parked in the join waiting for that worker. Neither is a monitor
+     * deadlock, so the JVM's deadlock detection cannot see either one, and the invocation simply never returns.
+     *
+     * <p>Reachable through anything a fan-out calls synchronously: with a single exporter the fan-out runs on the pump
+     * thread, so a customer exporter's {@code export()} or {@code flush()} that asks the scheduler for a flush, or a
+     * non-conforming {@code exportOne}, is enough; with several it runs on a worker instead, and the same call is
+     * refused for the same reason. A conforming production {@code exportOne} does not re-enter the scheduler, so this
+     * is hardening.
      *
      * <p>So the call fails fast instead: the plugin's failure handler is told — it logs — and the caller returns as it
      * would from any other flush or drain, with nothing propagating into the execution. The queued work itself is not
-     * dropped by refusing a drain: the record stays in the invocation's slot and the pump asking the question is the
-     * one that will export it. Callers that are not the pump — every SDK hook thread — never enter this branch and
-     * behave exactly as before, and the check is a single volatile read, so no lock is added to that path.
+     * dropped by refusing a drain: the record stays in the invocation's slot, and the pump that is waiting for this
+     * caller exports it as soon as this caller returns and the fan-out it belongs to settles. Callers that are neither
+     * — every SDK hook thread — never enter this branch and behave exactly as before; the check is a volatile read plus
+     * a thread-local read, so no lock is added to that path.
      */
-    private boolean refuseWaitFromThePumpThread(String call) {
-        if (pumpThread.get() != Thread.currentThread()) {
-            return false;
+    private boolean refuseWaitThatWouldBlockThePump(String call) {
+        if (pumpThread.get() == Thread.currentThread()) {
+            reportFailure(new IllegalStateException(call
+                    + " was called from the export pump thread, the only thread able to serve it; the call was refused"
+                    + " rather than deadlocking the invocation"));
+            return true;
         }
-        reportFailure(new IllegalStateException(call
-                + " was called from the export pump thread, the only thread able to serve it; the call was refused"
-                + " rather than deadlocking the invocation"));
-        return true;
+        if (Boolean.TRUE.equals(exporterFanOutThread.get())) {
+            reportFailure(new IllegalStateException(call
+                    + " was called from an exporter fan-out worker the export pump is waiting for, so the pump cannot"
+                    + " serve it; the call was refused rather than deadlocking the invocation"));
+            return true;
+        }
+        return false;
     }
 }

@@ -837,6 +837,57 @@ class PluginIntegrationTest {
         assertFalse(recordingPlugin.invocationEnds.isEmpty());
     }
 
+    @Test
+    void factoryThrowingLinkageError_doesNotDisruptExecution() {
+        // A provider whose optional dependency is missing from the deployment package fails this way. A LinkageError is
+        // an Error, not an Exception, so containment that catches only Exception lets it escape onInvocationStart and
+        // fail the whole execution.
+        var recordingPlugin = new RecordingPlugin();
+        var config = DurableConfig.builder()
+                .withPlugins(
+                        info -> {
+                            throw new NoClassDefFoundError("software/amazon/example/OptionalExporter");
+                        },
+                        info -> recordingPlugin)
+                .build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class, (input, context) -> context.step("step", String.class, stepCtx -> "safe"), config);
+
+        var result = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("safe", result.getResult(String.class));
+        assertFalse(recordingPlugin.invocationStarts.isEmpty(), "the surviving plugin must still receive its hooks");
+        assertFalse(recordingPlugin.invocationEnds.isEmpty());
+    }
+
+    @Test
+    void factoryThrowingAbstractMethodError_doesNotDisruptExecution() {
+        // What a provider compiled against an earlier version of the factory interface throws the first time the SDK
+        // invokes the method it does not implement — the exact failure this SDK's factory-only plugin contract creates
+        // for a provider that has not been recompiled.
+        var recordingPlugin = new RecordingPlugin();
+        var config = DurableConfig.builder()
+                .withPlugins(
+                        info -> {
+                            throw new AbstractMethodError(
+                                    "software.amazon.example.LegacyProvider.createPlugin(InvocationInfo)");
+                        },
+                        info -> recordingPlugin)
+                .build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class, (input, context) -> context.step("step", String.class, stepCtx -> "safe"), config);
+
+        var result = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("safe", result.getResult(String.class));
+        assertFalse(recordingPlugin.invocationStarts.isEmpty(), "the surviving plugin must still receive its hooks");
+        assertFalse(recordingPlugin.invocationEnds.isEmpty());
+    }
+
     // ─── Child context hooks ─────────────────────────────────────────────
 
     @Test
