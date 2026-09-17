@@ -19,10 +19,10 @@ import org.slf4j.LoggerFactory;
  * execution ARN.
  *
  * <p>Event hooks are fire-and-forget: each plugin is called in order, errors are swallowed. A factory that throws or
- * returns {@code null} is contained the same way — the plugin is skipped for the invocation. Containment covers
- * {@link LinkageError} as well as {@link Exception}, because a plugin built against a different SDK version or missing
- * an optional dependency fails with an {@code Error}; it deliberately stops short of the {@code Error}s that report the
- * JVM itself failing.
+ * returns {@code null} is contained the same way — the plugin is skipped for the invocation. Containment covers every
+ * non-fatal throwable, not only {@link Exception}, because a plugin built against a different SDK version, one missing
+ * an optional dependency, and one running with assertions enabled all fail with an {@code Error}. It stops short of the
+ * errors that report the JVM itself failing, which keep propagating.
  *
  * <p>{@code onInvocationEnd} is awaited (the SDK blocks until it returns) to allow plugins to flush data before Lambda
  * freezes.
@@ -61,14 +61,16 @@ public class PluginRunner {
      * <p>Called from {@link #onInvocationStart(InvocationInfo)} so the instances exist before any hook is dispatched.
      * Factories that throw or return null are logged and skipped.
      *
-     * <p>{@link LinkageError} is contained alongside {@link Exception} because it is how the two most likely
-     * version-skew failures of this contract present themselves, and neither is an {@code Exception}: a provider JAR
-     * compiled against an earlier version of {@link DurableExecutionPluginFactory} throws {@link AbstractMethodError}
-     * when the SDK invokes the method it does not implement, and a provider whose optional dependency is missing from
-     * the deployment package throws {@link NoClassDefFoundError} while building its plugin. The contract says a factory
-     * failure is skipped and never disrupts the execution, so both are skipped. Deliberately narrow: an {@code Error}
-     * that reports the JVM itself failing — {@link OutOfMemoryError}, {@link StackOverflowError} — is not a plugin
-     * defect and must keep propagating rather than be logged as one.
+     * <p>Every non-fatal throwable is contained, not just {@link Exception}. The contract says a factory failure is
+     * skipped and never disrupts the execution, and a throwable that escapes here fails an execution the plugin was
+     * only observing. Narrowing the catch to a list of types would leave that promise conditional on the list being
+     * complete, and it was not: a provider JAR compiled against an earlier version of
+     * {@link DurableExecutionPluginFactory} throws {@link AbstractMethodError}, a provider whose optional dependency is
+     * missing from the deployment package throws {@link NoClassDefFoundError}, a provider running with assertions
+     * enabled throws {@link AssertionError}, and a provider that loads its own exporter back ends through
+     * {@link java.util.ServiceLoader} throws {@link java.util.ServiceConfigurationError}. Only the first two are
+     * {@link LinkageError} and none is an {@link Exception}. Catching {@code Throwable} and rethrowing only the fatal
+     * cases makes the promise unconditional. See {@link #contain} for which cases stay fatal.
      */
     private void createPlugins(InvocationInfo info) {
         var created = new ArrayList<DurableExecutionPlugin>(pluginFactories.size());
@@ -80,8 +82,8 @@ public class PluginRunner {
                     continue;
                 }
                 created.add(plugin);
-            } catch (Exception | LinkageError e) {
-                logger.warn("Plugin factory failed; skipping it for this invocation", e);
+            } catch (Throwable t) {
+                contain(t, "Plugin factory failed; skipping it for this invocation");
             }
         }
         this.plugins = List.copyOf(created);
@@ -101,21 +103,54 @@ public class PluginRunner {
     // ─── Event hooks ─────────────────────────────────────────────────────
 
     /**
-     * Calls a void hook on all of this invocation's plugins, swallowing any errors.
+     * Calls a void hook on all of this invocation's plugins, swallowing any non-fatal throwable.
      *
-     * <p>{@link LinkageError} is contained alongside {@link Exception} for the reason given on {@link #createPlugins}:
-     * a plugin compiled against a different SDK version, or one missing an optional dependency, fails a hook with an
-     * {@code Error} rather than an {@code Exception}, and the fire-and-forget contract makes no distinction. Narrow on
-     * purpose — {@link OutOfMemoryError} and {@link StackOverflowError} still propagate.
+     * <p>Containment here follows the same rule as {@link #createPlugins}, because the fire-and-forget contract makes
+     * no distinction between the two boundaries. A plugin fails a hook with the same shapes a factory fails with, and
+     * one plugin's failure must not stop the remaining plugins from receiving the hook or fail the execution. See
+     * {@link #contain} for which cases stay fatal.
      */
     private void run(Consumer<DurableExecutionPlugin> hook) {
         for (var plugin : plugins) {
             try {
                 hook.accept(plugin);
-            } catch (Exception | LinkageError e) {
-                logger.warn("Plugin hook failed", e);
+            } catch (Throwable t) {
+                contain(t, "Plugin hook failed");
             }
         }
+    }
+
+    /**
+     * Logs a throwable that plugin code produced, or rethrows it if it is fatal.
+     *
+     * <p>A {@link VirtualMachineError} is the JVM reporting that it can no longer run correctly, which covers
+     * {@link OutOfMemoryError}, {@link StackOverflowError}, {@link InternalError} and {@link UnknownError}. That is not
+     * a plugin defect, and the process cannot be assumed able to continue past it. Logging it as a contained plugin
+     * failure would therefore hide a condition the caller has to see, so it is rethrown unchanged. The rule names the
+     * supertype rather than the four subclasses so that a subclass added later is fatal without an edit here.
+     *
+     * <p>{@code ThreadDeath} is the other error conventionally called fatal, and it is deliberately absent. The JVM
+     * delivers it only through {@code Thread.stop()}, which throws {@link UnsupportedOperationException} on JDK 20 and
+     * later, so on a current runtime it cannot arrive from the JVM at all. It is also deprecated for removal since JDK
+     * 20, so naming it would add a removal warning to every compile of this class and require a suppression that would
+     * then also mask genuine removal warnings here. A {@code ThreadDeath} that plugin code constructs and throws itself
+     * is a plugin defect, and is contained like any other.
+     *
+     * <p>Throwing an {@link InterruptedException} clears the throwing thread's interrupt status. The threads that run
+     * factories and hooks are SDK threads that carry SDK work after the plugin returns, so containing the interrupt
+     * without restoring the status would hide the cancellation request from that later work and from the SDK's own
+     * blocking calls. The status is therefore restored before returning. Restoring it immediately rather than after the
+     * dispatch loop keeps the flag true for every subsequent read on this thread; a remaining plugin whose blocking
+     * call then fails fast is contained by this same rule, so every plugin is still called.
+     */
+    private static void contain(Throwable t, String message) {
+        if (t instanceof VirtualMachineError fatal) {
+            throw fatal;
+        }
+        if (t instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+        }
+        logger.warn(message, t);
     }
 
     /**

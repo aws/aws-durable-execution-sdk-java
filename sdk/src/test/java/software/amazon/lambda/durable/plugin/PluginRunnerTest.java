@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.ServiceConfigurationError;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -233,6 +234,127 @@ class PluginRunnerTest {
                 calls);
     }
 
+    // ─── Factory and hook throwables that are neither Exception nor LinkageError ──
+    //
+    // AssertionError and ServiceConfigurationError extend Error and Error respectively, and neither is a LinkageError,
+    // so a catch of `Exception | LinkageError` lets both escape. Escaping the plugin boundary fails the invocation the
+    // plugin was only observing. The contract says a factory or hook failure is logged and skipped and never disrupts
+    // the execution, so both must be contained. Both shapes are reachable through the plugin contract: a plugin that
+    // ships with assertions enabled, or that calls a library which asserts internally, throws AssertionError, and a
+    // plugin that runs its own ServiceLoader over its exporter back ends throws ServiceConfigurationError when one of
+    // them is misdeclared.
+
+    @Test
+    void factoryThrowingAssertionError_isContained_andRemainingPluginsStillRun() {
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(
+                info -> {
+                    throw new AssertionError("plugin invariant violated");
+                },
+                info -> new TestPlugin("p2", calls)));
+
+        assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
+        runner.onInvocationEnd(invocationEndInfo());
+
+        assertEquals(List.of("p2:onInvocationStart", "p2:onInvocationEnd"), calls);
+    }
+
+    @Test
+    void factoryThrowingServiceConfigurationError_isContained_andRemainingPluginsStillRun() {
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(
+                info -> {
+                    throw new ServiceConfigurationError("software.amazon.example.Exporter: provider not found");
+                },
+                info -> new TestPlugin("p2", calls)));
+
+        assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
+        runner.onInvocationEnd(invocationEndInfo());
+
+        assertEquals(List.of("p2:onInvocationStart", "p2:onInvocationEnd"), calls);
+    }
+
+    @Test
+    void hookThrowingAssertionError_isContained_andRemainingPluginsStillRun() {
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(
+                info -> new AssertionErrorPlugin(),
+                info -> new TestPlugin("p2", calls),
+                info -> new TestPlugin("p3", calls)));
+
+        assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
+        calls.clear();
+        assertDoesNotThrow(() -> runner.onOperationStart(operationInfo()));
+        assertDoesNotThrow(() -> runner.onInvocationEnd(invocationEndInfo()));
+
+        assertEquals(
+                List.of("p2:onOperationStart", "p3:onOperationStart", "p2:onInvocationEnd", "p3:onInvocationEnd"),
+                calls);
+    }
+
+    @Test
+    void hookThrowingServiceConfigurationError_isContained_andRemainingPluginsStillRun() {
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(
+                info -> new ServiceConfigurationErrorPlugin(),
+                info -> new TestPlugin("p2", calls),
+                info -> new TestPlugin("p3", calls)));
+
+        assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
+        calls.clear();
+        assertDoesNotThrow(() -> runner.onInvocationEnd(invocationEndInfo()));
+
+        assertEquals(List.of("p2:onInvocationEnd", "p3:onInvocationEnd"), calls);
+    }
+
+    // ─── Interrupts ──────────────────────────────────────────────────────
+    //
+    // Throwing InterruptedException clears the throwing thread's interrupt status. The thread that fires a hook is an
+    // SDK thread that carries SDK work after the hook returns, so a runner that contains the InterruptedException
+    // without restoring the status hides the cancellation request from that later SDK work. The runner therefore
+    // contains the throwable, as the contract requires, and restores the interrupt status before returning.
+    //
+    // No hook and no factory method declares a checked exception, so plugin code reaches the boundary with an
+    // InterruptedException only by rethrowing it undeclared. The tests below use that shape deliberately.
+
+    @Test
+    void factoryThrowingInterruptedException_isContained_andRestoresTheInterruptStatus() {
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(
+                info -> {
+                    sneakyThrow(new InterruptedException("flush interrupted"));
+                    return null;
+                },
+                info -> new TestPlugin("p2", calls)));
+
+        try {
+            assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
+
+            assertTrue(Thread.currentThread().isInterrupted(), "the interrupt status must survive containment");
+            assertEquals(List.of("p2:onInvocationStart"), calls);
+        } finally {
+            // Clear the status so it does not leak into whatever else runs on this thread.
+            Thread.interrupted();
+        }
+    }
+
+    @Test
+    void hookThrowingInterruptedException_isContained_andRestoresTheInterruptStatus() {
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(info -> new InterruptingPlugin(), info -> new TestPlugin("p2", calls)));
+        runner.onInvocationStart(invocationInfo());
+        calls.clear();
+
+        try {
+            assertDoesNotThrow(() -> runner.onInvocationEnd(invocationEndInfo()));
+
+            assertTrue(Thread.currentThread().isInterrupted(), "the interrupt status must survive containment");
+            assertEquals(List.of("p2:onInvocationEnd"), calls, "remaining plugins must still be called");
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
     @Test
     void factoryThrowingAJvmError_stillPropagates() {
         // The containment is deliberately narrow: an Error that says the JVM itself is failing must not be swallowed as
@@ -249,6 +371,24 @@ class PluginRunnerTest {
         var runner = new PluginRunner(List.of(info -> new StackOverflowPlugin()));
 
         assertThrows(StackOverflowError.class, () -> runner.onInvocationStart(invocationInfo()));
+    }
+
+    @Test
+    void factoryThrowingAnyVirtualMachineError_stillPropagates() {
+        // The fatal set is named by the VirtualMachineError supertype rather than by listing its subclasses, so an
+        // InternalError propagates for the same reason OutOfMemoryError does. This pins the supertype, not the list.
+        var runner = new PluginRunner(List.of(info -> {
+            throw new InternalError("JVM internal invariant violated");
+        }));
+
+        assertThrows(InternalError.class, () -> runner.onInvocationStart(invocationInfo()));
+    }
+
+    @Test
+    void hookThrowingAnyVirtualMachineError_stillPropagates() {
+        var runner = new PluginRunner(List.of(info -> new UnknownErrorPlugin()));
+
+        assertThrows(UnknownError.class, () -> runner.onInvocationStart(invocationInfo()));
     }
 
     // ─── Fire-and-forget event hooks ─────────────────────────────────────
@@ -535,5 +675,61 @@ class PluginRunnerTest {
         public void onInvocationStart(InvocationInfo info) {
             throw new StackOverflowError();
         }
+    }
+
+    /** Plugin whose hook throws a VirtualMachineError other than the two the older tests pin. */
+    private static class UnknownErrorPlugin implements DurableExecutionPlugin {
+        @Override
+        public void onInvocationStart(InvocationInfo info) {
+            throw new UnknownError("unknown JVM failure");
+        }
+    }
+
+    /** Plugin whose hooks fail an assertion, as a plugin running with assertions enabled does. */
+    private static class AssertionErrorPlugin implements DurableExecutionPlugin {
+        @Override
+        public void onInvocationStart(InvocationInfo info) {
+            throw new AssertionError("plugin invariant violated");
+        }
+
+        @Override
+        public void onOperationStart(OperationInfo info) {
+            throw new AssertionError("plugin invariant violated");
+        }
+
+        @Override
+        public void onInvocationEnd(InvocationEndInfo info) {
+            throw new AssertionError("plugin invariant violated");
+        }
+    }
+
+    /** Plugin whose hook fails its own service lookup, as a plugin loading its exporter back ends does. */
+    private static class ServiceConfigurationErrorPlugin implements DurableExecutionPlugin {
+        @Override
+        public void onInvocationStart(InvocationInfo info) {
+            throw new ServiceConfigurationError("software.amazon.example.Exporter: provider not found");
+        }
+
+        @Override
+        public void onInvocationEnd(InvocationEndInfo info) {
+            throw new ServiceConfigurationError("software.amazon.example.Exporter: provider not found");
+        }
+    }
+
+    /** Plugin whose awaited hook is interrupted while flushing and rethrows the InterruptedException undeclared. */
+    private static class InterruptingPlugin implements DurableExecutionPlugin {
+        @Override
+        public void onInvocationEnd(InvocationEndInfo info) {
+            sneakyThrow(new InterruptedException("flush interrupted"));
+        }
+    }
+
+    /**
+     * Throws {@code t} without declaring it, which is how plugin code can reach the runner with an
+     * {@link InterruptedException} even though no hook signature permits a checked exception.
+     */
+    @SuppressWarnings("unchecked")
+    private static <E extends Throwable> void sneakyThrow(Throwable t) throws E {
+        throw (E) t;
     }
 }
