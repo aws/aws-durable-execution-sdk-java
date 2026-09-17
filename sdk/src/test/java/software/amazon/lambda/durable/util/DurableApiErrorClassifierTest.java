@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.http.SdkHttpResponse;
@@ -57,13 +58,23 @@ class DurableApiErrorClassifierTest {
         assertFalse(result.isRetryable());
     }
 
-    @Test
-    void classifyException_invalidCheckpointToken_returnsRetryable() {
-        var error = awsError(400, "InvalidParameterValueException", "Invalid Checkpoint Token: token expired");
+    @ParameterizedTest
+    @ValueSource(strings = {"Invalid checkpoint token", "Invalid checkpoint token: token expired"})
+    void classifyException_invalidCheckpointTokenPrefix_returnsRetryable(String message) {
+        var error = awsError(400, "InvalidParameterValueException", message);
 
         var result = DurableApiErrorClassifier.classifyException(error);
         assertInstanceOf(UnrecoverableDurableExecutionException.class, result);
         assertTrue(result.isRetryable());
+    }
+
+    @Test
+    void classifyException_invalidCheckpointTokenWrongCase_returnsNonRetryable() {
+        var error = awsError(400, "InvalidParameterValueException", "Invalid Checkpoint Token");
+
+        var result = DurableApiErrorClassifier.classifyException(error);
+        assertInstanceOf(UnrecoverableDurableExecutionException.class, result);
+        assertFalse(result.isRetryable());
     }
 
     @Test
