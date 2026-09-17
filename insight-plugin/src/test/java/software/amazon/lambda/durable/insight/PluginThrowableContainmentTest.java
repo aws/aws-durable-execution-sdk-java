@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.insight;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -81,6 +82,34 @@ class PluginThrowableContainmentTest {
     private InvocationEndInfo end(Object input) {
         return new InvocationEndInfo(
                 "req", ARN, true, START, ops("compute"), InvocationStatus.SUCCEEDED, null, input, "out");
+    }
+
+    @Test
+    void aNullExecutionArnEscapesNoHook() {
+        // The SDK's contract for these hooks is that a plugin fault never disrupts durable execution, so an input the
+        // plugin cannot key its per-execution state by must be contained rather than thrown back. onInvocationEnd is
+        // the case that matters: its state removal runs last, in a `finally`, and a ConcurrentHashMap cannot remove a
+        // null key.
+        var exporter = new CapturingExporter();
+        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(
+                WorkflowInsightConfig.builder().addExporter(exporter).build());
+
+        InvocationInfo nullStart = new InvocationInfo("req", null, true, START, "in", ops("compute"), Map.of());
+        InvocationEndInfo nullEnd = new InvocationEndInfo(
+                "req", null, true, START, ops("compute"), InvocationStatus.SUCCEEDED, null, "in", "out");
+
+        assertDoesNotThrow(() -> plugin.onInvocationStart(nullStart), "onInvocationStart must contain a null ARN");
+        assertDoesNotThrow(
+                () -> plugin.onOperationChange(new software.amazon.lambda.durable.plugin.OperationChangeInfo(
+                        "req", null, ops("compute"), ops("compute"))),
+                "onOperationChange must contain a null ARN");
+        assertDoesNotThrow(() -> plugin.onInvocationEnd(nullEnd), "onInvocationEnd must contain a null ARN");
+
+        // The plugin is still usable afterwards: a well-formed execution on the same instance still emits and flushes.
+        plugin.onInvocationStart(start("in"));
+        plugin.onInvocationEnd(end("in"));
+        assertEquals(1, exporter.records.size(), "the plugin still works after a null-ARN invocation");
+        assertTrue(exporter.flushes > 0);
     }
 
     @Test

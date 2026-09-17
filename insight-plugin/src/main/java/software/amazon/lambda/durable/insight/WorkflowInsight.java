@@ -56,6 +56,7 @@ public final class WorkflowInsight {
 
     /** Per-execution state, keyed by execution ARN, to prevent warm-container bleed and handle resume. */
     private static final class ExecutionState {
+        final String executionArn;
         final Instant startTime;
         final ArnParser arn;
         final boolean sampledIn;
@@ -68,7 +69,8 @@ public final class WorkflowInsight {
          */
         boolean closed;
 
-        ExecutionState(Instant startTime, ArnParser arn, boolean sampledIn) {
+        ExecutionState(String executionArn, Instant startTime, ArnParser arn, boolean sampledIn) {
+            this.executionArn = executionArn;
             this.startTime = startTime;
             this.arn = arn;
             this.sampledIn = sampledIn;
@@ -80,7 +82,7 @@ public final class WorkflowInsight {
                 if (closed) {
                     return false;
                 }
-                scheduler.schedule(record);
+                scheduler.schedule(executionArn, record);
                 return true;
             }
         }
@@ -90,7 +92,7 @@ public final class WorkflowInsight {
             synchronized (this) {
                 closed = true;
                 if (finalRecord != null) {
-                    scheduler.schedule(finalRecord);
+                    scheduler.schedule(executionArn, finalRecord);
                 }
             }
         }
@@ -115,7 +117,7 @@ public final class WorkflowInsight {
 
         /** Test seam: waits until every scheduled record has been handed to the exporters. */
         void drainExports() {
-            scheduler.drain();
+            scheduler.drainAll();
         }
 
         InsightPlugin(WorkflowInsightConfig config) {
@@ -137,7 +139,7 @@ public final class WorkflowInsight {
 
         private ExecutionState getState(String arn, Instant startTime) {
             return byArn.computeIfAbsent(
-                    arn, a -> new ExecutionState(startTime, ArnParser.parse(a), shouldSample(a, samplingRate)));
+                    arn, a -> new ExecutionState(a, startTime, ArnParser.parse(a), shouldSample(a, samplingRate)));
         }
 
         @Override
@@ -159,15 +161,17 @@ public final class WorkflowInsight {
                     state.cachedInput = null;
                 }
                 if (emitMode == WorkflowInsightConfig.EmitMode.ON_CHANGE) {
-                    scheduler.schedule(buildRecord(
-                            state,
+                    scheduler.schedule(
                             info.durableExecutionArn(),
-                            "RUNNING",
-                            info.operations(),
-                            null,
-                            state.cachedInput,
-                            null,
-                            null));
+                            buildRecord(
+                                    state,
+                                    info.durableExecutionArn(),
+                                    "RUNNING",
+                                    info.operations(),
+                                    null,
+                                    state.cachedInput,
+                                    null,
+                                    null));
                 }
             } catch (Throwable t) {
                 logSafely("onInvocationStart failed", t);
@@ -253,7 +257,7 @@ public final class WorkflowInsight {
                 // Sampled-out executions never schedule a record, so there is nothing to drain or flush. If the state
                 // lookup itself failed, drain anyway: it is a no-op when idle and otherwise delivers what is pending.
                 if (state == null || state.sampledIn) {
-                    drainAndFlush();
+                    drainAndFlush(info.durableExecutionArn());
                 }
                 // Remove per-execution state on EVERY invocation end, including non-terminal PENDING/RETRYING suspends,
                 // once any emission work above is done. Nothing durable is lost: the next invocation's onInvocation
@@ -263,19 +267,39 @@ public final class WorkflowInsight {
                 // InvocationInfo.executionInput(). Retaining state instead leaked one entry per suspended execution for
                 // the lifetime of the warm container. This runs even if emission above threw, so a plugin failure can
                 // never turn into a state leak.
-                byArn.remove(info.durableExecutionArn());
+                //
+                // Contained like every other step of this hook: the removal itself can fail — a null execution ARN
+                // makes ConcurrentHashMap.remove throw — and this is the last statement of onInvocationEnd, so an
+                // uncaught Throwable here would escape into the SDK and disrupt durable execution, which this method's
+                // contract forbids.
+                try {
+                    byArn.remove(info.durableExecutionArn());
+                } catch (Throwable t) {
+                    logSafely("failed to remove per-execution state", t);
+                }
             }
         }
 
-        /** Waits for every scheduled record to reach the exporters, then flushes each exporter once, concurrently. */
-        private void drainAndFlush() {
+        /**
+         * Waits for this execution's scheduled record to reach the exporters, then flushes each exporter once. The wait
+         * is per execution: another execution running in the same environment can never displace this execution's
+         * record, so this always returns having delivered this execution's latest snapshot. It is not insulated from
+         * the queue, though — one pump exports serially, so records another execution had already queued ahead of this
+         * one are exported first and this drain waits for them too.
+         *
+         * <p>The flush goes through the scheduler's queue and is served by that same pump, between records, so no
+         * exporter ever sees this execution's {@code flush()} overlap another execution's {@code export()}. Invocation
+         * ends that overlap share one flush: the cadence the exporter contract promises is at most one flush per
+         * sampled-in invocation end, not exactly one.
+         */
+        private void drainAndFlush(String executionArn) {
             try {
-                scheduler.drain();
+                scheduler.drain(executionArn);
             } catch (Throwable t) {
                 logSafely("failed to drain export scheduler", t);
             }
             try {
-                scheduler.flushAll();
+                scheduler.flush();
             } catch (Throwable t) {
                 logSafely("exporter flush failed", t);
             }
