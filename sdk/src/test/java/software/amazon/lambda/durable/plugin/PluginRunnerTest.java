@@ -309,16 +309,15 @@ class PluginRunnerTest {
 
     // ─── Interrupts ──────────────────────────────────────────────────────
     //
-    // Throwing InterruptedException clears the throwing thread's interrupt status. The thread that fires a hook is an
-    // SDK thread that carries SDK work after the hook returns, so a runner that contains the InterruptedException
-    // without restoring the status hides the cancellation request from that later SDK work. The runner therefore
-    // contains the throwable, as the contract requires, and restores the interrupt status before returning.
-    //
-    // No hook and no factory method declares a checked exception, so plugin code reaches the boundary with an
-    // InterruptedException only by rethrowing it undeclared. The tests below use that shape deliberately.
+    // An InterruptedException from plugin code is contained like any other non-fatal throwable, and the interrupt
+    // status is left alone. onInvocationStart runs on the handler thread, so setting the flag there would leave the
+    // handler's next blocking call to fail with an interrupt no user code asked for. A thrown InterruptedException is
+    // also no proof of interruption: no hook and no factory method declares a checked exception, so plugin code reaches
+    // the boundary with one only by rethrowing it undeclared, and it can construct one with the status clear. The tests
+    // below use that shape deliberately.
 
     @Test
-    void factoryThrowingInterruptedException_isContained_andRestoresTheInterruptStatus() {
+    void factoryThrowingInterruptedException_isContained_andLeavesTheThreadUninterrupted() {
         var calls = new ArrayList<String>();
         var runner = new PluginRunner(List.of(
                 info -> {
@@ -330,16 +329,18 @@ class PluginRunnerTest {
         try {
             assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
 
-            assertTrue(Thread.currentThread().isInterrupted(), "the interrupt status must survive containment");
+            assertFalse(
+                    Thread.currentThread().isInterrupted(),
+                    "containment must not interrupt the thread that runs the handler");
             assertEquals(List.of("p2:onInvocationStart"), calls);
         } finally {
-            // Clear the status so it does not leak into whatever else runs on this thread.
+            // Clear the status so a failure here does not leak into whatever else runs on this thread.
             Thread.interrupted();
         }
     }
 
     @Test
-    void hookThrowingInterruptedException_isContained_andRestoresTheInterruptStatus() {
+    void hookThrowingInterruptedException_isContained_andLeavesTheThreadUninterrupted() {
         var calls = new ArrayList<String>();
         var runner = new PluginRunner(List.of(info -> new InterruptingPlugin(), info -> new TestPlugin("p2", calls)));
         runner.onInvocationStart(invocationInfo());
@@ -348,8 +349,31 @@ class PluginRunnerTest {
         try {
             assertDoesNotThrow(() -> runner.onInvocationEnd(invocationEndInfo()));
 
-            assertTrue(Thread.currentThread().isInterrupted(), "the interrupt status must survive containment");
+            assertFalse(
+                    Thread.currentThread().isInterrupted(),
+                    "containment must not interrupt the thread that runs the handler");
             assertEquals(List.of("p2:onInvocationEnd"), calls, "remaining plugins must still be called");
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
+    void containmentPreservesAnInterruptTheThreadAlreadyCarried() {
+        // The boundary neither sets nor clears the flag: a thread that was already interrupted before it entered plugin
+        // code still carries the interrupt when containment returns.
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(info -> new ThrowingPlugin(), info -> new TestPlugin("p2", calls)));
+        runner.onInvocationStart(invocationInfo());
+        calls.clear();
+
+        try {
+            Thread.currentThread().interrupt();
+
+            assertDoesNotThrow(() -> runner.onInvocationEnd(invocationEndInfo()));
+
+            assertTrue(Thread.currentThread().isInterrupted(), "an interrupt the thread already carried must survive");
+            assertEquals(List.of("p2:onInvocationEnd"), calls);
         } finally {
             Thread.interrupted();
         }

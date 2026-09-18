@@ -148,12 +148,17 @@ public class PluginRunner {
      * class is compiled on a JDK 20 or later compiler. The {@code @SuppressWarnings("removal")} below is scoped to this
      * method rather than the class so it cannot mask a removal warning that appears elsewhere in {@code PluginRunner}.
      *
-     * <p>Throwing an {@link InterruptedException} clears the throwing thread's interrupt status. The threads that run
-     * factories and hooks are SDK threads that carry SDK work after the plugin returns, so containing the interrupt
-     * without restoring the status would hide the cancellation request from that later work and from the SDK's own
-     * blocking calls. The status is therefore restored before returning. Restoring it immediately rather than after the
-     * dispatch loop keeps the flag true for every subsequent read on this thread; a remaining plugin whose blocking
-     * call then fails fast is contained by this same rule, so every plugin is still called.
+     * <p>An {@link InterruptedException} is contained like any other non-fatal throwable, and the interrupt status is
+     * not restored. Three facts decide it. The thread that creates plugins and fires {@code onInvocationStart} is the
+     * handler thread — the hook runs there on purpose, so a plugin can set a {@code ThreadLocal} or an MDC key the
+     * handler's own logging then reads — so setting the flag there leaves the handler's next blocking call to fail with
+     * an {@code InterruptedException} that no user code asked for, which is the containment contract broken by the
+     * boundary meant to enforce it. A thrown {@code InterruptedException} is also no proof that the thread was
+     * interrupted: no hook and no factory method declares a checked exception, so the only way one arrives is plugin
+     * code rethrowing it undeclared, and plugin code can construct one and throw it with the interrupt status clear.
+     * And no SDK code interrupts these threads or reads their interrupt status, so restoring the flag serves no waiting
+     * reader. The interrupt is reported the way every other contained plugin failure is, as a logged warning naming the
+     * plugin boundary that produced it.
      */
     @SuppressWarnings("removal") // ThreadDeath is deprecated for removal since JDK 20; see the javadoc above.
     private static void contain(Throwable t, String message) {
@@ -162,9 +167,6 @@ public class PluginRunner {
         }
         if (t instanceof ThreadDeath fatal) {
             throw fatal;
-        }
-        if (t instanceof InterruptedException) {
-            Thread.currentThread().interrupt();
         }
         logger.warn(message, t);
     }
