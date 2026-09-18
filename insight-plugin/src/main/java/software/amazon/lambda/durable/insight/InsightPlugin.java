@@ -8,6 +8,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -37,6 +38,9 @@ import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
  *   <li><em>The input snapshot</em> — {@link #cachedInput} — is written by the thread that fires
  *       {@code onInvocationStart} and read by the operation-change and invocation-end threads of the same invocation,
  *       which the SDK does not promise are the same thread; {@code volatile} for that publication.
+ *   <li><em>The build revision</em> — {@link #buildRevision} — counts the record builds this invocation has started, so
+ *       that a build which was overtaken can be recognized at hand-off time and its record dropped. Atomic rather than
+ *       {@code volatile}, because the case it exists for is two builds running at once. See the field.
  *   <li><em>Scheduling state</em> — {@link #record}, {@link #settled}, {@link #exporting}, {@link #drainWaiters} and
  *       {@link #closed} — is shared with the export pump and guarded by the monitor of {@link #scheduler}. One monitor
  *       for the whole environment, not one per invocation, so the {@code closed} check and the hand-off of a record are
@@ -82,6 +86,27 @@ final class InsightPlugin implements DurableExecutionPlugin {
      */
     private volatile Object cachedInput;
 
+    // --- Build ordering. ---
+
+    /**
+     * Counts the record builds this invocation has started. The value a build takes identifies that build.
+     *
+     * <p>Customer code runs inside a build, on the hook thread: the input and output content transforms, an operation's
+     * result transform, and any Jackson serializer registered for a customer type. That code can call back into a hook
+     * of this same instance, and it runs before anything is scheduled, so a build can be overtaken by a newer build
+     * that starts and finishes inside it. Two hook threads for one invocation would produce the same overlap.
+     *
+     * <p>The scheduler's slot holds one record per invocation and takes whichever record is handed to it last, with no
+     * comparison of age. An overtaken build would therefore write its older snapshot over the newer one. Every build
+     * takes the next value here before it starts, and the scheduler queues the record only while that value is still
+     * the newest, so an overtaken build's record is dropped instead.
+     *
+     * <p>An {@link AtomicLong} rather than a {@code volatile long}: {@code ++} on a {@code volatile long} is a
+     * read-modify-write, so two concurrent builds can take the same value and each conclude its own record is the
+     * newest. That is the very case the check exists for, so a racy counter would guard nothing.
+     */
+    private final AtomicLong buildRevision = new AtomicLong();
+
     // --- Scheduling state: guarded by the scheduler's monitor. ---
 
     /**
@@ -90,6 +115,10 @@ final class InsightPlugin implements DurableExecutionPlugin {
      * <p>A newer record replaces an older one here — each record is a complete snapshot, so the older one carries
      * nothing the newer one lacks. That is the whole of coalescing: one slot, on the instance, which no other
      * invocation can reach.
+     *
+     * <p>Which record is newer is decided by {@link #buildRevision}, not by the order the records reach this slot. The
+     * slot itself takes the last hand-off unconditionally, and the last hand-off is not the newest build when a build
+     * was overtaken by one that customer code started from inside it.
      */
     WorkflowInsightRecord record;
 
@@ -121,6 +150,11 @@ final class InsightPlugin implements DurableExecutionPlugin {
      *
      * <p>A checkpoint that completes while the end record is being drained still delivers an operation-change hook to
      * this same instance, and that RUNNING snapshot must not supersede the final record.
+     *
+     * <p>This orders RUNNING records against the final record; {@link #buildRevision} orders RUNNING records against
+     * each other. Neither covers the other's case. A boolean cannot say which of two RUNNING builds is newer, and the
+     * revision cannot reject a RUNNING record that follows the final one, because the final record is queued without a
+     * revision check. See {@link ExportScheduler#closeAndSchedule}.
      */
     volatile boolean closed;
 
@@ -163,7 +197,12 @@ final class InsightPlugin implements DurableExecutionPlugin {
                 cachedInput = null;
             }
             if (settings.emitMode == WorkflowInsightConfig.EmitMode.ON_CHANGE) {
-                scheduler.schedule(this, buildRecord("RUNNING", info.operations(), null, cachedInput, null, null));
+                // The revision is taken before the build, never after. Customer code runs inside buildRecord and can
+                // re-enter a hook of this instance, which builds a newer record; a revision read afterwards would
+                // already be that newer build's, and this older record would pass the check and overwrite it.
+                long revision = beginBuild();
+                scheduler.scheduleIfNotSuperseded(
+                        this, buildRecord("RUNNING", info.operations(), null, cachedInput, null, null), revision);
             }
         } catch (Throwable t) {
             WorkflowInsight.logSafely("onInvocationStart failed", t);
@@ -181,7 +220,9 @@ final class InsightPlugin implements DurableExecutionPlugin {
             if (closed) {
                 return;
             }
-            scheduler.scheduleIfOpen(this, buildRecord("RUNNING", info.operations(), null, cachedInput, null, null));
+            long revision = beginBuild();
+            scheduler.scheduleIfNotSuperseded(
+                    this, buildRecord("RUNNING", info.operations(), null, cachedInput, null, null), revision);
         } catch (Throwable t) {
             WorkflowInsight.logSafely("onOperationChange failed", t);
         }
@@ -212,6 +253,10 @@ final class InsightPlugin implements DurableExecutionPlugin {
 
             WorkflowInsightRecord finalRecord = null;
             if (sampledIn && shouldEmit) {
+                // No build revision is taken here. Customer code running inside this build can start a newer RUNNING
+                // build, which would make a revision taken here stale, and a checked hand-off would then drop the final
+                // record and leave a RUNNING snapshot as this execution's last exported state. The final record is
+                // instead ordered by `closed`, which closeAndSchedule sets in the same critical section that queues it.
                 finalRecord = buildRecord(
                         status,
                         info.operations(),
@@ -270,6 +315,22 @@ final class InsightPlugin implements DurableExecutionPlugin {
     }
 
     // --- Record building. ---
+
+    /** Starts a record build and returns the revision that identifies it. */
+    private long beginBuild() {
+        return buildRevision.incrementAndGet();
+    }
+
+    /**
+     * Whether the identified build is still the newest one this invocation has started.
+     *
+     * <p>Read by the scheduler inside the critical section that queues the record, so a record that passes cannot be
+     * queued after a record that supersedes it. A build that starts after the check passes still supersedes this one:
+     * its record is handed over later and replaces this one in the slot, which is the order the slot should have.
+     */
+    boolean isNewestBuild(long revision) {
+        return buildRevision.get() == revision;
+    }
 
     private WorkflowInsightRecord buildRecord(
             String status,

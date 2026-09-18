@@ -43,6 +43,12 @@ import java.util.function.Consumer;
  * that invocation are coalesced into its slot — intermediate records are dropped because the latest one already
  * contains all of their information. A record from a <em>different</em> invocation never displaces another's record.
  *
+ * <p>The slot takes whichever record is handed to it last and compares nothing, so "newer" has to be established before
+ * the hand-off. Customer code runs while a record is being built and can re-enter a hook of the same invocation, which
+ * builds and hands over a newer record first; the build it re-entered from then hands over an older snapshot last.
+ * {@code InsightPlugin}'s build revision identifies each build and {@link #scheduleIfNotSuperseded} drops a record
+ * whose build has been overtaken, so the slot only ever advances.
+ *
  * <p>A single pump exports the queued records one at a time, in the order the invocations first queued work
  * ({@link #queue}, which is ordering only — membership in it is the same fact as "this invocation has a record",
  * written in one place), so exporters still never see two exports at once and each record keeps its per-exporter
@@ -164,9 +170,14 @@ final class ExportScheduler {
     // --- Scheduling. ---
 
     /**
-     * Queues the latest record of one invocation for export. If an export is already running, the record is held in
-     * that invocation's own slot (replacing only an earlier record of the <em>same</em> invocation) and exported once
-     * the pump reaches it.
+     * Queues the latest record of one invocation for export, with no ordering check. If an export is already running,
+     * the record is held in that invocation's own slot (replacing only an earlier record of the <em>same</em>
+     * invocation) and exported once the pump reaches it.
+     *
+     * <p>The slot takes whichever record is handed over last and does not compare record ages, so this is the right
+     * entry point only for a record that cannot be superseded. The plugin's RUNNING records go through
+     * {@link #scheduleIfNotSuperseded} and its final record through {@link #closeAndSchedule}; both add the ordering
+     * checks this one omits.
      */
     void schedule(InsightPlugin execution, WorkflowInsightRecord record) {
         CompletableFuture<Void> handle;
@@ -178,13 +189,31 @@ final class ExportScheduler {
     }
 
     /**
-     * Schedules the record unless this invocation has already ended; the check and the hand-off are one critical
-     * section, on the same monitor that owns the {@code closed} flag.
+     * Schedules a non-terminal record unless it has been superseded, which is two separate facts.
+     *
+     * <p>The invocation may already have ended. No RUNNING snapshot may follow the final record, so
+     * {@link InsightPlugin#closed} rejects it.
+     *
+     * <p>A newer build of this same invocation may already have started. Customer code runs inside a build — the
+     * content transforms, an operation result transform, a serializer for a customer type — and can re-enter a hook, so
+     * the build that hands its record over last is not necessarily the build that started last. Without the revision
+     * check the slot would take that older snapshot and the newer one would be lost, or, if a pump had already taken
+     * the newer one, an exporter would see the older snapshot after the newer one.
+     *
+     * <p>The superseded record is dropped rather than queued. Nothing is lost: a record is a complete snapshot of one
+     * execution, so the record that superseded it carries everything it carries. That is the same property that makes
+     * the slot's coalescing sound.
+     *
+     * <p>Both checks and the hand-off are one critical section, on the monitor that owns both fields, so a record
+     * cannot pass the checks and then be queued after the record that supersedes it.
+     *
+     * @param buildRevision the revision the caller took before it started building this record
+     * @return whether the record was queued
      */
-    boolean scheduleIfOpen(InsightPlugin execution, WorkflowInsightRecord record) {
+    boolean scheduleIfNotSuperseded(InsightPlugin execution, WorkflowInsightRecord record, long buildRevision) {
         CompletableFuture<Void> handle;
         synchronized (this) {
-            if (execution.closed) {
+            if (execution.closed || !execution.isNewestBuild(buildRevision)) {
                 return false;
             }
             queueRecord(execution, record);
@@ -194,7 +223,15 @@ final class ExportScheduler {
         return true;
     }
 
-    /** Marks the invocation ended and, when given a record, schedules it as the last one for that invocation. */
+    /**
+     * Marks the invocation ended and, when given a record, schedules it as the last one for that invocation.
+     *
+     * <p>The final record is queued without the build-revision check {@link #scheduleIfNotSuperseded} makes. Customer
+     * code running inside the final record's build can start a newer RUNNING build, which would leave the final
+     * record's revision stale, and a checked hand-off would then drop it and leave a RUNNING snapshot as the
+     * execution's last exported state. Exempting it cannot let a stale record win, because {@code closed} is set in
+     * this same critical section and every RUNNING record handed over afterwards is rejected.
+     */
     void closeAndSchedule(InsightPlugin execution, WorkflowInsightRecord finalRecord) {
         if (finalRecord == null && execution.closed) {
             // The idempotent second call from the hook's `finally`. A volatile read, so the common case of an
