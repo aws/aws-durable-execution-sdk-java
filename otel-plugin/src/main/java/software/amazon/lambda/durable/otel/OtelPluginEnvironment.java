@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.otel;
 
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
+import java.util.Objects;
 
 /**
  * Everything the OTel plugins need that belongs to the execution environment rather than to one invocation.
@@ -32,9 +33,16 @@ final class OtelPluginEnvironment {
      */
     private volatile OtelPluginSupport.ProviderSetup resolvedGlobalSetup;
 
+    /**
+     * @throws NullPointerException if the config is null. The check belongs here because every factory overload on both
+     *     plugins reaches this constructor, and because the alternative is silence: the global-provider path only
+     *     stores the config, so a null one would first be dereferenced when an invocation's plugin instance is built,
+     *     where {@code PluginRunner} contains the failure. The function would then run without the telemetry it asked
+     *     for, reporting one warning per invocation. Registration is where a caller can still act on it.
+     */
     private OtelPluginEnvironment(
             OtelPluginConfig config, DeterministicIdGenerator idGenerator, OtelPluginSupport.ProviderSetup ownedSetup) {
-        this.config = config;
+        this.config = Objects.requireNonNull(config, "config must not be null");
         this.idGenerator = idGenerator;
         this.ownedSetup = ownedSetup;
     }
