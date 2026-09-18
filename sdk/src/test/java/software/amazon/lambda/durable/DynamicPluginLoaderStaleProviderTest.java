@@ -81,6 +81,94 @@ class DynamicPluginLoaderStaleProviderTest {
             }
             """;
 
+    /**
+     * The invocation info as a stub, so a fixture can name it in a signature.
+     *
+     * <p>Not handed to the loader, so a compiled reference to it resolves to this SDK's class at load time and the
+     * fixture's method descriptor matches the one {@code getMethod} is asked for.
+     */
+    private static final String INVOCATION_INFO_SOURCE = """
+            package software.amazon.lambda.durable.plugin;
+
+            public final class InvocationInfo {}
+            """;
+
+    /** A provider whose only createPlugin(InvocationInfo) is static, which cannot implement an instance method. */
+    private static final String STATIC_PROVIDER_SOURCE = """
+            package com.example.audit;
+
+            import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+            import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
+            import software.amazon.lambda.durable.plugin.InvocationInfo;
+
+            public final class StaleAuditProvider implements DurableExecutionPluginProvider {
+
+                @Override
+                public String getName() {
+                    return "com.example.audit";
+                }
+
+                @Override
+                public int getApiVersion() {
+                    return API_VERSION;
+                }
+
+                @Override
+                public Class<? extends DurableExecutionPlugin> getPluginType() {
+                    return StaleAuditPlugin.class;
+                }
+
+                @Override
+                public DurableExecutionPlugin createPlugin() {
+                    return new StaleAuditPlugin();
+                }
+
+                public static DurableExecutionPlugin createPlugin(InvocationInfo info) {
+                    return new StaleAuditPlugin();
+                }
+
+                public static final class StaleAuditPlugin implements DurableExecutionPlugin {}
+            }
+            """;
+
+    /** A provider whose createPlugin(InvocationInfo) returns something that is not a plugin. */
+    private static final String WRONG_RETURN_PROVIDER_SOURCE = """
+            package com.example.audit;
+
+            import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+            import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
+            import software.amazon.lambda.durable.plugin.InvocationInfo;
+
+            public final class StaleAuditProvider implements DurableExecutionPluginProvider {
+
+                @Override
+                public String getName() {
+                    return "com.example.audit";
+                }
+
+                @Override
+                public int getApiVersion() {
+                    return API_VERSION;
+                }
+
+                @Override
+                public Class<? extends DurableExecutionPlugin> getPluginType() {
+                    return StaleAuditPlugin.class;
+                }
+
+                @Override
+                public DurableExecutionPlugin createPlugin() {
+                    return new StaleAuditPlugin();
+                }
+
+                public String createPlugin(InvocationInfo info) {
+                    return "not a plugin";
+                }
+
+                public static final class StaleAuditPlugin implements DurableExecutionPlugin {}
+            }
+            """;
+
     /** A provider written against the interface above, exactly as the migration guide's "before" example is. */
     private static final String PROVIDER_SOURCE = """
             package com.example.audit;
@@ -156,6 +244,48 @@ class DynamicPluginLoaderStaleProviderTest {
     }
 
     @Test
+    void rejectsAProviderWhoseCreatePluginIsStatic(@TempDir Path workDir) throws Exception {
+        // getMethod searches the class before the interfaces it implements and returns static methods, so a stale class
+        // carrying a static createPlugin(InvocationInfo) helper resolves to that helper. The instance method the
+        // interface call dispatches to is still missing, so the absence of the abstract modifier proves nothing here.
+        var provider = staleProviderOfShape(workDir, STATIC_PROVIDER_SOURCE);
+
+        var createPlugin = provider.getClass().getMethod("createPlugin", InvocationInfo.class);
+        assertTrue(Modifier.isStatic(createPlugin.getModifiers()));
+        assertTrue(!Modifier.isAbstract(createPlugin.getModifiers()));
+        assertThrows(AbstractMethodError.class, () -> provider.createPlugin(invocationInfo()));
+
+        var error = assertThrows(
+                IllegalStateException.class,
+                () -> DynamicPluginLoader.loadConfiguredPluginFactories(PROVIDER_NAME, List.of(provider), List.of()));
+
+        var message = error.getMessage();
+        assertTrue(message.contains("does not implement createPlugin(InvocationInfo)"), message);
+        assertTrue(message.contains("is static"), message);
+        assertTrue(message.contains("Rebuild the provider against this SDK version and redeploy it"), message);
+    }
+
+    @Test
+    void rejectsAProviderWhoseCreatePluginReturnsSomethingElse(@TempDir Path workDir) throws Exception {
+        // A createPlugin(InvocationInfo) whose return type is unrelated to DurableExecutionPlugin does not override the
+        // interface method, so it is concrete and still leaves the interface call unimplemented.
+        var provider = staleProviderOfShape(workDir, WRONG_RETURN_PROVIDER_SOURCE);
+
+        var createPlugin = provider.getClass().getMethod("createPlugin", InvocationInfo.class);
+        assertEquals(String.class, createPlugin.getReturnType());
+        assertTrue(!Modifier.isAbstract(createPlugin.getModifiers()));
+        assertThrows(AbstractMethodError.class, () -> provider.createPlugin(invocationInfo()));
+
+        var error = assertThrows(
+                IllegalStateException.class,
+                () -> DynamicPluginLoader.loadConfiguredPluginFactories(PROVIDER_NAME, List.of(provider), List.of()));
+
+        var message = error.getMessage();
+        assertTrue(message.contains("does not implement createPlugin(InvocationInfo)"), message);
+        assertTrue(message.contains("returns java.lang.String"), message);
+    }
+
+    @Test
     void doesNotRejectAStaleProviderThatWasNotSelected(@TempDir Path workDir) throws Exception {
         var staleProvider = staleProvider(workDir);
         var selectedProvider = new CurrentProvider();
@@ -197,15 +327,27 @@ class DynamicPluginLoaderStaleProviderTest {
      * from the function class path.
      */
     private static DurableExecutionPluginProvider staleProvider(Path workDir) throws Exception {
-        return staleProvider(workDir, workDir.resolve("classes").toUri().toURL());
+        return staleProviderOfShape(workDir, PROVIDER_SOURCE);
+    }
+
+    /** @param providerSource the stale shape to compile, one of the provider sources above */
+    private static DurableExecutionPluginProvider staleProviderOfShape(Path workDir, String providerSource)
+            throws Exception {
+        return staleProvider(workDir, workDir.resolve("classes").toUri().toURL(), providerSource);
     }
 
     /** @param artifactLocation reported as the fixture classes' code source, or null to report none */
     private static DurableExecutionPluginProvider staleProvider(Path workDir, URL artifactLocation) throws Exception {
+        return staleProvider(workDir, artifactLocation, PROVIDER_SOURCE);
+    }
+
+    /** @param artifactLocation reported as the fixture classes' code source, or null to report none */
+    private static DurableExecutionPluginProvider staleProvider(
+            Path workDir, URL artifactLocation, String providerSource) throws Exception {
         var compiler = ToolProvider.getSystemJavaCompiler();
         assumeTrue(compiler != null, "This test compiles a fixture and needs a JDK rather than a JRE");
 
-        var classDir = compileFixture(compiler, workDir);
+        var classDir = compileFixture(compiler, workDir, providerSource);
         var loader = new FixtureClassLoader(
                 DynamicPluginLoaderStaleProviderTest.class.getClassLoader(),
                 fixtureClasses(classDir),
@@ -214,13 +356,14 @@ class DynamicPluginLoaderStaleProviderTest {
         return (DurableExecutionPluginProvider) type.getDeclaredConstructor().newInstance();
     }
 
-    private static Path compileFixture(JavaCompiler compiler, Path workDir) throws Exception {
+    private static Path compileFixture(JavaCompiler compiler, Path workDir, String providerSource) throws Exception {
         var sourceDir = Files.createDirectories(workDir.resolve("source"));
         var classDir = Files.createDirectories(workDir.resolve("classes"));
         var sources = new String[] {
             write(sourceDir, "DurableExecutionPlugin.java", PLUGIN_SOURCE),
             write(sourceDir, "DurableExecutionPluginProvider.java", OLD_PROVIDER_INTERFACE_SOURCE),
-            write(sourceDir, "StaleAuditProvider.java", PROVIDER_SOURCE),
+            write(sourceDir, "InvocationInfo.java", INVOCATION_INFO_SOURCE),
+            write(sourceDir, "StaleAuditProvider.java", providerSource),
         };
 
         // The class path holds only the output directory, which is empty when the compile starts. This SDK's current

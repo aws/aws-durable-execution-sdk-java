@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -153,8 +154,17 @@ final class DynamicPluginLoader {
      * that declares the method itself, inherits a concrete implementation from a superclass, or inherits a default
      * implementation from a subinterface of {@link DurableExecutionPluginFactory} therefore resolves to a non-abstract
      * method. A provider that has none of those resolves to the abstract declaration on
-     * {@link DurableExecutionPluginFactory} itself. The abstract modifier on the resolved method distinguishes the two
-     * cases, and reading it runs no provider code.
+     * {@link DurableExecutionPluginFactory} itself.
+     *
+     * <p>Three properties of the resolved method are read, because the resolved method is not necessarily the one the
+     * interface call dispatches to. It must not be abstract, which is the stale provider above. It must not be static:
+     * {@link Class#getMethod} searches the class before the interfaces it implements and returns static methods, so a
+     * stale class carrying a static {@code createPlugin(InvocationInfo)} helper resolves to that helper while the
+     * instance method the interface call needs is still missing. And its return type must be a
+     * {@link DurableExecutionPlugin}: a class file whose {@code createPlugin(InvocationInfo)} returns something else
+     * does not override the interface method at all, and a covariant override or the bridge javac generates for one
+     * both return a {@link DurableExecutionPlugin} subtype, so requiring it refuses no valid provider. Each of the
+     * three is a class-file property, so reading them runs no provider code.
      *
      * <p>A class that inherits a {@code createPlugin(InvocationInfo)} default from an interface unrelated to
      * {@link DurableExecutionPluginFactory} does not compile, because an unrelated default does not override the
@@ -179,12 +189,32 @@ final class DynamicPluginLoader {
                             + REBUILD_PROVIDER_REMEDY,
                     e);
         }
-        if (Modifier.isAbstract(createPlugin.getModifiers())) {
+        var reason = unimplementedReason(createPlugin);
+        if (reason != null) {
             throw configurationError("Plugin provider '" + name + "' (" + describe(providerClass)
-                    + ") does not implement createPlugin(InvocationInfo). It was compiled against an older "
-                    + "Durable Execution SDK whose provider interface declared a different createPlugin method. "
-                    + REBUILD_PROVIDER_REMEDY);
+                    + ") does not implement createPlugin(InvocationInfo): " + reason
+                    + ". It was compiled against an older Durable Execution SDK whose provider interface declared a "
+                    + "different createPlugin method. " + REBUILD_PROVIDER_REMEDY);
         }
+    }
+
+    /** Returns why the resolved method cannot serve the interface call, or null when it can. */
+    private static String unimplementedReason(Method createPlugin) {
+        if (Modifier.isStatic(createPlugin.getModifiers())) {
+            return "the createPlugin(InvocationInfo) it declares is static, so it cannot implement the interface's "
+                    + "instance method";
+        }
+        if (Modifier.isAbstract(createPlugin.getModifiers())) {
+            return "the only declaration is the abstract one on "
+                    + createPlugin.getDeclaringClass().getName();
+        }
+        if (!DurableExecutionPlugin.class.isAssignableFrom(createPlugin.getReturnType())) {
+            return "its createPlugin(InvocationInfo) returns "
+                    + createPlugin.getReturnType().getName() + " rather than a "
+                    + DurableExecutionPlugin.class.getName()
+                    + ", so it does not override the interface method";
+        }
+        return null;
     }
 
     /** Returns the provider class name, with the artifact it was loaded from when the JVM reports one. */
