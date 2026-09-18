@@ -131,6 +131,51 @@ class DynamicPluginLoaderStaleProviderTest {
             }
             """;
 
+    /**
+     * A provider whose createPlugin(InvocationInfo) returns a plugin subtype and overrides nothing.
+     *
+     * <p>Compiled against the older interface, so the method overrides no abstract declaration and javac emits no
+     * bridge returning {@code DurableExecutionPlugin}. The return type is still a plugin, so a check that asked only
+     * whether the return type were assignable to {@code DurableExecutionPlugin} would accept it, while
+     * {@code invokeinterface} looks for the interface's erased descriptor and finds none.
+     */
+    private static final String SUBTYPE_RETURN_PROVIDER_SOURCE = """
+            package com.example.audit;
+
+            import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+            import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
+            import software.amazon.lambda.durable.plugin.InvocationInfo;
+
+            public final class StaleAuditProvider implements DurableExecutionPluginProvider {
+
+                @Override
+                public String getName() {
+                    return "com.example.audit";
+                }
+
+                @Override
+                public int getApiVersion() {
+                    return API_VERSION;
+                }
+
+                @Override
+                public Class<? extends DurableExecutionPlugin> getPluginType() {
+                    return StaleAuditPlugin.class;
+                }
+
+                @Override
+                public DurableExecutionPlugin createPlugin() {
+                    return new StaleAuditPlugin();
+                }
+
+                public StaleAuditPlugin createPlugin(InvocationInfo info) {
+                    return new StaleAuditPlugin();
+                }
+
+                public static final class StaleAuditPlugin implements DurableExecutionPlugin {}
+            }
+            """;
+
     /** A provider whose createPlugin(InvocationInfo) returns something that is not a plugin. */
     private static final String WRONG_RETURN_PROVIDER_SOURCE = """
             package com.example.audit;
@@ -283,6 +328,51 @@ class DynamicPluginLoaderStaleProviderTest {
         var message = error.getMessage();
         assertTrue(message.contains("does not implement createPlugin(InvocationInfo)"), message);
         assertTrue(message.contains("returns java.lang.String"), message);
+    }
+
+    @Test
+    void rejectsAProviderWhoseCreatePluginHasNoBridge(@TempDir Path workDir) throws Exception {
+        // The shape an assignability test accepts and the JVM does not. The method is concrete, takes this SDK's
+        // InvocationInfo, and returns a DurableExecutionPlugin subtype, but it overrides nothing, so there is no bridge
+        // carrying the interface's erased descriptor and invokeinterface finds nothing to dispatch to.
+        var provider = staleProviderOfShape(workDir, SUBTYPE_RETURN_PROVIDER_SOURCE);
+
+        var resolved = provider.getClass().getMethod("createPlugin", InvocationInfo.class);
+        assertTrue(!Modifier.isAbstract(resolved.getModifiers()));
+        assertTrue(!Modifier.isStatic(resolved.getModifiers()));
+        assertTrue(
+                DurableExecutionPlugin.class.isAssignableFrom(resolved.getReturnType()),
+                "the fixture is only interesting while an assignability test would accept it");
+        assertTrue(
+                Stream.of(provider.getClass().getMethods())
+                        .noneMatch(method -> "createPlugin".equals(method.getName())
+                                && method.getParameterCount() == 1
+                                && method.getParameterTypes()[0] == InvocationInfo.class
+                                && method.getReturnType() == DurableExecutionPlugin.class
+                                && !Modifier.isAbstract(method.getModifiers())),
+                "the fixture must carry no bridge method, which is what makes the call fail");
+        assertThrows(AbstractMethodError.class, () -> provider.createPlugin(invocationInfo()));
+
+        var error = assertThrows(
+                IllegalStateException.class,
+                () -> DynamicPluginLoader.loadConfiguredPluginFactories(PROVIDER_NAME, List.of(provider), List.of()));
+
+        var message = error.getMessage();
+        assertTrue(message.contains("does not implement createPlugin(InvocationInfo)"), message);
+        assertTrue(message.contains("carries no method returning"), message);
+    }
+
+    @Test
+    void acceptsAProviderWhoseCreatePluginReturnsASubtype() {
+        // The same covariant return, compiled against the current interface: javac emits the bridge, the interface call
+        // dispatches, and the check must accept it. This is what keeps the exact-descriptor rule from rejecting a
+        // provider that works.
+        var provider = new CovariantProvider();
+
+        var factories = DynamicPluginLoader.loadConfiguredPluginFactories("covariant", List.of(provider), List.of());
+
+        assertEquals(List.of(provider), factories);
+        assertTrue(provider.createPlugin(invocationInfo()) instanceof CurrentPlugin);
     }
 
     @Test
@@ -449,6 +539,20 @@ class DynamicPluginLoaderStaleProviderTest {
 
         @Override
         public DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo) {
+            return new CurrentPlugin();
+        }
+    }
+
+    /** A provider written against the current interface with a covariant return, so javac emits a bridge. */
+    private static final class CovariantProvider implements DurableExecutionPluginProvider {
+
+        @Override
+        public String getName() {
+            return "covariant";
+        }
+
+        @Override
+        public CurrentPlugin createPlugin(InvocationInfo invocationInfo) {
             return new CurrentPlugin();
         }
     }

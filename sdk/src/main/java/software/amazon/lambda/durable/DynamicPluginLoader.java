@@ -150,46 +150,40 @@ final class DynamicPluginLoader {
      * This check reports the condition as a startup failure instead, which is how every other provider configuration
      * problem on this path is already reported.
      *
-     * <p>{@link Class#getMethod} resolves to the most specific declaration reachable from the runtime class. A provider
-     * that declares the method itself, inherits a concrete implementation from a superclass, or inherits a default
-     * implementation from a subinterface of {@link DurableExecutionPluginFactory} therefore resolves to a non-abstract
-     * method. A provider that has none of those resolves to the abstract declaration on
-     * {@link DurableExecutionPluginFactory} itself.
+     * <p>What is checked is the condition {@code invokeinterface} itself needs: a public, non-static, non-abstract
+     * method named {@code createPlugin} taking this SDK's {@link InvocationInfo} and returning exactly
+     * {@link DurableExecutionPlugin}, which is the erased descriptor the interface declares. Checking anything looser
+     * accepts class files the call cannot dispatch to. A concrete {@code MyPlugin createPlugin(InvocationInfo)} that
+     * overrides nothing -- which is what a class compiled against an older interface declares -- is such a file: its
+     * return type is a {@link DurableExecutionPlugin} subtype, so an assignability test passes it, while the interface
+     * call still finds no matching descriptor and throws.
      *
-     * <p>Three properties of the resolved method are read, because the resolved method is not necessarily the one the
-     * interface call dispatches to. It must not be abstract, which is the stale provider above. It must not be static:
-     * {@link Class#getMethod} searches the class before the interfaces it implements and returns static methods, so a
-     * stale class carrying a static {@code createPlugin(InvocationInfo)} helper resolves to that helper while the
-     * instance method the interface call needs is still missing. And its return type must be a
-     * {@link DurableExecutionPlugin}: a class file whose {@code createPlugin(InvocationInfo)} returns something else
-     * does not override the interface method at all, and a covariant override or the bridge javac generates for one
-     * both return a {@link DurableExecutionPlugin} subtype, so requiring it refuses no valid provider. Each of the
-     * three is a class-file property, so reading them runs no provider code.
+     * <p>Requiring the exact descriptor cannot reject a provider that would have worked, because the descriptor is what
+     * dispatch resolves. A covariant override compiles to the specific method plus a bridge that returns
+     * {@link DurableExecutionPlugin}, and it is the bridge the interface call reaches; a compiler that emitted no
+     * bridge would produce a class the JVM cannot dispatch to either. The whole public method set is examined rather
+     * than the one {@link Class#getMethod} resolves, because that resolution prefers the most specific return type and
+     * so hides the bridge behind the covariant declaration, and because it searches the class before the interfaces and
+     * so returns a static same-signature helper in preference to the interface's declaration.
      *
-     * <p>A class that inherits a {@code createPlugin(InvocationInfo)} default from an interface unrelated to
-     * {@link DurableExecutionPluginFactory} does not compile, because an unrelated default does not override the
-     * factory interface's abstract declaration. That shape cannot reach this check from Java source.
+     * <p>Every property read is a class-file property, so this runs no provider code.
      *
-     * <p>The provider reaching this method was already cast to this SDK's {@link DurableExecutionPluginProvider}, so it
-     * inherits this SDK's {@code createPlugin(InvocationInfo)} declaration and {@link Class#getMethod} finds at least
-     * that declaration. A failure to resolve the method therefore means the provider's class hierarchy resolves
-     * {@link InvocationInfo} to a different class than this SDK does, which is a class path problem with the same
-     * remedy. It is reported as a configuration failure rather than allowed to escape configuration as an unexplained
-     * {@link NoSuchMethodException}.
+     * <p>{@link Class#getMethods} can raise a {@link LinkageError} while resolving a method's parameter or return type
+     * against a class path that cannot supply it. That is a class path problem with the same remedy, so it is reported
+     * as this configuration failure rather than escaping as an unexplained {@code NoClassDefFoundError}.
      */
     private static void requireCreatePluginImplementation(String name, DurableExecutionPluginProvider provider) {
         var providerClass = provider.getClass();
-        Method createPlugin;
+        String reason;
         try {
-            createPlugin = providerClass.getMethod("createPlugin", InvocationInfo.class);
-        } catch (NoSuchMethodException | LinkageError e) {
+            reason = undispatchableCreatePluginReason(providerClass);
+        } catch (LinkageError e) {
             throw configurationError(
                     "Plugin provider '" + name + "' (" + describe(providerClass)
-                            + ") does not expose a createPlugin method that accepts this SDK's InvocationInfo type. "
+                            + ") declares a createPlugin method whose types this class path cannot resolve. "
                             + REBUILD_PROVIDER_REMEDY,
                     e);
         }
-        var reason = unimplementedReason(createPlugin);
         if (reason != null) {
             throw configurationError("Plugin provider '" + name + "' (" + describe(providerClass)
                     + ") does not implement createPlugin(InvocationInfo): " + reason
@@ -198,23 +192,52 @@ final class DynamicPluginLoader {
         }
     }
 
-    /** Returns why the resolved method cannot serve the interface call, or null when it can. */
-    private static String unimplementedReason(Method createPlugin) {
-        if (Modifier.isStatic(createPlugin.getModifiers())) {
+    /**
+     * Returns why no public method can serve the interface call, or null when one can.
+     *
+     * <p>The reason names what was found instead, because an operator reading the failure has to be able to tell a
+     * provider that predates the current interface from a class path that resolves {@link InvocationInfo} to two
+     * different classes.
+     */
+    private static String undispatchableCreatePluginReason(Class<?> providerClass) {
+        var abstractOn = (Class<?>) null;
+        var staticFound = false;
+        var otherReturnType = (Class<?>) null;
+        for (var method : providerClass.getMethods()) {
+            if (!isCreatePluginCandidate(method)) {
+                continue;
+            }
+            var modifiers = method.getModifiers();
+            if (Modifier.isStatic(modifiers)) {
+                staticFound = true;
+            } else if (Modifier.isAbstract(modifiers)) {
+                abstractOn = method.getDeclaringClass();
+            } else if (method.getReturnType() == DurableExecutionPlugin.class) {
+                return null;
+            } else {
+                otherReturnType = method.getReturnType();
+            }
+        }
+        if (otherReturnType != null) {
+            return "its createPlugin(InvocationInfo) returns " + otherReturnType.getName()
+                    + " and the class carries no method returning " + DurableExecutionPlugin.class.getName()
+                    + ", so it overrides nothing the interface call can dispatch to";
+        }
+        if (staticFound) {
             return "the createPlugin(InvocationInfo) it declares is static, so it cannot implement the interface's "
                     + "instance method";
         }
-        if (Modifier.isAbstract(createPlugin.getModifiers())) {
-            return "the only declaration is the abstract one on "
-                    + createPlugin.getDeclaringClass().getName();
+        if (abstractOn != null) {
+            return "the only declaration is the abstract one on " + abstractOn.getName();
         }
-        if (!DurableExecutionPlugin.class.isAssignableFrom(createPlugin.getReturnType())) {
-            return "its createPlugin(InvocationInfo) returns "
-                    + createPlugin.getReturnType().getName() + " rather than a "
-                    + DurableExecutionPlugin.class.getName()
-                    + ", so it does not override the interface method";
-        }
-        return null;
+        return "it declares no createPlugin method taking this SDK's " + InvocationInfo.class.getName();
+    }
+
+    /** Whether a method is named and parameterized like the factory method, whatever it returns. */
+    private static boolean isCreatePluginCandidate(Method method) {
+        return "createPlugin".equals(method.getName())
+                && method.getParameterCount() == 1
+                && method.getParameterTypes()[0] == InvocationInfo.class;
     }
 
     /** Returns the provider class name, with the artifact it was loaded from when the JVM reports one. */
