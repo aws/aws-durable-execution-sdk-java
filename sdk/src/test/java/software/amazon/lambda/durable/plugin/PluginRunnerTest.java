@@ -69,6 +69,51 @@ class PluginRunnerTest {
     }
 
     @Test
+    void everyFactoryRunsBeforeAnyStartHook_andNoPluginSeesAnothersHookState() {
+        // The order is part of the contract, so it is pinned rather than left to the reply on a review thread. Every
+        // factory runs, then every start hook, and a plugin therefore cannot observe what another plugin's start hook
+        // installed. That is deliberate: a plugin that depended on it would be depending on the order entries appear in
+        // a customer's withPlugins call, and instrumentation that changes what other instrumentation records is not
+        // something the SDK can promise across three languages.
+        //
+        // Both run on the same thread, so the ThreadLocal below is visible where it is set; only the interleaving is
+        // being asserted, not visibility.
+        var order = new ArrayList<String>();
+        var seenByLaterConstructor = new ArrayList<String>();
+        var installed = new ThreadLocal<String>();
+
+        DurableExecutionPluginFactory first = info -> {
+            order.add("construct:first");
+            return new DurableExecutionPlugin() {
+                @Override
+                public void onInvocationStart(InvocationInfo hookInfo) {
+                    order.add("start:first");
+                    installed.set("from-first-start-hook");
+                }
+            };
+        };
+        DurableExecutionPluginFactory second = info -> {
+            order.add("construct:second");
+            seenByLaterConstructor.add(String.valueOf(installed.get()));
+            return new DurableExecutionPlugin() {
+                @Override
+                public void onInvocationStart(InvocationInfo hookInfo) {
+                    order.add("start:second");
+                }
+            };
+        };
+
+        try {
+            new PluginRunner(List.of(first, second)).onInvocationStart(invocationInfo());
+        } finally {
+            installed.remove();
+        }
+
+        assertEquals(List.of("construct:first", "construct:second", "start:first", "start:second"), order);
+        assertEquals(List.of("null"), seenByLaterConstructor, "a constructor must not observe another plugin's hook");
+    }
+
+    @Test
     void factoriesAreCalledOncePerInvocation_notPerHook() {
         var creations = new AtomicInteger();
         var calls = new ArrayList<String>();
