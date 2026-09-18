@@ -391,6 +391,36 @@ class PluginRunnerTest {
         assertThrows(UnknownError.class, () -> runner.onInvocationStart(invocationInfo()));
     }
 
+    // ─── Thread termination ──────────────────────────────────────────────
+    //
+    // Thread.stop() terminates a thread by throwing ThreadDeath into it, which unwinds that thread's stack from
+    // wherever it stood and releases the monitors it held over state it had only half updated. maven.compiler.source is
+    // 17, and Thread.stop() still delivers ThreadDeath on a JDK 17 runtime, so the delivery is possible on a runtime
+    // this SDK supports. Containing the ThreadDeath would return the factory or hook thread to the SDK and user work it
+    // carries after the plugin returns, with that thread's invariants already broken and the termination dropped. The
+    // runner therefore rethrows it, at both the factory boundary and the hook boundary.
+    //
+    // These tests throw the ThreadDeath directly. Thread.stop() throws UnsupportedOperationException on the JDK 20 or
+    // later runtime the build uses, so a test cannot ask the JVM to deliver one.
+
+    @Test
+    @SuppressWarnings("removal") // ThreadDeath is deprecated for removal since JDK 20.
+    void factoryThrowingThreadDeath_stillPropagates() {
+        var runner = new PluginRunner(List.of(info -> {
+            throw new ThreadDeath();
+        }));
+
+        assertThrows(ThreadDeath.class, () -> runner.onInvocationStart(invocationInfo()));
+    }
+
+    @Test
+    @SuppressWarnings("removal") // ThreadDeath is deprecated for removal since JDK 20.
+    void hookThrowingThreadDeath_stillPropagates() {
+        var runner = new PluginRunner(List.of(info -> new ThreadDeathPlugin()));
+
+        assertThrows(ThreadDeath.class, () -> runner.onInvocationStart(invocationInfo()));
+    }
+
     // ─── Fire-and-forget event hooks ─────────────────────────────────────
 
     @Test
@@ -682,6 +712,15 @@ class PluginRunnerTest {
         @Override
         public void onInvocationStart(InvocationInfo info) {
             throw new UnknownError("unknown JVM failure");
+        }
+    }
+
+    /** Plugin whose hook thread has been terminated by {@code Thread.stop()}, which must not be contained. */
+    @SuppressWarnings("removal") // ThreadDeath is deprecated for removal since JDK 20.
+    private static class ThreadDeathPlugin implements DurableExecutionPlugin {
+        @Override
+        public void onInvocationStart(InvocationInfo info) {
+            throw new ThreadDeath();
         }
     }
 

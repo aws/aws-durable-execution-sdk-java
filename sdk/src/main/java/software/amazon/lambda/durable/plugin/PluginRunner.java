@@ -21,8 +21,9 @@ import org.slf4j.LoggerFactory;
  * <p>Event hooks are fire-and-forget: each plugin is called in order, errors are swallowed. A factory that throws or
  * returns {@code null} is contained the same way — the plugin is skipped for the invocation. Containment covers every
  * non-fatal throwable, not only {@link Exception}, because a plugin built against a different SDK version, one missing
- * an optional dependency, and one running with assertions enabled all fail with an {@code Error}. It stops short of the
- * errors that report the JVM itself failing, which keep propagating.
+ * an optional dependency, and one running with assertions enabled all fail with an {@code Error}. It stops short of two
+ * cases, which keep propagating: the errors that report the JVM itself failing, and the {@code ThreadDeath} that
+ * reports the thread running the plugin has already been terminated.
  *
  * <p>{@code onInvocationEnd} is awaited (the SDK blocks until it returns) to allow plugins to flush data before Lambda
  * freezes.
@@ -129,12 +130,23 @@ public class PluginRunner {
      * failure would therefore hide a condition the caller has to see, so it is rethrown unchanged. The rule names the
      * supertype rather than the four subclasses so that a subclass added later is fatal without an edit here.
      *
-     * <p>{@code ThreadDeath} is the other error conventionally called fatal, and it is deliberately absent. The JVM
-     * delivers it only through {@code Thread.stop()}, which throws {@link UnsupportedOperationException} on JDK 20 and
-     * later, so on a current runtime it cannot arrive from the JVM at all. It is also deprecated for removal since JDK
-     * 20, so naming it would add a removal warning to every compile of this class and require a suppression that would
-     * then also mask genuine removal warnings here. A {@code ThreadDeath} that plugin code constructs and throws itself
-     * is a plugin defect, and is contained like any other.
+     * <p>{@code ThreadDeath} is fatal for a different reason. It is not a report of a failure but a thread termination
+     * that has already begun: {@code Thread.stop()} delivers it by throwing it into the target thread, which unwinds
+     * that thread's stack from wherever it stood and releases the monitors it held over state it had only half updated.
+     * The threads that create plugins and fire hooks are SDK threads that carry SDK and user work after the plugin
+     * returns. Containing the {@code ThreadDeath} would therefore return one of those threads to that work with its
+     * invariants already broken and the termination it was sent silently dropped. It is rethrown unchanged so the
+     * termination completes.
+     *
+     * <p>{@code Thread.stop()} throws {@link UnsupportedOperationException} on JDK 20 and later, so the JVM cannot
+     * deliver a {@code ThreadDeath} on those runtimes. It can deliver one on JDK 17, and {@code maven.compiler.source}
+     * is 17, so the rethrow is reachable on a runtime this SDK supports. A {@code ThreadDeath} that plugin code
+     * constructs and throws itself is rethrown on every runtime; the boundary cannot distinguish it from a delivered
+     * one, and treating the ambiguous case as fatal is the safe direction.
+     *
+     * <p>{@code ThreadDeath} is deprecated for removal since JDK 20, so naming it emits a removal warning when this
+     * class is compiled on a JDK 20 or later compiler. The {@code @SuppressWarnings("removal")} below is scoped to this
+     * method rather than the class so it cannot mask a removal warning that appears elsewhere in {@code PluginRunner}.
      *
      * <p>Throwing an {@link InterruptedException} clears the throwing thread's interrupt status. The threads that run
      * factories and hooks are SDK threads that carry SDK work after the plugin returns, so containing the interrupt
@@ -143,8 +155,12 @@ public class PluginRunner {
      * dispatch loop keeps the flag true for every subsequent read on this thread; a remaining plugin whose blocking
      * call then fails fast is contained by this same rule, so every plugin is still called.
      */
+    @SuppressWarnings("removal") // ThreadDeath is deprecated for removal since JDK 20; see the javadoc above.
     private static void contain(Throwable t, String message) {
         if (t instanceof VirtualMachineError fatal) {
+            throw fatal;
+        }
+        if (t instanceof ThreadDeath fatal) {
             throw fatal;
         }
         if (t instanceof InterruptedException) {
