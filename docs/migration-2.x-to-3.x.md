@@ -313,28 +313,46 @@ The provider instance itself is created once per execution environment by `Servi
 
 ### What happens to a provider that is not rebuilt
 
-This is the failure mode to understand before you deploy, because the function keeps succeeding while its instrumentation stops.
+A provider JAR compiled against `2.x` still loads. Its class file references nothing that `3.x` removed, so `ServiceLoader` instantiates it and `getName()` returns its name.
 
-A provider JAR compiled against `2.x` still loads. Its class file references nothing that `3.x` removed, so `ServiceLoader` instantiates it, `getName()` returns its name, and selection through `DURABLE_EXECUTION_PLUGINS` succeeds. Configuration therefore does not fail.
+It does not implement `createPlugin(InvocationInfo)` — it implements the zero-argument `createPlugin()` that no longer exists on the interface. Calling the method the class does not implement throws `AbstractMethodError`.
 
-The provider does not implement `createPlugin(InvocationInfo)` — it implements the zero-argument `createPlugin()` that no longer exists on the interface. When the SDK calls the method the class does not implement, the JVM throws `AbstractMethodError`. As of this release that error is contained: the SDK logs it and skips that factory for the invocation, exactly as it does for a factory that throws an exception. The execution proceeds and completes normally.
+`3.x` detects that at configuration time for every provider selected through `DURABLE_EXECUTION_PLUGINS`. Selecting a stale provider throws `IllegalStateException` from `DurableConfig` construction, so the handler fails to initialize and the invocation fails:
 
-The result is a deployment that runs correctly and emits nothing from its configured instrumentation. No execution fails, no invocation errors, and the only signal is a warning in the function's own logs, repeated once per invocation, from the `software.amazon.lambda.durable.plugin.PluginRunner` logger:
+```text
+java.lang.IllegalStateException: Dynamic plugin configuration failed: Plugin provider 'com.example.audit'
+    (com.example.AuditPluginProvider from file:/opt/java/lib/audit-plugin.jar) does not implement
+    createPlugin(InvocationInfo). It was compiled against an older Durable Execution SDK whose provider
+    interface declared a different createPlugin method. Rebuild the provider against this SDK version and
+    redeploy it. A provider shipped as a Lambda layer is versioned and deployed separately from the function
+    package, so upgrading the function's SDK dependency does not update the layer.
+```
+
+The check reads whether `createPlugin(InvocationInfo)` resolves to an abstract method on the provider's class, and calls no provider code. A provider written against `3.x` does not trip it, including one that declares `createPlugin` with a narrowed return type, inherits it from an abstract base class, or inherits it as a default method from a subinterface of `DurableExecutionPluginFactory`.
+
+Two cases are outside the check. Both produce a function that runs correctly and emits nothing from that provider.
+
+- **A stale provider on the class path that no name in `DURABLE_EXECUTION_PLUGINS` selects.** An unselected provider is never called, so failing startup for it would break a deployment that works. It is left alone.
+- **A stale provider registered directly through `withPlugins(...)` rather than discovered.** `DurableExecutionPluginProvider` extends `DurableExecutionPluginFactory`, so a provider instance is a valid `withPlugins(...)` argument, and the instance passed can come from a stale JAR even though the call site itself was recompiled. That registration is not checked.
+
+In the second case the outcome is the one per-invocation containment produces. `AbstractMethodError` is thrown once per invocation and contained: the SDK logs it and skips that factory for the invocation, exactly as it does for a factory that throws an exception. The execution proceeds and completes normally. No execution fails, no invocation errors, and the only signal is a warning in the function's own logs, repeated once per invocation, from the `software.amazon.lambda.durable.plugin.PluginRunner` logger:
 
 ```text
 WARN  software.amazon.lambda.durable.plugin.PluginRunner - Plugin factory failed; skipping it for this invocation
 java.lang.AbstractMethodError: com.example.AuditPluginProvider.createPlugin(...)
 ```
 
+Per-invocation containment is deliberate and did not change. Instrumentation never decides whether an execution runs, so a failure at the runtime boundary is logged and skipped rather than propagated. Configuration is the boundary where failing fast is already the policy, which is why the startup check is there and not in `PluginRunner`.
+
 If your instrumentation is the thing that produces your traces or audit records, losing it silently is worse than a failed deployment. Rebuild every provider JAR against `3.x` and redeploy it before or with the SDK upgrade. That includes provider JARs shipped as Lambda layers, which are versioned and deployed separately from the function package and are easy to leave behind.
 
-Caveat: containment is what makes this quiet, and containment is not the same as no failure at all. A stale provider whose class body also references an SDK symbol that `3.x` removed can instead fail during discovery, which throws `IllegalStateException` from `DurableConfig` construction and fails loudly. Both outcomes are possible depending on what the provider's code touches; neither is a substitute for rebuilding it.
+Caveat: a stale provider whose class body also references an SDK symbol that `3.x` removed can fail earlier still, during discovery, which throws `IllegalStateException` from `DurableConfig` construction with a different message. Both outcomes fail startup, and neither is a substitute for rebuilding the provider.
 
 ### Confirming a provider loaded
 
-There is no log line confirming successful provider selection, so confirmation is indirect. Check all three:
+A selected provider that was not rebuilt now fails startup, so the case left to confirm is a provider that loads and is selected but produces nothing, and a provider registered directly through `withPlugins(...)`. There is no log line confirming successful provider selection, so confirmation is indirect. Check all three:
 
-1. The function's logs contain no `Plugin factory failed` warning from `PluginRunner`.
+1. The function's logs contain no `Plugin factory failed` warning from `PluginRunner` and no `Dynamic plugin configuration failed` initialization error.
 2. The provider's own output is present for a recent execution — spans in your trace backend, records at your exporter's destination, or whatever the plugin emits.
 3. The deployed provider artifact is the one built against `3.x`. Check the layer version or JAR checksum you deployed, not just the version you built.
 
@@ -357,5 +375,5 @@ A useful pre-deployment check is to run one execution locally with the provider 
 - Environment-lifetime state moves outside the factory lambda; per-invocation state becomes plain instance fields and ARN-keyed maps are deleted
 - `DurableConfig.getPluginRunner()` is removed in favor of `getPluginFactories()`; `PluginRunner` is an SDK internal and should not be used
 - `DurableExecutionPluginProvider` keeps only `getName()` and inherits `createPlugin(InvocationInfo)`; `API_VERSION`, `getApiVersion()`, `getPluginType()`, and the zero-argument `createPlugin()` are removed
-- A provider that is not rebuilt still loads and is still selected, but produces no instrumentation and only logs a warning, so rebuild and redeploy every provider JAR
+- A provider selected through `DURABLE_EXECUTION_PLUGINS` that was not rebuilt fails startup with an `IllegalStateException` naming the provider and its JAR; a stale provider registered directly through `withPlugins(...)` instead produces no instrumentation and only logs a warning, so rebuild and redeploy every provider JAR
 - There is no compatibility bridge, and recompilation against `3.x` is required

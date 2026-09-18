@@ -50,7 +50,7 @@ DURABLE_EXECUTION_PLUGINS=otel-invocation,com.example.audit
 
 When the variable is unset or blank, the SDK does not perform provider discovery. During `DurableConfig` construction, the SDK uses `ServiceLoader` and the thread context class loader to find `DurableExecutionPluginProvider` implementations. Only named providers create plugins.
 
-Dynamically loaded plugins run first in the order listed in `DURABLE_EXECUTION_PLUGINS`. Plugins registered through `withPlugins(...)` follow in configuration order. Both sources are additive: if the same plugin is selected dynamically and registered explicitly, both factories are registered and each produces an instance that receives lifecycle hooks. Duplicate configured provider names, duplicate discovered provider names, missing providers, and provider discovery failures stop configuration with an `IllegalStateException`.
+Dynamically loaded plugins run first in the order listed in `DURABLE_EXECUTION_PLUGINS`. Plugins registered through `withPlugins(...)` follow in configuration order. Both sources are additive: if the same plugin is selected dynamically and registered explicitly, both factories are registered and each produces an instance that receives lifecycle hooks. Duplicate configured provider names, duplicate discovered provider names, missing providers, provider discovery failures, and selected providers that were built against an older SDK and do not implement `createPlugin(InvocationInfo)` stop configuration with an `IllegalStateException`.
 
 To distribute a provider in a Lambda layer, package its JAR under `java/lib`:
 

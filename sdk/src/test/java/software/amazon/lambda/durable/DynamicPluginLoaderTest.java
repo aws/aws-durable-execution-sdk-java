@@ -170,6 +170,55 @@ class DynamicPluginLoaderTest {
         assertInstanceOf(LinkageError.class, error.getCause());
     }
 
+    // ─── Providers that do implement createPlugin(InvocationInfo) ────────
+    //
+    // The startup check that rejects a provider compiled against the older provider interface reads whether
+    // createPlugin(InvocationInfo) resolves to an abstract method on the runtime class. These cases cover the shapes
+    // in which a provider written against this SDK supplies that method without declaring it on its own class, so the
+    // check must accept all of them. DynamicPluginLoaderStaleProviderTest covers the case the check rejects.
+
+    @Test
+    void acceptsProviderThatDeclaresCreatePluginItself() {
+        var declaringProvider = provider("declaring", FirstPlugin::new);
+
+        var factories =
+                DynamicPluginLoader.loadConfiguredPluginFactories("declaring", List.of(declaringProvider), List.of());
+
+        assertInstanceOf(FirstPlugin.class, factories.get(0).createPlugin(invocationInfo()));
+    }
+
+    @Test
+    void acceptsProviderThatInheritsCreatePluginFromAbstractBaseClass() {
+        var inheritingProvider = new InheritsFromBaseProvider();
+
+        var factories = DynamicPluginLoader.loadConfiguredPluginFactories(
+                "inherits-from-base", List.of(inheritingProvider), List.of());
+
+        assertInstanceOf(FirstPlugin.class, factories.get(0).createPlugin(invocationInfo()));
+    }
+
+    @Test
+    void acceptsProviderThatInheritsCreatePluginAsDefaultMethod() {
+        var inheritingProvider = new InheritsDefaultMethodProvider();
+
+        var factories = DynamicPluginLoader.loadConfiguredPluginFactories(
+                "inherits-default-method", List.of(inheritingProvider), List.of());
+
+        assertInstanceOf(FirstPlugin.class, factories.get(0).createPlugin(invocationInfo()));
+    }
+
+    @Test
+    void acceptsProviderThatNarrowsTheCreatePluginReturnType() {
+        // A narrowed return type makes the compiler emit a bridge method, so createPlugin(InvocationInfo) resolves to
+        // one of two declarations on the provider class. Neither is abstract.
+        var covariantProvider = new NarrowedReturnTypeProvider();
+
+        var factories = DynamicPluginLoader.loadConfiguredPluginFactories(
+                "narrowed-return-type", List.of(covariantProvider), List.of());
+
+        assertInstanceOf(FirstPlugin.class, factories.get(0).createPlugin(invocationInfo()));
+    }
+
     private static InvocationInfo invocationInfo() {
         return new InvocationInfo("req-123", "arn:test", true, Instant.now());
     }
@@ -197,4 +246,52 @@ class DynamicPluginLoaderTest {
     private static final class FirstPlugin implements DurableExecutionPlugin {}
 
     private static final class SecondPlugin implements DurableExecutionPlugin {}
+
+    /** A provider whose {@code createPlugin} implementation is inherited from a superclass. */
+    private abstract static class BaseProvider implements DurableExecutionPluginProvider {
+
+        @Override
+        public DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo) {
+            return new FirstPlugin();
+        }
+    }
+
+    private static final class InheritsFromBaseProvider extends BaseProvider {
+
+        @Override
+        public String getName() {
+            return "inherits-from-base";
+        }
+    }
+
+    /** A provider whose {@code createPlugin} implementation is inherited as a default method. */
+    private interface DefaultMethodProvider extends DurableExecutionPluginProvider {
+
+        @Override
+        default DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo) {
+            return new FirstPlugin();
+        }
+    }
+
+    private static final class InheritsDefaultMethodProvider implements DefaultMethodProvider {
+
+        @Override
+        public String getName() {
+            return "inherits-default-method";
+        }
+    }
+
+    /** A provider that declares {@code createPlugin} with a narrowed return type. */
+    private static final class NarrowedReturnTypeProvider implements DurableExecutionPluginProvider {
+
+        @Override
+        public String getName() {
+            return "narrowed-return-type";
+        }
+
+        @Override
+        public FirstPlugin createPlugin(InvocationInfo invocationInfo) {
+            return new FirstPlugin();
+        }
+    }
 }
