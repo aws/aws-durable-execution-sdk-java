@@ -15,7 +15,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -68,17 +68,21 @@ class WorkflowInsightHookTest {
                 "req", ARN, true, START, ops("greet", OperationStatus.SUCCEEDED), status, error, "in", result);
     }
 
-    @Test
-    void onChangeEmitsAtStartChangeAndEnd() {
-        var exporter = new CapturingExporter();
-        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+    /** The environment one or more invocations are then served in: one factory, one scheduler, one exporter set. */
+    private static DurableExecutionPluginFactory onChangeEnvironment(InsightExporter exporter) {
+        return WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
                 .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
                 .addExporter(exporter)
                 .build());
+    }
+
+    @Test
+    void onChangeEmitsAtStartChangeAndEnd() {
+        var exporter = new CapturingExporter();
+        var plugin = Executions.started(onChangeEnvironment(exporter), start(true));
 
         // Let each scheduled export land before the next hook so all three snapshots are observable; back-to-back
         // hooks may otherwise coalesce into the latest record (covered separately below).
-        plugin.onInvocationStart(start(true));
         plugin.drainExports();
         plugin.onOperationChange(new OperationChangeInfo(
                 "req", ARN, ops("greet", OperationStatus.SUCCEEDED), ops("greet", OperationStatus.SUCCEEDED)));
@@ -95,12 +99,8 @@ class WorkflowInsightHookTest {
     @Test
     void onChangeExportsOffTheHookThreadAndCoalescesBurstsIntoTheLatestRecord() {
         var exporter = new CapturingExporter();
-        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
-                .addExporter(exporter)
-                .build());
+        var plugin = Executions.started(onChangeEnvironment(exporter), start(true));
 
-        plugin.onInvocationStart(start(true));
         for (int i = 0; i < 20; i++) {
             plugin.onOperationChange(new OperationChangeInfo(
                     "req", ARN, ops("greet", OperationStatus.SUCCEEDED), ops("greet", OperationStatus.SUCCEEDED)));
@@ -137,12 +137,7 @@ class WorkflowInsightHookTest {
                 }
             }
         };
-        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
-                .addExporter(exporter)
-                .build());
-
-        plugin.onInvocationStart(start(true));
+        var plugin = Executions.started(onChangeEnvironment(exporter), start(true));
         plugin.drainExports();
 
         // The end hook blocks in its drain while the final record is being exported; the change hook arrives then,
@@ -165,10 +160,10 @@ class WorkflowInsightHookTest {
     @Test
     void invocationEndFlushesExportersEvenWhenNothingWasEmitted() {
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(
-                WorkflowInsightConfig.builder().addExporter(exporter).build());
-
-        plugin.onInvocationStart(start(true));
+        var plugin = Executions.started(
+                WorkflowInsight.workflowInsight(
+                        WorkflowInsightConfig.builder().addExporter(exporter).build()),
+                start(true));
         plugin.onInvocationEnd(end(InvocationStatus.PENDING, null, null));
 
         assertTrue(exporter.records.isEmpty(), "on-complete emits nothing for a suspend");
@@ -178,10 +173,10 @@ class WorkflowInsightHookTest {
     @Test
     void onCompleteSkipsNonTerminalAndEmitsTerminalOnly() {
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(
-                WorkflowInsightConfig.builder().addExporter(exporter).build());
-
-        plugin.onInvocationStart(start(true));
+        var plugin = Executions.started(
+                WorkflowInsight.workflowInsight(
+                        WorkflowInsightConfig.builder().addExporter(exporter).build()),
+                start(true));
         plugin.onOperationChange(new OperationChangeInfo(
                 "req", ARN, ops("greet", OperationStatus.SUCCEEDED), ops("greet", OperationStatus.SUCCEEDED)));
         assertTrue(exporter.records.isEmpty(), "no record before terminal in on-complete mode");
@@ -193,17 +188,16 @@ class WorkflowInsightHookTest {
     @Test
     void suspendResumeKeepsStableStartTimeAndLeavesNoRetainedState() {
         var exporter = new CapturingExporter();
-        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
-                .addExporter(exporter)
-                .build());
+        var environment = onChangeEnvironment(exporter);
 
-        plugin.onInvocationStart(start(true)); // first invocation
-        plugin.drainExports();
-        plugin.onInvocationEnd(end(InvocationStatus.PENDING, null, null)); // suspend -> state removed
-        plugin.onInvocationStart(start(false)); // resume invocation re-seeds state
-        plugin.drainExports();
-        plugin.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null)); // resume + terminal
+        // The suspend and the resume are two invocations of the same execution in one warm environment, so the SDK
+        // serves them with two instances: nothing is carried over in the plugin, and nothing has to be cleaned up.
+        var first = Executions.started(environment, start(true));
+        first.drainExports();
+        first.onInvocationEnd(end(InvocationStatus.PENDING, null, null)); // suspend
+        var resumed = Executions.started(environment, start(false)); // resume re-seeds from its own InvocationInfo
+        resumed.drainExports();
+        resumed.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null)); // resume + terminal
 
         // start(RUNNING) + pending(RUNNING) + resume-start(RUNNING) + terminal(SUCCEEDED); all share the stable
         // startTime recreated from InvocationInfo.executionStartTime() across the suspend boundary.
@@ -211,7 +205,8 @@ class WorkflowInsightHookTest {
         String startTime = exporter.records.get(0).startTime();
         assertTrue(exporter.records.stream().allMatch(r -> startTime.equals(r.startTime())));
         assertEquals(START.toString(), startTime);
-        assertEquals(0, plugin.retainedStateCount(), "no per-execution state retained after invocation end");
+        assertFalse(Executions.outstanding(first), "the suspended invocation left the scheduler owing nothing");
+        assertFalse(Executions.outstanding(resumed), "nor did the resumed one");
     }
 
     @Test
@@ -223,12 +218,12 @@ class WorkflowInsightHookTest {
             }
         };
         var good = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .addExporter(throwing)
-                .addExporter(good)
-                .build());
-
-        plugin.onInvocationStart(start(true));
+        var plugin = Executions.started(
+                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                        .addExporter(throwing)
+                        .addExporter(good)
+                        .build()),
+                start(true));
         plugin.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null));
 
         assertEquals(1, good.records.size(), "failing exporter never blocks the others");

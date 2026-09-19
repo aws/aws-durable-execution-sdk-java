@@ -17,7 +17,6 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -81,10 +80,15 @@ class TransformContractTest {
 
     private WorkflowInsightRecord runOnce(Object input, Function<Object, Object> inputTransform) {
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .content(ContentConfig.builder().inputTransform(inputTransform).build())
-                .addExporter(exporter)
-                .build());
+        var plugin = Executions.plugin(
+                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                        .content(ContentConfig.builder()
+                                .inputTransform(inputTransform)
+                                .build())
+                        .addExporter(exporter)
+                        .build()),
+                ARN,
+                START);
         plugin.onInvocationStart(new InvocationInfo("req", ARN, true, START, input, ops(), Map.of()));
         plugin.onInvocationEnd(
                 new InvocationEndInfo("req", ARN, true, START, ops(), InvocationStatus.SUCCEEDED, null, input, "out"));
@@ -126,11 +130,15 @@ class TransformContractTest {
             m.put("injected-" + m.size(), Boolean.TRUE); // mutate the argument in place
             return m;
         };
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
-                .content(ContentConfig.builder().inputTransform(mutating).build())
-                .addExporter(exporter)
-                .build());
+        var plugin = Executions.plugin(
+                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                        .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
+                        .content(
+                                ContentConfig.builder().inputTransform(mutating).build())
+                        .addExporter(exporter)
+                        .build()),
+                ARN,
+                START);
 
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("a", 1);
@@ -150,7 +158,7 @@ class TransformContractTest {
     @Test
     void throwingTransformOmitsInputWithoutFailingExecution() {
         var exporter = new CapturingExporter();
-        var plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+        var factory = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
                 .content(ContentConfig.builder()
                         .inputTransform(v -> {
                             throw new AssertionError("redactor blew up");
@@ -161,7 +169,7 @@ class TransformContractTest {
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> context.step("greet", String.class, sc -> "hi"),
-                DurableConfig.builder().withPlugins(plugin).build());
+                DurableConfig.builder().withPlugins(factory).build());
 
         var result = runner.runUntilComplete("World");
 

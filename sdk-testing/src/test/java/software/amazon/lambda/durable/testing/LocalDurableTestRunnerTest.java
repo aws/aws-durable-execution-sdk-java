@@ -95,7 +95,8 @@ class LocalDurableTestRunnerTest {
                 executionStartTimes.add(info.executionStartTime());
             }
         };
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        // One instance for both invocations, so the assertion below still compares what two invocations observed.
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> {
