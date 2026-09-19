@@ -419,12 +419,16 @@ public class ExecutionManager implements SafeCloseable {
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-        validateRunningThreads();
-
-        checkpointManager.shutdown();
-
-        // The invocation is over: drop this invocation's plugin instances so they cannot be reached again.
-        pluginRunner.releasePlugins();
+        try {
+            validateRunningThreads();
+            checkpointManager.shutdown();
+        } finally {
+            // The invocation is over: drop this invocation's plugin instances so they cannot be reached again.
+            // In a finally, because validateRunningThreads throws on a stuck user handler: leaving the instances
+            // in place then carries them into the next invocation the environment hosts, which is the
+            // cross-execution sharing the per-invocation lifetime exists to prevent.
+            pluginRunner.releasePlugins();
+        }
     }
 
     private void validateRunningThreads() {
