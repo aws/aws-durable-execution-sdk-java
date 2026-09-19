@@ -177,9 +177,38 @@ public class DurableExecutor {
                             }
                             // user handler complete successfully
                             logger.debug("Execution completed");
-                            var outputPayload = config.getSerDes().serialize(result);
-                            var output =
-                                    DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
+                            // Serializing the result and checkpointing an oversized one can both fail, and this
+                            // invocation ends either way. The end hook is the only point at which a plugin can finish:
+                            // releasePlugins() calls nothing on the instances it drops and the contract has no close(),
+                            // so an exit that skips the hook discards everything the plugin holds -- Insight's record
+                            // for the execution and every exporter's flush, and both OTel plugins' invocation and
+                            // Workflow spans. It also leaves a record queued for a pump that will export it after this
+                            // invocation has returned, which is the out-of-order delivery drainUntilSettled exists to
+                            // prevent. The status is RETRYING rather than FAILED because the throw below leaves the
+                            // invocation the way a retryable failure does: the execution is not finished, and the
+                            // backend decides whether a new invocation follows.
+                            DurableExecutionOutput output = null;
+                            Throwable resultDeliveryFailure = null;
+                            try {
+                                var outputPayload = config.getSerDes().serialize(result);
+                                output = DurableExecutionOutput.success(
+                                        handleLargePayload(executionManager, outputPayload));
+                            } catch (Throwable failure) {
+                                resultDeliveryFailure = failure;
+                            }
+                            if (resultDeliveryFailure != null) {
+                                fireOnInvocationEnd(
+                                        pluginRunner,
+                                        executionManager,
+                                        requestId,
+                                        executionArn,
+                                        isFirstInvocation,
+                                        InvocationStatus.RETRYING,
+                                        resultDeliveryFailure,
+                                        pluginExecutionInput.get(),
+                                        null);
+                                ExceptionHelper.sneakyThrow(resultDeliveryFailure);
+                            }
                             fireOnInvocationEnd(
                                     pluginRunner,
                                     executionManager,

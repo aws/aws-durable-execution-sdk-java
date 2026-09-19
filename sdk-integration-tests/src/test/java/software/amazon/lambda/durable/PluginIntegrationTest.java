@@ -355,6 +355,49 @@ class PluginIntegrationTest {
         }
     }
 
+    @Test
+    void plugin_hooksStayPaired_whenTheResultCannotBeSerialized() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder()
+                .withPlugins(info -> plugin)
+                .withSerDes(new ResultRejectingSerDes())
+                .build();
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> "unserializable", config);
+
+        // The invocation fails on the way out, after the handler has already returned.
+        assertThrows(Exception.class, () -> runner.run("input"));
+
+        // The end hook is the only point at which a plugin can flush: releasePlugins() calls nothing on the
+        // instances it drops and the contract has no close(). An exit that skips it therefore discards the whole
+        // invocation's telemetry -- Insight's record and every exporter's flush, and both OTel plugins' spans --
+        // and can leave a record queued for a pump that exports it after this invocation has returned.
+        assertEquals(1, plugin.invocationStarts.size());
+        assertEquals(1, plugin.invocationEnds.size(), "a start hook must not be left without its end hook");
+        // RETRYING, not SUCCEEDED: the result never reached the backend, so the execution is not finished.
+        assertEquals(InvocationStatus.RETRYING, plugin.invocationEnds.get(0).invocationStatus());
+        assertNotNull(
+                plugin.invocationEnds.get(0).executionError(), "the plugin must be told why the invocation ended");
+    }
+
+    /** SerDes that refuses to serialize the handler's result, as JacksonSerDes does for an unwritable value. */
+    static class ResultRejectingSerDes implements SerDes {
+        private final JacksonSerDes delegate = new JacksonSerDes();
+
+        @Override
+        public String serialize(Object value) {
+            if ("unserializable".equals(value)) {
+                throw new IllegalStateException("cannot serialize the result");
+            }
+            return delegate.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            return delegate.deserialize(data, typeToken);
+        }
+    }
+
     // ─── Operation-level hooks ───────────────────────────────────────────
 
     @Test
