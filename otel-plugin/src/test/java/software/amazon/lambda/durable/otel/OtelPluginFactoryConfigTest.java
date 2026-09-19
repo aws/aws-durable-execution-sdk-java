@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -41,5 +42,22 @@ class OtelPluginFactoryConfigTest {
     @Test
     void executionPluginRejectsANullConfigOnTheProviderBuilderOverload() {
         assertThrows(NullPointerException.class, () -> ExecutionOtelPlugin.factory(SdkTracerProvider.builder(), null));
+    }
+
+    @Test
+    void aRejectedConfigLeavesTheBuilderUsable() {
+        // The check is the first statement of forProviderBuilder, so it precedes the ID-generator and sampler
+        // installation and the provider build. That ordering matters because a provider built and then thrown away is
+        // unreachable: its span processors and their worker threads are never shut down. The ordering itself is a
+        // property of the source rather than something this test can observe -- SdkTracerProviderBuilder exposes no
+        // getters -- so what is asserted here is the consequence a caller can see: the builder they passed still
+        // works.
+        var builder = SdkTracerProvider.builder();
+
+        assertThrows(NullPointerException.class, () -> InvocationOtelPlugin.factory(builder, null));
+
+        try (var provider = builder.build()) {
+            assertNotNull(provider.get("probe"));
+        }
     }
 }

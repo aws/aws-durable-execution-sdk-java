@@ -53,6 +53,10 @@ final class OtelPluginEnvironment {
      */
     static OtelPluginEnvironment forProviderBuilder(
             SdkTracerProviderBuilder tracerProviderBuilder, OtelPluginConfig config) {
+        // Checked before anything is consumed. The constructor below checks it too, but by then this method has
+        // installed the ID generator and the sampler on the caller's builder and built a provider -- and a provider
+        // that fails validation is unreachable, so its span processors and their worker threads are never shut down.
+        Objects.requireNonNull(config, "config must not be null");
         var idGenerator = DeterministicIdGenerator.installOn(tracerProviderBuilder);
         // Wrap the configured sampler so durable spans use the execution's single precomputed decision.
         DurableSampler.installOn(tracerProviderBuilder);
