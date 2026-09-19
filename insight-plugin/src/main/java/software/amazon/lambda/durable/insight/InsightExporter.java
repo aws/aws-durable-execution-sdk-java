@@ -22,7 +22,12 @@ public interface InsightExporter {
      * all of them, because it starts only after each of their records has been handed to every exporter. An execution
      * that is sampled out neither exports nor flushes.
      *
-     * <p>Never called concurrently with {@link #export(WorkflowInsightRecord)} on the same plugin instance.
+     * <p>Never called concurrently with {@link #export(WorkflowInsightRecord)} by the plugins one
+     * {@link WorkflowInsight#workflowInsight} factory creates. That factory owns the scheduler serializing them, so the
+     * guarantee is per factory rather than per environment: an exporter instance handed to two factories is served by
+     * two schedulers, which can call its {@code export} and {@code flush} at the same time. Build the factory once per
+     * handler — which is what a {@code DurableConfig} created once per handler does — and give each factory its own
+     * exporter instances if a single exporter cannot tolerate concurrent calls.
      *
      * <p>May cover records belonging to other executions running in the same environment, so it is not a per-execution
      * barrier.
