@@ -75,19 +75,27 @@ public class PluginRunner {
      */
     private void createPlugins(InvocationInfo info) {
         var created = new ArrayList<DurableExecutionPlugin>(pluginFactories.size());
-        for (var factory : pluginFactories) {
-            try {
-                var plugin = factory.createPlugin(info);
-                if (plugin == null) {
-                    logger.warn("Plugin factory {} returned null; skipping it for this invocation", factory);
-                    continue;
+        try {
+            for (var factory : pluginFactories) {
+                try {
+                    var plugin = factory.createPlugin(info);
+                    if (plugin == null) {
+                        logger.warn("Plugin factory {} returned null; skipping it for this invocation", factory);
+                        continue;
+                    }
+                    created.add(plugin);
+                } catch (Throwable t) {
+                    contain(t, "Plugin factory failed; skipping it for this invocation");
                 }
-                created.add(plugin);
-            } catch (Throwable t) {
-                contain(t, "Plugin factory failed; skipping it for this invocation");
             }
+        } finally {
+            // Published even when a factory failure is fatal and propagates. A plugin constructor is where both OTel
+            // plugins bind their tracer and start the Invocation span, so an instance built before the fatal one
+            // already owns spans that only onInvocationEnd ends and flushes. Assigning after the loop meant a
+            // VirtualMachineError or ThreadDeath from a later factory left the runner looking empty, so the end hook
+            // the failure path fires reached nothing and those spans were dropped un-ended.
+            this.plugins = List.copyOf(created);
         }
-        this.plugins = List.copyOf(created);
     }
 
     /**

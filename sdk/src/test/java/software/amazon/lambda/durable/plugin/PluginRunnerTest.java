@@ -425,6 +425,26 @@ class PluginRunnerTest {
     }
 
     @Test
+    void aFatalFactoryFailure_stillPublishesTheInstancesAlreadyBuilt() {
+        // A plugin constructor is where both OTel plugins bind their tracer and start the Invocation span, so an
+        // instance built before a fatal failure already owns spans that only onInvocationEnd ends and flushes.
+        // Publishing after the loop meant a VirtualMachineError from a later factory left the runner looking empty,
+        // and the end hook the failure path fires reached nothing.
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(info -> new TestPlugin("p1", calls), info -> {
+            throw new OutOfMemoryError("fatal factory");
+        }));
+
+        assertThrows(OutOfMemoryError.class, () -> runner.onInvocationStart(invocationInfo()));
+
+        // The start hook never ran -- the fatal throw left createPlugins -- but the instance exists and its end hook
+        // must still reach it.
+        assertEquals(List.of(), calls);
+        runner.onInvocationEnd(invocationEndInfo());
+        assertEquals(List.of("p1:onInvocationEnd"), calls, "an instance already built must still be finalized");
+    }
+
+    @Test
     void factoryThrowingAJvmError_stillPropagates() {
         // The containment is deliberately narrow: an Error that says the JVM itself is failing must not be swallowed as
         // if it were a plugin defect, because the process cannot be assumed able to continue.
