@@ -194,7 +194,14 @@ public class DurableExecutor {
                                 output = DurableExecutionOutput.success(
                                         handleLargePayload(executionManager, outputPayload));
                             } catch (Throwable failure) {
-                                resultDeliveryFailure = failure;
+                                // handleLargePayload waits with join(), so a failed checkpoint arrives wrapped in a
+                                // CompletionException. The plugins are told what failed, not how it was delivered, and
+                                // the failure branches above already unwrap before they report -- so unwrap here too,
+                                // or Insight's record and the OTel span status would name the wrapper.
+                                resultDeliveryFailure = ExceptionHelper.unwrapCompletableFuture(failure);
+                                if (resultDeliveryFailure == null) {
+                                    resultDeliveryFailure = failure;
+                                }
                             }
                             if (resultDeliveryFailure != null) {
                                 fireOnInvocationEnd(

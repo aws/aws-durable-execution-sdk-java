@@ -398,6 +398,51 @@ class PluginIntegrationTest {
         }
     }
 
+    @Test
+    void plugin_seesTheUnderlyingFailure_whenResultDeliveryFailsWrapped() {
+        // handleLargePayload waits with join(), so a failed checkpoint of an oversized result reaches the same catch
+        // wrapped in a CompletionException. Plugins are told what failed, not how it was delivered.
+        var plugin = new RecordingPlugin();
+        var cause = new IllegalStateException("underlying delivery failure");
+        var config = DurableConfig.builder()
+                .withPlugins(info -> plugin)
+                .withSerDes(new WrappedFailureSerDes(cause))
+                .build();
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> "unserializable", config);
+
+        assertThrows(Exception.class, () -> runner.run("input"));
+
+        assertEquals(1, plugin.invocationEnds.size());
+        assertSame(
+                cause,
+                plugin.invocationEnds.get(0).executionError(),
+                "the plugin must be told the underlying failure, not the CompletionException wrapper");
+    }
+
+    /** SerDes whose result failure arrives wrapped, as a failed oversized-result checkpoint does. */
+    static class WrappedFailureSerDes implements SerDes {
+        private final JacksonSerDes delegate = new JacksonSerDes();
+        private final Throwable cause;
+
+        WrappedFailureSerDes(Throwable cause) {
+            this.cause = cause;
+        }
+
+        @Override
+        public String serialize(Object value) {
+            if ("unserializable".equals(value)) {
+                throw new CompletionException(cause);
+            }
+            return delegate.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            return delegate.deserialize(data, typeToken);
+        }
+    }
+
     // ─── Operation-level hooks ───────────────────────────────────────────
 
     @Test
