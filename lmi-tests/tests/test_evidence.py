@@ -271,6 +271,23 @@ class EvidenceTest(unittest.TestCase):
             finally:
                 cloud.close()
 
+    def test_missing_runtime_entry_is_not_an_sdk_regression(self):
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({}, directory)
+            cloud.refresh = Mock(return_value=[])
+            future = Future()
+            future.set_result({"headers": {"StatusCode": 202}})
+            try:
+                with self.assertRaisesRegex(CollectionError, "No runtime-entry evidence"):
+                    cloud.poll("default1", lambda events: False, seconds=0,
+                               items=[{"future": future, "marker": "test"}])
+                cloud.refresh.return_value = [{"kind": "WRAPPER_ENTER", "marker": "test"}]
+                with self.assertRaisesRegex(AssertionError, "Evidence deadline exceeded"):
+                    cloud.poll("default1", lambda events: False, seconds=0,
+                               items=[{"future": future, "marker": "test"}])
+            finally:
+                cloud.close()
+
     @patch("cloud_suite.save")
     @patch("cloud_suite.time.sleep")
     @patch("cloud_suite.aws")
