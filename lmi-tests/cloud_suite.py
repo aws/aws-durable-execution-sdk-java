@@ -29,28 +29,28 @@ FIXTURES = {"default1": (1, "default"), "default2": (2, "default"),
 
 def template(manifest):
     resources, outputs = {}, {}
-    key = manifest["fixture"]
-    concurrency, executor = FIXTURES[key]
-    name = manifest["stack"] + "-" + key
-    log_id, fn_id = key + "Logs", key + "Function"
-    resources[log_id] = {"Type": "AWS::Logs::LogGroup", "Properties": {
-        "LogGroupName": "/aws/lambda/" + name, "RetentionInDays": 1}}
-    resources[fn_id] = {"Type": "AWS::Lambda::Function", "Properties": {
-        "FunctionName": name, "Runtime": "java25", "Architectures": ["arm64"],
-        "Role": manifest["role"], "Handler": "software.amazon.lambda.durable.lmi.LifecycleHandler",
-        "Code": {"S3Bucket": manifest["bucket"], "S3Key": "lmi-fixtures.jar"},
-        "Timeout": manifest["invocationTimeout"], "MemorySize": 2048,
-        "DurableConfig": {"ExecutionTimeout": 240, "RetentionPeriodInDays": 1},
-        "CapacityProviderConfig": {"LambdaManagedInstancesCapacityProviderConfig": {
-            "CapacityProviderArn": manifest["provider"],
-            "PerExecutionEnvironmentMaxConcurrency": concurrency,
-            "ExecutionEnvironmentMemoryGiBPerVCpu": 2}},
-        "Environment": {"Variables": {"LMI_EXECUTOR": executor, "LMI_COMMIT": manifest["commit"]}},
-        "LoggingConfig": {"LogFormat": "JSON", "ApplicationLogLevel": "INFO",
-                          "SystemLogLevel": "INFO", "LogGroup": {"Ref": log_id}}}}
-    # CloudFormation automatically publishes $LATEST.PUBLISHED for an LMI function.
-    # An additional numbered version would provision a second independent set of environments.
-    outputs[key] = {"Value": {"Fn::Join": ["", [{"Fn::GetAtt": [fn_id, "Arn"]}, ":$LATEST.PUBLISHED"]]}}
+    for key, (concurrency, executor) in FIXTURES.items():
+        name = manifest["stack"] + "-" + key
+        log_id, fn_id = key + "Logs", key + "Function"
+        resources[log_id] = {"Type": "AWS::Logs::LogGroup", "Properties": {
+            "LogGroupName": "/aws/lambda/" + name, "RetentionInDays": 1}}
+        resources[fn_id] = {"Type": "AWS::Lambda::Function", "Properties": {
+            "FunctionName": name, "Runtime": "java25", "Architectures": ["arm64"],
+            "Role": manifest["role"], "Handler": "software.amazon.lambda.durable.lmi.LifecycleHandler",
+            "Code": {"S3Bucket": manifest["bucket"], "S3Key": "lmi-fixtures.jar"},
+            "Timeout": manifest["invocationTimeout"], "MemorySize": 2048,
+            "FunctionScalingConfig": {"MinExecutionEnvironments": 1, "MaxExecutionEnvironments": 1},
+            "DurableConfig": {"ExecutionTimeout": 240, "RetentionPeriodInDays": 1},
+            "CapacityProviderConfig": {"LambdaManagedInstancesCapacityProviderConfig": {
+                "CapacityProviderArn": manifest["provider"],
+                "PerExecutionEnvironmentMaxConcurrency": concurrency,
+                "ExecutionEnvironmentMemoryGiBPerVCpu": 2}},
+            "Environment": {"Variables": {"LMI_EXECUTOR": executor, "LMI_COMMIT": manifest["commit"]}},
+            "LoggingConfig": {"LogFormat": "JSON", "ApplicationLogLevel": "INFO",
+                              "SystemLogLevel": "INFO", "LogGroup": {"Ref": log_id}}}}
+        # CloudFormation automatically publishes $LATEST.PUBLISHED for an LMI function.
+        # An additional numbered version would provision a second independent set of environments.
+        outputs[key] = {"Value": {"Fn::Join": ["", [{"Fn::GetAtt": [fn_id, "Arn"]}, ":$LATEST.PUBLISHED"]]}}
     return {"AWSTemplateFormatVersion": "2010-09-09", "Resources": resources, "Outputs": outputs}
 
 
@@ -103,22 +103,23 @@ def remaining_budget(deadline, maximum):
 
 
 def deploy_fixtures(manifest, tags, seconds=1800):
-    """Retain all five functions; apply each one's limit before creating the next."""
+    """Create all five functions in one stack with scaling limits declared at creation."""
     deadline = time.monotonic() + seconds
+    remaining_budget(deadline, seconds)
+    manifest["stacks"] = [manifest["stack"]]
+    save(MANIFEST, manifest)  # Track the one stack before creation, including partial failures.
+    spec = template(manifest)
+    save(ARTIFACTS / "template.json", spec)
+    aws("cloudformation", "create-stack", {"StackName": manifest["stack"], "TemplateBody": json.dumps(spec),
+        "Tags": tags, "TimeoutInMinutes": 25})
+    wait_stack(manifest["stack"], "CREATE_COMPLETE", remaining_budget(deadline, seconds))
+    stack = aws("cloudformation", "describe-stacks", {"StackName": manifest["stack"]})["Stacks"][0]
+    outputs = {output["OutputKey"]: output["OutputValue"] for output in stack["Outputs"]}
+    require(set(outputs) == set(FIXTURES), "The stack must expose all five LMI fixtures")
     for fixture in FIXTURES:
-        remaining_budget(deadline, 960)
-        stack_name = manifest["stack"] + "-" + fixture
-        manifest["stacks"].append(stack_name)
-        save(MANIFEST, manifest)  # Track partial creation for teardown before sending the request.
-        spec = template({**manifest, "fixture": fixture})
-        save(ARTIFACTS / "templates" / (fixture + ".json"), spec)
-        aws("cloudformation", "create-stack", {"StackName": stack_name, "TemplateBody": json.dumps(spec),
-            "Tags": tags, "TimeoutInMinutes": 15})
-        wait_stack(stack_name, "CREATE_COMPLETE", remaining_budget(deadline, 960))
-        stack = aws("cloudformation", "describe-stacks", {"StackName": stack_name})["Stacks"][0]
-        arn = next(output["OutputValue"] for output in stack["Outputs"] if output["OutputKey"] == fixture)
+        arn = outputs[fixture]
         record_fixture(manifest, fixture, arn)
-        configure_function_scaling(arn, fixture, seconds=remaining_budget(deadline, 300))
+        verify_function_scaling(arn, fixture, seconds=remaining_budget(deadline, 300))
 
 
 def record_fixture(manifest, key, arn):
@@ -135,12 +136,11 @@ def record_fixture(manifest, key, arn):
     save(MANIFEST, manifest)
 
 
-def configure_function_scaling(arn, fixture, seconds=300):
-    """Cap only this test-owned version; never change the shared capacity provider."""
+def verify_function_scaling(arn, fixture, seconds=300):
+    """Read back CloudFormation's applied limits and wait for the published version to be active."""
     desired = {"MinExecutionEnvironments": 1, "MaxExecutionEnvironments": 1}
     function_name, qualifier = arn.rsplit(":", 1)
     request = {"FunctionName": function_name, "Qualifier": qualifier}
-    aws("lambda", "put-function-scaling-config", {**request, "FunctionScalingConfig": desired})
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         scaling = aws("lambda", "get-function-scaling-config", request)
@@ -503,7 +503,7 @@ def cleanup():
     if not MANIFEST.exists():
         return
     manifest = json.loads(MANIFEST.read_text())
-    # Support manifests from earlier single-stack runs as well as partially completed deployments.
+    # Keep cleanup compatible with older multi-stack artifacts; new runs track just the shared stack.
     stacks = manifest.get("stacks", [manifest["stack"]])
     failures = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:

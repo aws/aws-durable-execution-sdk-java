@@ -13,18 +13,20 @@ or accept a retry that happens to pass after a lifecycle violation.
   LMI. Deployment and readback are the region/architecture capability check:
   unsupported combinations fail setup; there is no ordinary-Lambda fallback.
 * One CI job builds once, deploys all five fixture functions, runs all 13 cases,
-  then collects evidence and deletes all test resources. All five functions remain
-  deployed throughout the test phase. Each uses 2 GiB / 1 vCPU and a single
+  then collects evidence and deletes all test resources. One CloudFormation stack
+  owns all five functions and log groups; all functions remain deployed throughout
+  the test phase. Each uses 2 GiB / 1 vCPU and a single
   `$LATEST.PUBLISHED` version; code is not republished during the run, and the
   digest is verified against the built artifact.
-* During setup, create each function and set its minimum/maximum execution
-  environments to 1 before creating the next. LMI initially defaults to three
-  environments, so this limits the startup target to at most four bounded
-  environments plus three for the new function. The five functions then have a
-  steady-state target of five environments. Read back the applied limits and
-  ACTIVE state before proceeding. This keeps provisioning within the dedicated
-  12-vCPU provider's budget without changing its limit. Invocation concurrency
-  remains 1, 2, or 8 per environment, and same-JVM overlap must still be proven.
+* The template declares `FunctionScalingConfig` with both
+  `MinExecutionEnvironments` and `MaxExecutionEnvironments` set to 1 on every
+  function. CloudFormation applies those limits as part of resource creation,
+  so setup does not first stabilize functions with the default three-environment
+  floor and then lower it. The driver reads back the applied limits and ACTIVE
+  version state before testing. The provider's 12-vCPU limit applies to EC2
+  instance capacity, including placement and instance overhead; the suite never
+  changes that limit. Invocation concurrency remains 1, 2, or 8 per environment,
+  and same-JVM overlap must still be proven.
 * A stream wrapper observes the actual SDK entry and return. Invocation-local
   root/task `finally` markers and a JVM-wide sequence establish ordering. The
   plugin end hook is deliberately not used as a completion signal.
@@ -59,9 +61,9 @@ its maximum vCPUs and provide working Lambda/S3/CloudWatch connectivity. The
 workflow uses `TEST_ROLE_ARN`, `TEST_ACCOUNT_ID`, and
 `TEST_LAMBDA_EXECUTION_ROLE_ARN`, as the ordinary E2E workflow does.
 
-Each run owns five tagged CloudFormation stacks (one function and log group each)
-and one shared private staging/control bucket with one-day object expiry. Normal teardown
-deletes all five stacks, then empties and deletes the bucket. A scheduled janitor removes
+Each run owns one tagged CloudFormation stack containing all five functions and
+log groups, plus one private staging/control bucket with one-day object expiry.
+Normal teardown deletes that stack, then empties and deletes the bucket. A scheduled janitor removes
 only expired resources bearing this suite's ownership tags, including runs
 cancelled before normal teardown. Logs and durable histories retain one day in
 AWS; GitHub artifacts retain seven days. The capacity provider remains owned by
@@ -92,11 +94,12 @@ python3 lmi-tests/cloud_suite.py cleanup
 The deploy command creates and retains `default1`, `default2`, `default8`,
 `fixed2`, and `nested2` together. The test command requires all five and runs the
 full suite. CI publishes one combined artifact, named `lmi-e2e-RUN-ATTEMPT`, with
-per-fixture templates and configuration snapshots. The deployment role also needs
-`lambda:PutFunctionScalingConfig` and `lambda:GetFunctionScalingConfig` on the
-test-owned functions.
+the single `template.json` and per-function configuration snapshots. The
+CloudFormation execution role needs permission to manage the function scaling
+configuration; the driver only calls `lambda:GetFunctionScalingConfig` to verify
+it after deployment.
 
-Deployment records `lmi-tests/artifacts/manifest.json`, including all stacks, functions, commit, jar
+Deployment records `lmi-tests/artifacts/manifest.json`, including the stack, functions, commit, jar
 digest, qualified function ARNs, runtime, architecture, concurrency and provider
 association. Never publish control URLs: they are temporary credentials. The
 artifact writer redacts them from histories and logs.
@@ -117,10 +120,10 @@ mvn -pl sdk test -Dtest=LmiLifecycleRegressionTest -Dtest.lmi.regressions.enable
 
 For a same-repository PR, add the `run-lmi-e2e` label to opt into cloud execution.
 The workflow never uses a privileged `pull_request_target` checkout. Provisioning
-has a 35-minute step budget, with a shared 30-minute deadline for creating and
-limiting all five functions. Each scaling wait is capped at 5 minutes and at the
+has a 35-minute step budget, with a shared 30-minute deadline for creating the
+stack and verifying all five functions. Each scaling wait is capped at 5 minutes and at the
 remaining deployment budget. Scenarios have 30 minutes, final collection 5 minutes,
-and parallel stack teardown 10 minutes. Individual admission attempts are bounded (four batches,
+and stack teardown 10 minutes. Individual admission attempts are bounded (four batches,
 25 seconds), fixed-pool progress has 8 seconds, and task escape timers are capped
 at 120 seconds. The normal invocation timeout is 60 seconds; the durable execution
 timeout is 240 seconds. Cleanup is required by the invocation deadline plus
@@ -143,6 +146,8 @@ that exceeds the cleanup budget. No virtual-thread executor variant is deployed
 until its executor contract is defined; default cached and shared fixed pools
 are covered separately.
 
-LMI provisioning and version behavior are documented in the AWS guides for
+CloudFormation's native [FunctionScalingConfig](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-lambda-function-functionscalingconfig.html)
+sets the limits in the resource declaration. LMI provisioning and version behavior
+are documented in the AWS guides for
 [scaling](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-scaling.html)
 and [$LATEST.PUBLISHED](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-version-publishing.html).
