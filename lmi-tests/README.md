@@ -1,0 +1,109 @@
+# LMI lifecycle cloud tests
+
+This opt-in suite tests the SDK commit being built on real Lambda Managed
+Instances (LMI). It asserts the desired behavior in [#726](https://github.com/aws/aws-durable-execution-sdk-java/issues/726)
+and implements the cloud coverage requested in [#727](https://github.com/aws/aws-durable-execution-sdk-java/issues/727).
+The affected SDK is expected to fail. Do not invert assertions, skip regressions,
+or accept a retry that happens to pass after a lifecycle violation.
+
+## Test design
+
+* Each fixture is a published durable function with LMI invocation concurrency
+  1, 2, or 8. Java 25 / x86_64 is the initial matrix. Java 17 is not supported by
+  LMI. Deployment and readback are the region/architecture capability check:
+  unsupported combinations fail setup; there is no ordinary-Lambda fallback.
+* A stream wrapper observes the actual SDK entry and return. Invocation-local
+  root/task `finally` markers and a JVM-wide sequence establish ordering. The
+  plugin end hook is deliberately not used as a completion signal.
+* A bounded same-JVM root barrier establishes the fixed-pool reproduction.
+  Other cases hold steps with private S3 control objects. The driver requires
+  distinct request IDs active in the same JVM. Placement has its own deadline
+  and failure category. Environment replacement is never worker recovery.
+* Timeout victims start before healthy peers, leaving the peers time to hold
+  the other runtime slots during recovery. Diagnostics capture the real context
+  deadline; no fake clock, context, checkpoint backend, or time-skipping runner
+  participates. Service timeout evidence, task interruption/exit, wrapper exit,
+  and restored admission are independent assertions. Durable execution status
+  is collected separately from the runtime invocation's outcome.
+* Successful and failed checkpointed steps precede a real durable wait. The
+  attempt ledger records entry into user bodies, while real service history
+  proves checkpoint identity and replay. Fixture business work returns an idempotent marker; BODY events form the
+  append-only attempt ledger keyed by execution and operation. Interrupted, uncheckpointed work may be retried.
+* Diagnostics (including target-JVM admission and barriers) are test-only
+  instrumentation. They never choose operation names or business branches.
+  Deliberately blocked tasks have finite escape timers. Escape diagnostics fail
+  lifecycle assertions; they cannot turn the reproduced bug into a pass.
+* CloudWatch collection polls for causal evidence and deduplicates JVM sequence
+  numbers. Test reports distinguish setup, placement, assertion, collection,
+  and teardown failures. Raw histories, configuration, and diagnostic logs are
+  retained even when a scenario fails.
+
+## Ownership
+
+`CAPACITY_PROVIDER_ARN` identifies an existing **dedicated test** capacity
+provider. The suite never creates, updates, or deletes it. Its owner must bound
+its maximum vCPUs and provide working Lambda/S3/CloudWatch connectivity. The
+workflow uses `TEST_ROLE_ARN`, `TEST_ACCOUNT_ID`, and
+`TEST_LAMBDA_EXECUTION_ROLE_ARN`, as the ordinary E2E workflow does.
+
+Each run owns a tagged CloudFormation stack (functions, versions, log groups)
+and a private staging/control bucket with one-day object expiry. Normal teardown
+empties the bucket and deletes the stack and bucket. A scheduled janitor removes
+only expired resources bearing this suite's ownership tags, including runs
+cancelled before normal teardown. Logs and durable histories retain one day in
+AWS; GitHub artifacts retain seven days. The capacity provider remains owned by
+the test-account operator, including any idle instance cost.
+
+## Running
+
+See the workflow `lmi-e2e-tests.yml` for the complete commands and budgets. The
+cloud driver requires Python 3.9+, AWS CLI v2 with LMI/Durable API support, and
+credentials for the dedicated test account. There are no new Python packages.
+The Java fixture uses the repository SDK and existing dependencies only.
+
+```sh
+mvn -B -pl lmi-tests -am package -DskipTests
+python3 -m unittest discover -s lmi-tests/tests -v
+export CAPACITY_PROVIDER_ARN=arn:aws:lambda:REGION:ACCOUNT:capacity-provider:NAME
+export TEST_LAMBDA_EXECUTION_ROLE_ARN=arn:aws:iam::ACCOUNT:role/ROLE
+export AWS_REGION=us-west-2
+python3 lmi-tests/cloud_suite.py deploy --run-id local-UNIQUE
+python3 lmi-tests/cloud_suite.py test --cloud-enabled
+python3 lmi-tests/cloud_suite.py collect
+python3 lmi-tests/cloud_suite.py cleanup
+```
+
+Deployment records `lmi-tests/artifacts/manifest.json`, including commit, jar
+digest, qualified function ARNs, runtime, architecture, concurrency and provider
+association. Never publish control URLs: they are temporary credentials. The
+artifact writer redacts them from histories and logs.
+
+Cloud tests are disabled unless `test --cloud-enabled` is explicitly requested.
+Local assertion tests verify that missing evidence, mismatched environments,
+early responses, late tasks and stalled executors cannot be reported as passes.
+Cloud regressions run through manual dispatch and a bounded schedule; they are
+not an ordinary PR smoke gate until #726 is fixed.
+
+The opt-in local regressions assert the same three contracts against the SDK's
+mock backend (they do not substitute for cloud coverage):
+
+```sh
+mvn -pl sdk test -Dtest=LmiLifecycleRegressionTest -Dtest.lmi.regressions.enabled=true
+```
+
+For a same-repository PR, add the `run-lmi-e2e` label to opt into cloud execution.
+The workflow never uses a privileged `pull_request_target` checkout. Provisioning
+has an 18-minute budget, scenarios 30 minutes, final collection 5 minutes, and
+teardown 10 minutes. Individual admission attempts are bounded (four batches,
+25 seconds), fixed-pool progress has 8 seconds, and task escape timers are capped
+at 120 seconds. The normal invocation timeout is 60 seconds; the durable execution
+timeout is 240 seconds. Cleanup is required by the invocation deadline plus
+5 seconds. Probe admission has an 8-second tolerance. Collection latency does
+not extend these assertions, which compare timestamps captured inside the JVM.
+
+`timeouts/*.json` distinguishes server timeout logs from an SDK deadline
+cancellation that returns early with an invocation error. A client HTTP timeout
+is a collection error. A successful durable retry cannot erase an old invocation
+that exceeds the cleanup budget. No virtual-thread executor variant is deployed
+until its executor contract is defined; default cached and shared fixed pools
+are covered separately.
