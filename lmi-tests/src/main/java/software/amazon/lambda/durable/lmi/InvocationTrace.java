@@ -93,6 +93,7 @@ final class InvocationTrace {
         data.put("environment", ENVIRONMENT);
         data.put("sequence", SEQUENCE.incrementAndGet());
         data.put("nanos", System.nanoTime());
+        data.put("epochMillis", System.currentTimeMillis());
         data.put("remainingMillis", (deadlineNanos - System.nanoTime()) / 1_000_000);
         data.put("runId", input.runId());
         data.put("cohort", input.cohort());

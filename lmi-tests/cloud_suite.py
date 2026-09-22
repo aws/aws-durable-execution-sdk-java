@@ -245,17 +245,19 @@ def timeout_case(cloud, fixture, stubborn=False):
     victim = cloud.launch(fixture, scenario, prefix + "-victim", hold_ms=(timeout + 20) * 1000)
     entry = cloud.poll(fixture, lambda events: selected(events, "TASK_ENTER", victim["marker"]), category=PreconditionError)[0]
     target = entry["environment"]
+    runtime_entry = selected(cloud.events_for(victim), "WRAPPER_ENTER")[0]
+    deadline_wall = (runtime_entry["epochMillis"] + runtime_entry["remainingMillis"]) / 1000
     # Stagger admission: healthy invocations must outlive the victim's real deadline.
-    cloud.poll(fixture, lambda events: time.time() - victim["started"] >= timeout / 2, seconds=timeout)
+    cloud.poll(fixture, lambda events: time.time() >= deadline_wall - timeout / 2, seconds=timeout)
     peers, gate = healthy_peers(cloud, fixture, target, FIXTURES[fixture][0] - 1, prefix + "-peer")
     assert_overlap(list(cloud.events.values()), {victim["marker"], *(p["marker"] for p in peers)}, FIXTURES[fixture][0], target)
     deadline = invocation_deadline(cloud.events_for(victim))
     # Launch probes while all other established slots remain occupied. Retry placement only.
-    cloud.poll(fixture, lambda events: time.time() - victim["started"] >= timeout - 5, seconds=timeout)
+    cloud.poll(fixture, lambda events: time.time() >= deadline_wall - 5, seconds=timeout)
     probe_gate_name = prefix + "-probe-gate"
     probe_gate = cloud.gate(probe_gate_name)
     probes = [cloud.launch(fixture, "probe", prefix + f"-probe-{i}", target=target, gate=probe_gate) for i in range(4)]
-    cloud.poll(fixture, lambda events: time.time() - victim["started"] >= timeout + 8, seconds=20)
+    cloud.poll(fixture, lambda events: time.time() >= deadline_wall + 8, seconds=20)
     cloud.gate(gate, release=True)
     cloud.gate(probe_gate_name, release=True)
     for peer in peers:

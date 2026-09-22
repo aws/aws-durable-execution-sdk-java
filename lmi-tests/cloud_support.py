@@ -183,7 +183,8 @@ class Cloud:
             path = Path(directory) / "response.json"
             headers = aws("lambda", "invoke", {
                 "FunctionName": self.manifest["functions"][fixture]["arn"],
-                "InvocationType": "RequestResponse", "Payload": json.dumps(payload)},
+                "InvocationType": "Event" if payload["scenario"] in {"timeout", "stubborn"} else "RequestResponse",
+                "Payload": json.dumps(payload)},
                 extra=["--cli-binary-format", "raw-in-base64-out", str(path)], timeout=150)
             try:
                 body = json.loads(path.read_text())
