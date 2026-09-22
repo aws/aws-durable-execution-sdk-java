@@ -1,6 +1,6 @@
 # LMI lifecycle cloud tests
 
-This opt-in suite tests the SDK commit being built on real Lambda Managed
+This suite tests the SDK commit being built on real Lambda Managed
 Instances (LMI). It asserts the desired behavior in [#726](https://github.com/aws/aws-durable-execution-sdk-java/issues/726)
 and implements the cloud coverage requested in [#727](https://github.com/aws/aws-durable-execution-sdk-java/issues/727).
 The affected SDK is expected to fail. Do not invert assertions, skip regressions,
@@ -81,8 +81,9 @@ artifact writer redacts them from histories and logs.
 Cloud tests are disabled unless `test --cloud-enabled` is explicitly requested.
 Local assertion tests verify that missing evidence, mismatched environments,
 early responses, late tasks and stalled executors cannot be reported as passes.
-Cloud regressions run through manual dispatch and a bounded schedule; they are
-not an ordinary PR smoke gate until #726 is fixed.
+Cloud regressions run on every push to `main`, including every merged change,
+with no changed-path filters. Manual dispatch and same-repository PR opt-in
+are also supported. The daily schedule runs only the cleanup janitor.
 
 The opt-in local regressions assert the same three contracts against the SDK's
 mock backend (they do not substitute for cloud coverage):
