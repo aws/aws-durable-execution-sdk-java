@@ -179,6 +179,14 @@ class Cloud:
         return item
 
     def _invoke(self, fixture, payload):
+        try:
+            return self._invoke_request(fixture, payload)
+        except Exception as error:
+            save(self.artifacts / "invocations" / (payload["marker"] + ".json"),
+                 {"errorType": type(error).__name__, "error": str(error)})
+            raise
+
+    def _invoke_request(self, fixture, payload):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "response.json"
             headers = aws("lambda", "invoke", {
@@ -207,9 +215,14 @@ class Cloud:
         save(self.artifacts / "cloudwatch.json", list(self.raw_logs.values()))
         return [e for e in self.events.values() if e["fixture"] == fixture]
 
-    def poll(self, fixture, predicate, seconds=25, category=AssertionError):
+    def poll(self, fixture, predicate, seconds=25, category=AssertionError, items=()):
         deadline = time.monotonic() + seconds
         while True:
+            for item in items:
+                future = item["future"]
+                if future.done() and future.exception() is not None:
+                    error = future.exception()
+                    raise CollectionError(f"Invocation request failed for {item['marker']}: {scrub(str(error))}") from error
             events = self.refresh(fixture)
             result = predicate(events)
             if result:

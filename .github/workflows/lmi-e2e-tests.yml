@@ -31,14 +31,8 @@ jobs:
        github.actor != 'dependabot[bot]' &&
        contains(github.event.pull_request.labels.*.name, 'run-lmi-e2e')))
     runs-on: ubuntu-latest
-    timeout-minutes: 70
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        fixture: [default1, default2, default8, fixed2, nested2]
+    timeout-minutes: 95
     env:
-      LMI_FIXTURE: ${{ matrix.fixture }}
       CAPACITY_PROVIDER_ARN: ${{ secrets.CAPACITY_PROVIDER_ARN }}
       TEST_LAMBDA_EXECUTION_ROLE_ARN: ${{ secrets.TEST_LAMBDA_EXECUTION_ROLE_ARN }}
     steps:
@@ -68,12 +62,9 @@ jobs:
           mvn -B -q -pl lmi-tests -am package
           mvn -B -q -pl lmi-tests -am spotless:check
           python3 -m unittest discover -s lmi-tests/tests -v
-      - name: Provision and verify LMI configuration
-        timeout-minutes: 18
-        run: >-
-          python3 lmi-tests/cloud_suite.py deploy
-          --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${LMI_FIXTURE}"
-          --fixture "$LMI_FIXTURE"
+      - name: Provision and verify all five LMI functions
+        timeout-minutes: 35
+        run: python3 lmi-tests/cloud_suite.py deploy --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
       - name: LMI cloud regression assertions (expected red until issue 726 is fixed)
         timeout-minutes: 30
         run: python3 -u lmi-tests/cloud_suite.py test --cloud-enabled
@@ -92,7 +83,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: lmi-e2e-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.fixture }}
+          name: lmi-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           retention-days: 7
           path: |
             lmi-tests/artifacts/
