@@ -29,32 +29,32 @@ FIXTURES = {"default1": (1, "default"), "default2": (2, "default"),
 
 def template(manifest):
     resources, outputs = {}, {}
-    for key, (concurrency, executor) in FIXTURES.items():
-        name = manifest["stack"] + "-" + key
-        log_id, fn_id, version_id = key + "Logs", key + "Function", key + "Version"
-        resources[log_id] = {"Type": "AWS::Logs::LogGroup", "Properties": {
-            "LogGroupName": "/aws/lambda/" + name, "RetentionInDays": 1}}
-        resources[fn_id] = {"Type": "AWS::Lambda::Function", "Properties": {
-            "FunctionName": name, "Runtime": "java25", "Architectures": ["arm64"],
-            "Role": manifest["role"], "Handler": "software.amazon.lambda.durable.lmi.LifecycleHandler",
-            "Code": {"S3Bucket": manifest["bucket"], "S3Key": "lmi-fixtures.jar"},
-            "Timeout": manifest["invocationTimeout"],
-            "DurableConfig": {"ExecutionTimeout": 240, "RetentionPeriodInDays": 1},
-            "CapacityProviderConfig": {"LambdaManagedInstancesCapacityProviderConfig": {
-                "CapacityProviderArn": manifest["provider"],
-                "PerExecutionEnvironmentMaxConcurrency": concurrency,
-                "ExecutionEnvironmentMemoryGiBPerVCpu": 2}},
-            "Environment": {"Variables": {"LMI_EXECUTOR": executor, "LMI_COMMIT": manifest["commit"]}},
-            "LoggingConfig": {"LogFormat": "JSON", "ApplicationLogLevel": "INFO",
-                              "SystemLogLevel": "INFO", "LogGroup": {"Ref": log_id}}}}
-        resources[version_id] = {"Type": "AWS::Lambda::Version", "Properties": {
-            "FunctionName": {"Ref": fn_id}, "CodeSha256": manifest["codeSha256"],
-            "Description": manifest["commit"]}}
-        outputs[key] = {"Value": {"Ref": version_id}}
+    key = manifest["fixture"]
+    concurrency, executor = FIXTURES[key]
+    name = manifest["stack"] + "-" + key
+    log_id, fn_id = key + "Logs", key + "Function"
+    resources[log_id] = {"Type": "AWS::Logs::LogGroup", "Properties": {
+        "LogGroupName": "/aws/lambda/" + name, "RetentionInDays": 1}}
+    resources[fn_id] = {"Type": "AWS::Lambda::Function", "Properties": {
+        "FunctionName": name, "Runtime": "java25", "Architectures": ["arm64"],
+        "Role": manifest["role"], "Handler": "software.amazon.lambda.durable.lmi.LifecycleHandler",
+        "Code": {"S3Bucket": manifest["bucket"], "S3Key": "lmi-fixtures.jar"},
+        "Timeout": manifest["invocationTimeout"], "MemorySize": 2048,
+        "DurableConfig": {"ExecutionTimeout": 240, "RetentionPeriodInDays": 1},
+        "CapacityProviderConfig": {"LambdaManagedInstancesCapacityProviderConfig": {
+            "CapacityProviderArn": manifest["provider"],
+            "PerExecutionEnvironmentMaxConcurrency": concurrency,
+            "ExecutionEnvironmentMemoryGiBPerVCpu": 2}},
+        "Environment": {"Variables": {"LMI_EXECUTOR": executor, "LMI_COMMIT": manifest["commit"]}},
+        "LoggingConfig": {"LogFormat": "JSON", "ApplicationLogLevel": "INFO",
+                          "SystemLogLevel": "INFO", "LogGroup": {"Ref": log_id}}}}
+    # CloudFormation automatically publishes $LATEST.PUBLISHED for an LMI function.
+    # An additional numbered version would provision a second independent set of environments.
+    outputs[key] = {"Value": {"Fn::Join": ["", [{"Fn::GetAtt": [fn_id, "Arn"]}, ":$LATEST.PUBLISHED"]]}}
     return {"AWSTemplateFormatVersion": "2010-09-09", "Resources": resources, "Outputs": outputs}
 
 
-def deploy(run_id, invocation_timeout):
+def deploy(run_id, invocation_timeout, fixture):
     if not re.fullmatch(r"[a-z0-9-]{1,24}", run_id):
         raise PreconditionError("run-id must be 1-24 lowercase letters, digits, or hyphens")
     provider = os.environ["CAPACITY_PROVIDER_ARN"]
@@ -71,7 +71,7 @@ def deploy(run_id, invocation_timeout):
     if not 2 <= scaling.get("MaxVCpuCount", 0) <= 128:
         raise PreconditionError("Dedicated provider must have an explicit maximum of 2-128 vCPUs")
     jar = ROOT / "target/lmi-fixtures.jar"
-    manifest = {"runId": run_id, "stack": "java-lmi-e2e-" + run_id,
+    manifest = {"runId": run_id, "fixture": fixture, "stack": "java-lmi-e2e-" + run_id,
                 "bucket": f"java-lmi-e2e-{account}-{run_id}", "region": region,
                 "role": os.environ["TEST_LAMBDA_EXECUTION_ROLE_ARN"], "provider": provider,
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
@@ -105,11 +105,33 @@ def deploy(run_id, invocation_timeout):
         require(actual.get("PerExecutionEnvironmentMaxConcurrency") == FIXTURES[key][0], "Concurrency readback mismatch")
         require(config["Runtime"] == "java25" and config["Architectures"] == ["arm64"], "Unsupported runtime/architecture")
         require(config.get("DurableConfig", {}).get("ExecutionTimeout") == 240, "Function is not durable")
-        require(config["Version"].isdigit() and config["CodeSha256"] == manifest["codeSha256"], "Artifact/version mismatch")
+        require(config["Version"] == "$LATEST.PUBLISHED" and config["CodeSha256"] == manifest["codeSha256"], "Artifact/version mismatch")
+        require(config["MemorySize"] == 2048, "Fixture must use the minimum 2 GiB / 1 vCPU allocation")
         manifest["functions"][key] = {"arn": arn, "logGroup": config["LoggingConfig"]["LogGroup"], "concurrency": FIXTURES[key][0]}
         save(MANIFEST, manifest)
+        configure_function_scaling(arn, key)
     manifest["logStartMillis"] = int(time.time() * 1000)
     save(MANIFEST, manifest)
+
+
+def configure_function_scaling(arn, fixture, seconds=300):
+    """Cap only this test-owned version; never change the shared capacity provider."""
+    desired = {"MinExecutionEnvironments": 1, "MaxExecutionEnvironments": 1}
+    function_name, qualifier = arn.rsplit(":", 1)
+    request = {"FunctionName": function_name, "Qualifier": qualifier}
+    aws("lambda", "put-function-scaling-config", {**request, "FunctionScalingConfig": desired})
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        scaling = aws("lambda", "get-function-scaling-config", request)
+        config = aws("lambda", "get-function-configuration", {"FunctionName": arn})
+        save(ARTIFACTS / "configuration" / (fixture + "-scaling.json"), scaling)
+        save(ARTIFACTS / "configuration" / (fixture + ".json"), config)
+        if config.get("State") == "Failed":
+            raise PreconditionError("LMI version provisioning failed: " + config.get("StateReason", "unknown"))
+        if scaling.get("AppliedFunctionScalingConfig") == desired and config.get("State") == "Active":
+            return
+        time.sleep(2)
+    raise PreconditionError("Function scaling/provisioning did not reach the bounded configuration")
 
 
 def wait_stack(name, expected, seconds):
@@ -347,21 +369,29 @@ def warm_case(cloud, fixture):
             "Thread growth exceeded bounded cache tolerance (+16)")
 
 
+def cases_for_fixture(cloud, fixture):
+    if fixture == "default1":
+        return [("baseline-concurrency1", lambda: replay_case(cloud, fixture, "baseline"))]
+    if fixture in {"fixed2", "nested2"}:
+        scenario = "fixed" if fixture == "fixed2" else "nested"
+        return [("fixed-two-roots" if fixture == "fixed2" else "fixed-nested-map-parallel",
+                 lambda: fixed_case(cloud, fixture, scenario))]
+    cases = [(fixture + "-isolation", lambda: overlap_case(cloud, fixture)),
+             (fixture + "-suspend-cleanup-replay", lambda: replay_case(cloud, fixture, "suspend")),
+             (fixture + "-timeout-recovery", lambda: timeout_case(cloud, fixture))]
+    if fixture == "default2":
+        cases += [("non-cooperative-child", lambda: timeout_case(cloud, fixture, True)),
+                  ("return-with-inflight-step", lambda: inflight_case(cloud, fixture, "return-inflight")),
+                  ("failure-with-inflight-step", lambda: inflight_case(cloud, fixture, "failure-inflight")),
+                  ("warm-repeated-batches", lambda: warm_case(cloud, fixture))]
+    return cases
+
+
 def run_tests():
     manifest = json.loads(MANIFEST.read_text())
     cloud = Cloud(manifest, ARTIFACTS)
     suite = ET.Element("testsuite", name="LMI cloud lifecycle")
-    cases = [("baseline-concurrency1", lambda: replay_case(cloud, "default1", "baseline"))]
-    for fixture in ["default2", "default8"]:
-        cases += [(fixture + "-isolation", lambda f=fixture: overlap_case(cloud, f)),
-                  (fixture + "-suspend-cleanup-replay", lambda f=fixture: replay_case(cloud, f, "suspend")),
-                  (fixture + "-timeout-recovery", lambda f=fixture: timeout_case(cloud, f))]
-    cases += [("fixed-two-roots", lambda: fixed_case(cloud, "fixed2", "fixed")),
-              ("fixed-nested-map-parallel", lambda: fixed_case(cloud, "nested2", "nested")),
-              ("non-cooperative-child", lambda: timeout_case(cloud, "default2", True)),
-              ("return-with-inflight-step", lambda: inflight_case(cloud, "default2", "return-inflight")),
-              ("failure-with-inflight-step", lambda: inflight_case(cloud, "default2", "failure-inflight")),
-              ("warm-repeated-batches", lambda: warm_case(cloud, "default2"))]
+    cases = cases_for_fixture(cloud, manifest["fixture"])
     try:
         for name, case in cases:
             started = time.monotonic()
@@ -478,12 +508,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["deploy", "test", "collect", "cleanup", "janitor"])
     parser.add_argument("--run-id")
+    parser.add_argument("--fixture", choices=FIXTURES)
     parser.add_argument("--cloud-enabled", action="store_true")
     parser.add_argument("--invocation-timeout", type=int, default=60, choices=range(45, 91))
     args = parser.parse_args()
     try:
         if args.command == "deploy":
-            deploy(args.run_id, args.invocation_timeout)
+            if not args.fixture:
+                parser.error("Deployment requires exactly one --fixture; run the fixture matrix sequentially")
+            deploy(args.run_id, args.invocation_timeout, args.fixture)
         elif args.command == "test":
             if not args.cloud_enabled:
                 parser.error("Real cloud tests require --cloud-enabled")

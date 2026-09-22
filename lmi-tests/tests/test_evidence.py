@@ -8,7 +8,8 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloud_support import (PreconditionError, assert_fixed, assert_lifecycle,
                            assert_overlap, assert_replay, diagnostic, scrub)
-from cloud_suite import template
+from cloud_suite import FIXTURES, cases_for_fixture, configure_function_scaling, template
+from unittest.mock import Mock, patch
 
 
 def event(kind, sequence, request="a", environment="jvm", **extra):
@@ -122,16 +123,77 @@ class EvidenceTest(unittest.TestCase):
     def test_deployment_has_real_lmi_and_durable_config_on_every_fixture(self):
         manifest = {"stack": "test", "role": "role", "bucket": "bucket", "provider": "provider",
                     "commit": "sha", "invocationTimeout": 60, "codeSha256": "digest"}
-        spec = template(manifest)
-        functions = [r["Properties"] for r in spec["Resources"].values() if r["Type"] == "AWS::Lambda::Function"]
-        self.assertEqual({1, 2, 8}, {f["CapacityProviderConfig"]["LambdaManagedInstancesCapacityProviderConfig"]
-                                    ["PerExecutionEnvironmentMaxConcurrency"] for f in functions})
-        for function in functions:
-            self.assertEqual("java25", function["Runtime"])
-            self.assertEqual(["arm64"], function["Architectures"])
-            self.assertEqual(240, function["DurableConfig"]["ExecutionTimeout"])
-            self.assertGreater(function["DurableConfig"]["ExecutionTimeout"], function["Timeout"])
-        self.assertFalse(any(r["Type"] == "AWS::Lambda::CapacityProvider" for r in spec["Resources"].values()))
+        concurrencies = set()
+        for fixture in FIXTURES:
+            with self.subTest(fixture=fixture):
+                spec = template({**manifest, "fixture": fixture})
+                functions = [r["Properties"] for r in spec["Resources"].values()
+                             if r["Type"] == "AWS::Lambda::Function"]
+                self.assertEqual(1, len(functions), "Only one fixture may consume capacity in each job")
+                function = functions[0]
+                capacity = function["CapacityProviderConfig"]["LambdaManagedInstancesCapacityProviderConfig"]
+                concurrencies.add(capacity["PerExecutionEnvironmentMaxConcurrency"])
+                self.assertEqual("java25", function["Runtime"])
+                self.assertEqual(["arm64"], function["Architectures"])
+                self.assertEqual(2048, function["MemorySize"])
+                self.assertEqual(2, capacity["ExecutionEnvironmentMemoryGiBPerVCpu"])
+                self.assertEqual(240, function["DurableConfig"]["ExecutionTimeout"])
+                self.assertGreater(function["DurableConfig"]["ExecutionTimeout"], function["Timeout"])
+                self.assertEqual([fixture], list(spec["Outputs"]))
+                self.assertIn(":$LATEST.PUBLISHED", json.dumps(spec["Outputs"]))
+                types = {r["Type"] for r in spec["Resources"].values()}
+                self.assertNotIn("AWS::Lambda::Version", types, "A numbered version duplicates the LMI environment floor")
+                self.assertNotIn("AWS::Lambda::CapacityProvider", types)
+        self.assertEqual({1, 2, 8}, concurrencies)
+
+    def test_split_matrix_preserves_all_cases_on_their_own_fixture(self):
+        cloud = Mock()
+        names = []
+        patches = [patch("cloud_suite." + name) for name in
+                   ["replay_case", "overlap_case", "fixed_case", "timeout_case", "inflight_case", "warm_case"]]
+        mocks = [p.start() for p in patches]
+        try:
+            for fixture in FIXTURES:
+                cases = cases_for_fixture(cloud, fixture)
+                self.assertTrue(cases)
+                names.extend(name for name, _ in cases)
+                for _, run in cases:
+                    run()
+                calls = [call for mock in mocks for call in mock.call_args_list]
+                self.assertTrue(all(call.args[0] is cloud and call.args[1] == fixture for call in calls))
+                for mock in mocks:
+                    mock.reset_mock()
+        finally:
+            for p in patches:
+                p.stop()
+        self.assertEqual(13, len(names))
+        self.assertEqual(13, len(set(names)))
+
+    @patch("cloud_suite.save")
+    @patch("cloud_suite.time.sleep")
+    @patch("cloud_suite.aws")
+    def test_scaling_waits_for_applied_limit_and_an_active_version(self, api, sleep, save):
+        desired = {"MinExecutionEnvironments": 1, "MaxExecutionEnvironments": 1}
+        api.side_effect = [{},
+                           {"RequestedFunctionScalingConfig": desired,
+                            "AppliedFunctionScalingConfig": {"MinExecutionEnvironments": 3}},
+                           {"State": "Active"},
+                           {"AppliedFunctionScalingConfig": desired}, {"State": "Pending"},
+                           {"AppliedFunctionScalingConfig": desired}, {"State": "Active"}]
+        configure_function_scaling("arn:aws:lambda:us-west-2:123456789012:function:test:$LATEST.PUBLISHED", "default2")
+        self.assertEqual(2, sleep.call_count)
+        request = api.call_args_list[0].args[2]
+        self.assertEqual("$LATEST.PUBLISHED", request["Qualifier"])
+        self.assertEqual(desired, request["FunctionScalingConfig"])
+        self.assertTrue(all(call.args[0] == "lambda" and "capacity-provider" not in call.args[1]
+                            for call in api.call_args_list))
+
+    @patch("cloud_suite.save")
+    @patch("cloud_suite.aws")
+    def test_failed_version_is_a_setup_failure(self, api, save):
+        api.side_effect = [{}, {}, {"State": "Failed", "StateReason": "capacity exhausted"}]
+        with self.assertRaisesRegex(PreconditionError, "capacity exhausted"):
+            configure_function_scaling("arn:aws:lambda:us-west-2:123456789012:function:test:$LATEST.PUBLISHED", "default2")
 
 
 if __name__ == "__main__":
