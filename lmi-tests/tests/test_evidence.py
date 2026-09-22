@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloud_support import (Cloud, CollectionError, PreconditionError, assert_fixed, assert_lifecycle,
                            assert_overlap, assert_replay, diagnostic, scrub)
-from cloud_suite import FIXTURES, cases_for_fixture, cleanup, configure_function_scaling, deploy_fixtures, run_tests, template
+from cloud_suite import FIXTURES, cases_for_fixture, cleanup, verify_function_scaling, deploy_fixtures, run_tests, template
 from unittest.mock import Mock, patch
 
 
@@ -122,30 +122,30 @@ class EvidenceTest(unittest.TestCase):
         value = {"controlUrl": "secret", "InputPayload": '{"controlUrl":"https://bucket/key?X-Amz-Signature=secret"}'}
         self.assertNotIn("secret", json.dumps(scrub(value)))
 
-    def test_deployment_has_real_lmi_and_durable_config_on_every_fixture(self):
+    def test_one_stack_declares_all_five_functions_and_their_scaling_limits(self):
         manifest = {"stack": "test", "role": "role", "bucket": "bucket", "provider": "provider",
                     "commit": "sha", "invocationTimeout": 60, "codeSha256": "digest"}
+        spec = template(manifest)
+        functions = [r["Properties"] for r in spec["Resources"].values() if r["Type"] == "AWS::Lambda::Function"]
+        self.assertEqual(5, len(functions))
+        self.assertEqual(set(FIXTURES), set(spec["Outputs"]))
+        self.assertEqual(5, sum(r["Type"] == "AWS::Logs::LogGroup" for r in spec["Resources"].values()))
         concurrencies = set()
-        for fixture in FIXTURES:
-            with self.subTest(fixture=fixture):
-                spec = template({**manifest, "fixture": fixture})
-                functions = [r["Properties"] for r in spec["Resources"].values()
-                             if r["Type"] == "AWS::Lambda::Function"]
-                self.assertEqual(1, len(functions), "Each fixture stack owns one function")
-                function = functions[0]
-                capacity = function["CapacityProviderConfig"]["LambdaManagedInstancesCapacityProviderConfig"]
-                concurrencies.add(capacity["PerExecutionEnvironmentMaxConcurrency"])
-                self.assertEqual("java25", function["Runtime"])
-                self.assertEqual(["arm64"], function["Architectures"])
-                self.assertEqual(2048, function["MemorySize"])
-                self.assertEqual(2, capacity["ExecutionEnvironmentMemoryGiBPerVCpu"])
-                self.assertEqual(240, function["DurableConfig"]["ExecutionTimeout"])
-                self.assertGreater(function["DurableConfig"]["ExecutionTimeout"], function["Timeout"])
-                self.assertEqual([fixture], list(spec["Outputs"]))
-                self.assertIn(":$LATEST.PUBLISHED", json.dumps(spec["Outputs"]))
-                types = {r["Type"] for r in spec["Resources"].values()}
-                self.assertNotIn("AWS::Lambda::Version", types, "A numbered version duplicates the LMI environment floor")
-                self.assertNotIn("AWS::Lambda::CapacityProvider", types)
+        for function in functions:
+            capacity = function["CapacityProviderConfig"]["LambdaManagedInstancesCapacityProviderConfig"]
+            concurrencies.add(capacity["PerExecutionEnvironmentMaxConcurrency"])
+            self.assertEqual("java25", function["Runtime"])
+            self.assertEqual(["arm64"], function["Architectures"])
+            self.assertEqual(2048, function["MemorySize"])
+            self.assertEqual(2, capacity["ExecutionEnvironmentMemoryGiBPerVCpu"])
+            self.assertEqual({"MinExecutionEnvironments": 1, "MaxExecutionEnvironments": 1},
+                             function["FunctionScalingConfig"], "Set limits at creation, before version stabilization")
+            self.assertEqual(240, function["DurableConfig"]["ExecutionTimeout"])
+            self.assertGreater(function["DurableConfig"]["ExecutionTimeout"], function["Timeout"])
+        types = {r["Type"] for r in spec["Resources"].values()}
+        self.assertNotIn("AWS::Lambda::Version", types, "A numbered version duplicates the LMI environment floor")
+        self.assertNotIn("AWS::Lambda::CapacityProvider", types)
+        self.assertIn(":$LATEST.PUBLISHED", json.dumps(spec["Outputs"]))
         self.assertEqual({1, 2, 8}, concurrencies)
 
     def test_full_suite_preserves_all_cases_on_their_own_fixture(self):
@@ -174,35 +174,31 @@ class EvidenceTest(unittest.TestCase):
     @patch("cloud_suite.save")
     @patch("cloud_suite.wait_stack")
     @patch("cloud_suite.record_fixture")
-    @patch("cloud_suite.configure_function_scaling")
+    @patch("cloud_suite.verify_function_scaling")
     @patch("cloud_suite.aws")
-    def test_all_functions_are_retained_and_bounded_before_the_next_creation(self, api, limit, record, wait, save):
+    def test_single_create_is_followed_by_readback_of_every_function(self, api, verify, record, wait, save):
         manifest = {"stack": "run", "stacks": [], "functions": {}, "role": "role", "bucket": "bucket",
                     "provider": "provider", "commit": "sha", "invocationTimeout": 60, "codeSha256": "digest"}
-        actions = []
         def invoke(service, operation, request):
             self.assertEqual("cloudformation", service)
-            fixture = request["StackName"].removeprefix("run-")
+            self.assertEqual("run", request["StackName"])
             if operation == "create-stack":
-                self.assertIn(request["StackName"], manifest["stacks"], "Track ownership before mutation")
-                actions.append(("create", fixture))
-                spec = json.loads(request["TemplateBody"])
-                self.assertEqual([fixture], list(spec["Outputs"]))
+                self.assertEqual(["run"], manifest["stacks"], "Track ownership before mutation")
+                self.assertEqual(set(FIXTURES), set(json.loads(request["TemplateBody"])["Outputs"]))
                 return {}
             self.assertEqual("describe-stacks", operation)
-            return {"Stacks": [{"Outputs": [{"OutputKey": fixture, "OutputValue": fixture}]}]}
+            return {"Stacks": [{"Outputs": [{"OutputKey": key, "OutputValue": key} for key in FIXTURES]}]}
         def record_one(current, fixture, arn):
             current["functions"][fixture] = {"arn": arn}
-        def limit_one(arn, fixture, **kwargs):
-            actions.append(("limit", fixture))
         api.side_effect = invoke
         record.side_effect = record_one
-        limit.side_effect = limit_one
         deploy_fixtures(manifest, [])
-        self.assertEqual([(action, fixture) for fixture in FIXTURES for action in ["create", "limit"]], actions)
+        self.assertEqual(["create-stack", "describe-stacks"], [call.args[1] for call in api.call_args_list])
         self.assertEqual(set(FIXTURES), set(manifest["functions"]))
-        self.assertEqual(["run-" + fixture for fixture in FIXTURES], manifest["stacks"])
-        self.assertEqual(5, wait.call_count)
+        self.assertEqual(["run"], manifest["stacks"])
+        self.assertEqual(list(FIXTURES), [call.args[1] for call in verify.call_args_list])
+        self.assertEqual(1, wait.call_count)
+        self.assertEqual("CREATE_COMPLETE", wait.call_args.args[1])
 
     @patch("cloud_suite.save")
     @patch("cloud_suite.aws", side_effect=RuntimeError("create failed"))
@@ -211,7 +207,7 @@ class EvidenceTest(unittest.TestCase):
                     "provider": "provider", "commit": "sha", "invocationTimeout": 60, "codeSha256": "digest"}
         with self.assertRaisesRegex(RuntimeError, "create failed"):
             deploy_fixtures(manifest, [])
-        self.assertEqual(["run-default1"], manifest["stacks"])
+        self.assertEqual(["run"], manifest["stacks"])
         self.assertEqual(1, api.call_count)
 
     @patch("cloud_suite.aws")
@@ -230,7 +226,7 @@ class EvidenceTest(unittest.TestCase):
         cloud.assert_not_called()
 
     @patch("cloud_suite.delete_owned")
-    def test_cleanup_attempts_every_stack_and_the_shared_bucket_after_a_failure(self, delete):
+    def test_legacy_cleanup_attempts_every_stack_and_shared_bucket_after_a_failure(self, delete):
         def remove(stack, bucket):
             if stack == "run-default1":
                 raise RuntimeError("first stack deletion failed")
@@ -244,6 +240,16 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual({(stack, None) for stack in stacks} | {(None, "bucket")},
                          {call.args for call in delete.call_args_list})
         self.assertEqual((None, "bucket"), delete.call_args_list[-1].args)
+
+    @patch("cloud_suite.delete_owned")
+    def test_cleanup_of_five_functions_deletes_only_the_shared_stack(self, delete):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            path.write_text(json.dumps({"stack": "run", "stacks": ["run"], "bucket": "bucket",
+                                        "functions": {key: {} for key in FIXTURES}}))
+            with patch("cloud_suite.MANIFEST", path):
+                cleanup()
+        self.assertEqual([("run", None), (None, "bucket")], [call.args for call in delete.call_args_list])
 
     @patch("cloud_support.aws", side_effect=RuntimeError("Invoke denied https://example.test/?signature=private-value"))
     def test_failed_invocation_is_preserved_in_redacted_artifacts(self, api):
@@ -293,26 +299,24 @@ class EvidenceTest(unittest.TestCase):
     @patch("cloud_suite.aws")
     def test_scaling_waits_for_applied_limit_and_an_active_version(self, api, sleep, save):
         desired = {"MinExecutionEnvironments": 1, "MaxExecutionEnvironments": 1}
-        api.side_effect = [{},
-                           {"RequestedFunctionScalingConfig": desired,
+        api.side_effect = [{"RequestedFunctionScalingConfig": desired,
                             "AppliedFunctionScalingConfig": {"MinExecutionEnvironments": 3}},
                            {"State": "Active"},
                            {"AppliedFunctionScalingConfig": desired}, {"State": "Pending"},
                            {"AppliedFunctionScalingConfig": desired}, {"State": "Active"}]
-        configure_function_scaling("arn:aws:lambda:us-west-2:123456789012:function:test:$LATEST.PUBLISHED", "default2")
+        verify_function_scaling("arn:aws:lambda:us-west-2:123456789012:function:test:$LATEST.PUBLISHED", "default2")
         self.assertEqual(2, sleep.call_count)
         request = api.call_args_list[0].args[2]
         self.assertEqual("$LATEST.PUBLISHED", request["Qualifier"])
-        self.assertEqual(desired, request["FunctionScalingConfig"])
-        self.assertTrue(all(call.args[0] == "lambda" and "capacity-provider" not in call.args[1]
-                            for call in api.call_args_list))
+        self.assertEqual(["get-function-scaling-config", "get-function-configuration"] * 3,
+                         [call.args[1] for call in api.call_args_list])
 
     @patch("cloud_suite.save")
     @patch("cloud_suite.aws")
     def test_failed_version_is_a_setup_failure(self, api, save):
-        api.side_effect = [{}, {}, {"State": "Failed", "StateReason": "capacity exhausted"}]
+        api.side_effect = [{}, {"State": "Failed", "StateReason": "capacity exhausted"}]
         with self.assertRaisesRegex(PreconditionError, "capacity exhausted"):
-            configure_function_scaling("arn:aws:lambda:us-west-2:123456789012:function:test:$LATEST.PUBLISHED", "default2")
+            verify_function_scaling("arn:aws:lambda:us-west-2:123456789012:function:test:$LATEST.PUBLISHED", "default2")
 
 
 if __name__ == "__main__":
