@@ -12,6 +12,18 @@ or accept a retry that happens to pass after a lifecycle violation.
   1, 2, or 8. Java 25 / arm64 is the initial matrix. Java 17 is not supported by
   LMI. Deployment and readback are the region/architecture capability check:
   unsupported combinations fail setup; there is no ordinary-Lambda fallback.
+* The CI fixture matrix has `max-parallel: 1`: deploy one fixture, run its cases,
+  collect evidence and delete it before the next fixture starts. Each function
+  uses 2 GiB / 1 vCPU. Only CloudFormation's automatic `$LATEST.PUBLISHED` version
+  is used; an additional numbered version would provision another independent
+  set of execution environments. Code is never republished during a fixture run,
+  and its digest is verified against the built artifact.
+* After creation, set the test version's minimum and maximum execution environments
+  to 1 and wait for the applied scaling configuration and an ACTIVE version.
+  Initial LMI provisioning can still use its default floor of three environments.
+  This fits the dedicated 12-vCPU provider without changing its limit. The
+  concurrency setting controls invocation slots within an environment independently
+  of this environment count. Same-JVM overlap is still required by the assertions.
 * A stream wrapper observes the actual SDK entry and return. Invocation-local
   root/task `finally` markers and a JVM-wide sequence establish ordering. The
   plugin end hook is deliberately not used as a completion signal.
@@ -46,7 +58,7 @@ its maximum vCPUs and provide working Lambda/S3/CloudWatch connectivity. The
 workflow uses `TEST_ROLE_ARN`, `TEST_ACCOUNT_ID`, and
 `TEST_LAMBDA_EXECUTION_ROLE_ARN`, as the ordinary E2E workflow does.
 
-Each run owns a tagged CloudFormation stack (functions, versions, log groups)
+Each fixture job owns a tagged CloudFormation stack (one function and log group)
 and a private staging/control bucket with one-day object expiry. Normal teardown
 empties the bucket and deletes the stack and bucket. A scheduled janitor removes
 only expired resources bearing this suite's ownership tags, including runs
@@ -67,13 +79,19 @@ python3 -m unittest discover -s lmi-tests/tests -v
 export CAPACITY_PROVIDER_ARN=arn:aws:lambda:REGION:ACCOUNT:capacity-provider:NAME
 export TEST_LAMBDA_EXECUTION_ROLE_ARN=arn:aws:iam::ACCOUNT:role/ROLE
 export AWS_REGION=us-west-2
-python3 lmi-tests/cloud_suite.py deploy --run-id local-UNIQUE
+python3 lmi-tests/cloud_suite.py deploy --run-id local-unique-default2 --fixture default2
 python3 lmi-tests/cloud_suite.py test --cloud-enabled
 python3 lmi-tests/cloud_suite.py collect
 python3 lmi-tests/cloud_suite.py cleanup
 ```
 
-Deployment records `lmi-tests/artifacts/manifest.json`, including commit, jar
+Run `default1`, `default2`, `default8`, `fixed2`, and `nested2` sequentially to
+cover the full suite, completing collection and cleanup before deploying the next.
+CI uses one artifact per fixture, named `lmi-e2e-RUN-ATTEMPT-FIXTURE`. The deployment
+role also needs `lambda:PutFunctionScalingConfig` and `lambda:GetFunctionScalingConfig`
+on the test-owned functions.
+
+Deployment records `lmi-tests/artifacts/manifest.json`, including the fixture, commit, jar
 digest, qualified function ARNs, runtime, architecture, concurrency and provider
 association. Never publish control URLs: they are temporary credentials. The
 artifact writer redacts them from histories and logs.
@@ -94,8 +112,8 @@ mvn -pl sdk test -Dtest=LmiLifecycleRegressionTest -Dtest.lmi.regressions.enable
 
 For a same-repository PR, add the `run-lmi-e2e` label to opt into cloud execution.
 The workflow never uses a privileged `pull_request_target` checkout. Provisioning
-has an 18-minute budget, scenarios 30 minutes, final collection 5 minutes, and
-teardown 10 minutes. Individual admission attempts are bounded (four batches,
+has an 18-minute budget per fixture (including a 5-minute scaling wait), scenarios
+30 minutes, final collection 5 minutes, and teardown 10 minutes. Individual admission attempts are bounded (four batches,
 25 seconds), fixed-pool progress has 8 seconds, and task escape timers are capped
 at 120 seconds. The normal invocation timeout is 60 seconds; the durable execution
 timeout is 240 seconds. Cleanup is required by the invocation deadline plus
@@ -112,3 +130,7 @@ A successful durable retry cannot erase an old invocation
 that exceeds the cleanup budget. No virtual-thread executor variant is deployed
 until its executor contract is defined; default cached and shared fixed pools
 are covered separately.
+
+LMI provisioning and version behavior are documented in the AWS guides for
+[scaling](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-scaling.html)
+and [$LATEST.PUBLISHED](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-version-publishing.html).
