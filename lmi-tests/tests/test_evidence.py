@@ -128,6 +128,7 @@ class EvidenceTest(unittest.TestCase):
                                     ["PerExecutionEnvironmentMaxConcurrency"] for f in functions})
         for function in functions:
             self.assertEqual("java25", function["Runtime"])
+            self.assertEqual(["arm64"], function["Architectures"])
             self.assertEqual(240, function["DurableConfig"]["ExecutionTimeout"])
             self.assertGreater(function["DurableConfig"]["ExecutionTimeout"], function["Timeout"])
         self.assertFalse(any(r["Type"] == "AWS::Lambda::CapacityProvider" for r in spec["Resources"].values()))

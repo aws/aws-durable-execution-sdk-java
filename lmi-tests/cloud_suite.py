@@ -35,7 +35,7 @@ def template(manifest):
         resources[log_id] = {"Type": "AWS::Logs::LogGroup", "Properties": {
             "LogGroupName": "/aws/lambda/" + name, "RetentionInDays": 1}}
         resources[fn_id] = {"Type": "AWS::Lambda::Function", "Properties": {
-            "FunctionName": name, "Runtime": "java25", "Architectures": ["x86_64"],
+            "FunctionName": name, "Runtime": "java25", "Architectures": ["arm64"],
             "Role": manifest["role"], "Handler": "software.amazon.lambda.durable.lmi.LifecycleHandler",
             "Code": {"S3Bucket": manifest["bucket"], "S3Key": "lmi-fixtures.jar"},
             "Timeout": manifest["invocationTimeout"],
@@ -103,7 +103,7 @@ def deploy(run_id, invocation_timeout):
         actual = config.get("CapacityProviderConfig", {}).get("LambdaManagedInstancesCapacityProviderConfig", {})
         require(actual.get("CapacityProviderArn") == provider, "Deployment is not associated with the requested LMI provider")
         require(actual.get("PerExecutionEnvironmentMaxConcurrency") == FIXTURES[key][0], "Concurrency readback mismatch")
-        require(config["Runtime"] == "java25" and config["Architectures"] == ["x86_64"], "Unsupported runtime/architecture")
+        require(config["Runtime"] == "java25" and config["Architectures"] == ["arm64"], "Unsupported runtime/architecture")
         require(config.get("DurableConfig", {}).get("ExecutionTimeout") == 240, "Function is not durable")
         require(config["Version"].isdigit() and config["CodeSha256"] == manifest["codeSha256"], "Artifact/version mismatch")
         manifest["functions"][key] = {"arn": arn, "logGroup": config["LoggingConfig"]["LogGroup"], "concurrency": FIXTURES[key][0]}
