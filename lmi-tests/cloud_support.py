@@ -50,7 +50,7 @@ def aws(service, operation, data=None, extra=(), timeout=30, raw=False):
     result = subprocess.run(command, capture_output=True, text=True, timeout=timeout + 10,
                             env={**os.environ, "AWS_MAX_ATTEMPTS": "2", "AWS_PAGER": ""})
     if result.returncode:
-        raise RuntimeError(f"{service} {operation}: {scrub(result.stderr[-4000:])}")
+        raise RuntimeError(f"{service} {operation} (exit {result.returncode}): {scrub(result.stderr[-4000:])}")
     return result.stdout.strip() if raw else json.loads(result.stdout or "{}")
 
 
@@ -179,28 +179,36 @@ class Cloud:
         return item
 
     def _invoke(self, fixture, payload):
+        started = time.time()
+        artifact = self.artifacts / "invocations" / (payload["marker"] + ".json")
+        details = {"fixture": fixture, "functionArn": self.manifest["functions"][fixture]["arn"],
+                   "scenario": payload["scenario"], "marker": payload["marker"], "started": started}
+        save(artifact, {**details, "state": "STARTED"})
         try:
-            return self._invoke_request(fixture, payload)
+            result = self._invoke_request(fixture, payload)
+            save(artifact, {**details, **result, "state": "RETURNED", "elapsedSeconds": time.time() - started})
+            return result
         except Exception as error:
-            save(self.artifacts / "invocations" / (payload["marker"] + ".json"),
-                 {"errorType": type(error).__name__, "error": str(error)})
+            save(artifact, {**details, "state": "REQUEST_FAILED", "elapsedSeconds": time.time() - started,
+                            "errorType": type(error).__name__, "error": str(error)})
             raise
 
     def _invoke_request(self, fixture, payload):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "response.json"
-            headers = aws("lambda", "invoke", {
-                "FunctionName": self.manifest["functions"][fixture]["arn"],
-                "InvocationType": "Event" if payload["scenario"] in {"timeout", "stubborn"} else "RequestResponse",
-                "Payload": json.dumps(payload)},
-                extra=["--cli-binary-format", "raw-in-base64-out", str(path)], timeout=150)
+            source = Path(directory) / "payload.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            # lambda invoke is a custom AWS CLI command: required flags cannot come from --cli-input-json.
+            # fileb:// sends the original JSON bytes regardless of the user's CLI binary-format setting.
+            headers = aws("lambda", "invoke", extra=[
+                "--function-name", self.manifest["functions"][fixture]["arn"],
+                "--invocation-type", "Event" if payload["scenario"] in {"timeout", "stubborn"} else "RequestResponse",
+                "--payload", "fileb://" + str(source), str(path)], timeout=150)
             try:
                 body = json.loads(path.read_text())
             except ValueError:
                 body = path.read_text()
-            result = {"headers": headers, "body": body}
-            save(self.artifacts / "invocations" / (payload["marker"] + ".json"), result)
-            return result
+            return {"headers": headers, "body": body}
 
     def refresh(self, fixture):
         group = self.manifest["functions"][fixture]["logGroup"]
@@ -228,6 +236,9 @@ class Cloud:
             if result:
                 return result
             if time.monotonic() >= deadline:
+                markers = {item["marker"] for item in items}
+                if items and not any(e["marker"] in markers and e["kind"] == "WRAPPER_ENTER" for e in events):
+                    raise CollectionError(f"No runtime-entry evidence for {fixture}; inspect invocations and CloudWatch artifacts")
                 raise category(f"Evidence deadline exceeded for {fixture}")
             time.sleep(1)
 
