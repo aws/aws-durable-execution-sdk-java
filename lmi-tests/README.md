@@ -9,7 +9,7 @@ or accept a retry that happens to pass after a lifecycle violation.
 ## Test design
 
 * Each fixture is a published durable function with LMI invocation concurrency
-  1, 2, or 8. Java 25 / x86_64 is the initial matrix. Java 17 is not supported by
+  1, 2, or 8. Java 25 / arm64 is the initial matrix. Java 17 is not supported by
   LMI. Deployment and readback are the region/architecture capability check:
   unsupported combinations fail setup; there is no ordinary-Lambda fallback.
 * A stream wrapper observes the actual SDK entry and return. Invocation-local
