@@ -103,7 +103,11 @@ not extend these assertions, which compare timestamps captured inside the JVM.
 
 `timeouts/*.json` distinguishes server timeout logs from an SDK deadline
 cancellation that returns early with an invocation error. A client HTTP timeout
-is a collection error. A successful durable retry cannot erase an old invocation
+is a collection error. Deadline victims use asynchronous service invocation so a
+longer durable retry does not consume the driver HTTP timeout; invocation
+outcomes come from request-correlated runtime logs. Healthy/probe scheduling
+uses the actual runtime deadline, excluding cold-start and request-queue delay.
+A successful durable retry cannot erase an old invocation
 that exceeds the cleanup budget. No virtual-thread executor variant is deployed
 until its executor contract is defined; default cached and shared fixed pools
 are covered separately.
