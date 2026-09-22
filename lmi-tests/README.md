@@ -72,7 +72,10 @@ the test-account operator, including any idle instance cost.
 See the workflow `lmi-e2e-tests.yml` for the complete commands and budgets. The
 cloud driver requires Python 3.9+, AWS CLI v2 with LMI/Durable API support, and
 credentials for the dedicated test account. There are no new Python packages.
-The Java fixture uses the repository SDK and existing dependencies only.
+The Java fixture uses the repository SDK and existing dependencies only. One local
+contract test runs the real AWS CLI against an unsigned localhost HTTP endpoint
+to validate synchronous/asynchronous invocation arguments and payload bytes. It
+does not call AWS or provide cloud coverage.
 
 ```sh
 mvn -B -pl lmi-tests -am package -DskipTests
@@ -129,8 +132,11 @@ cancellation that returns early with an invocation error. A client HTTP timeout
 is a collection error. Deadline victims use asynchronous service invocation so a
 longer durable retry does not consume the driver HTTP timeout; invocation
 outcomes come from request-correlated runtime logs. Invocation request failures
-are saved in `invocations/*.json` and reported separately from SDK lifecycle
-assertions. Healthy/probe scheduling
+are saved in `invocations/*.json` with the function ARN, scenario, start time,
+request state, elapsed time, and CLI exit code/error when available. The driver
+checks the invocation Future during evidence polling so an API/CLI failure is
+reported immediately. Missing runtime-entry evidence is a collection error;
+lifecycle assertions apply after the wrapper entry has been observed. Healthy/probe scheduling
 uses the actual runtime deadline, excluding cold-start and request-queue delay.
 A successful durable retry cannot erase an old invocation
 that exceeds the cleanup budget. No virtual-thread executor variant is deployed
