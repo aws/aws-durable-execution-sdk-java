@@ -1,14 +1,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import json
+from concurrent.futures import Future
 from pathlib import Path
 import sys
 import unittest
+from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from cloud_support import (PreconditionError, assert_fixed, assert_lifecycle,
+from cloud_support import (Cloud, CollectionError, PreconditionError, assert_fixed, assert_lifecycle,
                            assert_overlap, assert_replay, diagnostic, scrub)
-from cloud_suite import FIXTURES, cases_for_fixture, configure_function_scaling, template
+from cloud_suite import FIXTURES, cases_for_fixture, cleanup, configure_function_scaling, deploy_fixtures, run_tests, template
 from unittest.mock import Mock, patch
 
 
@@ -129,7 +131,7 @@ class EvidenceTest(unittest.TestCase):
                 spec = template({**manifest, "fixture": fixture})
                 functions = [r["Properties"] for r in spec["Resources"].values()
                              if r["Type"] == "AWS::Lambda::Function"]
-                self.assertEqual(1, len(functions), "Only one fixture may consume capacity in each job")
+                self.assertEqual(1, len(functions), "Each fixture stack owns one function")
                 function = functions[0]
                 capacity = function["CapacityProviderConfig"]["LambdaManagedInstancesCapacityProviderConfig"]
                 concurrencies.add(capacity["PerExecutionEnvironmentMaxConcurrency"])
@@ -146,7 +148,7 @@ class EvidenceTest(unittest.TestCase):
                 self.assertNotIn("AWS::Lambda::CapacityProvider", types)
         self.assertEqual({1, 2, 8}, concurrencies)
 
-    def test_split_matrix_preserves_all_cases_on_their_own_fixture(self):
+    def test_full_suite_preserves_all_cases_on_their_own_fixture(self):
         cloud = Mock()
         names = []
         patches = [patch("cloud_suite." + name) for name in
@@ -168,6 +170,106 @@ class EvidenceTest(unittest.TestCase):
                 p.stop()
         self.assertEqual(13, len(names))
         self.assertEqual(13, len(set(names)))
+
+    @patch("cloud_suite.save")
+    @patch("cloud_suite.wait_stack")
+    @patch("cloud_suite.record_fixture")
+    @patch("cloud_suite.configure_function_scaling")
+    @patch("cloud_suite.aws")
+    def test_all_functions_are_retained_and_bounded_before_the_next_creation(self, api, limit, record, wait, save):
+        manifest = {"stack": "run", "stacks": [], "functions": {}, "role": "role", "bucket": "bucket",
+                    "provider": "provider", "commit": "sha", "invocationTimeout": 60, "codeSha256": "digest"}
+        actions = []
+        def invoke(service, operation, request):
+            self.assertEqual("cloudformation", service)
+            fixture = request["StackName"].removeprefix("run-")
+            if operation == "create-stack":
+                self.assertIn(request["StackName"], manifest["stacks"], "Track ownership before mutation")
+                actions.append(("create", fixture))
+                spec = json.loads(request["TemplateBody"])
+                self.assertEqual([fixture], list(spec["Outputs"]))
+                return {}
+            self.assertEqual("describe-stacks", operation)
+            return {"Stacks": [{"Outputs": [{"OutputKey": fixture, "OutputValue": fixture}]}]}
+        def record_one(current, fixture, arn):
+            current["functions"][fixture] = {"arn": arn}
+        def limit_one(arn, fixture, **kwargs):
+            actions.append(("limit", fixture))
+        api.side_effect = invoke
+        record.side_effect = record_one
+        limit.side_effect = limit_one
+        deploy_fixtures(manifest, [])
+        self.assertEqual([(action, fixture) for fixture in FIXTURES for action in ["create", "limit"]], actions)
+        self.assertEqual(set(FIXTURES), set(manifest["functions"]))
+        self.assertEqual(["run-" + fixture for fixture in FIXTURES], manifest["stacks"])
+        self.assertEqual(5, wait.call_count)
+
+    @patch("cloud_suite.save")
+    @patch("cloud_suite.aws", side_effect=RuntimeError("create failed"))
+    def test_partial_deployment_tracks_the_failed_stack_for_cleanup(self, api, save):
+        manifest = {"stack": "run", "stacks": [], "functions": {}, "role": "role", "bucket": "bucket",
+                    "provider": "provider", "commit": "sha", "invocationTimeout": 60, "codeSha256": "digest"}
+        with self.assertRaisesRegex(RuntimeError, "create failed"):
+            deploy_fixtures(manifest, [])
+        self.assertEqual(["run-default1"], manifest["stacks"])
+        self.assertEqual(1, api.call_count)
+
+    @patch("cloud_suite.aws")
+    def test_expired_deployment_budget_prevents_further_allocation(self, api):
+        with self.assertRaisesRegex(PreconditionError, "budget exhausted"):
+            deploy_fixtures({"stack": "run", "stacks": [], "functions": {}}, [], seconds=0)
+        api.assert_not_called()
+
+    @patch("cloud_suite.Cloud")
+    def test_cloud_suite_requires_all_five_functions(self, cloud):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            path.write_text(json.dumps({"functions": {"default1": {}}}))
+            with patch("cloud_suite.MANIFEST", path), self.assertRaisesRegex(PreconditionError, "All five"):
+                run_tests()
+        cloud.assert_not_called()
+
+    @patch("cloud_suite.delete_owned")
+    def test_cleanup_attempts_every_stack_and_the_shared_bucket_after_a_failure(self, delete):
+        def remove(stack, bucket):
+            if stack == "run-default1":
+                raise RuntimeError("first stack deletion failed")
+        delete.side_effect = remove
+        stacks = ["run-" + fixture for fixture in FIXTURES]
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            path.write_text(json.dumps({"stack": "run", "stacks": stacks, "bucket": "bucket"}))
+            with patch("cloud_suite.MANIFEST", path), self.assertRaisesRegex(AssertionError, "first stack deletion failed"):
+                cleanup()
+        self.assertEqual({(stack, None) for stack in stacks} | {(None, "bucket")},
+                         {call.args for call in delete.call_args_list})
+        self.assertEqual((None, "bucket"), delete.call_args_list[-1].args)
+
+    @patch("cloud_support.aws", side_effect=RuntimeError("Invoke denied https://example.test/?signature=private-value"))
+    def test_failed_invocation_is_preserved_in_redacted_artifacts(self, api):
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({"functions": {"default1": {"arn": "function"}}}, directory)
+            try:
+                with self.assertRaisesRegex(RuntimeError, "Invoke denied"):
+                    cloud._invoke("default1", {"marker": "test", "scenario": "baseline"})
+                report = (Path(directory) / "invocations/test.json").read_text()
+                self.assertIn("Invoke denied", report)
+                self.assertNotIn("private-value", report)
+            finally:
+                cloud.close()
+
+    def test_failed_invocation_is_not_misreported_as_an_sdk_lifecycle_assertion(self):
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({}, directory)
+            cloud.refresh = Mock(return_value=[])
+            future = Future()
+            future.set_exception(RuntimeError("Invoke denied"))
+            try:
+                with self.assertRaisesRegex(CollectionError, "Invoke denied"):
+                    cloud.poll("default1", lambda events: False, items=[{"future": future, "marker": "test"}])
+                cloud.refresh.assert_not_called()
+            finally:
+                cloud.close()
 
     @patch("cloud_suite.save")
     @patch("cloud_suite.time.sleep")

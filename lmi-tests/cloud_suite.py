@@ -54,7 +54,7 @@ def template(manifest):
     return {"AWSTemplateFormatVersion": "2010-09-09", "Resources": resources, "Outputs": outputs}
 
 
-def deploy(run_id, invocation_timeout, fixture):
+def deploy(run_id, invocation_timeout):
     if not re.fullmatch(r"[a-z0-9-]{1,24}", run_id):
         raise PreconditionError("run-id must be 1-24 lowercase letters, digits, or hyphens")
     provider = os.environ["CAPACITY_PROVIDER_ARN"]
@@ -71,7 +71,7 @@ def deploy(run_id, invocation_timeout, fixture):
     if not 2 <= scaling.get("MaxVCpuCount", 0) <= 128:
         raise PreconditionError("Dedicated provider must have an explicit maximum of 2-128 vCPUs")
     jar = ROOT / "target/lmi-fixtures.jar"
-    manifest = {"runId": run_id, "fixture": fixture, "stack": "java-lmi-e2e-" + run_id,
+    manifest = {"runId": run_id, "stacks": [], "stack": "java-lmi-e2e-" + run_id,
                 "bucket": f"java-lmi-e2e-{account}-{run_id}", "region": region,
                 "role": os.environ["TEST_LAMBDA_EXECUTION_ROLE_ARN"], "provider": provider,
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
@@ -90,27 +90,48 @@ def deploy(run_id, invocation_timeout, fixture):
         "LifecycleConfiguration": {"Rules": [{"ID": "expire", "Status": "Enabled", "Filter": {"Prefix": ""},
                                               "Expiration": {"Days": 1}, "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1}}]}})
     aws("s3api", "put-object", {"Bucket": manifest["bucket"], "Key": "lmi-fixtures.jar"}, extra=["--body", str(jar)])
-    spec = template(manifest)
-    save(ARTIFACTS / "template.json", spec)
-    aws("cloudformation", "create-stack", {"StackName": manifest["stack"], "TemplateBody": json.dumps(spec),
-        "Tags": tags, "TimeoutInMinutes": 15})
-    wait_stack(manifest["stack"], "CREATE_COMPLETE", 960)
-    stack = aws("cloudformation", "describe-stacks", {"StackName": manifest["stack"]})["Stacks"][0]
-    for output in stack["Outputs"]:
-        key, arn = output["OutputKey"], output["OutputValue"]
-        config = aws("lambda", "get-function-configuration", {"FunctionName": arn})
-        save(ARTIFACTS / "configuration" / (key + ".json"), config)
-        actual = config.get("CapacityProviderConfig", {}).get("LambdaManagedInstancesCapacityProviderConfig", {})
-        require(actual.get("CapacityProviderArn") == provider, "Deployment is not associated with the requested LMI provider")
-        require(actual.get("PerExecutionEnvironmentMaxConcurrency") == FIXTURES[key][0], "Concurrency readback mismatch")
-        require(config["Runtime"] == "java25" and config["Architectures"] == ["arm64"], "Unsupported runtime/architecture")
-        require(config.get("DurableConfig", {}).get("ExecutionTimeout") == 240, "Function is not durable")
-        require(config["Version"] == "$LATEST.PUBLISHED" and config["CodeSha256"] == manifest["codeSha256"], "Artifact/version mismatch")
-        require(config["MemorySize"] == 2048, "Fixture must use the minimum 2 GiB / 1 vCPU allocation")
-        manifest["functions"][key] = {"arn": arn, "logGroup": config["LoggingConfig"]["LogGroup"], "concurrency": FIXTURES[key][0]}
-        save(MANIFEST, manifest)
-        configure_function_scaling(arn, key)
+    deploy_fixtures(manifest, tags)
     manifest["logStartMillis"] = int(time.time() * 1000)
+    save(MANIFEST, manifest)
+
+
+def remaining_budget(deadline, maximum):
+    remaining = int(deadline - time.monotonic())
+    if remaining <= 0:
+        raise PreconditionError("Five-function provisioning budget exhausted")
+    return min(remaining, maximum)
+
+
+def deploy_fixtures(manifest, tags, seconds=1800):
+    """Retain all five functions; apply each one's limit before creating the next."""
+    deadline = time.monotonic() + seconds
+    for fixture in FIXTURES:
+        remaining_budget(deadline, 960)
+        stack_name = manifest["stack"] + "-" + fixture
+        manifest["stacks"].append(stack_name)
+        save(MANIFEST, manifest)  # Track partial creation for teardown before sending the request.
+        spec = template({**manifest, "fixture": fixture})
+        save(ARTIFACTS / "templates" / (fixture + ".json"), spec)
+        aws("cloudformation", "create-stack", {"StackName": stack_name, "TemplateBody": json.dumps(spec),
+            "Tags": tags, "TimeoutInMinutes": 15})
+        wait_stack(stack_name, "CREATE_COMPLETE", remaining_budget(deadline, 960))
+        stack = aws("cloudformation", "describe-stacks", {"StackName": stack_name})["Stacks"][0]
+        arn = next(output["OutputValue"] for output in stack["Outputs"] if output["OutputKey"] == fixture)
+        record_fixture(manifest, fixture, arn)
+        configure_function_scaling(arn, fixture, seconds=remaining_budget(deadline, 300))
+
+
+def record_fixture(manifest, key, arn):
+    config = aws("lambda", "get-function-configuration", {"FunctionName": arn})
+    save(ARTIFACTS / "configuration" / (key + ".json"), config)
+    actual = config.get("CapacityProviderConfig", {}).get("LambdaManagedInstancesCapacityProviderConfig", {})
+    require(actual.get("CapacityProviderArn") == manifest["provider"], "Deployment is not associated with the requested LMI provider")
+    require(actual.get("PerExecutionEnvironmentMaxConcurrency") == FIXTURES[key][0], "Concurrency readback mismatch")
+    require(config["Runtime"] == "java25" and config["Architectures"] == ["arm64"], "Unsupported runtime/architecture")
+    require(config.get("DurableConfig", {}).get("ExecutionTimeout") == 240, "Function is not durable")
+    require(config["Version"] == "$LATEST.PUBLISHED" and config["CodeSha256"] == manifest["codeSha256"], "Artifact/version mismatch")
+    require(config["MemorySize"] == 2048, "Fixture must use the minimum 2 GiB / 1 vCPU allocation")
+    manifest["functions"][key] = {"arn": arn, "logGroup": config["LoggingConfig"]["LogGroup"], "concurrency": FIXTURES[key][0]}
     save(MANIFEST, manifest)
 
 
@@ -150,7 +171,7 @@ def wait_stack(name, expected, seconds):
 
 def wait_returns(cloud, fixture, items, seconds=30):
     markers = {i["marker"] for i in items}
-    cloud.poll(fixture, lambda events: markers <= {e["marker"] for e in selected(events, "WRAPPER_RETURN")}, seconds)
+    cloud.poll(fixture, lambda events: markers <= {e["marker"] for e in selected(events, "WRAPPER_RETURN")}, seconds, items=items)
 
 
 def healthy_peers(cloud, fixture, target, count, prefix):
@@ -167,7 +188,7 @@ def healthy_peers(cloud, fixture, target, count, prefix):
         attempts.extend(batch)
         markers = {i["marker"] for i in batch}
         cloud.poll(fixture, lambda events: markers <= {e["marker"] for e in events
-                   if e["kind"] in {"HEARTBEAT", "PLACEMENT_MISS"}}, seconds=8, category=PreconditionError)
+                   if e["kind"] in {"HEARTBEAT", "PLACEMENT_MISS"}}, seconds=8, category=PreconditionError, items=batch)
         admitted += [i for i in batch if selected(cloud.events_for(i), "HEARTBEAT")]
     if len(admitted) != count:
         cloud.gate(gate_name, release=True)
@@ -183,14 +204,14 @@ def replay_case(cloud, fixture, scenario):
         gate_name = prefix + "-anchor"
         gate = cloud.gate(gate_name)
         anchor = cloud.launch(fixture, "hold", prefix + "-healthy", gate=gate)
-        evidence = cloud.poll(fixture, lambda events: selected(events, "HEARTBEAT", anchor["marker"]), category=PreconditionError)
+        evidence = cloud.poll(fixture, lambda events: selected(events, "HEARTBEAT", anchor["marker"]), category=PreconditionError, items=[anchor])
         target = evidence[0]["environment"]
     else:
         target = None
     victim = None
     for attempt in range(4):
         item = cloud.launch(fixture, scenario, f"{prefix}-victim-{attempt}", target=target)
-        cloud.poll(fixture, lambda events: selected(events, "WRAPPER_RETURN", item["marker"]), seconds=30)
+        cloud.poll(fixture, lambda events: selected(events, "WRAPPER_RETURN", item["marker"]), seconds=30, items=[item])
         if not selected(cloud.events_for(item), "PLACEMENT_MISS"):
             victim = item
             break
@@ -222,7 +243,7 @@ def overlap_case(cloud, fixture, target=None):
     prefix = uuid.uuid4().hex[:12]
     gate_name = prefix + "-anchor"
     anchor = cloud.launch(fixture, "hold", prefix + "-anchor", target=target, gate=cloud.gate(gate_name))
-    heartbeat = cloud.poll(fixture, lambda events: selected(events, "HEARTBEAT", anchor["marker"]), category=PreconditionError)[0]
+    heartbeat = cloud.poll(fixture, lambda events: selected(events, "HEARTBEAT", anchor["marker"]), category=PreconditionError, items=[anchor])[0]
     peers, peer_gate = healthy_peers(cloud, fixture, heartbeat["environment"], count - 1, prefix + "-peer")
     items = [anchor] + peers
     assert_overlap(list(cloud.events.values()), {i["marker"] for i in items}, count, heartbeat["environment"])
@@ -265,7 +286,7 @@ def timeout_case(cloud, fixture, stubborn=False):
     timeout = cloud.manifest["invocationTimeout"]
     scenario = "stubborn" if stubborn else "timeout"
     victim = cloud.launch(fixture, scenario, prefix + "-victim", hold_ms=(timeout + 20) * 1000)
-    entry = cloud.poll(fixture, lambda events: selected(events, "TASK_ENTER", victim["marker"]), category=PreconditionError)[0]
+    entry = cloud.poll(fixture, lambda events: selected(events, "TASK_ENTER", victim["marker"]), category=PreconditionError, items=[victim])[0]
     target = entry["environment"]
     runtime_entry = selected(cloud.events_for(victim), "WRAPPER_ENTER")[0]
     deadline_wall = (runtime_entry["epochMillis"] + runtime_entry["remainingMillis"]) / 1000
@@ -331,7 +352,7 @@ def inflight_case(cloud, fixture, scenario):
     prefix = uuid.uuid4().hex[:12]
     gate_name = prefix + "-gate"
     anchor = cloud.launch(fixture, "hold", prefix + "-healthy", gate=cloud.gate(gate_name))
-    target = cloud.poll(fixture, lambda events: selected(events, "HEARTBEAT", anchor["marker"]), category=PreconditionError)[0]["environment"]
+    target = cloud.poll(fixture, lambda events: selected(events, "HEARTBEAT", anchor["marker"]), category=PreconditionError, items=[anchor])[0]["environment"]
     victim = cloud.launch(fixture, scenario, prefix + "-victim", target=target, hold_ms=1500)
     wait_returns(cloud, fixture, [victim])
     cloud.gate(gate_name, release=True)
@@ -389,9 +410,11 @@ def cases_for_fixture(cloud, fixture):
 
 def run_tests():
     manifest = json.loads(MANIFEST.read_text())
+    if set(manifest["functions"]) != set(FIXTURES):
+        raise PreconditionError("All five functions must be deployed before running the cloud suite")
     cloud = Cloud(manifest, ARTIFACTS)
     suite = ET.Element("testsuite", name="LMI cloud lifecycle")
-    cases = cases_for_fixture(cloud, manifest["fixture"])
+    cases = [case for fixture in FIXTURES for case in cases_for_fixture(cloud, fixture)]
     try:
         for name, case in cases:
             started = time.monotonic()
@@ -480,7 +503,21 @@ def cleanup():
     if not MANIFEST.exists():
         return
     manifest = json.loads(MANIFEST.read_text())
-    delete_owned(manifest["stack"], manifest["bucket"])
+    # Support manifests from earlier single-stack runs as well as partially completed deployments.
+    stacks = manifest.get("stacks", [manifest["stack"]])
+    failures = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+        futures = [pool.submit(delete_owned, stack, None) for stack in stacks]
+        for future in futures:
+            try:
+                future.result()
+            except Exception as error:
+                failures.append(str(error))
+    try:
+        delete_owned(None, manifest["bucket"])
+    except Exception as error:
+        failures.append(str(error))
+    require(not failures, "Teardown failed: " + "; ".join(failures))
 
 
 def janitor():
@@ -508,15 +545,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["deploy", "test", "collect", "cleanup", "janitor"])
     parser.add_argument("--run-id")
-    parser.add_argument("--fixture", choices=FIXTURES)
     parser.add_argument("--cloud-enabled", action="store_true")
     parser.add_argument("--invocation-timeout", type=int, default=60, choices=range(45, 91))
     args = parser.parse_args()
     try:
         if args.command == "deploy":
-            if not args.fixture:
-                parser.error("Deployment requires exactly one --fixture; run the fixture matrix sequentially")
-            deploy(args.run_id, args.invocation_timeout, args.fixture)
+            deploy(args.run_id, args.invocation_timeout)
         elif args.command == "test":
             if not args.cloud_enabled:
                 parser.error("Real cloud tests require --cloud-enabled")
