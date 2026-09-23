@@ -96,6 +96,8 @@ final class InvocationTrace {
         data.put("epochMillis", System.currentTimeMillis());
         data.put("remainingMillis", (deadlineNanos - System.nanoTime()) / 1_000_000);
         data.put("runId", input.runId());
+        data.put("deploymentRunId", System.getenv("LMI_TEST_RUN_ID"));
+        data.put("commit", System.getenv("LMI_COMMIT"));
         data.put("cohort", input.cohort());
         data.put("scenario", input.scenario());
         data.put("marker", input.marker());

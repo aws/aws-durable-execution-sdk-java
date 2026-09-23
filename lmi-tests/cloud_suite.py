@@ -3,7 +3,6 @@
 """Opt-in real-service LMI tests. See README.md for design and ownership."""
 import argparse
 import base64
-import concurrent.futures
 import hashlib
 import json
 import os
@@ -23,6 +22,7 @@ ROOT = Path(__file__).resolve().parent
 ARTIFACTS = ROOT / "artifacts"
 MANIFEST = ARTIFACTS / "manifest.json"
 OWNER = "java-sdk-lmi-e2e"
+DEFAULT_STACK = "java-lmi-e2e"
 FIXTURES = {"default1": (1, "default"), "default2": (2, "default"),
             "default8": (8, "default"), "fixed2": (2, "fixed"), "nested2": (2, "fixed")}
 
@@ -37,7 +37,7 @@ def template(manifest):
         resources[fn_id] = {"Type": "AWS::Lambda::Function", "Properties": {
             "FunctionName": name, "Runtime": "java25", "Architectures": ["arm64"],
             "Role": manifest["role"], "Handler": "software.amazon.lambda.durable.lmi.LifecycleHandler",
-            "Code": {"S3Bucket": manifest["bucket"], "S3Key": "lmi-fixtures.jar"},
+            "Code": {"S3Bucket": manifest["bucket"], "S3Key": manifest["codeKey"]},
             "Timeout": manifest["invocationTimeout"], "MemorySize": 2048,
             "FunctionScalingConfig": {"MinExecutionEnvironments": 1, "MaxExecutionEnvironments": 1},
             "DurableConfig": {"ExecutionTimeout": 240, "RetentionPeriodInDays": 1},
@@ -45,7 +45,8 @@ def template(manifest):
                 "CapacityProviderArn": manifest["provider"],
                 "PerExecutionEnvironmentMaxConcurrency": concurrency,
                 "ExecutionEnvironmentMemoryGiBPerVCpu": 2}},
-            "Environment": {"Variables": {"LMI_EXECUTOR": executor, "LMI_COMMIT": manifest["commit"]}},
+            "Environment": {"Variables": {"LMI_EXECUTOR": executor, "LMI_COMMIT": manifest["commit"],
+                                          "LMI_TEST_RUN_ID": manifest["runId"]}},
             "LoggingConfig": {"LogFormat": "JSON", "ApplicationLogLevel": "INFO",
                               "SystemLogLevel": "INFO", "LogGroup": {"Ref": log_id}}}}
         # CloudFormation automatically publishes $LATEST.PUBLISHED for an LMI function.
@@ -54,9 +55,11 @@ def template(manifest):
     return {"AWSTemplateFormatVersion": "2010-09-09", "Resources": resources, "Outputs": outputs}
 
 
-def deploy(run_id, invocation_timeout):
+def deploy(run_id, invocation_timeout, stack_name=DEFAULT_STACK):
     if not re.fullmatch(r"[a-z0-9-]{1,24}", run_id):
         raise PreconditionError("run-id must be 1-24 lowercase letters, digits, or hyphens")
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]{0,49}", stack_name):
+        raise PreconditionError("stack-name must be 1-50 letters, digits, or hyphens, starting with a letter")
     provider = os.environ["CAPACITY_PROVIDER_ARN"]
     region = provider.split(":")[3]
     if region != os.environ.get("AWS_REGION"):
@@ -71,28 +74,51 @@ def deploy(run_id, invocation_timeout):
     if not 2 <= scaling.get("MaxVCpuCount", 0) <= 128:
         raise PreconditionError("Dedicated provider must have an explicit maximum of 2-128 vCPUs")
     jar = ROOT / "target/lmi-fixtures.jar"
-    manifest = {"runId": run_id, "stacks": [], "stack": "java-lmi-e2e-" + run_id,
-                "bucket": f"java-lmi-e2e-{account}-{run_id}", "region": region,
+    digest = hashlib.sha256(jar.read_bytes()).digest()
+    bucket_scope = hashlib.sha256(f"{region}:{stack_name}".encode()).hexdigest()[:12]
+    manifest = {"runId": run_id, "stack": stack_name, "persistent": True, "account": account,
+                "bucket": f"java-lmi-e2e-{account}-{bucket_scope}", "region": region,
                 "role": os.environ["TEST_LAMBDA_EXECUTION_ROLE_ARN"], "provider": provider,
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-                "codeSha256": base64.b64encode(hashlib.sha256(jar.read_bytes()).digest()).decode(),
+                "codeSha256": base64.b64encode(digest).decode(), "codeKey": f"code/{digest.hex()}.jar",
                 "invocationTimeout": invocation_timeout, "created": int(time.time()), "functions": {}}
-    save(MANIFEST, manifest)  # Persist ownership before any mutation, including partial setup.
-    request = {"Bucket": manifest["bucket"]}
-    if region != "us-east-1":
-        request["CreateBucketConfiguration"] = {"LocationConstraint": region}
-    aws("s3api", "create-bucket", request)
-    tags = [{"Key": "Suite", "Value": OWNER}, {"Key": "Created", "Value": str(manifest["created"])}]
-    aws("s3api", "put-bucket-tagging", {"Bucket": manifest["bucket"], "Tagging": {"TagSet": tags}})
-    aws("s3api", "put-public-access-block", {"Bucket": manifest["bucket"], "PublicAccessBlockConfiguration": {
-        "BlockPublicAcls": True, "IgnorePublicAcls": True, "BlockPublicPolicy": True, "RestrictPublicBuckets": True}})
-    aws("s3api", "put-bucket-lifecycle-configuration", {"Bucket": manifest["bucket"],
-        "LifecycleConfiguration": {"Rules": [{"ID": "expire", "Status": "Enabled", "Filter": {"Prefix": ""},
-                                              "Expiration": {"Days": 1}, "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1}}]}})
-    aws("s3api", "put-object", {"Bucket": manifest["bucket"], "Key": "lmi-fixtures.jar"}, extra=["--body", str(jar)])
+    save(MANIFEST, manifest)
+    tags = [{"Key": "Suite", "Value": OWNER}, {"Key": "Stack", "Value": stack_name},
+            {"Key": "Persistent", "Value": "true"}]
+    ensure_bucket(manifest, tags)
+    aws("s3api", "put-object", {"Bucket": manifest["bucket"], "Key": manifest["codeKey"]}, extra=["--body", str(jar)])
     deploy_fixtures(manifest, tags)
     manifest["logStartMillis"] = int(time.time() * 1000)
     save(MANIFEST, manifest)
+
+
+def ensure_bucket(manifest, tags):
+    """Reuse the suite-owned bucket; only per-run control objects have automatic expiry."""
+    bucket = manifest["bucket"]
+    exists = True
+    try:
+        aws("s3api", "head-bucket", {"Bucket": bucket, "ExpectedBucketOwner": manifest["account"]})
+    except RuntimeError as error:
+        if not any(text in str(error) for text in ("404", "Not Found", "NoSuchBucket")):
+            raise
+        exists = False
+    if exists:
+        actual = aws("s3api", "get-bucket-tagging", {"Bucket": bucket})["TagSet"]
+        owner = {tag["Key"]: tag["Value"] for tag in actual}
+        if owner.get("Suite") != OWNER or owner.get("Stack") != manifest["stack"]:
+            raise PreconditionError("The persistent bucket is not owned by this test stack")
+    else:
+        request = {"Bucket": bucket}
+        if manifest["region"] != "us-east-1":
+            request["CreateBucketConfiguration"] = {"LocationConstraint": manifest["region"]}
+        aws("s3api", "create-bucket", request)
+        aws("s3api", "put-bucket-tagging", {"Bucket": bucket, "Tagging": {"TagSet": tags}})
+    aws("s3api", "put-public-access-block", {"Bucket": bucket, "PublicAccessBlockConfiguration": {
+        "BlockPublicAcls": True, "IgnorePublicAcls": True, "BlockPublicPolicy": True, "RestrictPublicBuckets": True}})
+    aws("s3api", "put-bucket-lifecycle-configuration", {"Bucket": bucket,
+        "LifecycleConfiguration": {"Rules": [{"ID": "expire-controls", "Status": "Enabled",
+            "Filter": {"Prefix": "control/"}, "Expiration": {"Days": 1},
+            "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1}}]}})
 
 
 def remaining_budget(deadline, maximum):
@@ -102,18 +128,74 @@ def remaining_budget(deadline, maximum):
     return min(remaining, maximum)
 
 
+def existing_stack(name):
+    try:
+        return aws("cloudformation", "describe-stacks", {"StackName": name})["Stacks"][0]
+    except RuntimeError as error:
+        if "does not exist" in str(error):
+            return None
+        raise
+
+
+def wait_for_idle_functions(stack, seconds=270):
+    """Do not change code while previous executions of these persistent fixtures are running."""
+    deadline = time.monotonic() + seconds
+    while True:
+        running = []
+        for output in stack.get("Outputs", []):
+            if output["OutputKey"] not in FIXTURES:
+                continue
+            function = output["OutputValue"].rsplit(":", 1)[0]
+            marker = None
+            while True:
+                request = {"FunctionName": function, "Statuses": ["RUNNING"]}
+                if marker:
+                    request["Marker"] = marker
+                response = aws("lambda", "list-durable-executions-by-function", request, extra=["--no-paginate"])
+                running.extend(response.get("DurableExecutions", []))
+                marker = response.get("NextMarker")
+                if not marker:
+                    break
+                if time.monotonic() >= deadline:
+                    raise PreconditionError("Could not finish checking previous executions; persistent code was not updated")
+        save(ARTIFACTS / "pre-deploy-executions.json", running)
+        if not running:
+            return
+        if time.monotonic() >= deadline:
+            raise PreconditionError("Previous durable test executions are still running; persistent code was not updated")
+        time.sleep(2)
+
+
 def deploy_fixtures(manifest, tags, seconds=1800):
-    """Create all five functions in one stack with scaling limits declared at creation."""
+    """Create once, then update the same stack and functions without test teardown."""
     deadline = time.monotonic() + seconds
     remaining_budget(deadline, seconds)
-    manifest["stacks"] = [manifest["stack"]]
-    save(MANIFEST, manifest)  # Track the one stack before creation, including partial failures.
+    save(MANIFEST, manifest)
     spec = template(manifest)
     save(ARTIFACTS / "template.json", spec)
-    aws("cloudformation", "create-stack", {"StackName": manifest["stack"], "TemplateBody": json.dumps(spec),
-        "Tags": tags, "TimeoutInMinutes": 25})
-    wait_stack(manifest["stack"], "CREATE_COMPLETE", remaining_budget(deadline, seconds))
-    stack = aws("cloudformation", "describe-stacks", {"StackName": manifest["stack"]})["Stacks"][0]
+    stack = existing_stack(manifest["stack"])
+    request = {"StackName": manifest["stack"], "TemplateBody": json.dumps(spec), "Tags": tags}
+    if stack is None:
+        request["TimeoutInMinutes"] = 25
+        aws("cloudformation", "create-stack", request)
+        expected = "CREATE_COMPLETE"
+    else:
+        owner = {tag["Key"]: tag["Value"] for tag in stack.get("Tags", [])}
+        if owner.get("Suite") != OWNER:
+            raise PreconditionError("The persistent stack is not owned by this suite")
+        if stack["StackStatus"] not in {"CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE"}:
+            raise PreconditionError(f"Persistent stack requires recovery from {stack['StackStatus']}; it was retained")
+        wait_for_idle_functions(stack, seconds=remaining_budget(deadline, 270))
+        try:
+            aws("cloudformation", "update-stack", request)
+            expected = "UPDATE_COMPLETE"
+        except RuntimeError as error:
+            if "No updates are to be performed" not in str(error):
+                raise
+            expected = None
+    if expected:
+        wait_stack(manifest["stack"], expected, remaining_budget(deadline, seconds))
+    stack = existing_stack(manifest["stack"])
     outputs = {output["OutputKey"]: output["OutputValue"] for output in stack["Outputs"]}
     require(set(outputs) == set(FIXTURES), "The stack must expose all five LMI fixtures")
     for fixture in FIXTURES:
@@ -470,93 +552,24 @@ def collect():
     require(not errors, "Evidence collection failed: " + "; ".join(errors))
 
 
-def delete_owned(stack, bucket):
-    failures = []
-    if stack:
-        try:
-            aws("cloudformation", "delete-stack", {"StackName": stack})
-            deadline = time.monotonic() + 480
-            while time.monotonic() < deadline:
-                try:
-                    result = aws("cloudformation", "describe-stacks", {"StackName": stack})
-                except RuntimeError as error:
-                    if "does not exist" in str(error):
-                        break
-                    raise
-                require(result["Stacks"][0]["StackStatus"] != "DELETE_FAILED", "Stack deletion failed")
-                time.sleep(5)
-            else:
-                raise RuntimeError("Teardown stack deadline exceeded")
-        except Exception as error:
-            failures.append(str(error))
-    if bucket:
-        try:
-            aws("s3", "rm", extra=["s3://" + bucket, "--recursive"], raw=True, timeout=60)
-            aws("s3api", "delete-bucket", {"Bucket": bucket})
-        except Exception as error:
-            if "NoSuchBucket" not in str(error):
-                failures.append(str(error))
-    require(not failures, "; ".join(failures))
-
-
-def cleanup():
-    if not MANIFEST.exists():
-        return
-    manifest = json.loads(MANIFEST.read_text())
-    # Keep cleanup compatible with older multi-stack artifacts; new runs track just the shared stack.
-    stacks = manifest.get("stacks", [manifest["stack"]])
-    failures = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
-        futures = [pool.submit(delete_owned, stack, None) for stack in stacks]
-        for future in futures:
-            try:
-                future.result()
-            except Exception as error:
-                failures.append(str(error))
-    try:
-        delete_owned(None, manifest["bucket"])
-    except Exception as error:
-        failures.append(str(error))
-    require(not failures, "Teardown failed: " + "; ".join(failures))
-
-
-def janitor():
-    cutoff = time.time() - 6 * 3600
-    stacks = aws("cloudformation", "describe-stacks").get("Stacks", [])
-    for stack in stacks:
-        tags = {t["Key"]: t["Value"] for t in stack.get("Tags", [])}
-        if tags.get("Suite") == OWNER and int(tags.get("Created", "0")) < cutoff:
-            delete_owned(stack["StackName"], None)
-    for bucket in aws("s3api", "list-buckets").get("Buckets", []):
-        name = bucket["Name"]
-        if not name.startswith("java-lmi-e2e-"):
-            continue
-        try:
-            tags = {t["Key"]: t["Value"] for t in aws("s3api", "get-bucket-tagging", {"Bucket": name})["TagSet"]}
-        except RuntimeError as error:
-            if "NoSuchTagSet" in str(error):
-                continue
-            raise
-        if tags.get("Suite") == OWNER and int(tags.get("Created", "0")) < cutoff:
-            delete_owned(None, name)
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["deploy", "test", "collect", "cleanup", "janitor"])
+    parser.add_argument("command", choices=["deploy", "test", "collect"])
     parser.add_argument("--run-id")
+    parser.add_argument("--stack-name", default=DEFAULT_STACK)
     parser.add_argument("--cloud-enabled", action="store_true")
     parser.add_argument("--invocation-timeout", type=int, default=60, choices=range(45, 91))
     args = parser.parse_args()
     try:
         if args.command == "deploy":
-            deploy(args.run_id, args.invocation_timeout)
+            deploy(args.run_id, args.invocation_timeout, args.stack_name)
         elif args.command == "test":
             if not args.cloud_enabled:
                 parser.error("Real cloud tests require --cloud-enabled")
             run_tests()
         else:
-            {"collect": collect, "cleanup": cleanup, "janitor": janitor}[args.command]()
+            collect()
     except Exception as error:
         save(ARTIFACTS / (args.command + "-error.json"), {"category": args.command, "error": str(error)})
         raise
