@@ -162,11 +162,11 @@ class Cloud:
         with tempfile.NamedTemporaryFile(mode="w") as body:
             body.write("release" if release else "hold")
             body.flush()
-            aws("s3api", "put-object", {"Bucket": self.manifest["bucket"], "Key": "control/" + name},
+            aws("s3api", "put-object", {"Bucket": self.manifest["bucket"], "Key": "control/" + self.manifest["runId"] + "/" + name},
                 extra=["--body", body.name])
         if release:
             return None
-        return aws("s3", "presign", extra=[f"s3://{self.manifest['bucket']}/control/{name}",
+        return aws("s3", "presign", extra=[f"s3://{self.manifest['bucket']}/control/{self.manifest['runId']}/{name}",
                                            "--expires-in", "3600"], raw=True)
 
     def launch(self, fixture, scenario, marker, cohort=None, target=None, peers=1, hold_ms=100000, gate=None):
@@ -221,7 +221,11 @@ class Cloud:
                 self.events[(parsed["environment"], parsed["sequence"])] = parsed
         save(self.artifacts / "diagnostics.json", list(self.events.values()))
         save(self.artifacts / "cloudwatch.json", list(self.raw_logs.values()))
-        return [e for e in self.events.values() if e["fixture"] == fixture]
+        events = [e for e in self.events.values() if e["fixture"] == fixture]
+        if any(e.get("deploymentRunId") != self.manifest["runId"] or e.get("commit") != self.manifest["commit"]
+               for e in events):
+            raise CollectionError("Invocation reached an outdated deployment; inspect the recorded commit and deploymentRunId")
+        return events
 
     def poll(self, fixture, predicate, seconds=25, category=AssertionError, items=()):
         deadline = time.monotonic() + seconds

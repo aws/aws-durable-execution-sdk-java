@@ -10,14 +10,12 @@ on:
       - 'lmi-tests/**'
       - 'sdk/src/test/java/software/amazon/lambda/durable/execution/LmiLifecycleRegressionTest.java'
       - '.github/workflows/lmi-e2e-tests.yml'
-  schedule:
-    - cron: '17 5 * * *'
 
 permissions:
   contents: read
   id-token: write
 
-# The existing dedicated capacity provider is shared; serialize use and janitor runs.
+# Persistent functions are shared; serialize deployment and testing across all runs.
 concurrency:
   group: java-lmi-e2e
   cancel-in-progress: false
@@ -25,14 +23,14 @@ concurrency:
 jobs:
   cloud:
     if: >-
-      github.event_name != 'schedule' &&
       (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
        github.actor != 'dependabot[bot]' &&
        contains(github.event.pull_request.labels.*.name, 'run-lmi-e2e')))
     runs-on: ubuntu-latest
-    timeout-minutes: 95
+    timeout-minutes: 85
     env:
+      LMI_STACK_NAME: java-lmi-e2e
       CAPACITY_PROVIDER_ARN: ${{ secrets.CAPACITY_PROVIDER_ARN }}
       TEST_LAMBDA_EXECUTION_ROLE_ARN: ${{ secrets.TEST_LAMBDA_EXECUTION_ROLE_ARN }}
     steps:
@@ -62,9 +60,9 @@ jobs:
           mvn -B -q -pl lmi-tests -am package
           mvn -B -q -pl lmi-tests -am spotless:check
           python3 -m unittest discover -s lmi-tests/tests -v
-      - name: Provision and verify all five LMI functions
+      - name: Create or update persistent LMI functions
         timeout-minutes: 35
-        run: python3 lmi-tests/cloud_suite.py deploy --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        run: python3 lmi-tests/cloud_suite.py deploy --stack-name "$LMI_STACK_NAME" --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
       - name: LMI cloud regression assertions (expected red until issue 726 is fixed)
         timeout-minutes: 30
         run: python3 -u lmi-tests/cloud_suite.py test --cloud-enabled
@@ -75,10 +73,6 @@ jobs:
           if test -f lmi-tests/artifacts/manifest.json; then
             python3 lmi-tests/cloud_suite.py collect
           fi
-      - name: Delete test-owned resources
-        if: always()
-        timeout-minutes: 10
-        run: python3 lmi-tests/cloud_suite.py cleanup
       - name: Publish failure evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -105,23 +99,3 @@ jobs:
               else:
                   out.write('Cloud assertions did not run. Inspect setup errors in the artifacts.\n')
           PY
-
-  janitor:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      CAPACITY_PROVIDER_ARN: ${{ secrets.CAPACITY_PROVIDER_ARN }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Select provider region
-        run: |
-          echo "AWS_REGION=$(cut -d: -f4 <<< "$CAPACITY_PROVIDER_ARN")" >> "$GITHUB_ENV"
-      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-        with:
-          role-to-assume: ${{ secrets.TEST_ROLE_ARN }}
-          role-session-name: java-lmi-janitor
-          aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
-      - name: Remove suite-owned resources older than six hours
-        run: python3 lmi-tests/cloud_suite.py janitor

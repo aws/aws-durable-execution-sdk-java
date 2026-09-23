@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloud_support import (Cloud, CollectionError, PreconditionError, assert_fixed, assert_lifecycle,
                            assert_overlap, assert_replay, diagnostic, scrub)
-from cloud_suite import FIXTURES, cases_for_fixture, cleanup, verify_function_scaling, deploy_fixtures, run_tests, template
+from cloud_suite import FIXTURES, cases_for_fixture, verify_function_scaling, run_tests, template
 from unittest.mock import Mock, patch
 
 
@@ -124,7 +124,7 @@ class EvidenceTest(unittest.TestCase):
 
     def test_one_stack_declares_all_five_functions_and_their_scaling_limits(self):
         manifest = {"stack": "test", "role": "role", "bucket": "bucket", "provider": "provider",
-                    "commit": "sha", "invocationTimeout": 60, "codeSha256": "digest"}
+                    "commit": "sha", "invocationTimeout": 60, "codeSha256": "digest", "codeKey": "code/digest.jar", "runId": "run-1"}
         spec = template(manifest)
         functions = [r["Properties"] for r in spec["Resources"].values() if r["Type"] == "AWS::Lambda::Function"]
         self.assertEqual(5, len(functions))
@@ -171,51 +171,6 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual(13, len(names))
         self.assertEqual(13, len(set(names)))
 
-    @patch("cloud_suite.save")
-    @patch("cloud_suite.wait_stack")
-    @patch("cloud_suite.record_fixture")
-    @patch("cloud_suite.verify_function_scaling")
-    @patch("cloud_suite.aws")
-    def test_single_create_is_followed_by_readback_of_every_function(self, api, verify, record, wait, save):
-        manifest = {"stack": "run", "stacks": [], "functions": {}, "role": "role", "bucket": "bucket",
-                    "provider": "provider", "commit": "sha", "invocationTimeout": 60, "codeSha256": "digest"}
-        def invoke(service, operation, request):
-            self.assertEqual("cloudformation", service)
-            self.assertEqual("run", request["StackName"])
-            if operation == "create-stack":
-                self.assertEqual(["run"], manifest["stacks"], "Track ownership before mutation")
-                self.assertEqual(set(FIXTURES), set(json.loads(request["TemplateBody"])["Outputs"]))
-                return {}
-            self.assertEqual("describe-stacks", operation)
-            return {"Stacks": [{"Outputs": [{"OutputKey": key, "OutputValue": key} for key in FIXTURES]}]}
-        def record_one(current, fixture, arn):
-            current["functions"][fixture] = {"arn": arn}
-        api.side_effect = invoke
-        record.side_effect = record_one
-        deploy_fixtures(manifest, [])
-        self.assertEqual(["create-stack", "describe-stacks"], [call.args[1] for call in api.call_args_list])
-        self.assertEqual(set(FIXTURES), set(manifest["functions"]))
-        self.assertEqual(["run"], manifest["stacks"])
-        self.assertEqual(list(FIXTURES), [call.args[1] for call in verify.call_args_list])
-        self.assertEqual(1, wait.call_count)
-        self.assertEqual("CREATE_COMPLETE", wait.call_args.args[1])
-
-    @patch("cloud_suite.save")
-    @patch("cloud_suite.aws", side_effect=RuntimeError("create failed"))
-    def test_partial_deployment_tracks_the_failed_stack_for_cleanup(self, api, save):
-        manifest = {"stack": "run", "stacks": [], "functions": {}, "role": "role", "bucket": "bucket",
-                    "provider": "provider", "commit": "sha", "invocationTimeout": 60, "codeSha256": "digest"}
-        with self.assertRaisesRegex(RuntimeError, "create failed"):
-            deploy_fixtures(manifest, [])
-        self.assertEqual(["run"], manifest["stacks"])
-        self.assertEqual(1, api.call_count)
-
-    @patch("cloud_suite.aws")
-    def test_expired_deployment_budget_prevents_further_allocation(self, api):
-        with self.assertRaisesRegex(PreconditionError, "budget exhausted"):
-            deploy_fixtures({"stack": "run", "stacks": [], "functions": {}}, [], seconds=0)
-        api.assert_not_called()
-
     @patch("cloud_suite.Cloud")
     def test_cloud_suite_requires_all_five_functions(self, cloud):
         with TemporaryDirectory() as directory:
@@ -224,32 +179,6 @@ class EvidenceTest(unittest.TestCase):
             with patch("cloud_suite.MANIFEST", path), self.assertRaisesRegex(PreconditionError, "All five"):
                 run_tests()
         cloud.assert_not_called()
-
-    @patch("cloud_suite.delete_owned")
-    def test_legacy_cleanup_attempts_every_stack_and_shared_bucket_after_a_failure(self, delete):
-        def remove(stack, bucket):
-            if stack == "run-default1":
-                raise RuntimeError("first stack deletion failed")
-        delete.side_effect = remove
-        stacks = ["run-" + fixture for fixture in FIXTURES]
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "manifest.json"
-            path.write_text(json.dumps({"stack": "run", "stacks": stacks, "bucket": "bucket"}))
-            with patch("cloud_suite.MANIFEST", path), self.assertRaisesRegex(AssertionError, "first stack deletion failed"):
-                cleanup()
-        self.assertEqual({(stack, None) for stack in stacks} | {(None, "bucket")},
-                         {call.args for call in delete.call_args_list})
-        self.assertEqual((None, "bucket"), delete.call_args_list[-1].args)
-
-    @patch("cloud_suite.delete_owned")
-    def test_cleanup_of_five_functions_deletes_only_the_shared_stack(self, delete):
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "manifest.json"
-            path.write_text(json.dumps({"stack": "run", "stacks": ["run"], "bucket": "bucket",
-                                        "functions": {key: {} for key in FIXTURES}}))
-            with patch("cloud_suite.MANIFEST", path):
-                cleanup()
-        self.assertEqual([("run", None), (None, "bucket")], [call.args for call in delete.call_args_list])
 
     @patch("cloud_support.aws", side_effect=RuntimeError("Invoke denied https://example.test/?signature=private-value"))
     def test_failed_invocation_is_preserved_in_redacted_artifacts(self, api):
@@ -291,6 +220,20 @@ class EvidenceTest(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, "Evidence deadline exceeded"):
                     cloud.poll("default1", lambda events: False, seconds=0,
                                items=[{"future": future, "marker": "test"}])
+            finally:
+                cloud.close()
+
+    @patch("cloud_support.aws")
+    def test_runtime_evidence_must_match_the_current_deployment(self, api):
+        entry = event("WRAPPER_ENTER", 1, runId="run-2", deploymentRunId="run-1", commit="commit-1")
+        api.return_value = {"events": [{"eventId": "event", "message": "LMI_TEST " + json.dumps(entry)}]}
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({"runId": "run-2", "commit": "commit-2",
+                           "functions": {"default1": {"logGroup": "logs"}}}, directory)
+            try:
+                with self.assertRaisesRegex(CollectionError, "outdated deployment"):
+                    cloud.refresh("default1")
+                self.assertTrue((Path(directory) / "diagnostics.json").exists())
             finally:
                 cloud.close()
 

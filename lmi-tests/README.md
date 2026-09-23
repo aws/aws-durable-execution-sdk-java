@@ -13,11 +13,16 @@ or accept a retry that happens to pass after a lifecycle violation.
   LMI. Deployment and readback are the region/architecture capability check:
   unsupported combinations fail setup; there is no ordinary-Lambda fallback.
 * One CI job builds once, deploys all five fixture functions, runs all 13 cases,
-  then collects evidence and deletes all test resources. One CloudFormation stack
-  owns all five functions and log groups; all functions remain deployed throughout
-  the test phase. Each uses 2 GiB / 1 vCPU and a single
-  `$LATEST.PUBLISHED` version; code is not republished during the run, and the
-  digest is verified against the built artifact.
+  then collects evidence. A persistent CloudFormation stack owns all five
+  functions and log groups. The stack, functions and bucket remain after both
+  successful and failed test runs; later deployments update the same resources. Each uses 2 GiB / 1 vCPU and a single
+  `$LATEST.PUBLISHED` version; code is not republished during the test phase, and
+  the digest is verified against the built artifact. Deployment and tests are
+  serialized. Before updating an existing stack, the driver waits for earlier
+  durable executions on its fixture functions to finish. Each deployment supplies
+  `LMI_TEST_RUN_ID` to refresh fault-fixture JVM state (including an executor grown
+  by a prior escape), while keeping resource names and ARNs stable. Runtime traces
+  must match the current deployment run ID and commit.
 * The template declares `FunctionScalingConfig` with both
   `MinExecutionEnvironments` and `MaxExecutionEnvironments` set to 1 on every
   function. CloudFormation applies those limits as part of resource creation,
@@ -53,6 +58,16 @@ or accept a retry that happens to pass after a lifecycle violation.
   and teardown failures. Raw histories, configuration, and diagnostic logs are
   retained even when a scenario fails.
 
+## Invocation qualifier
+
+LMI requires a published version. The suite uses the mutable `$LATEST.PUBLISHED`
+qualifier to update the same test functions without accumulating numbered
+versions. The unpublished `$LATEST` qualifier allowed by general Durable
+Functions documentation is not an LMI deployment target. An unqualified LMI ARN
+also resolves to `$LATEST.PUBLISHED`. See the LMI-specific
+[getting-started requirement](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-getting-started.html)
+and [version behavior](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-version-publishing.html).
+
 ## Ownership
 
 `CAPACITY_PROVIDER_ARN` identifies an existing **dedicated test** capacity
@@ -61,13 +76,22 @@ its maximum vCPUs and provide working Lambda/S3/CloudWatch connectivity. The
 workflow uses `TEST_ROLE_ARN`, `TEST_ACCOUNT_ID`, and
 `TEST_LAMBDA_EXECUTION_ROLE_ARN`, as the ordinary E2E workflow does.
 
-Each run owns one tagged CloudFormation stack containing all five functions and
-log groups, plus one private staging/control bucket with one-day object expiry.
-Normal teardown deletes that stack, then empties and deletes the bucket. A scheduled janitor removes
-only expired resources bearing this suite's ownership tags, including runs
-cancelled before normal teardown. Logs and durable histories retain one day in
-AWS; GitHub artifacts retain seven days. The capacity provider remains owned by
-the test-account operator, including any idle instance cost.
+The default persistent stack is `java-lmi-e2e`, with functions
+`java-lmi-e2e-default1`, `java-lmi-e2e-default2`, `java-lmi-e2e-default8`,
+`java-lmi-e2e-fixed2`, and `java-lmi-e2e-nested2`. Use `--stack-name` to select
+another dedicated stack. The private bucket name is stable for the account,
+region and stack. Existing resources must carry this suite's ownership tags.
+
+There is no automatic stack/function/bucket deletion and no janitor. The
+CloudFormation service's normal deployment rollback behavior still applies.
+Failed deployments remain available for diagnosis; the driver never deletes and
+recreates a failed stack to conceal the failure. The test-account owner manages
+retirement of the persistent resources.
+
+Each run uses its own `control/RUN_ID/` object prefix. Only control objects expire
+after one day. SDK jars use content-addressed `code/` keys and remain available
+for later deployments and CloudFormation rollback. CloudWatch logs and durable
+histories retain one day; GitHub artifacts retain seven days.
 
 ## Running
 
@@ -85,19 +109,20 @@ python3 -m unittest discover -s lmi-tests/tests -v
 export CAPACITY_PROVIDER_ARN=arn:aws:lambda:REGION:ACCOUNT:capacity-provider:NAME
 export TEST_LAMBDA_EXECUTION_ROLE_ARN=arn:aws:iam::ACCOUNT:role/ROLE
 export AWS_REGION=us-west-2
-python3 lmi-tests/cloud_suite.py deploy --run-id local-unique
+python3 lmi-tests/cloud_suite.py deploy --stack-name java-lmi-e2e --run-id local-unique
 python3 lmi-tests/cloud_suite.py test --cloud-enabled
 python3 lmi-tests/cloud_suite.py collect
-python3 lmi-tests/cloud_suite.py cleanup
 ```
 
-The deploy command creates and retains `default1`, `default2`, `default8`,
+The deploy command creates or updates and retains `default1`, `default2`, `default8`,
 `fixed2`, and `nested2` together. The test command requires all five and runs the
 full suite. CI publishes one combined artifact, named `lmi-e2e-RUN-ATTEMPT`, with
 the single `template.json` and per-function configuration snapshots. The
 CloudFormation execution role needs permission to manage the function scaling
-configuration; the driver only calls `lambda:GetFunctionScalingConfig` to verify
-it after deployment.
+configuration; the driver calls `lambda:GetFunctionScalingConfig` to verify it
+and `lambda:ListDurableExecutionsByFunction` to wait for earlier runs before an
+update. A changed jar gets a new S3 key so CloudFormation actually updates code,
+not just metadata. Updates with no changes are accepted.
 
 Deployment records `lmi-tests/artifacts/manifest.json`, including the stack, functions, commit, jar
 digest, qualified function ARNs, runtime, architecture, concurrency and provider
@@ -109,7 +134,7 @@ Local assertion tests verify that missing evidence, mismatched environments,
 early responses, late tasks and stalled executors cannot be reported as passes.
 Cloud regressions run on every push to `main`, including every merged change,
 with no changed-path filters. Manual dispatch and same-repository PR opt-in
-are also supported. The daily schedule runs only the cleanup janitor.
+are also supported. There are no scheduled jobs.
 
 The opt-in local regressions assert the same three contracts against the SDK's
 mock backend (they do not substitute for cloud coverage):
@@ -123,7 +148,7 @@ The workflow never uses a privileged `pull_request_target` checkout. Provisionin
 has a 35-minute step budget, with a shared 30-minute deadline for creating the
 stack and verifying all five functions. Each scaling wait is capped at 5 minutes and at the
 remaining deployment budget. Scenarios have 30 minutes, final collection 5 minutes,
-and stack teardown 10 minutes. Individual admission attempts are bounded (four batches,
+with no infrastructure teardown step. Individual admission attempts are bounded (four batches,
 25 seconds), fixed-pool progress has 8 seconds, and task escape timers are capped
 at 120 seconds. The normal invocation timeout is 60 seconds; the durable execution
 timeout is 240 seconds. Cleanup is required by the invocation deadline plus
