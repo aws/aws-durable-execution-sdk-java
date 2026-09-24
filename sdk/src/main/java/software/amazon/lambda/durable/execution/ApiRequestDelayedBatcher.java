@@ -7,8 +7,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -104,6 +107,20 @@ public class ApiRequestDelayedBatcher<T> {
 
     /** Flushes pending batch and waits for completion */
     void shutdown() {
+        try {
+            shutdown(MAX_DELAY);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while flushing API requests", interrupted);
+        } catch (ExecutionException failure) {
+            throw new CompletionException(failure.getCause());
+        } catch (TimeoutException timeout) {
+            throw new IllegalStateException("Timed out while flushing API requests", timeout);
+        }
+    }
+
+    /** Flushes pending batches and waits no longer than the supplied timeout. */
+    void shutdown(Duration timeout) throws InterruptedException, ExecutionException, TimeoutException {
         synchronized (delayedBatch) {
             // cancel the flush timer if it has not been triggered
             this.delayedBatchFlushTimer.cancel(false);
@@ -112,7 +129,7 @@ public class ApiRequestDelayedBatcher<T> {
         }
 
         // wait for previous batches to be flushed
-        flushingQueueFuture.join();
+        flushingQueueFuture.get(Math.max(0, timeout.toNanos()), TimeUnit.NANOSECONDS);
     }
 
     /** clear the current batch and creates a new batch */

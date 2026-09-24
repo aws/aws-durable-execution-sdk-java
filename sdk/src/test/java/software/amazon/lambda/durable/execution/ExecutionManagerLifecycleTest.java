@@ -4,25 +4,31 @@ package software.amazon.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static software.amazon.lambda.durable.model.ExecutionStatus.PENDING;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -30,8 +36,12 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 
 class ExecutionManagerLifecycleTest {
     private static final String EXECUTION_ID = "execution";
@@ -202,25 +212,174 @@ class ExecutionManagerLifecycleTest {
         }
     }
 
+    @Test
+    void interruptedDrainStillShutsDownCheckpointsAndRestoresInterrupt() throws Exception {
+        var executor = Executors.newSingleThreadExecutor();
+        var taskEntered = new CountDownLatch(1);
+        var taskInterrupted = new CountDownLatch(1);
+        var manager = createManager(null, executor);
+        manager.submitRootTask(() -> {
+            taskEntered.countDown();
+            try {
+                new CountDownLatch(1).await();
+            } catch (InterruptedException expected) {
+                taskInterrupted.countDown();
+            }
+            return "cancelled";
+        });
+        assertTrue(taskEntered.await(5, TimeUnit.SECONDS));
+        var checkpoint = manager.sendOperationUpdate(OperationUpdate.builder()
+                .id("step")
+                .name("step")
+                .type(OperationType.STEP)
+                .subType("Step")
+                .action(OperationAction.START)
+                .build());
+
+        Thread.currentThread().interrupt();
+        try {
+            var failure = manager.finishInvocation(null);
+
+            var lifecycleFailure = assertInstanceOf(UnrecoverableDurableExecutionException.class, failure);
+            assertInstanceOf(InterruptedException.class, lifecycleFailure.getCause());
+            assertEquals(ExecutionManager.LifecycleState.CLOSED, manager.getLifecycleState());
+            assertTrue(checkpoint.isDone(), "checkpoint shutdown should still be attempted");
+            assertTrue(Thread.currentThread().isInterrupted());
+            Thread.interrupted();
+            assertTrue(taskInterrupted.await(5, TimeUnit.SECONDS));
+        } finally {
+            Thread.interrupted();
+            stop(executor);
+        }
+    }
+
+    @Test
+    void invocationDeadlineCancelsAStuckRootAndReturnsRetryableFailure() throws Exception {
+        var context = mock(Context.class);
+        when(context.getAwsRequestId()).thenReturn("deadline-request");
+        when(context.getRemainingTimeInMillis()).thenReturn(700);
+        var executor = Executors.newSingleThreadExecutor();
+        var entered = new CountDownLatch(1);
+        var interrupted = new CountDownLatch(1);
+        var manager = createManager(context, executor);
+        var root = manager.submitRootTask(() -> {
+            entered.countDown();
+            try {
+                new CountDownLatch(1).await();
+            } catch (InterruptedException expected) {
+                interrupted.countDown();
+            }
+            return "cancelled";
+        });
+        assertTrue(entered.await(5, TimeUnit.SECONDS));
+
+        try {
+            var outcome = manager.awaitInvocationOutcome(root);
+            var deadlineFailure = assertInstanceOf(UnrecoverableDurableExecutionException.class, outcome.failure());
+            assertTrue(deadlineFailure.isRetryable());
+
+            assertEquals(deadlineFailure, manager.finishInvocation(deadlineFailure));
+            assertTrue(interrupted.await(5, TimeUnit.SECONDS));
+            assertEquals(ExecutionManager.LifecycleState.CLOSED, manager.getLifecycleState());
+        } finally {
+            stop(executor);
+        }
+    }
+
+    @Test
+    void responseCriticalCheckpointWaitIsBoundedByInvocationDeadline() {
+        var context = mock(Context.class);
+        when(context.getAwsRequestId()).thenReturn("checkpoint-deadline-request");
+        when(context.getRemainingTimeInMillis()).thenReturn(250);
+        var manager = createManager(context, null);
+
+        var failure = assertThrows(
+                UnrecoverableDurableExecutionException.class,
+                () -> manager.awaitCheckpointCompletion(new CompletableFuture<>()));
+
+        assertTrue(failure.isRetryable());
+        assertInstanceOf(TimeoutException.class, failure.getCause());
+        assertEquals(failure, manager.finishInvocation(failure));
+    }
+
+    @Test
+    void pendingResponseAndInvocationEndWaitForRootFinally() throws Exception {
+        var users = Executors.newCachedThreadPool();
+        var runtime = Executors.newSingleThreadExecutor();
+        var cleanupEntered = new CountDownLatch(1);
+        var releaseCleanup = new CountDownLatch(1);
+        var invocationEnded = new CountDownLatch(1);
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withExecutorService(users)
+                .withPlugins(new DurableExecutionPlugin() {
+                    @Override
+                    public void onInvocationEnd(InvocationEndInfo info) {
+                        invocationEnded.countDown();
+                    }
+                })
+                .build();
+
+        try {
+            var response = runtime.submit(() -> DurableExecutor.execute(
+                    input(),
+                    context(10_000),
+                    TypeToken.get(String.class),
+                    (value, durableContext) -> {
+                        try {
+                            durableContext.wait("wait", Duration.ofSeconds(5));
+                            return value;
+                        } finally {
+                            cleanupEntered.countDown();
+                            await(releaseCleanup);
+                        }
+                    },
+                    config));
+            assertTrue(cleanupEntered.await(5, TimeUnit.SECONDS));
+
+            assertThrows(TimeoutException.class, () -> response.get(100, TimeUnit.MILLISECONDS));
+            assertEquals(1, invocationEnded.getCount());
+
+            releaseCleanup.countDown();
+            assertEquals(PENDING, response.get(5, TimeUnit.SECONDS).status());
+            assertTrue(invocationEnded.await(5, TimeUnit.SECONDS));
+        } finally {
+            releaseCleanup.countDown();
+            stop(users);
+            stop(runtime);
+        }
+    }
+
     private ExecutionManager createManager(Context context, ExecutorService executor) {
         var config = DurableConfig.builder().withDurableExecutionClient(TestUtils.createMockClient());
         if (executor != null) {
             config.withExecutorService(executor);
         }
+        return new ExecutionManager(input(), config.build(), context);
+    }
+
+    private DurableExecutionInput input() {
         var execution = Operation.builder()
                 .id(EXECUTION_ID)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
+                .startTimestamp(Instant.now())
+                .executionDetails(
+                        ExecutionDetails.builder().inputPayload("\"input\"").build())
                 .build();
-        return new ExecutionManager(
-                new DurableExecutionInput(
-                        EXECUTION_ARN,
-                        "token",
-                        CheckpointUpdatedExecutionState.builder()
-                                .operations(List.of(execution))
-                                .build()),
-                config.build(),
-                context);
+        return new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(execution))
+                        .build());
+    }
+
+    private Context context(int remainingMillis) {
+        var context = mock(Context.class);
+        when(context.getAwsRequestId()).thenReturn("request-id");
+        when(context.getRemainingTimeInMillis()).thenReturn(remainingMillis);
+        return context;
     }
 
     private static void await(CountDownLatch latch) {
