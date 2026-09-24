@@ -3,19 +3,26 @@
 package software.amazon.lambda.durable.execution;
 
 import com.amazonaws.services.lambda.runtime.Context;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -39,7 +46,8 @@ import software.amazon.lambda.durable.plugin.PluginInfoConverter;
  *
  * <ul>
  *   <li>Execution state (operations, checkpoint token)
- *   <li>Thread lifecycle (registration/deregistration)
+ *   <li>Logical thread and executor-task lifecycle
+ *   <li>Invocation deadline and work admission
  *   <li>Checkpoint batching (via CheckpointManager)
  *   <li>Checkpoint result handling (CheckpointManager callback)
  *   <li>Polling (for waits and retries)
@@ -56,6 +64,21 @@ import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 public class ExecutionManager implements SafeCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(ExecutionManager.class);
+    private static final AtomicLong LOCAL_INVOCATION_SEQUENCE = new AtomicLong();
+
+    enum LifecycleState {
+        /** The invocation accepts new durable operations, executor tasks, checkpoints, and polls. */
+        OPEN,
+
+        /**
+         * Invocation shutdown has started. New operations and tasks are rejected, while already-admitted work may still
+         * checkpoint or poll as it finishes.
+         */
+        DRAINING,
+
+        /** Invocation cleanup has ended; all new operations, tasks, checkpoints, and polls are rejected. */
+        CLOSED
+    }
 
     // ===== Execution State =====
     private final Map<String, Operation> operationStorage;
@@ -64,9 +87,16 @@ public class ExecutionManager implements SafeCloseable {
     private final Context lambdaContext;
     private final AtomicReference<ExecutionMode> executionMode;
     private final DurableConfig durableConfig;
-    private final InvocationScope invocationScope;
     private final Set<String> updatedOperationIdsSinceLastInvocation;
     private final Set<String> initialOperationIds;
+
+    // ===== Invocation Lifecycle =====
+    private final Object admissionLock = new Object();
+    private final String invocationId;
+    private final Long deadlineNanos;
+    private final AtomicLong taskSequence = new AtomicLong();
+    private final Map<Long, ExecutorTaskHandle<?>> activeExecutorTasks = new ConcurrentHashMap<>();
+    private LifecycleState lifecycleState = LifecycleState.OPEN;
 
     // ===== Thread Coordination =====
     private final Map<String, BaseDurableOperation> registeredOperations = new ConcurrentHashMap<>();
@@ -83,7 +113,8 @@ public class ExecutionManager implements SafeCloseable {
         durableConfig = config;
         this.durableExecutionArn = input.durableExecutionArn();
         this.lambdaContext = lambdaContext;
-        this.invocationScope = new InvocationScope(lambdaContext, durableExecutionArn);
+        this.invocationId = resolveInvocationId(lambdaContext, durableExecutionArn);
+        this.deadlineNanos = resolveDeadlineNanos(lambdaContext);
 
         // Store the set of operation IDs updated since the last successful invocation
         this.updatedOperationIdsSinceLastInvocation =
@@ -192,12 +223,15 @@ public class ExecutionManager implements SafeCloseable {
 
     /** Registers an operation so it can receive checkpoint completion notifications. */
     public void registerOperation(BaseDurableOperation operation) {
-        invocationScope.admitOperation(() -> registeredOperations.put(operation.getOperationId(), operation));
+        synchronized (admissionLock) {
+            requireOpen("durable operation");
+            registeredOperations.put(operation.getOperationId(), operation);
+        }
     }
 
     /** Submits the invocation's root handler and records its executor task separately from its logical result. */
     <T> CompletableFuture<T> submitRootTask(Supplier<T> action) {
-        return invocationScope.submit(ExecutorTaskHandle.Role.ROOT, null, durableConfig.getExecutorService(), action);
+        return submitExecutorTask(ExecutorTaskHandle.Role.ROOT, null, durableConfig.getExecutorService(), action);
     }
 
     /** Submits an operation handler and records its executor task separately from its logical result. */
@@ -208,14 +242,52 @@ public class ExecutionManager implements SafeCloseable {
                     case MAP, PARALLEL -> ExecutorTaskHandle.Role.COORDINATOR;
                     default -> ExecutorTaskHandle.Role.CHILD_CONTEXT;
                 };
-        return invocationScope.submit(role, operation.getOperationId(), durableConfig.getExecutorService(), () -> {
+        return submitExecutorTask(role, operation.getOperationId(), durableConfig.getExecutorService(), () -> {
             action.run();
             return null;
         });
     }
 
-    InvocationScope getInvocationScope() {
-        return invocationScope;
+    private <T> CompletableFuture<T> submitExecutorTask(
+            ExecutorTaskHandle.Role role, String operationId, ExecutorService executor, Supplier<T> action) {
+        ExecutorTaskHandle<T> task;
+        synchronized (admissionLock) {
+            requireOpen("task");
+            var taskId = taskSequence.incrementAndGet();
+            task = new ExecutorTaskHandle<>(taskId, role, operationId, () -> activeExecutorTasks.remove(taskId));
+            activeExecutorTasks.put(task.id(), task);
+        }
+
+        try {
+            task.bindExecution(executor.submit(() -> task.run(action)));
+            return task.completion();
+        } catch (RuntimeException | Error failure) {
+            task.submissionFailed(failure);
+            throw failure;
+        }
+    }
+
+    String getInvocationId() {
+        return invocationId;
+    }
+
+    Optional<Duration> getRemainingInvocationTime() {
+        if (deadlineNanos == null) {
+            return Optional.empty();
+        }
+        return Optional.of(Duration.ofNanos(Math.max(0, deadlineNanos - System.nanoTime())));
+    }
+
+    LifecycleState getLifecycleState() {
+        synchronized (admissionLock) {
+            return lifecycleState;
+        }
+    }
+
+    List<ExecutorTaskHandle<?>> getActiveExecutorTasks() {
+        return activeExecutorTasks.values().stream()
+                .sorted(Comparator.comparingLong(ExecutorTaskHandle::id))
+                .toList();
     }
 
     // ===== Checkpoint Completion Handler =====
@@ -406,7 +478,7 @@ public class ExecutionManager implements SafeCloseable {
     // This method will checkpoint the operation updates to the durable backend and return a future which completes
     // when the checkpoint completes.
     public CompletableFuture<Void> sendOperationUpdate(OperationUpdate update) {
-        return invocationScope.admitCheckpoint(() -> checkpointManager.checkpoint(update));
+        return admitCheckpoint(() -> checkpointManager.checkpoint(update));
     }
 
     // ===== Polling =====
@@ -417,7 +489,7 @@ public class ExecutionManager implements SafeCloseable {
     // wait while another thread is still running, and we therefore are not
     // re-invoked because we never suspended.
     public CompletableFuture<Operation> pollForOperationUpdates(String operationId) {
-        return invocationScope.admitCheckpoint(() -> checkpointManager.pollForUpdate(operationId));
+        return admitCheckpoint(() -> checkpointManager.pollForUpdate(operationId));
     }
 
     /**
@@ -428,20 +500,54 @@ public class ExecutionManager implements SafeCloseable {
      * @return a completable future that completes with the operation update
      */
     public CompletableFuture<Operation> pollForOperationUpdates(String operationId, Instant at) {
-        return invocationScope.admitCheckpoint(() -> checkpointManager.pollForUpdate(operationId, at));
+        return admitCheckpoint(() -> checkpointManager.pollForUpdate(operationId, at));
     }
 
     // ===== Utilities =====
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-        invocationScope.beginDraining();
+        beginDraining();
         try {
             validateRunningThreads();
             checkpointManager.shutdown();
         } finally {
-            invocationScope.close();
+            closeLifecycle();
         }
+    }
+
+    void beginDraining() {
+        synchronized (admissionLock) {
+            if (lifecycleState == LifecycleState.OPEN) {
+                lifecycleState = LifecycleState.DRAINING;
+            }
+        }
+    }
+
+    private void closeLifecycle() {
+        synchronized (admissionLock) {
+            lifecycleState = LifecycleState.CLOSED;
+        }
+    }
+
+    private <T> T admitCheckpoint(Supplier<T> request) {
+        synchronized (admissionLock) {
+            if (lifecycleState == LifecycleState.CLOSED) {
+                throw rejected("checkpoint request");
+            }
+            return request.get();
+        }
+    }
+
+    private void requireOpen(String workType) {
+        if (lifecycleState != LifecycleState.OPEN) {
+            throw rejected(workType);
+        }
+    }
+
+    private RejectedExecutionException rejected(String workType) {
+        return new RejectedExecutionException(
+                "Invocation " + invocationId + " is " + lifecycleState + "; cannot admit new " + workType);
     }
 
     private void validateRunningThreads() {
@@ -535,5 +641,25 @@ public class ExecutionManager implements SafeCloseable {
             }
             return null;
         });
+    }
+
+    private static String resolveInvocationId(Context lambdaContext, String durableExecutionArn) {
+        if (lambdaContext != null) {
+            var requestId = lambdaContext.getAwsRequestId();
+            if (requestId != null && !requestId.isBlank()) {
+                return requestId;
+            }
+        }
+        return durableExecutionArn + "#local-" + LOCAL_INVOCATION_SEQUENCE.incrementAndGet();
+    }
+
+    private static Long resolveDeadlineNanos(Context lambdaContext) {
+        if (lambdaContext == null) {
+            return null;
+        }
+        var remainingMillis = Math.max(0L, lambdaContext.getRemainingTimeInMillis());
+        var remainingNanos = TimeUnit.MILLISECONDS.toNanos(remainingMillis);
+        var now = System.nanoTime();
+        return now > Long.MAX_VALUE - remainingNanos ? Long.MAX_VALUE : now + remainingNanos;
     }
 }
