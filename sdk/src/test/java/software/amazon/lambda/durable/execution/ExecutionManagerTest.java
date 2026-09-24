@@ -317,7 +317,7 @@ class ExecutionManagerTest {
     }
 
     @Test
-    void tracksRootStepChildAndCoordinatorTasksInInvocationScope() throws Exception {
+    void tracksRootStepChildAndCoordinatorTasks() throws Exception {
         var manager = createManager(List.of(executionOp()));
         var entered = new CountDownLatch(5);
         var release = new CountDownLatch(1);
@@ -337,7 +337,7 @@ class ExecutionManagerTest {
 
             assertTrue(entered.await(5, TimeUnit.SECONDS));
 
-            var tasks = manager.getInvocationScope().tasks();
+            var tasks = manager.getActiveExecutorTasks();
             assertEquals(
                     List.of(
                             ExecutorTaskHandle.Role.ROOT,
@@ -354,7 +354,7 @@ class ExecutionManagerTest {
             waitForCondition.get(5, TimeUnit.SECONDS);
             child.get(5, TimeUnit.SECONDS);
             coordinator.get(5, TimeUnit.SECONDS);
-            assertTrue(manager.getInvocationScope().tasks().isEmpty());
+            assertTrue(manager.getActiveExecutorTasks().isEmpty());
         } finally {
             release.countDown();
             manager.close();
