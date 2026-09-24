@@ -54,6 +54,7 @@ class WaitForConditionOperationTest {
                 .thenReturn(DurableConfig.builder()
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
+        MockExecutionManagerSupport.completeOperationsOnManager(executionManager);
     }
 
     private WaitForConditionOperation<Integer> createOperation(

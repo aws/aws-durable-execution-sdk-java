@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
 /**
@@ -56,17 +56,26 @@ public interface DurableFuture<T> {
     }
 
     /**
-     * Waits for any of the provided futures to complete and returns its result.
+     * Waits for any of the provided futures to settle and returns its result.
      *
      * @param futures the futures to wait for
-     * @return the result of the first future to complete
+     * @return the result of the first future to settle
      */
     static Object anyOf(DurableFuture<?>... futures) {
-        return CompletableFuture.anyOf(Arrays.stream(futures)
-                        .map(f -> ((BaseDurableOperation) f).getCompletionFuture())
-                        .toArray(CompletableFuture[]::new))
-                .thenApply(o -> (DurableFuture) o)
-                .join()
-                .get();
+        if (futures == null || futures.length == 0) {
+            throw new IllegalArgumentException("anyOf requires at least one future");
+        }
+
+        var operations = new ArrayList<BaseDurableOperation>(futures.length);
+        for (var future : futures) {
+            if (!(future instanceof BaseDurableOperation operation)) {
+                throw new IllegalArgumentException("anyOf accepts only futures created by a DurableContext, got: "
+                        + (future == null ? "null" : future.getClass().getName()));
+            }
+            operations.add(operation);
+        }
+
+        var future = BaseDurableOperation.waitForFirstOperationCompletion(operations);
+        return future.get();
     }
 }
