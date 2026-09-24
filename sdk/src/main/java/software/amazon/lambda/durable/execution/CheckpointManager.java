@@ -11,6 +11,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
@@ -150,6 +152,20 @@ class CheckpointManager {
 
     /** Cancels all polling futures and waits for all pending checkpoint requests to complete */
     void shutdown() {
+        try {
+            shutdown(Duration.ofMinutes(60));
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while shutting down checkpoints", interrupted);
+        } catch (ExecutionException failure) {
+            throw new IllegalStateException("Checkpoint shutdown failed", failure.getCause());
+        } catch (TimeoutException timeout) {
+            throw new IllegalStateException("Checkpoint shutdown timed out", timeout);
+        }
+    }
+
+    /** Cancels polling futures and bounds the wait for pending checkpoint requests. */
+    void shutdown(Duration timeout) throws InterruptedException, ExecutionException, TimeoutException {
         // complete all polling futures with an exception
         List<List<CompletableFuture<Operation>>> allFutures;
         synchronized (pollingFutures) {
@@ -162,7 +178,7 @@ class CheckpointManager {
         }
 
         // wait for all non-polling checkpoint requests to complete
-        checkpointApiRequestDelayedBatcher.shutdown();
+        checkpointApiRequestDelayedBatcher.shutdown(timeout);
     }
 
     /**

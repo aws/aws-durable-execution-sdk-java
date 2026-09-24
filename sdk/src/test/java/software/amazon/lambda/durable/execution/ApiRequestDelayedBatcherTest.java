@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
@@ -225,5 +226,30 @@ class ApiRequestDelayedBatcherTest {
         var future2 = cut.submit(input, LONG_DELAY);
         cut.shutdown();
         assertTrue(future2.isDone());
+    }
+
+    @Test
+    void shutdownHonorsTimeoutWhileBatchActionIsBlocked() throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var batcher = new ApiRequestDelayedBatcher<Input>(
+                MAX_BATCH_SIZE, MAX_BATCH_BINARY_SIZE_IN_BYTES, item -> 0, items -> {
+                    entered.countDown();
+                    try {
+                        release.await();
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+        var future = batcher.submit(input, Duration.ZERO);
+        assertTrue(entered.await(5, TimeUnit.SECONDS));
+
+        try {
+            assertThrows(TimeoutException.class, () -> batcher.shutdown(Duration.ofMillis(50)));
+            assertFalse(future.isDone());
+        } finally {
+            release.countDown();
+        }
+        future.get(5, TimeUnit.SECONDS);
     }
 }

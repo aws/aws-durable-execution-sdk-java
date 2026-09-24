@@ -61,7 +61,7 @@ final class ExecutorTaskHandle<T> {
     /** Associated durable operation ID, or {@code null} for the root handler. */
     private final String operationId;
 
-    /** Removes this task from the invocation scope's active-task registry. */
+    /** Removes this task from the execution manager's active-task registry. */
     private final Runnable onExit;
 
     /** Logical action result consumed by the SDK; cancellation can complete it before the action exits. */
@@ -104,7 +104,7 @@ final class ExecutorTaskHandle<T> {
      */
     void bindExecution(Future<?> future) {
         if (!execution.compareAndSet(null, future)) {
-            throw new IllegalStateException("Invocation task already has an execution future");
+            throw new IllegalStateException("Executor task already has an execution future");
         }
         if (cancellationRequested.get()) {
             cancelExecution(future);
@@ -140,16 +140,16 @@ final class ExecutorTaskHandle<T> {
             return false;
         }
         if (state.compareAndSet(State.REGISTERED, State.EXITED)) {
-            exit.complete(null);
             onExit.run();
+            exit.complete(null);
         }
         return true;
     }
 
     private void markExited() {
         state.set(State.EXITED);
-        exit.complete(null);
         onExit.run();
+        exit.complete(null);
     }
 
     long id() {
