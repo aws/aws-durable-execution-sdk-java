@@ -61,10 +61,10 @@ class InvocationScopeTest {
 
         try {
             var scope = new InvocationScope(null, EXECUTION_ARN);
-            var completion = scope.submit(InvocationTask.Kind.ROOT, null, executor, () -> "result");
+            var completion = scope.submit(ExecutorTaskHandle.Kind.ROOT, null, executor, () -> "result");
             var task = scope.tasks().get(0);
 
-            assertEquals(InvocationTask.State.REGISTERED, task.state());
+            assertEquals(ExecutorTaskHandle.State.REGISTERED, task.state());
             assertNotNull(task.execution());
             assertFalse(completion.isDone());
             assertFalse(task.exit().isDone());
@@ -72,7 +72,7 @@ class InvocationScopeTest {
             releaseBlocker.countDown();
             assertEquals("result", completion.get(5, TimeUnit.SECONDS));
             task.exit().get(5, TimeUnit.SECONDS);
-            assertEquals(InvocationTask.State.EXITED, task.state());
+            assertEquals(ExecutorTaskHandle.State.EXITED, task.state());
             assertTrue(scope.tasks().isEmpty());
         } finally {
             releaseBlocker.countDown();
@@ -89,7 +89,7 @@ class InvocationScopeTest {
         var release = new CountDownLatch(1);
         try {
             var scope = new InvocationScope(null, EXECUTION_ARN);
-            var completion = scope.submit(InvocationTask.Kind.STEP, "step", executor, () -> {
+            var completion = scope.submit(ExecutorTaskHandle.Kind.STEP, "step", executor, () -> {
                 entered.countDown();
                 while (release.getCount() > 0) {
                     try {
@@ -110,7 +110,7 @@ class InvocationScopeTest {
 
             release.countDown();
             task.exit().get(5, TimeUnit.SECONDS);
-            assertEquals(InvocationTask.State.EXITED, task.state());
+            assertEquals(ExecutorTaskHandle.State.EXITED, task.state());
         } finally {
             release.countDown();
             executor.shutdownNow();
@@ -121,7 +121,7 @@ class InvocationScopeTest {
     @Test
     void cancellationRequestedBeforeExecutorHandleIsBoundIsNotLost() throws Exception {
         var exits = new AtomicInteger();
-        var task = new InvocationTask<String>(1, InvocationTask.Kind.ROOT, null, exits::incrementAndGet);
+        var task = new ExecutorTaskHandle<String>(1, ExecutorTaskHandle.Kind.ROOT, null, exits::incrementAndGet);
         var execution = new FutureTask<Void>(() -> null);
 
         assertTrue(task.cancel(true));
@@ -143,7 +143,7 @@ class InvocationScopeTest {
 
         assertThrows(
                 RejectedExecutionException.class,
-                () -> scope.submit(InvocationTask.Kind.ROOT, null, executor, () -> "result"));
+                () -> scope.submit(ExecutorTaskHandle.Kind.ROOT, null, executor, () -> "result"));
         assertTrue(scope.tasks().isEmpty());
     }
 
@@ -158,7 +158,7 @@ class InvocationScopeTest {
             assertThrows(RejectedExecutionException.class, () -> scope.admitOperation(() -> {}));
             assertThrows(
                     RejectedExecutionException.class,
-                    () -> scope.submit(InvocationTask.Kind.ROOT, null, executor, () -> "result"));
+                    () -> scope.submit(ExecutorTaskHandle.Kind.ROOT, null, executor, () -> "result"));
             assertEquals("checkpoint", scope.admitCheckpoint(() -> "checkpoint"));
 
             scope.close();

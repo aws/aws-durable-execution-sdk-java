@@ -38,7 +38,7 @@ final class InvocationScope {
     private final String invocationId;
     private final Long deadlineNanos;
     private final AtomicLong taskSequence = new AtomicLong();
-    private final ConcurrentHashMap<Long, InvocationTask<?>> tasks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, ExecutorTaskHandle<?>> tasks = new ConcurrentHashMap<>();
     private State state = State.OPEN;
 
     InvocationScope(Context lambdaContext, String durableExecutionArn) {
@@ -47,12 +47,12 @@ final class InvocationScope {
     }
 
     <T> CompletableFuture<T> submit(
-            InvocationTask.Kind kind, String operationId, ExecutorService executor, Supplier<T> action) {
-        InvocationTask<T> task;
+            ExecutorTaskHandle.Kind kind, String operationId, ExecutorService executor, Supplier<T> action) {
+        ExecutorTaskHandle<T> task;
         synchronized (admissionLock) {
             requireOpen("task");
             var taskId = taskSequence.incrementAndGet();
-            task = new InvocationTask<>(taskId, kind, operationId, () -> tasks.remove(taskId));
+            task = new ExecutorTaskHandle<>(taskId, kind, operationId, () -> tasks.remove(taskId));
             tasks.put(task.id(), task);
         }
 
@@ -112,9 +112,9 @@ final class InvocationScope {
         return Optional.of(Duration.ofNanos(Math.max(0, deadlineNanos - System.nanoTime())));
     }
 
-    List<InvocationTask<?>> tasks() {
+    List<ExecutorTaskHandle<?>> tasks() {
         return tasks.values().stream()
-                .sorted(Comparator.comparingLong(InvocationTask::id))
+                .sorted(Comparator.comparingLong(ExecutorTaskHandle::id))
                 .toList();
     }
 
