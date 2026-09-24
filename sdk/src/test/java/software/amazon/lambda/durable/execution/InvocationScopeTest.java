@@ -61,7 +61,7 @@ class InvocationScopeTest {
 
         try {
             var scope = new InvocationScope(null, EXECUTION_ARN);
-            var completion = scope.submit(ExecutorTaskHandle.Kind.ROOT, null, executor, () -> "result");
+            var completion = scope.submit(ExecutorTaskHandle.Role.ROOT, null, executor, () -> "result");
             var task = scope.tasks().get(0);
 
             assertEquals(ExecutorTaskHandle.State.REGISTERED, task.state());
@@ -89,7 +89,7 @@ class InvocationScopeTest {
         var release = new CountDownLatch(1);
         try {
             var scope = new InvocationScope(null, EXECUTION_ARN);
-            var completion = scope.submit(ExecutorTaskHandle.Kind.STEP, "step", executor, () -> {
+            var completion = scope.submit(ExecutorTaskHandle.Role.STEP, "step", executor, () -> {
                 entered.countDown();
                 while (release.getCount() > 0) {
                     try {
@@ -121,7 +121,7 @@ class InvocationScopeTest {
     @Test
     void cancellationRequestedBeforeExecutorHandleIsBoundIsNotLost() throws Exception {
         var exits = new AtomicInteger();
-        var task = new ExecutorTaskHandle<String>(1, ExecutorTaskHandle.Kind.ROOT, null, exits::incrementAndGet);
+        var task = new ExecutorTaskHandle<String>(1, ExecutorTaskHandle.Role.ROOT, null, exits::incrementAndGet);
         var execution = new FutureTask<Void>(() -> null);
 
         assertTrue(task.cancel(true));
@@ -143,7 +143,7 @@ class InvocationScopeTest {
 
         assertThrows(
                 RejectedExecutionException.class,
-                () -> scope.submit(ExecutorTaskHandle.Kind.ROOT, null, executor, () -> "result"));
+                () -> scope.submit(ExecutorTaskHandle.Role.ROOT, null, executor, () -> "result"));
         assertTrue(scope.tasks().isEmpty());
     }
 
@@ -158,7 +158,7 @@ class InvocationScopeTest {
             assertThrows(RejectedExecutionException.class, () -> scope.admitOperation(() -> {}));
             assertThrows(
                     RejectedExecutionException.class,
-                    () -> scope.submit(ExecutorTaskHandle.Kind.ROOT, null, executor, () -> "result"));
+                    () -> scope.submit(ExecutorTaskHandle.Role.ROOT, null, executor, () -> "result"));
             assertEquals("checkpoint", scope.admitCheckpoint(() -> "checkpoint"));
 
             scope.close();

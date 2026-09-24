@@ -47,12 +47,12 @@ final class InvocationScope {
     }
 
     <T> CompletableFuture<T> submit(
-            ExecutorTaskHandle.Kind kind, String operationId, ExecutorService executor, Supplier<T> action) {
+            ExecutorTaskHandle.Role role, String operationId, ExecutorService executor, Supplier<T> action) {
         ExecutorTaskHandle<T> task;
         synchronized (admissionLock) {
             requireOpen("task");
             var taskId = taskSequence.incrementAndGet();
-            task = new ExecutorTaskHandle<>(taskId, kind, operationId, () -> tasks.remove(taskId));
+            task = new ExecutorTaskHandle<>(taskId, role, operationId, () -> tasks.remove(taskId));
             tasks.put(task.id(), task);
         }
 

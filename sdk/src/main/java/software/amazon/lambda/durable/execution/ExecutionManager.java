@@ -197,18 +197,18 @@ public class ExecutionManager implements SafeCloseable {
 
     /** Submits the invocation's root handler and records its executor task separately from its logical result. */
     <T> CompletableFuture<T> submitRootTask(Supplier<T> action) {
-        return invocationScope.submit(ExecutorTaskHandle.Kind.ROOT, null, durableConfig.getExecutorService(), action);
+        return invocationScope.submit(ExecutorTaskHandle.Role.ROOT, null, durableConfig.getExecutorService(), action);
     }
 
     /** Submits an operation handler and records its executor task separately from its logical result. */
     public CompletableFuture<Void> submitOperationTask(BaseDurableOperation operation, Runnable action) {
-        var kind = operation.getType() == OperationType.STEP
-                ? ExecutorTaskHandle.Kind.STEP
+        var role = operation.getType() == OperationType.STEP
+                ? ExecutorTaskHandle.Role.STEP
                 : switch (operation.getSubType()) {
-                    case MAP, PARALLEL -> ExecutorTaskHandle.Kind.COORDINATOR;
-                    default -> ExecutorTaskHandle.Kind.CHILD_CONTEXT;
+                    case MAP, PARALLEL -> ExecutorTaskHandle.Role.COORDINATOR;
+                    default -> ExecutorTaskHandle.Role.CHILD_CONTEXT;
                 };
-        return invocationScope.submit(kind, operation.getOperationId(), durableConfig.getExecutorService(), () -> {
+        return invocationScope.submit(role, operation.getOperationId(), durableConfig.getExecutorService(), () -> {
             action.run();
             return null;
         });

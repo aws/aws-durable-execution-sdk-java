@@ -23,7 +23,12 @@ import java.util.function.Supplier;
  */
 final class ExecutorTaskHandle<T> {
 
-    enum Kind {
+    /**
+     * Runtime role used for invocation-local cleanup, diagnostics, and executor routing. This is deliberately separate
+     * from a persisted durable operation type: the root has no operation, and map/parallel coordinators share the
+     * CONTEXT operation type with child user code.
+     */
+    enum Role {
         /** The top-level durable handler submitted by {@link DurableExecutor}. */
         ROOT,
 
@@ -51,7 +56,7 @@ final class ExecutorTaskHandle<T> {
     /** Scope-local sequence number; this is not a durable operation ID. */
     private final long id;
 
-    private final Kind kind;
+    private final Role role;
 
     /** Associated durable operation ID, or {@code null} for the root handler. */
     private final String operationId;
@@ -72,9 +77,9 @@ final class ExecutorTaskHandle<T> {
     private final AtomicBoolean cancellationRequested = new AtomicBoolean();
     private final AtomicBoolean interruptRequested = new AtomicBoolean();
 
-    ExecutorTaskHandle(long id, Kind kind, String operationId, Runnable onExit) {
+    ExecutorTaskHandle(long id, Role role, String operationId, Runnable onExit) {
         this.id = id;
-        this.kind = kind;
+        this.role = role;
         this.operationId = operationId;
         this.onExit = onExit;
     }
@@ -151,8 +156,8 @@ final class ExecutorTaskHandle<T> {
         return id;
     }
 
-    Kind kind() {
-        return kind;
+    Role role() {
+        return role;
     }
 
     String operationId() {
