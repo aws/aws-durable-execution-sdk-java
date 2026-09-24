@@ -225,16 +225,12 @@ class ExecutionManagerTest {
 
             @Override
             protected void replay(Operation existing) {}
-
-            CompletableFuture<BaseDurableOperation> completionLock() {
-                return completionFuture;
-            }
         }
 
         var operation = new TestOperation();
         var checkpointStarted = new CountDownLatch(1);
         CompletableFuture<Void> checkpoint;
-        synchronized (operation.completionLock()) {
+        synchronized (manager.completionLockFor(operation)) {
             checkpoint = CompletableFuture.runAsync(() -> {
                 checkpointStarted.countDown();
                 manager.onCheckpointComplete(List.of(stepOp("step", OperationStatus.SUCCEEDED)));
@@ -251,6 +247,101 @@ class ExecutionManagerTest {
         assertEquals(
                 OperationStatus.SUCCEEDED,
                 manager.getOperationAndUpdateReplayState("step").status());
+    }
+
+    @Test
+    void operationProcessCheckpointUpdateDelegatesThroughManagerLock() throws Exception {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        var durableContext = mock(DurableContextImpl.class);
+        when(durableContext.getExecutionManager()).thenReturn(manager);
+
+        class TestOperation extends BaseDurableOperation {
+            TestOperation() {
+                super(OperationIdentifier.of("step", "step", OperationSubType.STEP), durableContext, null);
+            }
+
+            @Override
+            protected void start() {}
+
+            @Override
+            protected void replay(Operation existing) {}
+        }
+
+        var operation = new TestOperation();
+        var publishCount = new AtomicInteger();
+        var checkpointStarted = new CountDownLatch(1);
+        CompletableFuture<Void> checkpoint;
+        // Hold the manager lock while invoking the operation-level shim from another thread. If the shim bypasses
+        // ExecutionManager.processCheckpointUpdate(...), the publish callback will run immediately and this test fails.
+        synchronized (manager.completionLockFor(operation)) {
+            checkpoint = CompletableFuture.runAsync(() -> {
+                checkpointStarted.countDown();
+                operation.processCheckpointUpdate(
+                        stepOp("step", OperationStatus.SUCCEEDED), publishCount::incrementAndGet);
+            });
+            assertTrue(checkpointStarted.await(5, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> checkpoint.get(500, TimeUnit.MILLISECONDS));
+            assertEquals(0, publishCount.get());
+        }
+
+        checkpoint.get(5, TimeUnit.SECONDS);
+        assertEquals(1, publishCount.get());
+        assertTrue(operation.getCompletionFuture().isDone());
+    }
+
+    @Test
+    void waitForOperationCompletionReactivatesCallerBeforeReturning() throws Exception {
+        var callerThread = "root";
+        var otherThread = "other";
+        var manager = new BlockingReactivationExecutionManager(
+                new DurableExecutionInput(
+                        EXECUTION_ARN,
+                        "test-token",
+                        CheckpointUpdatedExecutionState.builder()
+                                .operations(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)))
+                                .build()),
+                DurableConfig.builder()
+                        .withDurableExecutionClient(TestUtils.createMockClient())
+                        .build(),
+                callerThread);
+        var durableContext = mock(DurableContextImpl.class);
+        when(durableContext.getExecutionManager()).thenReturn(manager);
+
+        class TestOperation extends BaseDurableOperation {
+            TestOperation() {
+                super(OperationIdentifier.of("step", "step", OperationSubType.STEP), durableContext, null);
+            }
+
+            @Override
+            protected void start() {}
+
+            @Override
+            protected void replay(Operation existing) {}
+        }
+
+        var operation = new TestOperation();
+        manager.setCurrentThreadContext(new ThreadContext(callerThread, ThreadType.CONTEXT));
+        manager.registerActiveThread(callerThread);
+        manager.registerActiveThread(otherThread);
+        manager.blockCallerRegistration();
+
+        var waiter = CompletableFuture.runAsync(() -> {
+            manager.setCurrentThreadContext(new ThreadContext(callerThread, ThreadType.CONTEXT));
+            manager.waitForOperationCompletion(operation);
+        });
+
+        assertTrue(manager.awaitCallerDeregistration());
+        var checkpoint = CompletableFuture.runAsync(
+                () -> manager.onCheckpointComplete(List.of(stepOp("step", OperationStatus.SUCCEEDED))));
+        assertTrue(manager.awaitCallerRegistration());
+        assertThrows(TimeoutException.class, () -> waiter.get(500, TimeUnit.MILLISECONDS));
+
+        manager.allowCallerRegistration();
+
+        waiter.get(5, TimeUnit.SECONDS);
+        checkpoint.get(5, TimeUnit.SECONDS);
+        assertDoesNotThrow(() -> manager.deregisterActiveThread(otherThread));
+        assertThrows(SuspendExecutionException.class, () -> manager.deregisterActiveThread(callerThread));
     }
 
     @Test
@@ -314,5 +405,57 @@ class ExecutionManagerTest {
         var operation = registration.get(5, TimeUnit.SECONDS);
         operation.execute();
         assertTrue(operation.getCompletionFuture().isDone());
+    }
+
+    private static final class BlockingReactivationExecutionManager extends ExecutionManager {
+        private final String callerThread;
+        private final CountDownLatch callerDeregistered = new CountDownLatch(1);
+        private final CountDownLatch callerRegistrationStarted = new CountDownLatch(1);
+        private final CountDownLatch allowCallerRegistration = new CountDownLatch(1);
+        private volatile boolean blockCallerRegistration;
+
+        private BlockingReactivationExecutionManager(
+                DurableExecutionInput input, DurableConfig config, String callerThread) {
+            super(input, config, null);
+            this.callerThread = callerThread;
+        }
+
+        void blockCallerRegistration() {
+            blockCallerRegistration = true;
+        }
+
+        boolean awaitCallerDeregistration() throws InterruptedException {
+            return callerDeregistered.await(5, TimeUnit.SECONDS);
+        }
+
+        boolean awaitCallerRegistration() throws InterruptedException {
+            return callerRegistrationStarted.await(5, TimeUnit.SECONDS);
+        }
+
+        void allowCallerRegistration() {
+            allowCallerRegistration.countDown();
+        }
+
+        @Override
+        public void registerActiveThread(String threadId) {
+            if (blockCallerRegistration && callerThread.equals(threadId)) {
+                callerRegistrationStarted.countDown();
+                try {
+                    assertTrue(allowCallerRegistration.await(5, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            }
+            super.registerActiveThread(threadId);
+        }
+
+        @Override
+        public void deregisterActiveThread(String threadId) {
+            super.deregisterActiveThread(threadId);
+            if (callerThread.equals(threadId)) {
+                callerDeregistered.countDown();
+            }
+        }
     }
 }

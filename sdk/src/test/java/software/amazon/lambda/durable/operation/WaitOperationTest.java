@@ -4,8 +4,7 @@ package software.amazon.lambda.durable.operation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +33,7 @@ class WaitOperationTest {
         executionManager = mock(ExecutionManager.class);
         durableContext = mock(DurableContextImpl.class);
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
+        MockExecutionManagerSupport.completeOperationsOnManager(executionManager);
     }
 
     @Test

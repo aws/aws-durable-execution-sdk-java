@@ -25,11 +25,14 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.DurableFuture;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Central manager for durable execution coordination.
@@ -68,11 +71,24 @@ public class ExecutionManager implements SafeCloseable {
 
     // ===== Thread Coordination =====
     private final Map<String, BaseDurableOperation> registeredOperations = new ConcurrentHashMap<>();
+    private final Map<String, Object> operationCompletionLocks = new ConcurrentHashMap<>();
     private final Set<String> activeThreads = Collections.synchronizedSet(new HashSet<>());
     private static final ThreadLocal<ThreadContext> currentThreadContext = new ThreadLocal<>();
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
     // Guarded by activeThreads so starting a checkpoint request is atomic with the last-thread suspension decision.
     private int checkpointRequestsInFlight;
+
+    /**
+     * Per-wait state used to coordinate the caller thread with the future completion callback.
+     *
+     * <p>{@code completed} prevents the caller from deregistering after the future has already settled. {@code waiting}
+     * records that the caller did deregister, so completion should register it again. Both fields must always be read
+     * and written while synchronized on this instance.
+     */
+    private static final class CompletionWait {
+        private boolean completed;
+        private boolean waiting;
+    }
 
     // ===== Checkpoint Batching =====
     private final CheckpointManager checkpointManager;
@@ -189,7 +205,20 @@ public class ExecutionManager implements SafeCloseable {
 
     /** Registers an operation so it can receive checkpoint completion notifications. */
     public void registerOperation(BaseDurableOperation operation) {
+        registerOperation(operation, null);
+    }
+
+    /**
+     * Registers an operation so it can receive checkpoint completion notifications.
+     *
+     * @param operation operation to register
+     * @param completionLockParent parent operation whose completion lock should also serialize this operation, or null
+     */
+    public void registerOperation(BaseDurableOperation operation, BaseDurableOperation completionLockParent) {
         registeredOperations.put(operation.getOperationId(), operation);
+        var completionLock =
+                completionLockParent == null ? completionLockFor(operation) : completionLockFor(completionLockParent);
+        operationCompletionLocks.put(operation.getOperationId(), completionLock);
     }
 
     // ===== Checkpoint Completion Handler =====
@@ -208,7 +237,7 @@ public class ExecutionManager implements SafeCloseable {
                 if (registeredOperation == null) {
                     operationStorage.put(op.id(), op);
                 } else {
-                    registeredOperation.processCheckpointUpdate(op, () -> operationStorage.put(op.id(), op));
+                    processCheckpointUpdate(registeredOperation, op, () -> operationStorage.put(op.id(), op));
                 }
                 return registeredOperation;
             });
@@ -288,6 +317,161 @@ public class ExecutionManager implements SafeCloseable {
     /** Returns the current thread's ThreadContext (threadId and threadType), or null if not set. */
     public ThreadContext getCurrentThreadContext() {
         return currentThreadContext.get();
+    }
+
+    Object completionLockFor(BaseDurableOperation operation) {
+        return operationCompletionLocks.computeIfAbsent(operation.getOperationId(), ignored -> new Object());
+    }
+
+    /**
+     * Publishes a checkpoint update and notifies the operation under the same manager-owned lock used by operation
+     * waiters.
+     *
+     * @param operation durable operation receiving the checkpoint update
+     * @param checkpointedOperation the updated operation state
+     * @param publishUpdate publishes the operation update to execution state
+     */
+    public void processCheckpointUpdate(
+            BaseDurableOperation operation, Operation checkpointedOperation, Runnable publishUpdate) {
+        synchronized (completionLockFor(operation)) {
+            publishUpdate.run();
+            operation.onCheckpointComplete(checkpointedOperation);
+        }
+    }
+
+    /**
+     * Completes an operation future under the same lock used by waiters and checkpoint update delivery.
+     *
+     * @param operation operation to mark complete
+     */
+    public void completeOperation(BaseDurableOperation operation) {
+        synchronized (completionLockFor(operation)) {
+            operation.getCompletionFuture().complete(operation);
+        }
+    }
+
+    /**
+     * Waits for a single operation to settle, deregistering the current thread while the operation is still in progress
+     * so the execution can suspend.
+     *
+     * @param operation operation to wait on
+     */
+    public void waitForOperationCompletion(BaseDurableOperation operation) {
+        validateCurrentThreadCanWaitForDurableOperation(operation.getType(), operation.getName());
+
+        var threadContext = getCurrentThreadContext();
+        var completionFuture = operation.getCompletionFuture();
+        CompletableFuture<?> future = operation.getCompletionFuture();
+
+        // It's important that we synchronize access to the future. Otherwise, a race condition could happen if the
+        // completionFuture is completed by a user thread (a step or child context thread) when the execution here
+        // is between `isOperationCompleted` and `thenRun`.
+        // If this operation is a branch/iteration of a ConcurrencyOperation (map or parallel), the branches/iterations
+        // must be completed sequentially to avoid race conditions.
+        var completionLock = completionLockFor(operation);
+        synchronized (completionLock) {
+            if (!completionFuture.isDone()) {
+                // Add a completion stage to completionFuture so that when the completionFuture is completed,
+                // it will register the current Context thread synchronously to make sure it is always registered
+                // strictly before the execution thread (Step or child context) is deregistered.
+                // chain them together
+                future = completionFuture.thenRun(() -> registerActiveThread(threadContext.threadId()));
+
+                // Deregister the current thread to allow suspension
+                deregisterActiveThread(threadContext.threadId());
+            }
+        }
+
+        // Block until operation completes. No-op if the future is already completed.
+        try {
+            future.join();
+        } catch (Throwable throwable) {
+            ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
+        }
+    }
+
+    /**
+     * Waits for the first of the given operations to settle and returns it.
+     *
+     * <p>This is the multi-operation equivalent of {@code BaseDurableOperation.waitForOperationCompletion()}: it builds
+     * a combined future so this manager can suspend while waiting for the first operation to settle.
+     *
+     * @param operations operations to wait on
+     * @return the first durable future to settle
+     */
+    public DurableFuture<?> waitForFirstOperationCompletion(List<? extends BaseDurableOperation> operations) {
+        if (operations == null || operations.isEmpty()) {
+            throw new IllegalArgumentException("waitForFirstOperationCompletion requires at least one operation");
+        }
+
+        validateCurrentThreadCanWaitForDurableOperation(null, null);
+
+        var threadId = getCurrentThreadContext().threadId();
+        var wait = new CompletionWait();
+        var anyOfFuture = CompletableFuture.anyOf(operations.stream()
+                .map(BaseDurableOperation::getCompletionFuture)
+                .toArray(CompletableFuture[]::new));
+
+        // Attach the callback before the caller decides whether to deregister. This ensures the combined future cannot
+        // settle between "is it done?" and "deregister the caller thread" without updating the wait state below.
+        var reactivationFuture = anyOfFuture.whenComplete((ignored, failure) -> {
+            synchronized (wait) {
+                // Completion may happen before or after the caller deregisters.
+                //     - If the caller has not deregistered yet, completed=true tells it to stay active.
+                //     - If it has, waiting=true tells this callback to wake it.
+                wait.completed = true;
+                if (wait.waiting) {
+                    wait.waiting = false;
+                    if (failure == null) {
+                        registerActiveThread(threadId);
+                    }
+                }
+            }
+        });
+
+        synchronized (wait) {
+            if (!wait.completed) {
+                // The combined future is still pending, so the current thread can deregister and allow suspension.
+                // On success, the completion callback observes waiting=true and registers this thread again before the
+                // join below returns.
+                wait.waiting = true;
+                deregisterActiveThread(threadId);
+            }
+        }
+
+        Object firstCompletedOperation;
+        try {
+            firstCompletedOperation = reactivationFuture.join();
+        } catch (Throwable throwable) {
+            ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
+            return null;
+        }
+        if (firstCompletedOperation instanceof DurableFuture<?> future) {
+            return future;
+        }
+
+        var exception = new IllegalDurableOperationException("Expected first completion future to complete with a "
+                + DurableFuture.class.getSimpleName() + ", got: "
+                + (firstCompletedOperation == null
+                        ? "null"
+                        : firstCompletedOperation.getClass().getName()));
+        terminateExecution(exception);
+        throw exception;
+    }
+
+    /** Validates that the current thread can wait for a durable operation to complete. */
+    public void validateCurrentThreadCanWaitForDurableOperation(OperationType operationType, String operationName) {
+        var currentThreadType = getCurrentThreadContext().threadType();
+        if (currentThreadType != ThreadType.STEP) {
+            return;
+        }
+
+        var errorMessage = operationType == null
+                ? "Nested durable operation is not supported from within a " + currentThreadType + " execution."
+                : String.format(
+                        "Nested %s operation is not supported on %s from within a %s execution.",
+                        operationType, operationName, currentThreadType);
+        throw new IllegalStateException(errorMessage);
     }
 
     /**
