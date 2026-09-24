@@ -17,6 +17,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -63,6 +64,7 @@ public class ExecutionManager implements SafeCloseable {
     private final Context lambdaContext;
     private final AtomicReference<ExecutionMode> executionMode;
     private final DurableConfig durableConfig;
+    private final InvocationScope invocationScope;
     private final Set<String> updatedOperationIdsSinceLastInvocation;
     private final Set<String> initialOperationIds;
 
@@ -81,6 +83,7 @@ public class ExecutionManager implements SafeCloseable {
         durableConfig = config;
         this.durableExecutionArn = input.durableExecutionArn();
         this.lambdaContext = lambdaContext;
+        this.invocationScope = new InvocationScope(lambdaContext, durableExecutionArn);
 
         // Store the set of operation IDs updated since the last successful invocation
         this.updatedOperationIdsSinceLastInvocation =
@@ -189,7 +192,30 @@ public class ExecutionManager implements SafeCloseable {
 
     /** Registers an operation so it can receive checkpoint completion notifications. */
     public void registerOperation(BaseDurableOperation operation) {
-        registeredOperations.put(operation.getOperationId(), operation);
+        invocationScope.admitOperation(() -> registeredOperations.put(operation.getOperationId(), operation));
+    }
+
+    /** Submits the invocation's root handler and records its executor task separately from its logical result. */
+    <T> CompletableFuture<T> submitRootTask(Supplier<T> action) {
+        return invocationScope.submit(InvocationTask.Kind.ROOT, null, durableConfig.getExecutorService(), action);
+    }
+
+    /** Submits an operation handler and records its executor task separately from its logical result. */
+    public CompletableFuture<Void> submitOperationTask(BaseDurableOperation operation, Runnable action) {
+        var kind = operation.getType() == OperationType.STEP
+                ? InvocationTask.Kind.STEP
+                : switch (operation.getSubType()) {
+                    case MAP, PARALLEL -> InvocationTask.Kind.COORDINATOR;
+                    default -> InvocationTask.Kind.CHILD_CONTEXT;
+                };
+        return invocationScope.submit(kind, operation.getOperationId(), durableConfig.getExecutorService(), () -> {
+            action.run();
+            return null;
+        });
+    }
+
+    InvocationScope getInvocationScope() {
+        return invocationScope;
     }
 
     // ===== Checkpoint Completion Handler =====
@@ -380,7 +406,7 @@ public class ExecutionManager implements SafeCloseable {
     // This method will checkpoint the operation updates to the durable backend and return a future which completes
     // when the checkpoint completes.
     public CompletableFuture<Void> sendOperationUpdate(OperationUpdate update) {
-        return checkpointManager.checkpoint(update);
+        return invocationScope.admitCheckpoint(() -> checkpointManager.checkpoint(update));
     }
 
     // ===== Polling =====
@@ -391,7 +417,7 @@ public class ExecutionManager implements SafeCloseable {
     // wait while another thread is still running, and we therefore are not
     // re-invoked because we never suspended.
     public CompletableFuture<Operation> pollForOperationUpdates(String operationId) {
-        return checkpointManager.pollForUpdate(operationId);
+        return invocationScope.admitCheckpoint(() -> checkpointManager.pollForUpdate(operationId));
     }
 
     /**
@@ -402,16 +428,20 @@ public class ExecutionManager implements SafeCloseable {
      * @return a completable future that completes with the operation update
      */
     public CompletableFuture<Operation> pollForOperationUpdates(String operationId, Instant at) {
-        return checkpointManager.pollForUpdate(operationId, at);
+        return invocationScope.admitCheckpoint(() -> checkpointManager.pollForUpdate(operationId, at));
     }
 
     // ===== Utilities =====
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-        validateRunningThreads();
-
-        checkpointManager.shutdown();
+        invocationScope.beginDraining();
+        try {
+            validateRunningThreads();
+            checkpointManager.shutdown();
+        } finally {
+            invocationScope.close();
+        }
     }
 
     private void validateRunningThreads() {

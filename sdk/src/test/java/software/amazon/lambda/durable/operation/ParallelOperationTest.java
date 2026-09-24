@@ -80,6 +80,7 @@ class ParallelOperationTest {
                         .build());
         when(durableContext.createChildContext(anyString(), anyString(), eq(false)))
                 .thenReturn(childContext);
+        TestUtils.executeOperationTasks(executionManager, durableContext);
 
         // Capture registered operations so we can drive onCheckpointComplete callbacks.
         var registeredOps = new ConcurrentHashMap<String, BaseDurableOperation>();
