@@ -340,12 +340,12 @@ class ExecutionManagerTest {
             var tasks = manager.getInvocationScope().tasks();
             assertEquals(
                     List.of(
-                            ExecutorTaskHandle.Kind.ROOT,
-                            ExecutorTaskHandle.Kind.STEP,
-                            ExecutorTaskHandle.Kind.STEP,
-                            ExecutorTaskHandle.Kind.CHILD_CONTEXT,
-                            ExecutorTaskHandle.Kind.COORDINATOR),
-                    tasks.stream().map(ExecutorTaskHandle::kind).toList());
+                            ExecutorTaskHandle.Role.ROOT,
+                            ExecutorTaskHandle.Role.STEP,
+                            ExecutorTaskHandle.Role.STEP,
+                            ExecutorTaskHandle.Role.CHILD_CONTEXT,
+                            ExecutorTaskHandle.Role.COORDINATOR),
+                    tasks.stream().map(ExecutorTaskHandle::role).toList());
             assertTrue(tasks.stream().allMatch(task -> task.state() == ExecutorTaskHandle.State.RUNNING));
 
             release.countDown();
