@@ -54,6 +54,14 @@ public final class LifecycleHandler implements RequestStreamHandler {
                     .withExecutorService(Executors.newFixedThreadPool(2))
                     .build();
         }
+        if ("nested".equals(System.getenv("LMI_EXECUTOR"))) {
+            // Leave capacity for both roots to start their child contexts. The two child handlers then occupy the
+            // remaining workers while synchronously waiting for nested map/parallel work, independently exercising
+            // nested orchestration starvation rather than failing at the roots' first ordinary steps.
+            return DurableConfig.builder()
+                    .withExecutorService(Executors.newFixedThreadPool(4))
+                    .build();
+        }
         return DurableConfig.defaultConfig();
     }
 

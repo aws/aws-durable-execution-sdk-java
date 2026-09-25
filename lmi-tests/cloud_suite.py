@@ -15,7 +15,7 @@ import uuid
 import xml.etree.ElementTree as ET
 
 from cloud_support import (Cloud, CollectionError, PreconditionError, assert_fixed,
-                           assert_lifecycle, assert_overlap, assert_replay, aws,
+                           assert_lifecycle, assert_nested_reached, assert_overlap, assert_replay, aws,
                            platform_timeout, require, save, selected)
 
 ROOT = Path(__file__).resolve().parent
@@ -24,7 +24,9 @@ MANIFEST = ARTIFACTS / "manifest.json"
 OWNER = "java-sdk-lmi-e2e"
 DEFAULT_STACK = "java-lmi-e2e"
 FIXTURES = {"default1": (1, "default"), "default2": (2, "default"),
-            "default8": (8, "default"), "fixed2": (2, "fixed"), "nested2": (2, "fixed")}
+            "default8": (8, "default"), "fixed2": (2, "fixed"), "nested2": (2, "nested")}
+PEER_LOG_OBSERVATION_SECONDS = 20
+PEER_PLACEMENT_SECONDS = 60
 
 
 def template(manifest):
@@ -256,12 +258,21 @@ def wait_returns(cloud, fixture, items, seconds=30):
     cloud.poll(fixture, lambda events: markers <= {e["marker"] for e in selected(events, "WRAPPER_RETURN")}, seconds, items=items)
 
 
+def wait_for_wrapper_status(cloud, fixture, item, status, seconds=30):
+    return cloud.poll(
+        fixture,
+        lambda events: any(e.get("status") == status
+                           for e in selected(events, "WRAPPER_RETURN", item["marker"])),
+        seconds=seconds,
+        items=[item])
+
+
 def healthy_peers(cloud, fixture, target, count, prefix):
     """Bounded placement only; never retry an established lifecycle assertion."""
     gate_name = prefix + "-gate"
     gate = cloud.gate(gate_name)
     admitted, attempts = [], []
-    deadline = time.monotonic() + 25
+    deadline = time.monotonic() + PEER_PLACEMENT_SECONDS
     for attempt in range(4):
         if len(admitted) >= count or time.monotonic() >= deadline:
             break
@@ -269,9 +280,18 @@ def healthy_peers(cloud, fixture, target, count, prefix):
                  for i in range(count - len(admitted))]
         attempts.extend(batch)
         markers = {i["marker"] for i in batch}
+        observation_seconds = min(
+            PEER_LOG_OBSERVATION_SECONDS, max(1, int(deadline - time.monotonic())))
         cloud.poll(fixture, lambda events: markers <= {e["marker"] for e in events
-                   if e["kind"] in {"HEARTBEAT", "PLACEMENT_MISS"}}, seconds=8, category=PreconditionError, items=batch)
-        admitted += [i for i in batch if selected(cloud.events_for(i), "HEARTBEAT")]
+                   if e["kind"] in {"HEARTBEAT", "PLACEMENT_MISS"}},
+                   seconds=observation_seconds, category=PreconditionError, items=batch)
+        for item in batch:
+            heartbeats = selected(cloud.events_for(item), "HEARTBEAT")
+            if heartbeats:
+                admitted_event = min(heartbeats, key=lambda event: event["epochMillis"])
+                item["requestId"] = admitted_event["requestId"]
+                item["environment"] = admitted_event["environment"]
+                admitted.append(item)
     if len(admitted) != count:
         cloud.gate(gate_name, release=True)
         raise PreconditionError(f"Could not place {count} healthy peers in original environment {target}")
@@ -287,7 +307,10 @@ def replay_case(cloud, fixture, scenario):
         gate = cloud.gate(gate_name)
         anchor = cloud.launch(fixture, "hold", prefix + "-healthy", gate=gate)
         evidence = cloud.poll(fixture, lambda events: selected(events, "HEARTBEAT", anchor["marker"]), category=PreconditionError, items=[anchor])
-        target = evidence[0]["environment"]
+        admitted = min(evidence, key=lambda event: event["epochMillis"])
+        target = admitted["environment"]
+        anchor["requestId"] = admitted["requestId"]
+        anchor["environment"] = admitted["environment"]
     else:
         target = None
     victim = None
@@ -300,13 +323,14 @@ def replay_case(cloud, fixture, scenario):
     if victim is None:
         raise PreconditionError("No replay victim admitted to the anchor JVM")
     cloud.finish(victim)
-    cloud.poll(fixture, lambda events: any(e.get("status") == "SUCCEEDED" for e in selected(events, "WRAPPER_RETURN", victim["marker"])))
+    wait_for_wrapper_status(cloud, fixture, victim, "SUCCEEDED")
     if anchor:
         cloud.gate(gate_name, release=True)
         cloud.finish(anchor)
         wait_returns(cloud, fixture, [anchor])
         # Root/task interval overlap is required, including the first victim invocation.
         assert_overlap(list(cloud.events.values()), {anchor["marker"], victim["marker"]}, 2, target)
+    wait_for_runtime_quiescence(cloud, fixture, victim["marker"])
     history = cloud.history(victim)
     events = cloud.events_for(victim)
     assert_replay(events, history, victim["marker"])
@@ -314,8 +338,10 @@ def replay_case(cloud, fixture, scenario):
         if anchor:
             cleanup = selected(events, "CLEANUP_ENTER")[0]
             exits = selected(events, "CLEANUP_EXIT")
+            anchor_events = request_trace(
+                cloud.events_for(anchor), anchor["marker"], anchor["requestId"], anchor["environment"])
             require(any(e["environment"] == target and cleanup["nanos"] <= e["nanos"] <= exits[0]["nanos"]
-                        for e in selected(cloud.events_for(anchor), "HEARTBEAT")),
+                        for e in selected(anchor_events, "HEARTBEAT")),
                     "Healthy invocation did not progress during root cleanup")
         assert_lifecycle(events)
 
@@ -335,6 +361,7 @@ def overlap_case(cloud, fixture, target=None):
         cloud.finish(item)
         cloud.history(item)
     wait_returns(cloud, fixture, items)
+    wait_for_runtime_quiescence(cloud, fixture, {item["marker"] for item in items})
     for item in items:
         assert_lifecycle(cloud.events_for(item))
 
@@ -350,6 +377,10 @@ def fixed_case(cloud, fixture, scenario):
             for item in items:
                 cloud.finish(item)
                 cloud.history(item)
+            wait_for_runtime_quiescence(cloud, fixture, {item["marker"] for item in items})
+            events = [e for item in items for e in cloud.events_for(item)]
+            if scenario == "nested":
+                assert_nested_reached(events, {item["marker"] for item in items})
             assert_fixed(events, {i["marker"] for i in items})
             assert_lifecycle(events)
             return
@@ -377,25 +408,29 @@ def wait_until_wall_time(cloud, fixture, wall_time, seconds, items):
     return cloud.poll(fixture, lambda events: time.time() >= wall_time, seconds=seconds, items=items)
 
 
-def runtime_requests_drained(events, marker):
-    entered = {(e["environment"], e["requestId"])
-               for e in selected(events, "WRAPPER_ENTER", marker)}
-    returned = {(e["environment"], e["requestId"])
-                for e in selected(events, "WRAPPER_RETURN", marker)}
+def runtime_requests_drained(events, markers):
+    if isinstance(markers, str):
+        markers = {markers}
+    entered = {(e["marker"], e["environment"], e["requestId"])
+               for e in selected(events, "WRAPPER_ENTER") if e["marker"] in markers}
+    returned = {(e["marker"], e["environment"], e["requestId"])
+                for e in selected(events, "WRAPPER_RETURN") if e["marker"] in markers}
     return bool(entered) and entered <= returned
 
 
-def wait_for_runtime_quiescence(cloud, fixture, marker, seconds=30, quiet_seconds=10):
+def wait_for_runtime_quiescence(cloud, fixture, markers, seconds=30, quiet_seconds=10):
     """Require every visible request to return and no request set changes during a quiet period."""
+    if isinstance(markers, str):
+        markers = {markers}
     deadline = time.monotonic() + seconds
     previous, quiet_since = None, None
     while True:
         events = cloud.refresh(fixture)
-        current = {(e["environment"], e["requestId"])
-                   for e in events if e["marker"] == marker
+        current = {(e["marker"], e["environment"], e["requestId"])
+                   for e in events if e["marker"] in markers
                    and e["kind"] in {"WRAPPER_ENTER", "WRAPPER_RETURN"}}
         now = time.monotonic()
-        if runtime_requests_drained(events, marker):
+        if runtime_requests_drained(events, markers):
             if current != previous or quiet_since is None:
                 quiet_since = now
             elif quiet_since is not None and now - quiet_since >= quiet_seconds:
@@ -404,7 +439,7 @@ def wait_for_runtime_quiescence(cloud, fixture, marker, seconds=30, quiet_second
             quiet_since = None
         previous = current
         if now >= deadline:
-            raise AssertionError(f"Runtime requests for {marker} did not reach stable quiescence")
+            raise AssertionError(f"Runtime requests for {sorted(markers)} did not reach stable quiescence")
         time.sleep(1)
 
 
@@ -413,34 +448,38 @@ def server_timeout_logs(cloud, request_id):
             if platform_timeout(event["message"], request_id)]
 
 
-def timeout_evidence_ready(cloud, events, victim_marker, request_id, environment, peers):
+def timeout_evidence_ready(cloud, events, victim_marker, request_id, environment, peers, deadline):
     trace = request_trace(events, victim_marker, request_id, environment)
     returned = selected(trace, "WRAPPER_RETURN")
-    peer_returns = all(selected(events, "WRAPPER_RETURN", peer["marker"]) for peer in peers)
+    peer_evidence = []
+    for peer in peers:
+        peer_trace = request_trace(
+            events, peer["marker"], peer["requestId"], peer["environment"])
+        peer_evidence.append(
+            bool(selected(peer_trace, "WRAPPER_RETURN"))
+            and any(event["nanos"] >= deadline for event in selected(peer_trace, "HEARTBEAT")))
     interrupted = selected(trace, "INTERRUPTED") + selected(trace, "IGNORED_INTERRUPT")
     cancellation = returned and returned[0]["status"] == "THREW" and interrupted
-    return bool(returned) and peer_returns and bool(server_timeout_logs(cloud, request_id) or cancellation)
+    return bool(returned) and all(peer_evidence) and bool(server_timeout_logs(cloud, request_id) or cancellation)
 
 
-def cleanup_timeout_case(cloud, fixture, victim, timeout, invocation_start):
-    """Release and observe every request created by a timeout case before the next case starts."""
+def cleanup_case(cloud, fixture, invocation_start, seconds):
+    """Release and terminate every request created by one case before the next case starts."""
     failures = []
     try:
         cloud.release_all()
     except Exception as failure:
         failures.append(failure)
     try:
-        cloud.stop(victim, seconds=timeout + 30)
+        items = cloud.invocations[invocation_start:]
+        cloud.stop_all(items, seconds=seconds)
     except Exception as failure:
         failures.append(failure)
-    others = [item for item in cloud.invocations[invocation_start:] if item is not victim]
-    try:
-        cloud.stop_all(others, seconds=timeout + 30)
-    except Exception as failure:
-        failures.append(failure)
-    if selected(cloud.events_for(victim), "WRAPPER_ENTER"):
+    markers = {item["marker"] for item in cloud.invocations[invocation_start:]
+               if selected(cloud.events_for(item), "WRAPPER_ENTER")}
+    if markers:
         try:
-            wait_for_runtime_quiescence(cloud, fixture, victim["marker"])
+            wait_for_runtime_quiescence(cloud, fixture, markers)
         except Exception as failure:
             failures.append(failure)
     if failures:
@@ -453,10 +492,8 @@ def timeout_case(cloud, fixture, stubborn=False):
     timeout = cloud.manifest["invocationTimeout"]
     scenario = "stubborn" if stubborn else "timeout"
     victim = cloud.launch(fixture, scenario, prefix + "-victim", hold_ms=(timeout + 20) * 1000)
-    try:
-        target = assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim)
-    finally:
-        cleanup_timeout_case(cloud, fixture, victim, timeout, invocation_start)
+    target = assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim)
+    cleanup_case(cloud, fixture, invocation_start, timeout + 30)
     # All lanes, not just one replacement invocation, must be available again.
     overlap_case(cloud, fixture, target=target)
 
@@ -495,7 +532,7 @@ def assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim):
     cloud.poll(
         fixture,
         lambda events: timeout_evidence_ready(
-            cloud, events, victim["marker"], request_id, target, peers),
+            cloud, events, victim["marker"], request_id, target, peers, deadline),
         seconds=timeout + 30,
         items=[victim, *peers, *probes])
     cloud.finish(victim, expected=None)
@@ -528,9 +565,11 @@ def assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim):
           "Neither server-reported invocation timeout nor explicit SDK deadline cancellation observed")
     check(bool(recovered), "Affected worker slot was not recovered in the original JVM while healthy slots stayed occupied")
     for peer in peers:
-        heartbeats = selected(cloud.events_for(peer), "HEARTBEAT")
+        peer_events = request_trace(
+            cloud.events_for(peer), peer["marker"], peer["requestId"], peer["environment"])
+        heartbeats = selected(peer_events, "HEARTBEAT")
         check(any(e["nanos"] >= deadline for e in heartbeats), "Healthy invocation stopped progressing at victim deadline")
-        assert_lifecycle(cloud.events_for(peer))
+        assert_lifecycle(peer_events)
     if stubborn:
         check(bool(selected(trace, "IGNORED_INTERRUPT")), "Cancellation was not attempted for the non-cooperative child")
         check(bool(selected(trace, "LATE_REJECTED")) and not selected(trace, "LATE_ACCEPTED"), "Residual child could issue later SDK work")
@@ -559,6 +598,7 @@ def inflight_case(cloud, fixture, scenario):
         raise PreconditionError("In-flight cleanup victim placed in another environment")
     cloud.finish(victim, expected="FAILED" if scenario == "failure-inflight" else "SUCCEEDED")
     cloud.history(victim)
+    wait_for_runtime_quiescence(cloud, fixture, victim["marker"])
     assert_overlap(list(cloud.events.values()), {anchor["marker"], victim["marker"]}, 2, target)
     assert_lifecycle(cloud.events_for(victim))
 
@@ -573,6 +613,9 @@ def warm_case(cloud, fixture):
             if selected(cloud.events_for(item), "PLACEMENT_MISS"):
                 raise PreconditionError("Warm-environment fixture replaced; cannot claim no accumulation")
             cloud.finish(item, expected="FAILED" if scenario == "failure" else "SUCCEEDED")
+            if scenario == "replay":
+                wait_for_wrapper_status(cloud, fixture, item, "SUCCEEDED")
+            wait_for_runtime_quiescence(cloud, fixture, item["marker"])
             trace = cloud.events_for(item)
             if target is None:
                 target = trace[0]["environment"]
@@ -606,33 +649,59 @@ def cases_for_fixture(cloud, fixture):
     return cases
 
 
+def execute_case(cloud, fixture, case):
+    """Run one assertion and return its primary and isolation-cleanup failures separately."""
+    invocation_start = len(cloud.invocations)
+    primary_failure = None
+    try:
+        case()
+    except Exception as failure:
+        primary_failure = failure
+    cleanup_failure = None
+    try:
+        cleanup_case(cloud, fixture, invocation_start, cloud.manifest["invocationTimeout"] + 30)
+    except Exception as failure:
+        cleanup_failure = failure
+    return primary_failure, cleanup_failure
+
+
 def run_tests():
     manifest = json.loads(MANIFEST.read_text())
     if set(manifest["functions"]) != set(FIXTURES):
         raise PreconditionError("All five functions must be deployed before running the cloud suite")
     cloud = Cloud(manifest, ARTIFACTS)
     suite = ET.Element("testsuite", name="LMI cloud lifecycle")
-    cases = [case for fixture in FIXTURES for case in cases_for_fixture(cloud, fixture)]
+    cases = [(fixture, name, case) for fixture in FIXTURES
+             for name, case in cases_for_fixture(cloud, fixture)]
     try:
-        for name, case in cases:
+        for fixture, name, case in cases:
             started = time.monotonic()
             node = ET.SubElement(suite, "testcase", classname="LmiCloudLifecycle", name=name)
-            try:
-                case()
+            primary_failure, cleanup_failure = execute_case(cloud, fixture, case)
+            if primary_failure is not None:
+                kind = "failure" if isinstance(primary_failure, AssertionError) else "error"
+                ET.SubElement(node, kind, type=type(primary_failure).__name__,
+                              message=str(primary_failure)).text = "".join(traceback.format_exception(
+                                  type(primary_failure), primary_failure, primary_failure.__traceback__))
+                print(kind.upper(), name, str(primary_failure), flush=True)
+            if cleanup_failure is not None:
+                ET.SubElement(node, "error", type=type(cleanup_failure).__name__,
+                              message=str(cleanup_failure)).text = "".join(traceback.format_exception(
+                                  type(cleanup_failure), cleanup_failure, cleanup_failure.__traceback__))
+                print("ERROR", name, "isolation cleanup:", str(cleanup_failure), flush=True)
+            if primary_failure is None and cleanup_failure is None:
                 print("PASS", name, flush=True)
+            refresh_failure = None
+            try:
+                for current_fixture in manifest["functions"]:
+                    cloud.refresh(current_fixture)
             except Exception as error:
-                kind = "failure" if isinstance(error, AssertionError) else "error"
-                ET.SubElement(node, kind, type=type(error).__name__, message=str(error)).text = traceback.format_exc()
-                print(kind.upper(), name, str(error), flush=True)
-            finally:
-                try:
-                    cloud.release_all()
-                    for fixture in manifest["functions"]:
-                        cloud.refresh(fixture)
-                except Exception as error:
-                    ET.SubElement(node, "error", type="CollectionError", message=str(error))
-                node.set("time", str(round(time.monotonic() - started, 3)))
-                write_junit(suite)
+                refresh_failure = error
+                ET.SubElement(node, "error", type="CollectionError", message=str(error))
+            node.set("time", str(round(time.monotonic() - started, 3)))
+            write_junit(suite)
+            if cleanup_failure is not None or refresh_failure is not None:
+                break
     finally:
         cloud.close()
         write_junit(suite)

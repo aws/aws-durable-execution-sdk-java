@@ -9,11 +9,13 @@ from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloud_support import (Cloud, CollectionError, PreconditionError, assert_fixed, assert_lifecycle,
-                           assert_overlap, assert_replay, diagnostic, platform_timeout, scrub)
-from cloud_suite import (FIXTURES, cases_for_fixture, cleanup_timeout_case, request_trace,
-                         residual_outcome_observed, runtime_requests_drained, timeout_case,
-                         timeout_evidence_ready, verify_function_scaling, run_tests, template,
-                         wait_for_runtime_quiescence, wait_until_wall_time)
+                           assert_nested_reached, assert_overlap, assert_replay, diagnostic,
+                           platform_timeout, scrub)
+from cloud_suite import (FIXTURES, PEER_LOG_OBSERVATION_SECONDS, cases_for_fixture, cleanup_case,
+                         execute_case, request_trace, residual_outcome_observed,
+                         runtime_requests_drained, timeout_evidence_ready, verify_function_scaling,
+                         run_tests, template, wait_for_runtime_quiescence, wait_for_wrapper_status,
+                         wait_until_wall_time, warm_case)
 from unittest.mock import Mock, patch
 
 
@@ -78,6 +80,14 @@ class EvidenceTest(unittest.TestCase):
             assert_lifecycle(events)
         assert_lifecycle([event("ROOT_EXIT", 1), event("WRAPPER_RETURN", 2, status="THREW")])
 
+    def test_lifecycle_rejects_an_entered_request_hidden_by_a_later_retry(self):
+        events = [event("WRAPPER_ENTER", 1, "lost", marker="victim"),
+                  event("WRAPPER_ENTER", 2, "retry", marker="victim"),
+                  event("ROOT_EXIT", 3, "retry", marker="victim"),
+                  event("WRAPPER_RETURN", 4, "retry", marker="victim", status="THREW")]
+        with self.assertRaisesRegex(AssertionError, "entered without wrapper return"):
+            assert_lifecycle(events)
+
     def test_escape_cannot_make_deadlock_look_successful(self):
         events = [event("BARRIER_ENTER", 1), event("BARRIER_ENTER", 2, "b"),
                   event("BARRIER_PASSED", 3), event("BARRIER_PASSED", 4, "b"),
@@ -90,6 +100,13 @@ class EvidenceTest(unittest.TestCase):
                   event("BARRIER_PASSED", 3), event("BARRIER_PASSED", 4, "b"),
                   event("PROGRESS", 5), event("PROGRESS", 6, "b")]
         assert_fixed(events, {"a", "b"})
+
+    def test_nested_contention_must_precede_the_escape(self):
+        events = [event("TASK_ENTER", 1, name="child"),
+                  event("TASK_ENTER", 2, "b", name="child"), event("ESCAPE", 3)]
+        assert_nested_reached(events, {"a", "b"})
+        with self.assertRaisesRegex(AssertionError, "before nested contention"):
+            assert_nested_reached([event("ESCAPE", 1), *events[:2]], {"a", "b"})
 
     def test_replay_rejects_second_execution_of_checkpointed_body(self):
         events, history = self.replay_evidence()
@@ -166,6 +183,11 @@ class EvidenceTest(unittest.TestCase):
         self.assertNotIn("AWS::Lambda::CapacityProvider", types)
         self.assertIn(":$LATEST.PUBLISHED", json.dumps(spec["Outputs"]))
         self.assertEqual({1, 2, 8}, concurrencies)
+        fixed_executor = spec["Resources"]["fixed2Function"]["Properties"]["Environment"]["Variables"]
+        nested_executor = spec["Resources"]["nested2Function"]["Properties"]["Environment"]["Variables"]
+        self.assertEqual("fixed", fixed_executor["LMI_EXECUTOR"])
+        self.assertEqual("nested", nested_executor["LMI_EXECUTOR"])
+        self.assertGreater(PEER_LOG_OBSERVATION_SECONDS, 9)
 
     def test_full_suite_preserves_all_cases_on_their_own_fixture(self):
         cloud = Mock()
@@ -342,48 +364,100 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual(6, cloud.refresh.call_count)
 
     def test_timeout_readiness_waits_for_peer_and_platform_logs(self):
-        peers = [{"marker": "peer"}]
+        peers = [{"marker": "peer", "requestId": "peer-request", "environment": "jvm"}]
         events = [event("WRAPPER_RETURN", 1, "request", marker="victim", status="SUCCEEDED")]
         cloud = Mock()
         cloud.raw_logs = {}
-        self.assertFalse(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers))
-        events.append(event("WRAPPER_RETURN", 2, "peer", marker="peer", status="SUCCEEDED"))
-        self.assertFalse(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers))
+        self.assertFalse(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers, 0))
+        events.append(event("HEARTBEAT", 2, "peer-request", marker="peer"))
+        events.append(event("WRAPPER_RETURN", 2, "peer-request", marker="peer", status="SUCCEEDED"))
+        self.assertFalse(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers, 0))
         cloud.raw_logs = {"timeout": {"message": json.dumps(
             {"type": "platform.runtimeDone", "record": {"requestId": "request", "status": "timeout"}})}}
-        self.assertTrue(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers))
+        self.assertTrue(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers, 0))
 
     def test_explicit_cancellation_can_satisfy_timeout_readiness(self):
-        peers = [{"marker": "peer"}]
+        peers = [{"marker": "peer", "requestId": "peer-request", "environment": "jvm"}]
         events = [event("INTERRUPTED", 1, "request", marker="victim"),
                   event("WRAPPER_RETURN", 2, "request", marker="victim", status="THREW"),
-                  event("WRAPPER_RETURN", 3, "peer", marker="peer", status="SUCCEEDED")]
+                  event("HEARTBEAT", 2, "peer-request", marker="peer"),
+                  event("WRAPPER_RETURN", 3, "peer-request", marker="peer", status="SUCCEEDED")]
         cloud = Mock()
         cloud.raw_logs = {}
-        self.assertTrue(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers))
+        self.assertTrue(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers, 0))
 
-    @patch("cloud_suite.overlap_case")
-    @patch("cloud_suite.assert_timeout_case", side_effect=AssertionError("regression"))
-    def test_timeout_case_stops_victim_after_an_assertion_failure(self, assertion, overlap):
+    def test_timeout_readiness_rejects_another_peer_retry(self):
+        peers = [{"marker": "peer", "requestId": "admitted", "environment": "jvm"}]
+        events = [event("INTERRUPTED", 1, "victim", marker="victim"),
+                  event("WRAPPER_RETURN", 2, "victim", marker="victim", status="THREW"),
+                  event("WRAPPER_RETURN", 3, "retry", "other", marker="peer", status="SUCCEEDED")]
         cloud = Mock()
-        cloud.manifest = {"invocationTimeout": 60}
-        cloud.invocations = []
-        victim = {"marker": "victim"}
-        cloud.launch.return_value = victim
-        cloud.events_for.return_value = []
-        with self.assertRaisesRegex(AssertionError, "regression"):
-            timeout_case(cloud, "default2")
-        cloud.release_all.assert_called_once()
-        cloud.stop.assert_called_once_with(victim, seconds=90)
-        overlap.assert_not_called()
+        cloud.raw_logs = {}
+        self.assertFalse(timeout_evidence_ready(cloud, events, "victim", "victim", "jvm", peers, 0))
 
-    def test_timeout_cleanup_drains_every_driver_request_from_the_case(self):
+    def test_case_preserves_primary_failure_when_cleanup_also_fails(self):
+        cloud = Mock()
+        cloud.invocations = []
+        cloud.manifest = {"invocationTimeout": 60}
+        def fail_case():
+            raise AssertionError("regression")
+        with patch("cloud_suite.cleanup_case", side_effect=CollectionError("cleanup")):
+            primary, cleanup = execute_case(cloud, "default2", fail_case)
+        self.assertIsInstance(primary, AssertionError)
+        self.assertEqual("regression", str(primary))
+        self.assertIsInstance(cleanup, CollectionError)
+
+    @patch("cloud_suite.write_junit")
+    @patch("cloud_suite.execute_case",
+           return_value=(AssertionError("regression"), CollectionError("cleanup")))
+    @patch("cloud_suite.cases_for_fixture")
+    @patch("cloud_suite.Cloud")
+    def test_cleanup_failure_aborts_later_cases(self, cloud_type, fixture_cases, execute, write):
+        cloud = cloud_type.return_value
+        fixture_cases.side_effect = lambda instance, fixture: [(fixture + "-case", Mock())]
+        with TemporaryDirectory() as directory:
+            manifest = Path(directory) / "manifest.json"
+            manifest.write_text(json.dumps({"functions": {fixture: {} for fixture in FIXTURES}}))
+            with patch("cloud_suite.MANIFEST", manifest), self.assertRaisesRegex(AssertionError, "cases failed"):
+                run_tests()
+        self.assertEqual(1, execute.call_count)
+        suite = write.call_args.args[0]
+        self.assertEqual(1, len(suite.findall(".//failure")))
+        self.assertEqual(1, len(suite.findall(".//error")))
+        cloud.close.assert_called_once()
+
+    def test_case_cleanup_drains_every_driver_request(self):
         cloud = Mock()
         victim, peer, probe = ({"marker": name} for name in ("victim", "peer", "probe"))
         cloud.invocations = [{"marker": "older"}, victim, peer, probe]
         cloud.events_for.return_value = []
-        cleanup_timeout_case(cloud, "default2", victim, 60, 1)
-        cloud.stop_all.assert_called_once_with([peer, probe], seconds=90)
+        cleanup_case(cloud, "default2", 1, 90)
+        cloud.release_all.assert_called_once()
+        cloud.stop_all.assert_called_once_with([victim, peer, probe], seconds=90)
+
+    @patch("cloud_suite.wait_for_runtime_quiescence")
+    @patch("cloud_suite.assert_lifecycle")
+    @patch("cloud_suite.assert_replay")
+    @patch("cloud_suite.wait_for_wrapper_status")
+    def test_warm_replay_refreshes_final_wrapper_log(self, wait_status, replay, lifecycle, quiescence):
+        cloud = Mock()
+        cloud.launch.side_effect = lambda fixture, scenario, marker, target=None: {
+            "marker": marker, "scenario": scenario}
+        cloud.events_for.side_effect = lambda item: [{
+            "kind": "SNAPSHOT", "marker": item["marker"], "environment": "jvm",
+            "liveTasks": 0, "liveRoots": 0, "queued": 0, "threads": 10}]
+        warm_case(cloud, "default2")
+        replay_items = [call.args[2] for call in wait_status.call_args_list]
+        self.assertEqual(3, len(replay_items))
+        self.assertTrue(all(item["scenario"] == "replay" for item in replay_items))
+
+    def test_wrapper_status_wait_refreshes_until_expected_return(self):
+        cloud = Mock()
+        item = {"marker": "replay"}
+        wait_for_wrapper_status(cloud, "default2", item, "SUCCEEDED")
+        predicate = cloud.poll.call_args.args[1]
+        self.assertFalse(predicate([event("WRAPPER_RETURN", 1, marker="replay", status="PENDING")]))
+        self.assertTrue(predicate([event("WRAPPER_RETURN", 2, marker="replay", status="SUCCEEDED")]))
 
     @patch("cloud_suite.time.time", return_value=10)
     def test_wall_clock_wait_observes_probe_failures(self, now):
