@@ -5,30 +5,45 @@ on:
     branches: [main]
   workflow_dispatch:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened]
     paths:
       - 'lmi-tests/**'
-      - 'sdk/src/test/java/software/amazon/lambda/durable/execution/LmiLifecycleRegressionTest.java'
+      - 'sdk/**'
+      - 'pom.xml'
       - '.github/workflows/lmi-e2e-tests.yml'
 
 permissions:
   contents: read
-  id-token: write
-
-# Persistent functions are shared; serialize deployment and testing across all runs.
-concurrency:
-  group: java-lmi-e2e
-  cancel-in-progress: false
 
 jobs:
+  local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: corretto
+          java-version: '25'
+          cache: maven
+      - name: Build fixtures and validate evidence assertions
+        run: |
+          mvn -B -q -pl lmi-tests -am package
+          mvn -B -q -pl lmi-tests -am spotless:check
+          python3 -m unittest discover -s lmi-tests/tests -v
+
   cloud:
-    if: >-
-      (github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       github.actor != 'dependabot[bot]' &&
-       contains(github.event.pull_request.labels.*.name, 'run-lmi-e2e')))
+    if: github.event_name != 'pull_request'
+    needs: local
     runs-on: ubuntu-latest
     timeout-minutes: 85
+    permissions:
+      contents: read
+      id-token: write
+    # Persistent functions are shared; serialize only deployment and cloud testing.
+    concurrency:
+      group: java-lmi-e2e
+      cancel-in-progress: false
     env:
       LMI_STACK_NAME: java-lmi-e2e
       CAPACITY_PROVIDER_ARN: ${{ secrets.CAPACITY_PROVIDER_ARN }}
@@ -54,12 +69,9 @@ jobs:
           distribution: corretto
           java-version: '25'
           cache: maven
-      - name: Build commit under test and validate evidence assertions
+      - name: Build commit under test
         timeout-minutes: 10
-        run: |
-          mvn -B -q -pl lmi-tests -am package
-          mvn -B -q -pl lmi-tests -am spotless:check
-          python3 -m unittest discover -s lmi-tests/tests -v
+        run: mvn -B -q -pl lmi-tests -am package -DskipTests
       - name: Create or update persistent LMI functions
         timeout-minutes: 35
         run: python3 lmi-tests/cloud_suite.py deploy --stack-name "$LMI_STACK_NAME" --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"

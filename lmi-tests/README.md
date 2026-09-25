@@ -12,8 +12,11 @@ or accept a retry that happens to pass after a lifecycle violation.
   1, 2, or 8. Java 25 / arm64 is the initial matrix. Java 17 is not supported by
   LMI. Deployment and readback are the region/architecture capability check:
   unsupported combinations fail setup; there is no ordinary-Lambda fallback.
-* One CI job builds once, deploys all five fixture functions, runs all 13 cases,
-  then collects evidence. A persistent CloudFormation stack owns all five
+* Pull requests run a local CI job that builds the fixtures and validates the
+  evidence assertions without cloud credentials. On every `main` push and manual
+  dispatch, a separate serialized cloud job builds the commit, deploys all five
+  fixture functions, runs all 13 cases, then collects evidence. A persistent
+  CloudFormation stack owns all five
   functions and log groups. The stack, functions and bucket remain after both
   successful and failed test runs; later deployments update the same resources. Each uses 2 GiB / 1 vCPU and a single
   `$LATEST.PUBLISHED` version; code is not republished during the test phase, and
@@ -133,8 +136,9 @@ Cloud tests are disabled unless `test --cloud-enabled` is explicitly requested.
 Local assertion tests verify that missing evidence, mismatched environments,
 early responses, late tasks and stalled executors cannot be reported as passes.
 Cloud regressions run on every push to `main`, including every merged change,
-with no changed-path filters. Manual dispatch and same-repository PR opt-in
-are also supported. There are no scheduled jobs.
+with no changed-path filters, and through manual dispatch. Pull requests that
+change the SDK, fixtures, root build, or this workflow run only the local fixture
+validation. There are no scheduled jobs or label-triggered cloud runs.
 
 The opt-in local regressions assert the same three contracts against the SDK's
 mock backend (they do not substitute for cloud coverage):
@@ -143,8 +147,9 @@ mock backend (they do not substitute for cloud coverage):
 mvn -pl sdk test -Dtest=LmiLifecycleRegressionTest -Dtest.lmi.regressions.enabled=true
 ```
 
-For a same-repository PR, add the `run-lmi-e2e` label to opt into cloud execution.
-The workflow never uses a privileged `pull_request_target` checkout. Provisioning
+To validate an unmerged branch in the cloud, manually dispatch the workflow and
+select that branch. The workflow never uses a privileged `pull_request_target`
+checkout. Provisioning
 has a 35-minute step budget, with a shared 30-minute deadline for creating the
 stack and verifying all five functions. Each scaling wait is capped at 5 minutes and at the
 remaining deployment budget. Scenarios have 30 minutes, final collection 5 minutes,
