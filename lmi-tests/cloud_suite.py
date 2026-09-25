@@ -3,6 +3,7 @@
 """Opt-in real-service LMI tests. See README.md for design and ownership."""
 import argparse
 import base64
+from collections import Counter
 import hashlib
 import json
 import os
@@ -416,7 +417,25 @@ def runtime_requests_drained(events, markers, allow_no_entry=False):
                for e in selected(events, "WRAPPER_ENTER") if e["marker"] in markers}
     returned = {(e["marker"], e["environment"], e["requestId"])
                 for e in selected(events, "WRAPPER_RETURN") if e["marker"] in markers}
-    return (allow_no_entry or bool(entered)) and entered <= returned
+    if not (allow_no_entry or entered) or not entered <= returned:
+        return False
+    for marker, environment, request_id in entered:
+        trace = request_trace(events, marker, request_id, environment)
+        wrapper_returns = selected(trace, "WRAPPER_RETURN")
+        if not wrapper_returns:
+            return False
+        if len(selected(trace, "ROOT_ENTER")) != len(selected(trace, "ROOT_EXIT")):
+            return False
+        task_enters = Counter(event.get("name") for event in selected(trace, "TASK_ENTER"))
+        task_exits = Counter(event.get("name") for event in selected(trace, "TASK_EXIT"))
+        if task_enters != task_exits:
+            return False
+        returned_at = wrapper_returns[-1]["sequence"]
+        if any(event["sequence"] > returned_at and event["kind"] in {
+                "BODY", "CHECKPOINT_CALL", "POLL_CALL", "CHECKPOINT_EXIT", "POLL_EXIT",
+                "ROOT_ENTER", "TASK_ENTER"} for event in trace):
+            return False
+    return True
 
 
 def wait_for_runtime_quiescence(
@@ -450,7 +469,8 @@ def server_timeout_logs(cloud, request_id):
             if platform_timeout(event["message"], request_id)]
 
 
-def timeout_evidence_ready(cloud, events, victim_marker, request_id, environment, peers, deadline):
+def timeout_evidence_ready(
+        cloud, events, victim_marker, request_id, environment, peers, probes, deadline):
     trace = request_trace(events, victim_marker, request_id, environment)
     returned = selected(trace, "WRAPPER_RETURN")
     peer_evidence = []
@@ -463,7 +483,11 @@ def timeout_evidence_ready(cloud, events, victim_marker, request_id, environment
             and any(event["nanos"] >= deadline for event in selected(peer_trace, "HEARTBEAT")))
     interrupted = selected(trace, "INTERRUPTED") + selected(trace, "IGNORED_INTERRUPT")
     cancellation = returned and returned[0]["status"] == "THREW" and interrupted
-    return bool(returned) and all(peer_evidence) and bool(server_timeout_logs(cloud, request_id) or cancellation)
+    recovered = any(event["environment"] == environment
+                    and event["nanos"] <= deadline + 8_000_000_000
+                    for probe in probes for event in selected(events, "TASK_ENTER", probe["marker"]))
+    return (bool(returned) and all(peer_evidence) and recovered
+            and bool(server_timeout_logs(cloud, request_id) or cancellation))
 
 
 def cleanup_case(cloud, fixture, invocation_start, seconds):
@@ -539,7 +563,7 @@ def assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim):
     cloud.poll(
         fixture,
         lambda events: timeout_evidence_ready(
-            cloud, events, victim["marker"], request_id, target, peers, deadline),
+            cloud, events, victim["marker"], request_id, target, peers, probes, deadline),
         seconds=timeout + 30,
         items=[victim, *peers, *probes])
     cloud.finish(victim, expected=None)
