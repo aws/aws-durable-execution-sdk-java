@@ -3,8 +3,9 @@
 package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import org.junit.jupiter.api.Test;
@@ -23,17 +24,20 @@ class OtelPluginConfigValidationTest {
     }
 
     @Test
-    void builderConstructorsValidateConfigBeforeConsumingBuilder() {
-        var invocationBuilder = SdkTracerProvider.builder();
-        var executionBuilder = SdkTracerProvider.builder();
+    void invocationConstructorRejectsNullConfigBeforeTouchingBuilder() {
+        var builder = spy(SdkTracerProvider.builder());
 
-        assertThrows(NullPointerException.class, () -> new InvocationOtelPlugin(invocationBuilder, null));
-        assertThrows(NullPointerException.class, () -> new ExecutionOtelPlugin(executionBuilder, null));
+        assertThrows(NullPointerException.class, () -> new InvocationOtelPlugin(builder, null));
 
-        try (var invocationProvider = invocationBuilder.build();
-                var executionProvider = executionBuilder.build()) {
-            assertNotNull(invocationProvider.get("probe"));
-            assertNotNull(executionProvider.get("probe"));
-        }
+        verifyNoInteractions(builder);
+    }
+
+    @Test
+    void executionConstructorRejectsNullConfigBeforeTouchingBuilder() {
+        var builder = spy(SdkTracerProvider.builder());
+
+        assertThrows(NullPointerException.class, () -> new ExecutionOtelPlugin(builder, null));
+
+        verifyNoInteractions(builder);
     }
 }
