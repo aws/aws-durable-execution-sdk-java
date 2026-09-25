@@ -1,0 +1,127 @@
+name: LMI E2E Tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'lmi-tests/**'
+      - 'sdk/**'
+      - 'pom.xml'
+      - '.github/workflows/lmi-e2e-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: corretto
+          java-version: '25'
+          cache: maven
+      - name: Build fixtures and validate evidence assertions
+        run: |
+          mvn -B -q -pl lmi-tests -am package
+          mvn -B -q -pl lmi-tests -am spotless:check
+          python3 -m unittest discover -s lmi-tests/tests -v
+
+  cloud:
+    if: github.event_name == 'workflow_dispatch'
+    needs: local
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    permissions:
+      contents: read
+      id-token: write
+    # Persistent functions are shared; serialize only deployment and cloud testing.
+    concurrency:
+      group: java-lmi-e2e
+      cancel-in-progress: false
+    env:
+      LMI_STACK_NAME: java-lmi-e2e
+      CAPACITY_PROVIDER_ARN: ${{ secrets.CAPACITY_PROVIDER_ARN }}
+      TEST_LAMBDA_EXECUTION_ROLE_ARN: ${{ secrets.TEST_LAMBDA_EXECUTION_ROLE_ARN }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CAPACITY_PROVIDER_ARN"
+          test -n "$TEST_LAMBDA_EXECUTION_ROLE_ARN"
+          region=$(cut -d: -f4 <<< "$CAPACITY_PROVIDER_ARN")
+          echo "AWS_REGION=$region" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v6
+        with:
+          distribution: corretto
+          java-version: '25'
+          cache: maven
+      - name: Build commit under test
+        timeout-minutes: 10
+        run: mvn -B -q -pl lmi-tests -am package -DskipTests
+      - name: Configure AWS credentials for deployment
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.TEST_ROLE_ARN }}
+          role-session-name: java-lmi-e2e-deploy
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
+      - name: Create or update persistent LMI functions
+        timeout-minutes: 35
+        run: python3 lmi-tests/cloud_suite.py deploy --stack-name "$LMI_STACK_NAME" --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Refresh AWS credentials for assertions
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.TEST_ROLE_ARN }}
+          role-session-name: java-lmi-e2e-test
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
+      - name: LMI cloud regression assertions (expected red until issue 726 is fixed)
+        timeout-minutes: 30
+        run: python3 -u lmi-tests/cloud_suite.py test --cloud-enabled
+      - name: Refresh AWS credentials for evidence collection
+        if: always() && hashFiles('lmi-tests/artifacts/manifest.json') != ''
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.TEST_ROLE_ARN }}
+          role-session-name: java-lmi-e2e-collect
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
+      - name: Collect histories and lifecycle evidence
+        if: always()
+        timeout-minutes: 5
+        run: |
+          if test -f lmi-tests/artifacts/manifest.json; then
+            python3 lmi-tests/cloud_suite.py collect
+          fi
+      - name: Publish failure evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lmi-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 7
+          path: |
+            lmi-tests/artifacts/
+            lmi-tests/target/surefire-reports/
+            sdk/target/surefire-reports/
+      - name: Summarize outcomes
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, xml.etree.ElementTree as ET
+          p = pathlib.Path('lmi-tests/artifacts/junit.xml')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write('LMI tests assert the fixed behavior in #726; failures are not expected-success results.\n\n')
+              if p.exists():
+                  for case in ET.parse(p).getroot().findall('testcase'):
+                      failures = list(case)
+                      state = 'PASS' if not failures else failures[0].get('type', 'FAIL')
+                      out.write(f"- {case.get('name')}: {state}\n")
+              else:
+                  out.write('Cloud assertions did not run. Inspect setup errors in the artifacts.\n')
+          PY
