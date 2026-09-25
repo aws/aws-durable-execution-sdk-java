@@ -71,12 +71,14 @@ public class ExecutionManager implements SafeCloseable {
         OPEN,
 
         /**
-         * Invocation shutdown has started. New operations and tasks are rejected, while already-admitted work may still
-         * checkpoint or poll as it finishes.
+         * Invocation shutdown has started. New operations and root tasks are rejected, while registered operations may
+         * still submit tasks, checkpoint, or poll as they finish.
          */
         DRAINING,
 
-        /** Invocation cleanup has ended; all new operations, tasks, checkpoints, and polls are rejected. */
+        /**
+         * Work admission has ended; cleanup finishes enqueueing and flushing already-admitted checkpoints and polls.
+         */
         CLOSED
     }
 
@@ -97,6 +99,8 @@ public class ExecutionManager implements SafeCloseable {
     private final AtomicLong taskSequence = new AtomicLong();
     private final Map<Long, ExecutorTaskHandle<?>> activeExecutorTasks = new ConcurrentHashMap<>();
     private LifecycleState lifecycleState = LifecycleState.OPEN;
+    // Guarded by admissionLock. Counts enqueue calls, not the lifetime of their returned futures.
+    private int checkpointAdmissionsInFlight;
 
     // ===== Thread Coordination =====
     private final Map<String, BaseDurableOperation> registeredOperations = new ConcurrentHashMap<>();
@@ -242,18 +246,22 @@ public class ExecutionManager implements SafeCloseable {
                     case MAP, PARALLEL -> ExecutorTaskHandle.Role.COORDINATOR;
                     default -> ExecutorTaskHandle.Role.CHILD_CONTEXT;
                 };
-        return submitExecutorTask(role, operation.getOperationId(), durableConfig.getExecutorService(), () -> {
+        return submitExecutorTask(role, operation, durableConfig.getExecutorService(), () -> {
             action.run();
             return null;
         });
     }
 
     private <T> CompletableFuture<T> submitExecutorTask(
-            ExecutorTaskHandle.Role role, String operationId, ExecutorService executor, Supplier<T> action) {
+            ExecutorTaskHandle.Role role,
+            BaseDurableOperation operation,
+            ExecutorService executor,
+            Supplier<T> action) {
         ExecutorTaskHandle<T> task;
         synchronized (admissionLock) {
-            requireOpen("task");
+            requireTaskAdmission(operation);
             var taskId = taskSequence.incrementAndGet();
+            var operationId = operation == null ? null : operation.getOperationId();
             task = new ExecutorTaskHandle<>(taskId, role, operationId, () -> activeExecutorTasks.remove(taskId));
             activeExecutorTasks.put(task.id(), task);
         }
@@ -510,10 +518,10 @@ public class ExecutionManager implements SafeCloseable {
         beginDraining();
         try {
             validateRunningThreads();
-            checkpointManager.shutdown();
         } finally {
             closeLifecycle();
         }
+        checkpointManager.shutdown();
     }
 
     void beginDraining() {
@@ -525,8 +533,20 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private void closeLifecycle() {
+        var interrupted = false;
         synchronized (admissionLock) {
             lifecycleState = LifecycleState.CLOSED;
+            // Admission must stop before the final flush, including calls admitted before CLOSED but not yet enqueued.
+            while (checkpointAdmissionsInFlight > 0) {
+                try {
+                    admissionLock.wait();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -535,8 +555,29 @@ public class ExecutionManager implements SafeCloseable {
             if (lifecycleState == LifecycleState.CLOSED) {
                 throw rejected("checkpoint request");
             }
-            return request.get();
+            checkpointAdmissionsInFlight++;
         }
+        try {
+            // CheckpointManager completes continuations under its polling monitor. Those continuations may submit
+            // tasks or poll again, so never call it while holding admissionLock.
+            return request.get();
+        } finally {
+            synchronized (admissionLock) {
+                if (--checkpointAdmissionsInFlight == 0) {
+                    admissionLock.notifyAll();
+                }
+            }
+        }
+    }
+
+    private void requireTaskAdmission(BaseDurableOperation operation) {
+        if (lifecycleState == LifecycleState.DRAINING
+                && operation != null
+                && registeredOperations.get(operation.getOperationId()) == operation) {
+            // Map/parallel branches are registered before their coordinator submits them to the executor.
+            return;
+        }
+        requireOpen("task");
     }
 
     private void requireOpen(String workType) {
