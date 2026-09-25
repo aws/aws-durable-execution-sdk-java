@@ -115,24 +115,28 @@ def assert_overlap(events, markers, count, environment=None):
 
 
 def assert_lifecycle(events, allow_residual=False):
+    entered = {(e["marker"], e["environment"], e["requestId"])
+               for e in selected(events, "WRAPPER_ENTER")}
     returns = selected(events, "WRAPPER_RETURN")
+    returned = {(e["marker"], e["environment"], e["requestId"]) for e in returns}
+    require(not entered - returned, f"Runtime requests entered without wrapper return: {sorted(entered - returned)}")
     require(returns, "No SDK wrapper return observed")
-    for returned in returns:
-        local = [e for e in events if e["requestId"] == returned["requestId"]
-                 and e["environment"] == returned["environment"]]
-        requires_quiescence = not allow_residual or returned["status"] in {"SUCCEEDED", "FAILED", "PENDING"}
+    for return_event in returns:
+        local = [e for e in events if e["requestId"] == return_event["requestId"]
+                 and e["environment"] == return_event["environment"]]
+        requires_quiescence = not allow_residual or return_event["status"] in {"SUCCEEDED", "FAILED", "PENDING"}
         if requires_quiescence:
-            require(returned["rootExited"], f"{returned['status']} returned before root exit")
-            require(returned["tasks"] == 0, f"{returned['status']} returned with live invocation tasks")
+            require(return_event["rootExited"], f"{return_event['status']} returned before root exit")
+            require(return_event["tasks"] == 0, f"{return_event['status']} returned with live invocation tasks")
             roots = selected(local, "ROOT_EXIT")
-            require(roots and roots[-1]["sequence"] < returned["sequence"], "Missing causal root exit")
+            require(roots and roots[-1]["sequence"] < return_event["sequence"], "Missing causal root exit")
         if not allow_residual:
             require(not selected(local, "ESCAPE"), "A test-only escape was needed to finish SDK work")
-        late = [e for e in local if e["sequence"] > returned["sequence"]
+        late = [e for e in local if e["sequence"] > return_event["sequence"]
                 and e["kind"] in {"CHECKPOINT_CALL", "POLL_CALL", "CHECKPOINT_EXIT", "POLL_EXIT"}]
         require(not late, "SDK checkpoint/poll activity continued after wrapper return")
         if not allow_residual:
-            late_work = [e for e in local if e["sequence"] > returned["sequence"]
+            late_work = [e for e in local if e["sequence"] > return_event["sequence"]
                          and e["kind"] in {"ROOT_EXIT", "TASK_ENTER", "TASK_EXIT", "BODY"}]
             require(not late_work, "Invocation task/body activity continued after wrapper return")
 
@@ -172,6 +176,20 @@ def assert_fixed(events, markers):
         start = selected(events, "BARRIER_PASSED", marker)
         require(progress and (progress[-1]["nanos"] - start[0]["nanos"]) < 8_000_000_000,
                 "Shared executor did not progress within budget")
+
+
+def assert_nested_reached(events, markers):
+    """Prove nested child handlers were active before progress or the starvation escape."""
+    children = [event for event in selected(events, "TASK_ENTER")
+                if event.get("name") == "child" and event["marker"] in markers]
+    require({event["marker"] for event in children} == set(markers),
+            "Nested child contention was not reached by every participant")
+    boundary = selected(events, "ESCAPE") or selected(events, "PROGRESS")
+    require(len({event["environment"] for event in children + boundary}) == 1,
+            "Nested contention evidence came from different JVMs")
+    require(boundary and max(event["sequence"] for event in children)
+            < min(event["sequence"] for event in boundary),
+            "Executor capacity changed before nested contention was established")
 
 
 class Cloud:

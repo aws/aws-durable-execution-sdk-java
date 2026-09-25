@@ -39,6 +39,9 @@ or accept a retry that happens to pass after a lifecycle violation.
   root/task `finally` markers and a JVM-wide sequence establish ordering. The
   plugin end hook is deliberately not used as a completion signal.
 * A bounded same-JVM root barrier establishes the fixed-pool reproduction.
+  `fixed2` uses a shared two-thread pool so two roots starve their first steps.
+  `nested2` uses four threads so both roots and child-context handlers start
+  before the child handlers starve the nested map/parallel work they await.
   Other cases hold steps with private S3 control objects. The driver requires
   distinct request IDs active in the same JVM. Placement has its own deadline
   and failure category. Environment replacement is never worker recovery.
@@ -155,8 +158,9 @@ checkout. Provisioning
 has a 35-minute step budget, with a shared 30-minute deadline for creating the
 stack and verifying all five functions. Each scaling wait is capped at 5 minutes and at the
 remaining deployment budget. Scenarios have 30 minutes, final collection 5 minutes,
-with no infrastructure teardown step. Individual admission attempts are bounded (four batches,
-25 seconds), fixed-pool progress has 8 seconds, and task escape timers are capped
+with no infrastructure teardown step. Peer placement is bounded to four batches
+and 60 seconds, with up to 20 seconds for CloudWatch observation per batch;
+fixed-pool progress has 8 seconds, and task escape timers are capped
 at 120 seconds. The normal invocation timeout is 60 seconds; the durable execution
 timeout is 240 seconds. Cleanup is required by the invocation deadline plus
 5 seconds. Probe admission has an 8-second tolerance. Collection latency does
