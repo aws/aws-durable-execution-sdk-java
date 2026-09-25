@@ -12,7 +12,8 @@ from cloud_support import (Cloud, CollectionError, PreconditionError, assert_fix
                            assert_overlap, assert_replay, diagnostic, platform_timeout, scrub)
 from cloud_suite import (FIXTURES, cases_for_fixture, cleanup_timeout_case, request_trace,
                          residual_outcome_observed, runtime_requests_drained, timeout_case,
-                         verify_function_scaling, run_tests, template, wait_until_wall_time)
+                         timeout_evidence_ready, verify_function_scaling, run_tests, template,
+                         wait_for_runtime_quiescence, wait_until_wall_time)
 from unittest.mock import Mock, patch
 
 
@@ -324,6 +325,42 @@ class EvidenceTest(unittest.TestCase):
         self.assertFalse(runtime_requests_drained(events, "victim"))
         events.append(event("WRAPPER_RETURN", 4, "retry", marker="victim", status="THREW"))
         self.assertTrue(runtime_requests_drained(events, "victim"))
+
+    @patch("cloud_suite.time.sleep")
+    @patch("cloud_suite.time.monotonic", side_effect=[0, 0, 1, 2, 3, 4, 5])
+    def test_runtime_quiescence_resets_for_a_delayed_retry(self, monotonic, sleep):
+        original = [event("WRAPPER_ENTER", 1, "original", marker="victim"),
+                    event("WRAPPER_RETURN", 2, "original", marker="victim", status="THREW")]
+        retry_enter = event("WRAPPER_ENTER", 3, "retry", marker="victim")
+        retry_return = event("WRAPPER_RETURN", 4, "retry", marker="victim", status="THREW")
+        cloud = Mock()
+        cloud.refresh.side_effect = [original, original, original + [retry_enter],
+                                     original + [retry_enter, retry_return],
+                                     original + [retry_enter, retry_return],
+                                     original + [retry_enter, retry_return]]
+        wait_for_runtime_quiescence(cloud, "default2", "victim", seconds=10, quiet_seconds=2)
+        self.assertEqual(6, cloud.refresh.call_count)
+
+    def test_timeout_readiness_waits_for_peer_and_platform_logs(self):
+        peers = [{"marker": "peer"}]
+        events = [event("WRAPPER_RETURN", 1, "request", marker="victim", status="SUCCEEDED")]
+        cloud = Mock()
+        cloud.raw_logs = {}
+        self.assertFalse(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers))
+        events.append(event("WRAPPER_RETURN", 2, "peer", marker="peer", status="SUCCEEDED"))
+        self.assertFalse(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers))
+        cloud.raw_logs = {"timeout": {"message": json.dumps(
+            {"type": "platform.runtimeDone", "record": {"requestId": "request", "status": "timeout"}})}}
+        self.assertTrue(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers))
+
+    def test_explicit_cancellation_can_satisfy_timeout_readiness(self):
+        peers = [{"marker": "peer"}]
+        events = [event("INTERRUPTED", 1, "request", marker="victim"),
+                  event("WRAPPER_RETURN", 2, "request", marker="victim", status="THREW"),
+                  event("WRAPPER_RETURN", 3, "peer", marker="peer", status="SUCCEEDED")]
+        cloud = Mock()
+        cloud.raw_logs = {}
+        self.assertTrue(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers))
 
     @patch("cloud_suite.overlap_case")
     @patch("cloud_suite.assert_timeout_case", side_effect=AssertionError("regression"))

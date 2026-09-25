@@ -385,6 +385,43 @@ def runtime_requests_drained(events, marker):
     return bool(entered) and entered <= returned
 
 
+def wait_for_runtime_quiescence(cloud, fixture, marker, seconds=30, quiet_seconds=10):
+    """Require every visible request to return and no request set changes during a quiet period."""
+    deadline = time.monotonic() + seconds
+    previous, quiet_since = None, None
+    while True:
+        events = cloud.refresh(fixture)
+        current = {(e["environment"], e["requestId"])
+                   for e in events if e["marker"] == marker
+                   and e["kind"] in {"WRAPPER_ENTER", "WRAPPER_RETURN"}}
+        now = time.monotonic()
+        if runtime_requests_drained(events, marker):
+            if current != previous or quiet_since is None:
+                quiet_since = now
+            elif quiet_since is not None and now - quiet_since >= quiet_seconds:
+                return events
+        else:
+            quiet_since = None
+        previous = current
+        if now >= deadline:
+            raise AssertionError(f"Runtime requests for {marker} did not reach stable quiescence")
+        time.sleep(1)
+
+
+def server_timeout_logs(cloud, request_id):
+    return [event for event in cloud.raw_logs.values()
+            if platform_timeout(event["message"], request_id)]
+
+
+def timeout_evidence_ready(cloud, events, victim_marker, request_id, environment, peers):
+    trace = request_trace(events, victim_marker, request_id, environment)
+    returned = selected(trace, "WRAPPER_RETURN")
+    peer_returns = all(selected(events, "WRAPPER_RETURN", peer["marker"]) for peer in peers)
+    interrupted = selected(trace, "INTERRUPTED") + selected(trace, "IGNORED_INTERRUPT")
+    cancellation = returned and returned[0]["status"] == "THREW" and interrupted
+    return bool(returned) and peer_returns and bool(server_timeout_logs(cloud, request_id) or cancellation)
+
+
 def cleanup_timeout_case(cloud, fixture, victim, timeout, invocation_start):
     """Release and observe every request created by a timeout case before the next case starts."""
     failures = []
@@ -403,11 +440,7 @@ def cleanup_timeout_case(cloud, fixture, victim, timeout, invocation_start):
         failures.append(failure)
     if selected(cloud.events_for(victim), "WRAPPER_ENTER"):
         try:
-            cloud.poll(
-                fixture,
-                lambda events: runtime_requests_drained(events, victim["marker"]),
-                seconds=30,
-                items=[victim])
+            wait_for_runtime_quiescence(cloud, fixture, victim["marker"])
         except Exception as failure:
             failures.append(failure)
     if failures:
@@ -461,9 +494,10 @@ def assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim):
     # Residual Java code is bounded, but arbitrary code cannot be forcibly killed.
     cloud.poll(
         fixture,
-        lambda events: selected(request_trace(events, victim["marker"], request_id, target), "WRAPPER_RETURN"),
+        lambda events: timeout_evidence_ready(
+            cloud, events, victim["marker"], request_id, target, peers),
         seconds=timeout + 30,
-        items=[victim])
+        items=[victim, *peers, *probes])
     cloud.finish(victim, expected=None)
     history = cloud.history(victim)
     if stubborn:
@@ -483,8 +517,7 @@ def assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim):
               "interrupts": selected(trace, "INTERRUPTED") + selected(trace, "IGNORED_INTERRUPT"),
               "recoveryAdmissions": recovered, "retryRequestIds": retry_request_ids,
               "durableHistoryEvents": len(history)}
-    report["serverTimeoutLogs"] = [e for e in cloud.raw_logs.values()
-                                   if platform_timeout(e["message"], request_id)]
+    report["serverTimeoutLogs"] = server_timeout_logs(cloud, request_id)
     save(ARTIFACTS / "timeouts" / (prefix + ".json"), report)
     errors = []
     def check(condition, message):
