@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -102,20 +101,6 @@ public class ApiRequestDelayedBatcher<T> {
             }
 
             return future;
-        }
-    }
-
-    /** Flushes pending batch and waits for completion */
-    void shutdown() {
-        try {
-            shutdown(MAX_DELAY);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while flushing API requests", interrupted);
-        } catch (ExecutionException failure) {
-            throw new CompletionException(failure.getCause());
-        } catch (TimeoutException timeout) {
-            throw new IllegalStateException("Timed out while flushing API requests", timeout);
         }
     }
 
