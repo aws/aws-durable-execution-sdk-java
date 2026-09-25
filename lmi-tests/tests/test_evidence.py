@@ -9,8 +9,9 @@ from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloud_support import (Cloud, CollectionError, PreconditionError, assert_fixed, assert_lifecycle,
-                           assert_overlap, assert_replay, diagnostic, scrub)
-from cloud_suite import (FIXTURES, cases_for_fixture, request_trace, residual_outcome_observed,
+                           assert_overlap, assert_replay, diagnostic, platform_timeout, scrub)
+from cloud_suite import (FIXTURES, cases_for_fixture, cleanup_timeout_case, request_trace,
+                         residual_outcome_observed, runtime_requests_drained, timeout_case,
                          verify_function_scaling, run_tests, template, wait_until_wall_time)
 from unittest.mock import Mock, patch
 
@@ -69,6 +70,13 @@ class EvidenceTest(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "live invocation tasks"):
             assert_lifecycle(events)
 
+    def test_exceptional_return_must_also_be_quiescent(self):
+        events = [event("WRAPPER_RETURN", 1, status="THREW", rootExited=False, tasks=1),
+                  event("ROOT_EXIT", 2), event("TASK_EXIT", 3)]
+        with self.assertRaisesRegex(AssertionError, "before root exit"):
+            assert_lifecycle(events)
+        assert_lifecycle([event("ROOT_EXIT", 1), event("WRAPPER_RETURN", 2, status="THREW")])
+
     def test_escape_cannot_make_deadlock_look_successful(self):
         events = [event("BARRIER_ENTER", 1), event("BARRIER_ENTER", 2, "b"),
                   event("BARRIER_PASSED", 3), event("BARRIER_PASSED", 4, "b"),
@@ -118,6 +126,15 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual(record, diagnostic(json.dumps({"message": "LMI_TEST " + json.dumps(record)})))
         self.assertIsNone(diagnostic('{"type":"platform.report"}'))
         self.assertIsNone(diagnostic('LMI_TEST malformed'))
+
+    def test_only_structured_platform_records_count_as_server_timeouts(self):
+        diagnostic_message = json.dumps({"message": "LMI_TEST " + json.dumps(
+            {"scenario": "timeout", "requestId": "request"})})
+        platform_message = json.dumps({"type": "platform.runtimeDone",
+                                       "record": {"requestId": "request", "status": "timeout"}})
+        self.assertFalse(platform_timeout(diagnostic_message, "request"))
+        self.assertTrue(platform_timeout(platform_message, "request"))
+        self.assertFalse(platform_timeout(platform_message, "another-request"))
 
     def test_artifacts_redact_control_credentials_in_nested_payloads(self):
         value = {"controlUrl": "secret", "InputPayload": '{"controlUrl":"https://bucket/key?X-Amz-Signature=secret"}'}
@@ -270,6 +287,22 @@ class EvidenceTest(unittest.TestCase):
             finally:
                 cloud.close()
 
+    @patch("cloud_support.time.sleep")
+    @patch("cloud_support.aws")
+    def test_stop_waits_until_durable_retries_are_terminal(self, api, sleep):
+        api.side_effect = [{"Status": "RUNNING"}, {}, {"Status": "STOPPED"}]
+        future = Future()
+        future.set_result({"headers": {"DurableExecutionArn": "arn:test"}})
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({}, directory)
+            try:
+                final = cloud.stop({"future": future, "marker": "test"}, seconds=5)
+            finally:
+                cloud.close()
+        self.assertEqual("STOPPED", final["Status"])
+        self.assertEqual(["get-durable-execution", "stop-durable-execution", "get-durable-execution"],
+                         [call.args[1] for call in api.call_args_list])
+
     def test_timeout_trace_cannot_use_a_later_retry_or_another_jvm(self):
         events = [event("WRAPPER_ENTER", 1, "original", marker="victim"),
                   event("WRAPPER_RETURN", 2, "retry", marker="victim", status="THREW"),
@@ -283,6 +316,37 @@ class EvidenceTest(unittest.TestCase):
         self.assertFalse(residual_outcome_observed(events, "victim", "original", "jvm"))
         events.append(event("LATE_REJECTED", 3, "original", marker="victim"))
         self.assertTrue(residual_outcome_observed(events, "victim", "original", "jvm"))
+
+    def test_runtime_drain_requires_every_retry_to_return(self):
+        events = [event("WRAPPER_ENTER", 1, "original", marker="victim"),
+                  event("WRAPPER_RETURN", 2, "original", marker="victim", status="THREW"),
+                  event("WRAPPER_ENTER", 3, "retry", marker="victim")]
+        self.assertFalse(runtime_requests_drained(events, "victim"))
+        events.append(event("WRAPPER_RETURN", 4, "retry", marker="victim", status="THREW"))
+        self.assertTrue(runtime_requests_drained(events, "victim"))
+
+    @patch("cloud_suite.overlap_case")
+    @patch("cloud_suite.assert_timeout_case", side_effect=AssertionError("regression"))
+    def test_timeout_case_stops_victim_after_an_assertion_failure(self, assertion, overlap):
+        cloud = Mock()
+        cloud.manifest = {"invocationTimeout": 60}
+        cloud.invocations = []
+        victim = {"marker": "victim"}
+        cloud.launch.return_value = victim
+        cloud.events_for.return_value = []
+        with self.assertRaisesRegex(AssertionError, "regression"):
+            timeout_case(cloud, "default2")
+        cloud.release_all.assert_called_once()
+        cloud.stop.assert_called_once_with(victim, seconds=90)
+        overlap.assert_not_called()
+
+    def test_timeout_cleanup_drains_every_driver_request_from_the_case(self):
+        cloud = Mock()
+        victim, peer, probe = ({"marker": name} for name in ("victim", "peer", "probe"))
+        cloud.invocations = [{"marker": "older"}, victim, peer, probe]
+        cloud.events_for.return_value = []
+        cleanup_timeout_case(cloud, "default2", victim, 60, 1)
+        cloud.stop_all.assert_called_once_with([peer, probe], seconds=90)
 
     @patch("cloud_suite.time.time", return_value=10)
     def test_wall_clock_wait_observes_probe_failures(self, now):
