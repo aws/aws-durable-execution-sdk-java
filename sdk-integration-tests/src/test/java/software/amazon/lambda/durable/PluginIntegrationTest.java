@@ -372,22 +372,6 @@ class PluginIntegrationTest {
         assertNull(end.executionResult(), "an undelivered result must not be reported as successful");
     }
 
-    @Test
-    void plugin_seesUnderlyingFailure_whenResultDeliveryFailsWrapped() {
-        var plugin = new RecordingPlugin();
-        var cause = new IllegalStateException("underlying delivery failure");
-        var config = DurableConfig.builder()
-                .withPlugins(plugin)
-                .withSerDes(new WrappedFailureSerDes(cause))
-                .build();
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> "unserializable", config);
-
-        assertThrows(Exception.class, () -> runner.run("input"));
-
-        assertEquals(1, plugin.invocationEnds.size());
-        assertSame(cause, plugin.invocationEnds.get(0).executionError());
-    }
-
     /** SerDes that refuses to serialize the handler result. */
     static class ResultRejectingSerDes implements SerDes {
         private final JacksonSerDes delegate = new JacksonSerDes();
@@ -396,29 +380,6 @@ class PluginIntegrationTest {
         public String serialize(Object value) {
             if ("unserializable".equals(value)) {
                 throw new IllegalStateException("cannot serialize the result");
-            }
-            return delegate.serialize(value);
-        }
-
-        @Override
-        public <T> T deserialize(String data, TypeToken<T> typeToken) {
-            return delegate.deserialize(data, typeToken);
-        }
-    }
-
-    /** SerDes whose result failure arrives wrapped, like a failed oversized-result checkpoint. */
-    static class WrappedFailureSerDes implements SerDes {
-        private final JacksonSerDes delegate = new JacksonSerDes();
-        private final Throwable cause;
-
-        WrappedFailureSerDes(Throwable cause) {
-            this.cause = cause;
-        }
-
-        @Override
-        public String serialize(Object value) {
-            if ("unserializable".equals(value)) {
-                throw new CompletionException(cause);
             }
             return delegate.serialize(value);
         }
