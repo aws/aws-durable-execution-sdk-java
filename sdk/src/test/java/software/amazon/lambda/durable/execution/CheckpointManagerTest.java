@@ -34,6 +34,8 @@ import software.amazon.lambda.durable.retry.PollingStrategies;
 
 class CheckpointManagerTest {
 
+    private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(5);
+
     private DurableConfig config;
     private DurableExecutionClient client;
     private CheckpointManager batcher;
@@ -171,11 +173,11 @@ class CheckpointManagerTest {
     }
 
     @Test
-    void shutdown_completesAllPendingPollersWithException() {
+    void shutdown_completesAllPendingPollersWithException() throws Exception {
         var future1 = batcher.pollForUpdate("op-1");
         var future2 = batcher.pollForUpdate("op-2");
 
-        batcher.shutdown();
+        batcher.shutdown(SHUTDOWN_TIMEOUT);
 
         assertTrue(future1.isCompletedExceptionally());
         assertTrue(future2.isCompletedExceptionally());
@@ -197,7 +199,7 @@ class CheckpointManagerTest {
                 .type(OperationType.STEP)
                 .build());
 
-        batcher.shutdown();
+        batcher.shutdown(SHUTDOWN_TIMEOUT);
 
         assertTrue(future.isDone());
         verify(client, atLeastOnce()).checkpoint(anyString(), anyString(), anyList());
