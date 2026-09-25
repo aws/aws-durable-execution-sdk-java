@@ -15,7 +15,7 @@ from cloud_suite import (FIXTURES, PEER_LOG_OBSERVATION_SECONDS, cases_for_fixtu
                          execute_case, request_trace, residual_outcome_observed,
                          runtime_requests_drained, timeout_evidence_ready, verify_function_scaling,
                          run_tests, template, wait_for_runtime_quiescence, wait_for_wrapper_status,
-                         wait_until_wall_time, warm_case)
+                         wait_until_wall_time, warm_case, warm_environment)
 from unittest.mock import Mock, patch
 
 
@@ -380,23 +380,30 @@ class EvidenceTest(unittest.TestCase):
         events = [event("WRAPPER_RETURN", 1, "request", marker="victim", status="SUCCEEDED")]
         cloud = Mock()
         cloud.raw_logs = {}
-        self.assertFalse(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers, 0))
+        deadline = 2_500_000
+        self.assertFalse(timeout_evidence_ready(
+            cloud, events, "victim", "request", "jvm", peers, deadline))
         events.append(event("HEARTBEAT", 2, "peer-request", marker="peer"))
-        events.append(event("WRAPPER_RETURN", 2, "peer-request", marker="peer", status="SUCCEEDED"))
-        self.assertFalse(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers, 0))
+        events.append(event("HEARTBEAT", 3, "peer-request", marker="peer"))
+        events.append(event("WRAPPER_RETURN", 4, "peer-request", marker="peer", status="SUCCEEDED"))
+        self.assertFalse(timeout_evidence_ready(
+            cloud, events, "victim", "request", "jvm", peers, deadline))
         cloud.raw_logs = {"timeout": {"message": json.dumps(
             {"type": "platform.runtimeDone", "record": {"requestId": "request", "status": "timeout"}})}}
-        self.assertTrue(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers, 0))
+        self.assertTrue(timeout_evidence_ready(
+            cloud, events, "victim", "request", "jvm", peers, deadline))
 
     def test_explicit_cancellation_can_satisfy_timeout_readiness(self):
         peers = [{"marker": "peer", "requestId": "peer-request", "environment": "jvm"}]
         events = [event("INTERRUPTED", 1, "request", marker="victim"),
                   event("WRAPPER_RETURN", 2, "request", marker="victim", status="THREW"),
                   event("HEARTBEAT", 2, "peer-request", marker="peer"),
-                  event("WRAPPER_RETURN", 3, "peer-request", marker="peer", status="SUCCEEDED")]
+                  event("HEARTBEAT", 3, "peer-request", marker="peer"),
+                  event("WRAPPER_RETURN", 4, "peer-request", marker="peer", status="SUCCEEDED")]
         cloud = Mock()
         cloud.raw_logs = {}
-        self.assertTrue(timeout_evidence_ready(cloud, events, "victim", "request", "jvm", peers, 0))
+        self.assertTrue(timeout_evidence_ready(
+            cloud, events, "victim", "request", "jvm", peers, 2_500_000))
 
     def test_timeout_readiness_rejects_another_peer_retry(self):
         peers = [{"marker": "peer", "requestId": "admitted", "environment": "jvm"}]
@@ -406,6 +413,17 @@ class EvidenceTest(unittest.TestCase):
         cloud = Mock()
         cloud.raw_logs = {}
         self.assertFalse(timeout_evidence_ready(cloud, events, "victim", "victim", "jvm", peers, 0))
+
+    def test_timeout_readiness_rejects_a_peer_admitted_after_deadline(self):
+        peers = [{"marker": "peer", "requestId": "peer-request", "environment": "jvm"}]
+        events = [event("INTERRUPTED", 1, "victim", marker="victim"),
+                  event("WRAPPER_RETURN", 2, "victim", marker="victim", status="THREW"),
+                  event("HEARTBEAT", 3, "peer-request", marker="peer"),
+                  event("WRAPPER_RETURN", 4, "peer-request", marker="peer", status="SUCCEEDED")]
+        cloud = Mock()
+        cloud.raw_logs = {}
+        self.assertFalse(timeout_evidence_ready(
+            cloud, events, "victim", "victim", "jvm", peers, 2_500_000))
 
     def test_case_preserves_primary_failure_when_cleanup_also_fails(self):
         cloud = Mock()
@@ -460,13 +478,21 @@ class EvidenceTest(unittest.TestCase):
         cloud = Mock()
         cloud.launch.side_effect = lambda fixture, scenario, marker, target=None: {
             "marker": marker, "scenario": scenario}
-        cloud.events_for.side_effect = lambda item: [{
-            "kind": "SNAPSHOT", "marker": item["marker"], "environment": "jvm",
-            "liveTasks": 0, "liveRoots": 0, "queued": 0, "threads": 10}]
+        cloud.events_for.side_effect = lambda item: [
+            {"kind": "WRAPPER_ENTER", "marker": item["marker"], "environment": "jvm"},
+            {"kind": "WRAPPER_RETURN", "marker": item["marker"], "environment": "jvm"},
+            {"kind": "SNAPSHOT", "marker": item["marker"], "environment": "jvm",
+             "liveTasks": 0, "liveRoots": 0, "queued": 0, "threads": 10}]
         warm_case(cloud, "default2")
         replay_items = [call.args[2] for call in wait_status.call_args_list]
         self.assertEqual(3, len(replay_items))
         self.assertTrue(all(item["scenario"] == "replay" for item in replay_items))
+
+    def test_warm_replay_rejects_a_replacement_environment(self):
+        trace = [event("WRAPPER_ENTER", 1, environment="original"),
+                 event("WRAPPER_RETURN", 2, "resume", "replacement", marker="a", status="SUCCEEDED")]
+        with self.assertRaisesRegex(AssertionError, "replacement environment"):
+            warm_environment(trace, "original")
 
     def test_wrapper_status_wait_refreshes_until_expected_return(self):
         cloud = Mock()
@@ -491,6 +517,10 @@ class EvidenceTest(unittest.TestCase):
         self.assertIn("if: github.event_name == 'workflow_dispatch'", workflow)
         self.assertIn("- 'sdk/**'", workflow)
         self.assertEqual(1, workflow.count("id-token: write"))
+        self.assertEqual(3, workflow.count("uses: aws-actions/configure-aws-credentials@"))
+        self.assertIn("java-lmi-e2e-deploy", workflow)
+        self.assertIn("java-lmi-e2e-test", workflow)
+        self.assertIn("java-lmi-e2e-collect", workflow)
         self.assertNotIn("run-lmi-e2e", workflow)
         self.assertNotIn("labeled", workflow)
         self.assertNotIn("  push:\n", workflow)

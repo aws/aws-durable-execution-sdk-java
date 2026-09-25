@@ -147,10 +147,10 @@ def wait_for_idle_functions(stack, seconds=270):
         for output in stack.get("Outputs", []):
             if output["OutputKey"] not in FIXTURES:
                 continue
-            function = output["OutputValue"].rsplit(":", 1)[0]
+            function, qualifier = output["OutputValue"].rsplit(":", 1)
             marker = None
             while True:
-                request = {"FunctionName": function, "Statuses": ["RUNNING"]}
+                request = {"FunctionName": function, "Qualifier": qualifier, "Statuses": ["RUNNING"]}
                 if marker:
                     request["Marker"] = marker
                 response = aws("lambda", "list-durable-executions-by-function", request, extra=["--no-paginate"])
@@ -291,6 +291,7 @@ def healthy_peers(cloud, fixture, target, count, prefix):
                 admitted_event = min(heartbeats, key=lambda event: event["epochMillis"])
                 item["requestId"] = admitted_event["requestId"]
                 item["environment"] = admitted_event["environment"]
+                item["admittedNanos"] = admitted_event["nanos"]
                 admitted.append(item)
     if len(admitted) != count:
         cloud.gate(gate_name, release=True)
@@ -458,6 +459,7 @@ def timeout_evidence_ready(cloud, events, victim_marker, request_id, environment
             events, peer["marker"], peer["requestId"], peer["environment"])
         peer_evidence.append(
             bool(selected(peer_trace, "WRAPPER_RETURN"))
+            and any(event["nanos"] < deadline for event in selected(peer_trace, "HEARTBEAT"))
             and any(event["nanos"] >= deadline for event in selected(peer_trace, "HEARTBEAT")))
     interrupted = selected(trace, "INTERRUPTED") + selected(trace, "IGNORED_INTERRUPT")
     cancellation = returned and returned[0]["status"] == "THREW" and interrupted
@@ -513,11 +515,13 @@ def assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim):
         category=PreconditionError,
         items=[victim])[0]
     deadline_wall = (runtime_entry["epochMillis"] + runtime_entry["remainingMillis"]) / 1000
+    deadline = runtime_entry["nanos"] + runtime_entry["remainingMillis"] * 1_000_000
     # Stagger admission: healthy invocations must outlive the victim's real deadline.
     wait_until_wall_time(cloud, fixture, deadline_wall - timeout / 2, timeout, [victim])
     peers, gate = healthy_peers(cloud, fixture, target, FIXTURES[fixture][0] - 1, prefix + "-peer")
+    require(all(peer["environment"] == target and peer["admittedNanos"] < deadline for peer in peers),
+            "Healthy peers were not active in the original JVM before the victim deadline")
     assert_overlap(list(cloud.events.values()), {victim["marker"], *(p["marker"] for p in peers)}, FIXTURES[fixture][0], target)
-    deadline = runtime_entry["nanos"] + runtime_entry["remainingMillis"] * 1_000_000
     # Launch probes while all other established slots remain occupied. Retry placement only.
     wait_until_wall_time(cloud, fixture, deadline_wall - 5, timeout, [victim])
     probe_gate_name = prefix + "-probe-gate"
@@ -606,6 +610,17 @@ def inflight_case(cloud, fixture, scenario):
     assert_lifecycle(cloud.events_for(victim))
 
 
+def warm_environment(trace, target):
+    environments = {event["environment"] for event in trace
+                    if event["kind"] in {"WRAPPER_ENTER", "WRAPPER_RETURN"}}
+    require(environments, "Missing warm invocation environment evidence")
+    if target is None:
+        require(len(environments) == 1, "Warm execution started across multiple environments")
+        return next(iter(environments))
+    require(environments == {target}, "Warm replay resumed in a replacement environment")
+    return target
+
+
 def warm_case(cloud, fixture):
     target, snapshots = None, []
     for batch in range(3):
@@ -620,8 +635,7 @@ def warm_case(cloud, fixture):
                 wait_for_wrapper_status(cloud, fixture, item, "SUCCEEDED")
             wait_for_runtime_quiescence(cloud, fixture, item["marker"])
             trace = cloud.events_for(item)
-            if target is None:
-                target = trace[0]["environment"]
+            target = warm_environment(trace, target)
             snapshots.extend(e for e in selected(trace, "SNAPSHOT") if e["environment"] == target)
             if scenario == "replay":
                 assert_replay(trace, cloud.history(item), marker)
