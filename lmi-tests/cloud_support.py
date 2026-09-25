@@ -124,21 +124,23 @@ def assert_lifecycle(events, allow_residual=False):
     for return_event in returns:
         local = [e for e in events if e["requestId"] == return_event["requestId"]
                  and e["environment"] == return_event["environment"]]
-        requires_quiescence = not allow_residual or return_event["status"] in {"SUCCEEDED", "FAILED", "PENDING"}
-        if requires_quiescence:
-            require(return_event["rootExited"], f"{return_event['status']} returned before root exit")
+        require(return_event["rootExited"], f"{return_event['status']} returned before root exit")
+        roots = selected(local, "ROOT_EXIT")
+        require(roots and roots[-1]["sequence"] < return_event["sequence"], "Missing causal root exit")
+        allow_live_tasks = allow_residual and return_event["status"] == "THREW"
+        if not allow_live_tasks:
             require(return_event["tasks"] == 0, f"{return_event['status']} returned with live invocation tasks")
-            roots = selected(local, "ROOT_EXIT")
-            require(roots and roots[-1]["sequence"] < return_event["sequence"], "Missing causal root exit")
         if not allow_residual:
             require(not selected(local, "ESCAPE"), "A test-only escape was needed to finish SDK work")
         late = [e for e in local if e["sequence"] > return_event["sequence"]
                 and e["kind"] in {"CHECKPOINT_CALL", "POLL_CALL", "CHECKPOINT_EXIT", "POLL_EXIT"}]
         require(not late, "SDK checkpoint/poll activity continued after wrapper return")
-        if not allow_residual:
-            late_work = [e for e in local if e["sequence"] > return_event["sequence"]
-                         and e["kind"] in {"ROOT_EXIT", "TASK_ENTER", "TASK_EXIT", "BODY"}]
-            require(not late_work, "Invocation task/body activity continued after wrapper return")
+        forbidden_work = {"ROOT_ENTER", "ROOT_EXIT", "TASK_ENTER", "BODY"}
+        if not allow_live_tasks:
+            forbidden_work.add("TASK_EXIT")
+        late_work = [e for e in local if e["sequence"] > return_event["sequence"]
+                     and e["kind"] in forbidden_work]
+        require(not late_work, "Invocation task/body activity continued after wrapper return")
 
 
 def assert_replay(events, history, marker):

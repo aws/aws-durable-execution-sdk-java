@@ -40,6 +40,7 @@ class PersistenceTest(unittest.TestCase):
         self.assertEqual(["create-stack", "update-stack"], [call.args[1] for call in api.call_args_list])
         self.assertEqual(["persistent", "persistent"], [call.args[2]["StackName"] for call in api.call_args_list])
         first, second = [json.loads(call.args[2]["TemplateBody"]) for call in api.call_args_list]
+        self.assertEqual("DO_NOTHING", api.call_args_list[0].args[2]["OnFailure"])
         self.assertEqual(first["Outputs"], second["Outputs"])
         self.assertEqual(first["Resources"].keys(), second["Resources"].keys())
         for fixture in FIXTURES:
@@ -92,6 +93,7 @@ class PersistenceTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "create failed"):
             deploy_fixtures(self.manifest(), [])
         self.assertEqual(["create-stack"], [call.args[1] for call in api.call_args_list])
+        self.assertEqual("DO_NOTHING", api.call_args.args[2]["OnFailure"])
 
     @patch("cloud_suite.aws")
     def test_expired_budget_prevents_changes(self, api):

@@ -12,7 +12,7 @@ from cloud_support import (Cloud, CollectionError, PreconditionError, assert_fix
                            assert_nested_reached, assert_overlap, assert_replay, diagnostic,
                            platform_timeout, scrub)
 from cloud_suite import (FIXTURES, PEER_LOG_OBSERVATION_SECONDS, cases_for_fixture, cleanup_case,
-                         execute_case, request_trace, residual_outcome_observed,
+                         assert_request_lifecycles, execute_case, request_trace, residual_outcome_observed,
                          runtime_requests_drained, timeout_evidence_ready, verify_function_scaling,
                          run_tests, template, wait_for_runtime_quiescence, wait_for_wrapper_status,
                          wait_until_wall_time, warm_case, warm_environment)
@@ -87,6 +87,23 @@ class EvidenceTest(unittest.TestCase):
                   event("WRAPPER_RETURN", 4, "retry", marker="victim", status="THREW")]
         with self.assertRaisesRegex(AssertionError, "entered without wrapper return"):
             assert_lifecycle(events)
+
+    def test_stubborn_residual_allows_task_exit_but_never_late_root_exit(self):
+        original = [event("WRAPPER_ENTER", 1, "original", marker="victim"),
+                    event("ROOT_ENTER", 2, "original", marker="victim"),
+                    event("TASK_ENTER", 3, "original", marker="victim", name="child"),
+                    event("ROOT_EXIT", 4, "original", marker="victim"),
+                    event("WRAPPER_RETURN", 5, "original", marker="victim",
+                          status="THREW", rootExited=True, tasks=1),
+                    event("TASK_EXIT", 6, "original", marker="victim", name="child")]
+        assert_request_lifecycles(original, "victim", allow_residual_tasks=True)
+        retry = [event("WRAPPER_ENTER", 7, "retry", marker="victim"),
+                 event("WRAPPER_RETURN", 8, "retry", marker="victim",
+                       status="THREW", rootExited=False, tasks=1),
+                 event("ROOT_EXIT", 9, "retry", marker="victim"),
+                 event("TASK_EXIT", 10, "retry", marker="victim", name="child")]
+        with self.assertRaisesRegex(AssertionError, "before root exit"):
+            assert_request_lifecycles(original + retry, "victim", allow_residual_tasks=True)
 
     def test_escape_cannot_make_deadlock_look_successful(self):
         events = [event("BARRIER_ENTER", 1), event("BARRIER_ENTER", 2, "b"),
