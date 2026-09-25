@@ -20,6 +20,7 @@ final class InvocationTrace {
     private static final AtomicInteger LIVE_TASKS = new AtomicInteger();
     private static final AtomicInteger LIVE_WRAPPERS = new AtomicInteger();
     private static final JacksonSerDes JSON = new JacksonSerDes();
+    private final AtomicLong apiCallSequence = new AtomicLong();
     final FixtureInput input;
     final String requestId;
     final String executionArn;
@@ -85,6 +86,11 @@ final class InvocationTrace {
 
     void event(String kind) {
         event(kind, Map.of());
+    }
+
+    // Shared by all observed clients for this request, including concurrent checkpoint and poll calls.
+    long nextApiCallId() {
+        return apiCallSequence.incrementAndGet();
     }
 
     synchronized void event(String kind, Map<String, ?> details) {

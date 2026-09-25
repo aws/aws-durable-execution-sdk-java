@@ -21,9 +21,12 @@ final class ObservedClient implements DurableExecutionClient {
 
     @Override
     public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {
+        var callId = trace.nextApiCallId();
         trace.event(
                 "CHECKPOINT_CALL",
                 Map.of(
+                        "callId",
+                        callId,
                         "operations",
                         updates.stream()
                                 .map(update -> update.id() + ":" + update.type() + ":" + update.action())
@@ -31,17 +34,18 @@ final class ObservedClient implements DurableExecutionClient {
         try {
             return delegate.checkpoint(arn, token, updates);
         } finally {
-            trace.event("CHECKPOINT_EXIT");
+            trace.event("CHECKPOINT_EXIT", Map.of("callId", callId));
         }
     }
 
     @Override
     public GetDurableExecutionStateResponse getExecutionState(String arn, String token, String marker) {
-        trace.event("POLL_CALL");
+        var callId = trace.nextApiCallId();
+        trace.event("POLL_CALL", Map.of("callId", callId));
         try {
             return delegate.getExecutionState(arn, token, marker);
         } finally {
-            trace.event("POLL_EXIT");
+            trace.event("POLL_EXIT", Map.of("callId", callId));
         }
     }
 }

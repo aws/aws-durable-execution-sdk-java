@@ -15,12 +15,16 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
@@ -39,6 +43,7 @@ public final class LifecycleHandler implements RequestStreamHandler {
     private static final HttpClient HTTP =
             HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
     private static final ConcurrentHashMap<String, CountDownLatch> BARRIERS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, CyclicBarrier> CHILD_BARRIERS = new ConcurrentHashMap<>();
     private static final ScheduledExecutorService ESCAPES = Executors.newSingleThreadScheduledExecutor(runnable -> {
         var thread = new Thread(runnable, "lmi-test-escape");
         thread.setDaemon(true);
@@ -223,6 +228,24 @@ public final class LifecycleHandler implements RequestStreamHandler {
 
     private String fixed(FixtureInput input, DurableContext context, InvocationTrace trace) {
         var pool = (ThreadPoolExecutor) shared.getExecutorService();
+        awaitRootBarrier(input, trace);
+        if ("nested".equals(input.scenario())) {
+            var value = context.step("success", String.class, step -> body(trace, "success", input.marker()));
+            nested(input, context, trace, value, pool);
+            trace.event("PROGRESS");
+            return value;
+        }
+        var escape = startProgressEscape(pool, trace);
+        try {
+            var value = context.step("success", String.class, step -> body(trace, "success", input.marker()));
+            trace.event("PROGRESS");
+            return value;
+        } finally {
+            escape.cancel(false);
+        }
+    }
+
+    private static void awaitRootBarrier(FixtureInput input, InvocationTrace trace) {
         var barrier = BARRIERS.computeIfAbsent(input.cohort(), key -> {
             ESCAPES.schedule(() -> BARRIERS.remove(key), 20, TimeUnit.SECONDS);
             return new CountDownLatch(input.peers());
@@ -231,7 +254,10 @@ public final class LifecycleHandler implements RequestStreamHandler {
         barrier.countDown();
         await(barrier, 8000);
         trace.event("BARRIER_PASSED");
-        var escape = ESCAPES.schedule(
+    }
+
+    private static ScheduledFuture<?> startProgressEscape(ThreadPoolExecutor pool, InvocationTrace trace) {
+        return ESCAPES.schedule(
                 () -> {
                     trace.snapshot(pool);
                     trace.event("ESCAPE", Map.of("reason", "fixed executor failed to progress"));
@@ -240,40 +266,61 @@ public final class LifecycleHandler implements RequestStreamHandler {
                 },
                 8,
                 TimeUnit.SECONDS);
-        try {
-            var value = context.step("success", String.class, step -> body(trace, "success", input.marker()));
-            if ("nested".equals(input.scenario())) {
-                nested(context, trace, value);
-            }
-            trace.event("PROGRESS");
-            return value;
-        } finally {
-            escape.cancel(false);
-        }
     }
 
-    private static void nested(DurableContext context, InvocationTrace trace, String value) {
+    private static void nested(
+            FixtureInput input, DurableContext context, InvocationTrace trace, String value, ThreadPoolExecutor pool) {
+        var barrier = CHILD_BARRIERS.computeIfAbsent(input.cohort(), key -> {
+            ESCAPES.schedule(() -> CHILD_BARRIERS.remove(key), 20, TimeUnit.SECONDS);
+            return new CyclicBarrier(input.peers());
+        });
         context.runInChildContext("child", String.class, child -> {
             trace.taskEnter("child");
             try {
-                var mapped = child.map(
-                        "map",
-                        List.of(value, value),
-                        String.class,
-                        (item, index, branch) ->
-                                branch.step("mapped-step", String.class, step -> body(trace, "mapped-step", item)));
-                try (var parallel = child.parallel("parallel")) {
-                    parallel.branch(
-                            "left", String.class, branch -> branch.step("left-step", String.class, step -> value));
-                    parallel.branch(
-                            "right", String.class, branch -> branch.step("right-step", String.class, step -> value));
-                    parallel.get();
+                // Separate setup from the progress budget. Neither child can submit a coordinator until both
+                // have entered; otherwise the first child's coordinator could steal the second child's worker.
+                awaitChildBarrier(barrier, trace, 8000);
+                var escape = startProgressEscape(pool, trace);
+                try {
+                    return nestedWork(child, trace, value);
+                } finally {
+                    escape.cancel(false);
                 }
-                return mapped.getResult(0);
             } finally {
                 trace.taskExit("child");
             }
         });
+    }
+
+    private static String nestedWork(DurableContext child, InvocationTrace trace, String value) {
+        trace.event("NESTED_WORK_START");
+        var mapped = child.map(
+                "map",
+                List.of(value, value),
+                String.class,
+                (item, index, branch) ->
+                        branch.step("mapped-step", String.class, step -> body(trace, "mapped-step", item)));
+        try (var parallel = child.parallel("parallel")) {
+            parallel.branch("left", String.class, branch -> branch.step("left-step", String.class, step -> value));
+            parallel.branch("right", String.class, branch -> branch.step("right-step", String.class, step -> value));
+            parallel.get();
+        }
+        return mapped.getResult(0);
+    }
+
+    static void awaitChildBarrier(CyclicBarrier barrier, InvocationTrace trace, long millis) {
+        trace.event("CHILD_BARRIER_ENTER");
+        try {
+            barrier.await(millis, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            trace.event("CHILD_BARRIER_FAILED");
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("fixture interrupted", interrupted);
+        } catch (BrokenBarrierException | TimeoutException failure) {
+            trace.event("CHILD_BARRIER_FAILED");
+            throw new IllegalStateException("PLACEMENT_PRECONDITION: child barrier not established", failure);
+        }
+        trace.event("CHILD_BARRIER_PASSED");
     }
 
     private static String hold(FixtureInput input, InvocationTrace trace) {

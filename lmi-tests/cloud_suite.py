@@ -15,7 +15,7 @@ import traceback
 import uuid
 import xml.etree.ElementTree as ET
 
-from cloud_support import (Cloud, CollectionError, PreconditionError, assert_fixed,
+from cloud_support import (Cloud, CollectionError, PreconditionError, api_calls_complete, assert_fixed,
                            assert_lifecycle, assert_nested_reached, assert_overlap, assert_replay, aws,
                            platform_timeout, require, save, selected)
 
@@ -376,6 +376,17 @@ def fixed_case(cloud, fixture, scenario):
         wait_returns(cloud, fixture, items, seconds=35)
         events = [e for i in items for e in cloud.events_for(i)]
         if len(selected(events, "BARRIER_PASSED")) == 2:
+            if scenario == "nested":
+                # A broken child barrier is setup failure, not nested starvation. Its
+                # diagnostics may arrive after the wrapper-return CloudWatch batch.
+                cloud.poll(fixture, lambda events: selected(
+                    [e for e in events if e["marker"] in {i["marker"] for i in items}], "CHILD_BARRIER_FAILED")
+                    or len([e for e in selected(events, "CHILD_BARRIER_PASSED")
+                            if e["marker"] in {i["marker"] for i in items}]) == 2,
+                    seconds=PEER_LOG_OBSERVATION_SECONDS, items=items)
+                events = [e for i in items for e in cloud.events_for(i)]
+                if selected(events, "CHILD_BARRIER_FAILED"):
+                    raise PreconditionError("Nested child barrier was not established")
             # A failure after admission is final, even if the escape grows the pool.
             for item in items:
                 cloud.finish(item)
@@ -384,7 +395,8 @@ def fixed_case(cloud, fixture, scenario):
             events = [e for item in items for e in cloud.events_for(item)]
             if scenario == "nested":
                 assert_nested_reached(events, {item["marker"] for item in items})
-            assert_fixed(events, {i["marker"] for i in items})
+            assert_fixed(events, {i["marker"] for i in items},
+                         progress_start="CHILD_BARRIER_PASSED" if scenario == "nested" else "BARRIER_PASSED")
             assert_lifecycle(events)
             return
         if selected(events, "BARRIER_PASSED") or selected(events, "ESCAPE"):
@@ -429,6 +441,8 @@ def runtime_requests_drained(events, markers, allow_no_entry=False):
     returned = {(e["marker"], e["environment"], e["requestId"])
                 for e in selected(events, "WRAPPER_RETURN") if e["marker"] in markers}
     if not (allow_no_entry or entered) or not entered <= returned:
+        return False
+    if not api_calls_complete([e for e in events if e["marker"] in markers]):
         return False
     for marker, environment, request_id in entered:
         trace = request_trace(events, marker, request_id, environment)
@@ -484,21 +498,39 @@ def timeout_evidence_ready(
         cloud, events, victim_marker, request_id, environment, peers, probes, deadline):
     trace = request_trace(events, victim_marker, request_id, environment)
     returned = selected(trace, "WRAPPER_RETURN")
-    peer_evidence = []
-    for peer in peers:
-        peer_trace = request_trace(
-            events, peer["marker"], peer["requestId"], peer["environment"])
-        peer_evidence.append(
-            bool(selected(peer_trace, "WRAPPER_RETURN"))
-            and any(event["nanos"] < deadline for event in selected(peer_trace, "HEARTBEAT"))
-            and any(event["nanos"] >= deadline for event in selected(peer_trace, "HEARTBEAT")))
     interrupted = selected(trace, "INTERRUPTED") + selected(trace, "IGNORED_INTERRUPT")
     cancellation = returned and returned[0]["status"] == "THREW" and interrupted
-    recovered = any(event["environment"] == environment
-                    and event["nanos"] <= deadline + 8_000_000_000
-                    for probe in probes for event in selected(events, "TASK_ENTER", probe["marker"]))
-    return (bool(returned) and all(peer_evidence) and recovered
+    recovered = recovery_admissions(events, environment, peers, probes, deadline)
+    return (bool(returned) and bool(recovered)
             and bool(server_timeout_logs(cloud, request_id) or cancellation))
+
+
+def recovery_admissions(events, environment, peers, probes, deadline):
+    """Prove a probe could not have used a slot released by an original healthy peer.
+
+    Wait for complete peer intervals: absence of an exit in delayed logs is not
+    occupancy evidence. Retried peers and replacement JVMs cannot fill the interval.
+    """
+    intervals = []
+    for peer in peers:
+        trace = request_trace(events, peer["marker"], peer["requestId"], peer["environment"])
+        boundaries = [selected(trace, "WRAPPER_ENTER"),
+                      [e for e in selected(trace, "TASK_ENTER") if e.get("name") == "held-step"],
+                      [e for e in selected(trace, "TASK_EXIT") if e.get("name") == "held-step"],
+                      selected(trace, "WRAPPER_RETURN")]
+        if peer["environment"] != environment or any(len(points) != 1 for points in boundaries):
+            return []
+        start, task_start, task_end, end = [points[0] for points in boundaries]
+        if not start["sequence"] < task_start["sequence"] < task_end["sequence"] < end["sequence"]:
+            return []
+        beats = selected(trace, "HEARTBEAT")
+        if not (any(e["nanos"] < deadline for e in beats) and any(e["nanos"] >= deadline for e in beats)):
+            return []
+        intervals.append((task_start["sequence"], task_end["sequence"]))
+    return [e for probe in probes for e in selected(events, "TASK_ENTER", probe["marker"])
+            if e.get("name") == "held-step" and e["environment"] == environment
+            and e["nanos"] <= deadline + 8_000_000_000
+            and all(start < e["sequence"] < end for start, end in intervals)]
 
 
 def cleanup_case(cloud, fixture, invocation_start, seconds):
@@ -590,8 +622,7 @@ def assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim):
     all_victim_events = cloud.events_for(victim)
     trace = request_trace(all_victim_events, victim["marker"], request_id, target)
     returned = selected(trace, "WRAPPER_RETURN")[0]
-    recovered = [e for p in probes for e in selected(cloud.events_for(p), "TASK_ENTER")
-                 if e["environment"] == target and e["nanos"] <= deadline + 8_000_000_000]
+    recovered = recovery_admissions(list(cloud.events.values()), target, peers, probes, deadline)
     retry_request_ids = sorted({e["requestId"] for e in all_victim_events if e["requestId"] != request_id})
     report = {"requestId": request_id, "environment": target, "deadlineNanos": deadline,
               "wrapperReturnNanos": returned["nanos"], "taskExits": selected(trace, "TASK_EXIT"),

@@ -38,10 +38,17 @@ or accept a retry that happens to pass after a lifecycle violation.
 * A stream wrapper observes the actual SDK entry and return. Invocation-local
   root/task `finally` markers and a JVM-wide sequence establish ordering. The
   plugin end hook is deliberately not used as a completion signal.
+  Each real checkpoint/poll call has a request-local call ID paired with its
+  `finally` exit. Missing or mismatched exits prevent cleanup from reusing the
+  fixture, and an exit after wrapper return remains a lifecycle failure.
 * A bounded same-JVM root barrier establishes the fixed-pool reproduction.
   `fixed2` uses a shared two-thread pool so two roots starve their first steps.
-  `nested2` uses four threads so both roots and child-context handlers start
-  before the child handlers starve the nested map/parallel work they await.
+  `nested2` uses four threads and a separate cohort-scoped child barrier. Both
+  child handlers must enter before either schedules nested map/parallel work.
+  The child barrier has an independent 8-second setup budget; the nested progress
+  budget starts when it releases, not when the roots passed their earlier barrier.
+  A broken child barrier fails setup without growing the pool; an escape after
+  successful child admission still fails the starvation assertion.
   Other cases hold steps with private S3 control objects. The driver requires
   distinct request IDs active in the same JVM. Placement has its own deadline
   and failure category. Environment replacement is never worker recovery.
@@ -50,7 +57,10 @@ or accept a retry that happens to pass after a lifecycle violation.
   deadline; no fake clock, context, checkpoint backend, or time-skipping runner
   participates. Service timeout evidence, task interruption/exit, wrapper exit,
   and restored admission are independent assertions. Durable execution status
-  is collected separately from the runtime invocation's outcome. After evidence
+  is collected separately from the runtime invocation's outcome. Recovery requires
+  complete task and wrapper intervals for every original healthy peer covering
+  the qualifying probe admission in the same JVM. A peer's early exit, missing
+  exit log, or successful later retry cannot establish that occupancy. After evidence
   is recorded, the driver stops any nonterminal timeout execution and drains all
   requests launched by that case before reusing the fixture's capacity.
 * Successful and failed checkpointed steps precede a real durable wait. The

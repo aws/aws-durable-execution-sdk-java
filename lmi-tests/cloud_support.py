@@ -95,6 +95,33 @@ def selected(events, kind=None, marker=None):
             and (marker is None or e["marker"] == marker)]
 
 
+def api_calls_complete(events):
+    """Pair actual backend calls, not logical SDK futures, within their originating request.
+
+    Reordering by CloudWatch is harmless; missing, duplicate or mismatched records
+    cannot prove an exit. A request-local ID is shared by checkpoint and poll calls.
+    """
+    pending, seen = {}, set()
+    for event in sorted(events, key=lambda e: e["sequence"]):
+        if event["kind"] not in {"CHECKPOINT_CALL", "CHECKPOINT_EXIT", "POLL_CALL", "POLL_EXIT"}:
+            continue
+        call_id = event.get("callId")
+        if type(call_id) is not int or call_id <= 0:
+            return False
+        key = (event["marker"], event["environment"], event["requestId"], call_id)
+        api, boundary = event["kind"].rsplit("_", 1)
+        if boundary == "CALL":
+            if key in seen:
+                return False
+            seen.add(key)
+            pending[key] = (api, event["sequence"])
+        else:
+            call = pending.pop(key, None)
+            if call is None or call[0] != api or call[1] >= event["sequence"]:
+                return False
+    return not pending
+
+
 def assert_overlap(events, markers, count, environment=None):
     """Use actual task intervals on one JVM; driver parallelism is not evidence."""
     points = {}
@@ -135,6 +162,7 @@ def assert_lifecycle(events, allow_residual=False):
         late = [e for e in local if e["sequence"] > return_event["sequence"]
                 and e["kind"] in {"CHECKPOINT_CALL", "POLL_CALL", "CHECKPOINT_EXIT", "POLL_EXIT"}]
         require(not late, "SDK checkpoint/poll activity continued after wrapper return")
+        require(api_calls_complete(local), "Missing or mismatched checkpoint/poll call exits before wrapper return")
         forbidden_work = {"ROOT_ENTER", "ROOT_EXIT", "TASK_ENTER", "BODY"}
         if not allow_live_tasks:
             forbidden_work.add("TASK_EXIT")
@@ -162,7 +190,7 @@ def assert_replay(events, history, marker):
     require(any(e.get("EventType") == "WaitSucceeded" for e in history), "No service wait completion")
 
 
-def assert_fixed(events, markers):
+def assert_fixed(events, markers, progress_start="BARRIER_PASSED"):
     entered = selected(events, "BARRIER_ENTER")
     passed = selected(events, "BARRIER_PASSED")
     require(len({e["marker"] for e in passed}) == len(markers), "Root barrier was not passed by every participant")
@@ -173,25 +201,33 @@ def assert_fixed(events, markers):
     require(max(e["sequence"] for e in entered) < min(e["sequence"] for e in passed),
             "Root invocations did not overlap at the barrier")
     require(not selected(events, "ESCAPE"), "Shared fixed executor starved its own queued work")
+    # Child admission is one cohort-wide phase. A participant scheduled later must
+    # not get a fresh progress budget after its peer has already left the barrier.
+    cohort_start = min((e["nanos"] for e in selected(events, progress_start)), default=None)
     for marker in markers:
         progress = selected(events, "PROGRESS", marker)
-        start = selected(events, "BARRIER_PASSED", marker)
-        require(progress and (progress[-1]["nanos"] - start[0]["nanos"]) < 8_000_000_000,
+        start = selected(events, progress_start, marker)
+        started = cohort_start if progress_start == "CHILD_BARRIER_PASSED" else (start[0]["nanos"] if start else None)
+        require(start and progress and 0 <= (progress[-1]["nanos"] - started) < 8_000_000_000,
                 "Shared executor did not progress within budget")
 
 
 def assert_nested_reached(events, markers):
-    """Prove nested child handlers were active before progress or the starvation escape."""
-    children = [event for event in selected(events, "TASK_ENTER")
-                if event.get("name") == "child" and event["marker"] in markers]
-    require({event["marker"] for event in children} == set(markers),
-            "Nested child contention was not reached by every participant")
-    boundary = selected(events, "ESCAPE") or selected(events, "PROGRESS")
-    require(len({event["environment"] for event in children + boundary}) == 1,
+    """Both original child handlers must reach their own barrier before any nested scheduling."""
+    entered = selected(events, "CHILD_BARRIER_ENTER")
+    passed = selected(events, "CHILD_BARRIER_PASSED")
+    roots = selected(events, "BARRIER_PASSED")
+    identity = lambda e: (e["marker"], e["environment"], e["requestId"])
+    if (selected(events, "CHILD_BARRIER_FAILED") or len(entered) != len(markers)
+            or len(passed) != len(markers) or {e["marker"] for e in passed} != set(markers)
+            or {identity(e) for e in entered} != {identity(e) for e in roots}
+            or {identity(e) for e in passed} != {identity(e) for e in roots}):
+        raise PreconditionError("Nested child barrier was not established by the original participants")
+    require(len({e["environment"] for e in entered}) == 1,
             "Nested contention evidence came from different JVMs")
-    require(boundary and max(event["sequence"] for event in children)
-            < min(event["sequence"] for event in boundary),
-            "Executor capacity changed before nested contention was established")
+    boundary = passed + selected(events, "NESTED_WORK_START") + selected(events, "ESCAPE") + selected(events, "PROGRESS")
+    require(max(e["sequence"] for e in entered) < min(e["sequence"] for e in boundary),
+            "Work started before nested contention was established")
 
 
 class Cloud:
