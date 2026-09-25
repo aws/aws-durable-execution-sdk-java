@@ -145,6 +145,7 @@ public class MyHandler extends DurableHandler<Input, Output> {
 | `lambdaClientBuilder` | Auto-created `LambdaClient` for current region, primed for performance (see [`DurableConfig.java`](../sdk/src/main/java/software/amazon/lambda/durable/DurableConfig.java))       |
 | `serDes`              | `JacksonSerDes`                                                                                                                                                                   |
 | `executorService`     | `Executors.newCachedThreadPool()` (for user-defined operations only)                                                                                                              |
+| `invocationExecutorFactory` | Disabled; when configured, creates an SDK-owned executor for each invocation                                                                                               |
 | `loggerConfig`        | `LoggerConfig.defaults()` (suppress replay logs)                                                                                                                                  |
 | `pollingStrategy`     | Exponential backoff: 1s base, 2x rate, FULL jitter, 10s max                                                                                                                      |
 | `checkpointDelay`     | `Duration.ofSeconds(0)` (checkpoint as soon as possible)                                                                                                                          |
@@ -154,9 +155,16 @@ public class MyHandler extends DurableHandler<Input, Output> {
 The SDK uses two separate thread pools with distinct responsibilities:
 
 **User Executor (`DurableConfig.executorService`):**
-- Runs user-defined operations (the code passed to `ctx.step()` and `ctx.stepAsync()`)
+- Runs the root handler, steps, and child-context user code
 - Configurable via `DurableConfig.builder().withExecutorService()`
+- Caller-owned and shared across invocations; the SDK never shuts it down
 - Default: cached daemon thread pool
+
+**Invocation Executor Factory (`DurableConfig.invocationExecutorFactory`):**
+- Optional alternative to the shared user executor
+- Creates one executor per invocation for all root, step, and child-context user code
+- SDK-owned: drained and shut down before the invocation response returns
+- Must return a fresh executor and cannot be combined with `withExecutorService()`
 
 **Internal Executor (`InternalExecutor.INSTANCE`):**
 - Runs SDK coordination tasks: checkpoint batching, polling for wait completion

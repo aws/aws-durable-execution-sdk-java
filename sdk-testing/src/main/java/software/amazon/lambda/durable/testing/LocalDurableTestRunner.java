@@ -61,17 +61,22 @@ public class LocalDurableTestRunner<I, O> {
         // Create config that uses customer's configuration but overrides the client with in-memory storage
         if (customerConfig != null) {
             // Use customer's config but override the client with our in-memory implementation
-            this.customerConfig = DurableConfig.builder()
+            var configBuilder = DurableConfig.builder()
                     .withDurableExecutionClient(storage)
                     .withSerDes(customerConfig.getSerDes())
-                    .withExecutorService(customerConfig.getExecutorService())
                     .withPollingStrategy(customerConfig.getPollingStrategy())
                     .withCheckpointDelay(customerConfig.getCheckpointDelay())
                     .withLoggerConfig(customerConfig.getLoggerConfig())
                     // Temporary: remove along with the checkpointEmptyMap flag in a future major version.
                     .withCheckpointEmptyMap(customerConfig.shouldCheckpointEmptyMap())
-                    .withPlugins(customerConfig.getPluginRunner().getPlugins().toArray(new DurableExecutionPlugin[0]))
-                    .build();
+                    .withPlugins(customerConfig.getPluginRunner().getPlugins().toArray(new DurableExecutionPlugin[0]));
+            var invocationExecutorFactory = customerConfig.getInvocationExecutorFactory();
+            if (invocationExecutorFactory.isPresent()) {
+                configBuilder.withInvocationExecutorFactory(invocationExecutorFactory.orElseThrow());
+            } else {
+                configBuilder.withExecutorService(customerConfig.getExecutorService());
+            }
+            this.customerConfig = configBuilder.build();
         } else {
             // Fallback to default config with in-memory client
             this.customerConfig =

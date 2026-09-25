@@ -34,11 +34,22 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 | `withLambdaClientBuilder()` | Custom AWS Lambda client                | Auto-configured Lambda client |
 | `withSerDes()`              | Serializer for step results             | Jackson with default settings |
 | `withExecutorService()`     | Thread pool for user-defined operations | Cached daemon thread pool     |
+| `withInvocationExecutorFactory()` | Factory for isolated per-invocation user executors | Disabled |
 | `withLoggerConfig()`        | Logger behavior configuration           | Suppress logs during replay   |
 | `withPollingStrategy()`     | Backend polling strategy                | Exponential backoff: 1s base, 2x rate, FULL jitter, 10s max |
 | `withCheckpointDelay()`     | How often the SDK checkpoints updates   | `Duration.ofSeconds(0)` (as soon as possible) |
 
-The `withExecutorService()` option configures the thread pool used for running user-defined operations. Internal SDK coordination (checkpoint batching, polling) runs on an SDK-managed thread pool.
+The `withExecutorService()` option configures a caller-owned executor shared by every invocation that uses the configuration. The SDK never shuts it down. To isolate concurrent Lambda Managed Instances invocations, configure a factory instead:
+
+```java
+DurableConfig.builder()
+    .withInvocationExecutorFactory(() -> Executors.newFixedThreadPool(4))
+    .build();
+```
+
+The factory is called once per invocation and may be called concurrently on Lambda Managed Instances. It must return a fresh executor, which the SDK drains and shuts down before returning the invocation response. Returning an executor already leased to an active invocation is rejected. The factory and `withExecutorService()` are mutually exclusive. Both options run all user code, including the root handler, steps, and child contexts. Internal SDK coordination such as checkpoint batching and polling remains on the SDK-managed executor.
+
+A bounded executor supplied through `withExecutorService()` remains shared. On Lambda Managed Instances, concurrent roots can occupy all of its workers while waiting for queued steps. Use the invocation factory when capacity must be isolated between native invocations. Isolation does not define the capacity required by arbitrarily nested synchronous child contexts; size or design those separately.
 
 ### Dynamic plugin loading
 

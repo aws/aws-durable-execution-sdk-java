@@ -209,7 +209,7 @@ def assert_fixed(events, markers, progress_start="BARRIER_PASSED"):
     require(len({e["requestId"] for e in entered}) == len(markers), "Missing distinct runtime invocations")
     require(max(e["sequence"] for e in entered) < min(e["sequence"] for e in passed),
             "Root invocations did not overlap at the barrier")
-    require(not selected(events, "ESCAPE"), "Shared fixed executor starved its own queued work")
+    require(not selected(events, "ESCAPE"), "Fixed executor starved its own queued work")
     # Child admission is one cohort-wide phase. A participant scheduled later must
     # not get a fresh progress budget after its peer has already left the barrier.
     cohort_start = min((e["nanos"] for e in selected(events, progress_start)), default=None)
@@ -218,7 +218,7 @@ def assert_fixed(events, markers, progress_start="BARRIER_PASSED"):
         start = selected(events, progress_start, marker)
         started = cohort_start if progress_start == "CHILD_BARRIER_PASSED" else (start[0]["nanos"] if start else None)
         require(start and progress and 0 <= (progress[-1]["nanos"] - started) < 8_000_000_000,
-                "Shared executor did not progress within budget")
+                "Fixed executor did not progress within budget")
 
 
 def assert_nested_reached(events, markers):

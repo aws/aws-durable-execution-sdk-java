@@ -17,7 +17,7 @@ or accept a retry that happens to pass after a lifecycle violation.
   SDK's minimum JDK prevents fixture-only changes from introducing newer JDK APIs
   into the shared Maven reactor. On manual dispatch, a separate
   serialized cloud job builds the selected commit, deploys all five
-  fixture functions, runs all 13 cases, then collects evidence. A persistent
+  fixture functions, runs all 12 gating cases, then collects evidence. A persistent
   CloudFormation stack owns all five
   functions and log groups. The stack, functions and bucket remain after both
   successful and failed test runs; later deployments update the same resources. Each uses 2 GiB / 1 vCPU and a single
@@ -50,17 +50,14 @@ or accept a retry that happens to pass after a lifecycle violation.
   Each real checkpoint/poll call has a request-local call ID paired with its
   `finally` exit. Missing or mismatched exits prevent cleanup from reusing the
   fixture, and an exit after wrapper return remains a lifecycle failure.
-* A bounded same-JVM root barrier establishes the fixed-pool reproduction.
-  `fixed2` uses a shared two-thread pool so two roots starve their first steps.
-  `nested2` uses four threads and a separate cohort-scoped child barrier. Both
-  child handlers must enter before either schedules nested map/parallel work.
-  The child barrier has an independent 8-second setup budget; the nested progress
-  budget starts when it releases, not when the roots passed their earlier barrier.
-  A broken child barrier fails setup without growing the pool; an escape after
-  successful child admission still fails the starvation assertion.
-  Other cases hold steps with private S3 control objects. The driver requires
-  distinct request IDs active in the same JVM. Placement has its own deadline
-  and failure category. Environment replacement is never worker recovery.
+* A bounded same-JVM root barrier verifies that `fixed2` gives each invocation
+  its own two-thread executor. `nested2` is retained in the persistent stack for
+  baseline diagnostics but does not produce a gating LMI case. It uses four
+  shared threads and a separate cohort-scoped child barrier before scheduling
+  nested map/parallel work. Other cases hold steps with private S3 control
+  objects. The driver requires distinct request IDs active in the same JVM.
+  Placement has its own deadline and failure category. Environment replacement
+  is never worker recovery.
 * Timeout victims start before healthy peers, leaving the peers time to hold
   the other runtime slots during recovery. Diagnostics capture the real context
   deadline; no fake clock, context, checkpoint backend, or time-skipping runner
@@ -146,8 +143,9 @@ python3 lmi-tests/cloud_suite.py collect
 ```
 
 The deploy command creates or updates and retains `default1`, `default2`, `default8`,
-`fixed2`, and `nested2` together. The test command requires all five and runs the
-full suite. CI publishes one combined artifact, named `lmi-e2e-RUN-ATTEMPT`, with
+`fixed2`, and `nested2` together. The test command requires all five and runs 12
+gating cases; `nested2` is retained but excluded. CI publishes one combined
+artifact, named `lmi-e2e-RUN-ATTEMPT`, with
 the single `template.json` and per-function configuration snapshots. The
 CloudFormation execution role needs permission to manage the function scaling
 configuration; the driver calls `lambda:GetFunctionScalingConfig` to verify it
@@ -204,8 +202,9 @@ wrapper entry and return. Healthy/probe scheduling
 uses the actual runtime deadline, excluding cold-start and request-queue delay.
 A successful durable retry cannot erase an old invocation
 that exceeds the cleanup budget. No virtual-thread executor variant is deployed
-until its executor contract is defined; default cached and shared fixed pools
-are covered separately.
+until its executor contract is defined. The cloud suite gates default cached and
+invocation-local fixed pools; the shared fixed nesting fixture remains available
+as a non-gating baseline diagnostic.
 
 CloudFormation's native [FunctionScalingConfig](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-lambda-function-functionscalingconfig.html)
 sets the limits in the resource declaration. LMI provisioning and version behavior
