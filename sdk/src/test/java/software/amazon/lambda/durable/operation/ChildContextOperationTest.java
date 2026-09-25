@@ -20,6 +20,7 @@ import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
+import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
@@ -75,6 +76,7 @@ class ChildContextOperationTest {
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
         when(durableContext.getDurableConfig()).thenReturn(createConfig());
+        TestUtils.executeOperationTasks(executionManager, durableContext);
     }
 
     private DurableConfig createConfig() {

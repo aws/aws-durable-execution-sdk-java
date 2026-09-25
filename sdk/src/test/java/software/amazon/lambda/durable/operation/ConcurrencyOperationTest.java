@@ -90,6 +90,7 @@ class ConcurrencyOperationTest {
                         .status(OperationStatus.SUCCEEDED)
                         .build());
         when(executionManager.sendOperationUpdate(any())).thenReturn(CompletableFuture.completedFuture(null));
+        TestUtils.executeOperationTasks(executionManager, durableContext);
     }
 
     private TestConcurrencyOperation createOperation(CompletionConfig completionConfig) throws Exception {
