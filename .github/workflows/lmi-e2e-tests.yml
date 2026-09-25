@@ -56,12 +56,6 @@ jobs:
           test -n "$TEST_LAMBDA_EXECUTION_ROLE_ARN"
           region=$(cut -d: -f4 <<< "$CAPACITY_PROVIDER_ARN")
           echo "AWS_REGION=$region" >> "$GITHUB_ENV"
-      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-        with:
-          role-to-assume: ${{ secrets.TEST_ROLE_ARN }}
-          role-session-name: java-lmi-e2e
-          aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
       - uses: actions/setup-java@v6
         with:
           distribution: corretto
@@ -70,12 +64,34 @@ jobs:
       - name: Build commit under test
         timeout-minutes: 10
         run: mvn -B -q -pl lmi-tests -am package -DskipTests
+      - name: Configure AWS credentials for deployment
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.TEST_ROLE_ARN }}
+          role-session-name: java-lmi-e2e-deploy
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
       - name: Create or update persistent LMI functions
         timeout-minutes: 35
         run: python3 lmi-tests/cloud_suite.py deploy --stack-name "$LMI_STACK_NAME" --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Refresh AWS credentials for assertions
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.TEST_ROLE_ARN }}
+          role-session-name: java-lmi-e2e-test
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
       - name: LMI cloud regression assertions (expected red until issue 726 is fixed)
         timeout-minutes: 30
         run: python3 -u lmi-tests/cloud_suite.py test --cloud-enabled
+      - name: Refresh AWS credentials for evidence collection
+        if: always() && hashFiles('lmi-tests/artifacts/manifest.json') != ''
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.TEST_ROLE_ARN }}
+          role-session-name: java-lmi-e2e-collect
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
       - name: Collect histories and lifecycle evidence
         if: always()
         timeout-minutes: 5

@@ -110,6 +110,8 @@ class PersistenceTest(unittest.TestCase):
         self.assertEqual(1, sleep.call_count)
         self.assertTrue(all(call.args[1] == "list-durable-executions-by-function" for call in api.call_args_list))
         self.assertEqual(["RUNNING"], api.call_args.args[2]["Statuses"])
+        self.assertEqual("function:default1", api.call_args.args[2]["FunctionName"])
+        self.assertEqual("$LATEST.PUBLISHED", api.call_args.args[2]["Qualifier"])
 
     @patch("cloud_suite.save")
     @patch("cloud_suite.aws")
