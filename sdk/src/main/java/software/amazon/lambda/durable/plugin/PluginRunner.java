@@ -11,7 +11,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Composes multiple {@link DurableExecutionPlugin} instances into a single dispatcher.
  *
- * <p>Event hooks are fire-and-forget: each plugin is called in order, errors are swallowed.
+ * <p>Event hooks are fire-and-forget: each plugin is called in order, and non-fatal failures are contained. JVM
+ * failures and thread termination continue to propagate.
  *
  * <p>{@code onInvocationEnd} is awaited (the SDK blocks until it returns) to allow plugins to flush data before Lambda
  * freezes.
@@ -44,15 +45,27 @@ public class PluginRunner {
 
     // ─── Event hooks ─────────────────────────────────────────────────────
 
-    /** Calls a void hook on all plugins, swallowing any errors. */
+    /** Calls a void hook on all plugins, containing any non-fatal failure. */
     private void run(Consumer<DurableExecutionPlugin> hook) {
         for (var plugin : plugins) {
             try {
                 hook.accept(plugin);
-            } catch (Exception e) {
-                logger.warn("Plugin hook threw exception", e);
+            } catch (Throwable t) {
+                contain(t);
             }
         }
+    }
+
+    /** Logs a plugin failure, or rethrows it when the JVM or current thread cannot safely continue. */
+    @SuppressWarnings("removal") // ThreadDeath is deprecated for removal on newer JDKs but is deliverable on JDK 17.
+    private static void contain(Throwable t) {
+        if (t instanceof VirtualMachineError fatal) {
+            throw fatal;
+        }
+        if (t instanceof ThreadDeath fatal) {
+            throw fatal;
+        }
+        logger.warn("Plugin hook threw exception", t);
     }
 
     public void onInvocationStart(InvocationInfo info) {

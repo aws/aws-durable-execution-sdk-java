@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.ServiceConfigurationError;
 import org.junit.jupiter.api.Test;
 
 class PluginRunnerTest {
@@ -62,6 +63,39 @@ class PluginRunnerTest {
 
         assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
         assertEquals(List.of("p2:onInvocationStart"), calls);
+    }
+
+    @Test
+    void fireAndForget_containsNonFatalErrors_andCallsRemainingPlugins() {
+        List<Error> failures = List.of(
+                new AssertionError("assertion failed"),
+                new ServiceConfigurationError("provider failed"),
+                new NoClassDefFoundError("optional dependency"));
+
+        for (var failure : failures) {
+            var calls = new ArrayList<String>();
+            var runner = new PluginRunner(List.of(new ErrorPlugin(failure), new TestPlugin("p2", calls)));
+
+            assertDoesNotThrow(() -> runner.onInvocationStart(invocationInfo()));
+            assertEquals(List.of("p2:onInvocationStart"), calls);
+        }
+    }
+
+    @Test
+    void fireAndForget_propagatesVirtualMachineErrors() {
+        var failure = new InternalError("JVM failure");
+        var runner = new PluginRunner(List.of(new ErrorPlugin(failure)));
+
+        assertSame(failure, assertThrows(InternalError.class, () -> runner.onInvocationStart(invocationInfo())));
+    }
+
+    @SuppressWarnings("removal")
+    @Test
+    void fireAndForget_propagatesThreadDeath() {
+        var failure = new ThreadDeath();
+        var runner = new PluginRunner(List.of(new ErrorPlugin(failure)));
+
+        assertSame(failure, assertThrows(ThreadDeath.class, () -> runner.onInvocationStart(invocationInfo())));
     }
 
     @Test
@@ -314,6 +348,14 @@ class PluginRunnerTest {
         @Override
         public void onInvocationEnd(InvocationEndInfo info) {
             throw new RuntimeException("boom");
+        }
+    }
+
+    /** Plugin that throws the supplied error from its start hook. */
+    private record ErrorPlugin(Error failure) implements DurableExecutionPlugin {
+        @Override
+        public void onInvocationStart(InvocationInfo info) {
+            throw failure;
         }
     }
 }
