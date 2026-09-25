@@ -130,7 +130,7 @@ class DurableExecutionTest {
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(executionOp(), pendingStep))
                         .build());
-        var checkpointAttempted = new CountDownLatch(1);
+        var waiterReady = new CountDownLatch(1);
         var checkpointFuture = new AtomicReference<CompletableFuture<Void>>();
 
         var output = DurableExecutor.execute(
@@ -142,8 +142,22 @@ class DurableExecutionTest {
                     var manager = durableContext.getExecutionManager();
 
                     class TestOperation extends BaseDurableOperation {
+                        private final CompletableFuture<BaseDurableOperation> completionFuture =
+                                new CompletableFuture<>() {
+                                    @Override
+                                    public CompletableFuture<Void> thenRun(Runnable action) {
+                                        waiterReady.countDown();
+                                        return super.thenRun(action);
+                                    }
+                                };
+
                         TestOperation() {
                             super(OperationIdentifier.of("step", "step", OperationSubType.STEP), durableContext, null);
+                        }
+
+                        @Override
+                        public CompletableFuture<BaseDurableOperation> getCompletionFuture() {
+                            return completionFuture;
                         }
 
                         @Override
@@ -155,36 +169,31 @@ class DurableExecutionTest {
                         Operation awaitCompletion() {
                             return waitForOperationCompletion();
                         }
-
-                        @Override
-                        protected void deregisterActiveThread(String threadId) {
-                            checkpointFuture.set(CompletableFuture.runAsync(() -> {
-                                checkpointAttempted.countDown();
-                                try {
-                                    manager.onCheckpointComplete(List.of(Operation.builder()
-                                            .id("step")
-                                            .name("step")
-                                            .type(OperationType.STEP)
-                                            .subType(OperationSubType.STEP.getValue())
-                                            .status(OperationStatus.SUCCEEDED)
-                                            .build()));
-                                } finally {
-                                    manager.finishCheckpointProcessing();
-                                }
-                            }));
-                            try {
-                                assertTrue(checkpointAttempted.await(5, TimeUnit.SECONDS));
-                            } catch (InterruptedException e) {
-                                Thread.currentThread().interrupt();
-                                throw new AssertionError(e);
-                            }
-                            super.deregisterActiveThread(threadId);
-                        }
                     }
 
+                    var succeededStep = Operation.builder()
+                            .id("step")
+                            .name("step")
+                            .type(OperationType.STEP)
+                            .subType(OperationSubType.STEP.getValue())
+                            .status(OperationStatus.SUCCEEDED)
+                            .build();
                     var operation = new TestOperation();
                     operation.execute();
+
                     assertTrue(manager.tryStartCheckpointProcessing());
+
+                    checkpointFuture.set(CompletableFuture.runAsync(() -> {
+                        try {
+                            assertTrue(waiterReady.await(5, TimeUnit.SECONDS));
+                            manager.onCheckpointComplete(List.of(succeededStep));
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(e);
+                        } finally {
+                            manager.finishCheckpointProcessing();
+                        }
+                    }));
                     var completed = operation.awaitCompletion();
                     checkpointFuture.get().join();
                     return completed.statusAsString();

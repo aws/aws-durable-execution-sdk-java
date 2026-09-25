@@ -95,7 +95,8 @@ class ParallelOperationTest {
                     return null;
                 })
                 .when(executionManager)
-                .registerOperation(any());
+                .registerOperation(any(BaseDurableOperation.class), nullable(BaseDurableOperation.class));
+        MockExecutionManagerSupport.stubWaitForOperationCompletion(executionManager);
 
         // Simulate the real backend for all sendOperationUpdate calls.
         // For SUCCEED on the parallel op: write to operationStore first (establishes happens-before
@@ -383,7 +384,8 @@ class ParallelOperationTest {
 
         // The child operation should be registered in the execution manager
         // (BaseDurableOperation constructor calls executionManager.registerOperation)
-        verify(executionManager, atLeastOnce()).registerOperation(any());
+        verify(executionManager, atLeastOnce())
+                .registerOperation(any(BaseDurableOperation.class), nullable(BaseDurableOperation.class));
         assertNotNull(childOp);
     }
 

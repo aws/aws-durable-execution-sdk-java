@@ -46,6 +46,7 @@ class StepOperationTest {
                 .thenReturn(DurableConfig.builder()
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
+        MockExecutionManagerSupport.completeOperationsOnManager(executionManager);
     }
 
     private void mockFailedOperation(

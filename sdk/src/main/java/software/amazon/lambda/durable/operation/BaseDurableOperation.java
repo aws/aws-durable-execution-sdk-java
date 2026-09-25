@@ -16,6 +16,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.lambda.durable.DurableFuture;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
@@ -91,7 +92,7 @@ public abstract class BaseDurableOperation {
         this.completionFuture = new CompletableFuture<>();
 
         // register this operation in ExecutionManager so that the operation can receive updates from ExecutionManager
-        executionManager.registerOperation(this);
+        executionManager.registerOperation(this, parentOperation);
     }
 
     public CompletableFuture<BaseDurableOperation> getCompletionFuture() {
@@ -196,24 +197,44 @@ public abstract class BaseDurableOperation {
         return executionManager.getChildOperations(getOperationId());
     }
 
-    /**
-     * Checks if it's called from a Step.
-     *
-     * @throws IllegalStateException if it's in a step
-     */
-    private void validateCurrentThreadType() {
-        ThreadType current = getCurrentThreadContext().threadType();
-        if (current == ThreadType.STEP) {
-            var message = String.format(
-                    "Nested %s operation is not supported on %s from within a %s execution.",
-                    getType(), getName(), current);
-            throw new IllegalStateException(message);
-        }
-    }
-
     /** Returns true if this operation has completed (successfully or exceptionally). */
     protected boolean isOperationCompleted() {
         return completionFuture.isDone();
+    }
+
+    /**
+     * Waits for the first of the given operations to complete.
+     *
+     * @param operations operations to wait on
+     * @return the first operation future to complete
+     */
+    public static DurableFuture<?> waitForFirstOperationCompletion(List<? extends BaseDurableOperation> operations) {
+        if (operations == null || operations.isEmpty()) {
+            throw new IllegalArgumentException("waitForFirstOperationCompletion requires at least one operation");
+        }
+
+        var executionManager = getExecutionManager(operations);
+
+        return executionManager.waitForFirstOperationCompletion(operations);
+    }
+
+    private static ExecutionManager getExecutionManager(List<? extends BaseDurableOperation> operations) {
+        var first = operations.get(0);
+        if (first == null) {
+            throw new IllegalArgumentException("waitForFirstOperationCompletion requires non-null operations");
+        }
+
+        var executionManager = first.executionManager;
+        for (var operation : operations) {
+            if (operation == null) {
+                throw new IllegalArgumentException("waitForFirstOperationCompletion requires non-null operations");
+            }
+            if (operation.executionManager != executionManager) {
+                throw new IllegalArgumentException(
+                        "waitForFirstOperationCompletion requires operations from the same ExecutionManager");
+            }
+        }
+        return executionManager;
     }
 
     /**
@@ -223,36 +244,7 @@ public abstract class BaseDurableOperation {
      * @return the completed operation
      */
     protected Operation waitForOperationCompletion() {
-
-        validateCurrentThreadType();
-
-        var threadContext = getCurrentThreadContext();
-        CompletableFuture<?> future = completionFuture;
-
-        // It's important that we synchronize access to the future. Otherwise, a race condition could happen if the
-        // completionFuture is completed by a user thread (a step or child context thread) when the execution here
-        // is between `isOperationCompleted` and `thenRun`.
-        // If this operation is a branch/iteration of a ConcurrencyOperation (map or parallel), the branches/iterations
-        // must be completed sequentially to avoid race conditions.
-        synchronized (completionLock()) {
-            if (!isOperationCompleted()) {
-                // Add a completion stage to completionFuture so that when the completionFuture is completed,
-                // it will register the current Context thread synchronously to make sure it is always registered
-                // strictly before the execution thread (Step or child context) is deregistered.
-                // chain them together
-                future = completionFuture.thenRun(() -> registerActiveThread(threadContext.threadId()));
-
-                // Deregister the current thread to allow suspension
-                deregisterActiveThread(threadContext.threadId());
-            }
-        }
-
-        // Block until operation completes. No-op if the future is already completed.
-        try {
-            future.join();
-        } catch (Throwable throwable) {
-            ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(throwable));
-        }
+        executionManager.waitForOperationCompletion(this);
 
         if (isVirtual) {
             // We don't  store virtual operations so they don't corresponding Operation in storage
@@ -403,10 +395,7 @@ public abstract class BaseDurableOperation {
      * @param publishUpdate publishes the operation to execution state
      */
     public final void processCheckpointUpdate(Operation operation, Runnable publishUpdate) {
-        synchronized (completionLock()) {
-            publishUpdate.run();
-            onCheckpointComplete(operation);
-        }
+        executionManager.processCheckpointUpdate(this, operation, publishUpdate);
     }
 
     /** Marks the operation as already completed (in replay). */
@@ -418,19 +407,11 @@ public abstract class BaseDurableOperation {
     }
 
     private void markCompletionFutureCompleted() {
-        // It's important that we synchronize access to the future, otherwise the processing could happen
-        // on someone else's thread and cause a race condition.
-        synchronized (completionLock()) {
-            // Completing the future here will also run any other completion stages that have been attached
-            // to the future. In our case, other contexts may have attached a function to reactivate themselves,
-            // so they will definitely have a chance to reactivate before we finish completing and deactivating
-            // whatever operations were just checkpointed.
-            completionFuture.complete(this);
-        }
-    }
-
-    private CompletableFuture<BaseDurableOperation> completionLock() {
-        return parentOperation == null ? completionFuture : parentOperation.completionFuture;
+        // Completing the future here will also run any other completion stages that have been attached to the future.
+        // In our case, other contexts may have attached a function to reactivate themselves, so they will definitely
+        // have a chance to reactivate before we finish completing and deactivating whatever operations were
+        // checkpointed.
+        executionManager.completeOperation(this);
     }
 
     /**

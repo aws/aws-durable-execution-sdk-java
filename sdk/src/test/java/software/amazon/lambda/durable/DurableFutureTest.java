@@ -69,6 +69,29 @@ class DurableFutureTest {
         assertThrows(RuntimeException.class, () -> DurableFuture.allOf(op1, op2));
     }
 
+    @Test
+    void anyOfVarargsEmptyThrows() {
+        var thrown = assertThrows(IllegalArgumentException.class, DurableFuture::anyOf);
+
+        assertEquals("anyOf requires at least one future", thrown.getMessage());
+    }
+
+    @Test
+    void anyOfNullVarargsThrows() {
+        var thrown = assertThrows(IllegalArgumentException.class, () -> DurableFuture.anyOf((DurableFuture<?>[]) null));
+
+        assertEquals("anyOf requires at least one future", thrown.getMessage());
+    }
+
+    @Test
+    void anyOfRejectsNonSdkFuture() {
+        DurableFuture<String> future = () -> "result";
+
+        var thrown = assertThrows(IllegalArgumentException.class, () -> DurableFuture.anyOf(future));
+
+        assertTrue(thrown.getMessage().startsWith("anyOf accepts only futures created by a DurableContext"));
+    }
+
     @SuppressWarnings("unchecked")
     private <T> SerializableDurableOperation<T> mockOperation(T result) {
         SerializableDurableOperation<T> op = mock(SerializableDurableOperation.class);
