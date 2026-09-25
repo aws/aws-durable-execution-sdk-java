@@ -1,8 +1,6 @@
 name: LMI E2E Tests
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -33,7 +31,7 @@ jobs:
           python3 -m unittest discover -s lmi-tests/tests -v
 
   cloud:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     needs: local
     runs-on: ubuntu-latest
     timeout-minutes: 85

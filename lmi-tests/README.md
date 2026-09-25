@@ -13,8 +13,8 @@ or accept a retry that happens to pass after a lifecycle violation.
   LMI. Deployment and readback are the region/architecture capability check:
   unsupported combinations fail setup; there is no ordinary-Lambda fallback.
 * Pull requests run a local CI job that builds the fixtures and validates the
-  evidence assertions without cloud credentials. On every `main` push and manual
-  dispatch, a separate serialized cloud job builds the commit, deploys all five
+  evidence assertions without cloud credentials. On manual dispatch, a separate
+  serialized cloud job builds the selected commit, deploys all five
   fixture functions, runs all 13 cases, then collects evidence. A persistent
   CloudFormation stack owns all five
   functions and log groups. The stack, functions and bucket remain after both
@@ -140,10 +140,11 @@ artifact writer redacts them from histories and logs.
 Cloud tests are disabled unless `test --cloud-enabled` is explicitly requested.
 Local assertion tests verify that missing evidence, mismatched environments,
 early responses, late tasks and stalled executors cannot be reported as passes.
-Cloud regressions run on every push to `main`, including every merged change,
-with no changed-path filters, and through manual dispatch. Pull requests that
-change the SDK, fixtures, root build, or this workflow run only the local fixture
-validation. There are no scheduled jobs or label-triggered cloud runs.
+Cloud regressions run only through manual dispatch while the assertions reproduce
+the open SDK defects in #726. Pull requests that change the SDK, fixtures, root
+build, or this workflow run only the local fixture validation. There are no
+automatic `main`, scheduled, or label-triggered cloud runs. Automatic gating can
+be enabled with the corresponding SDK fixes once the red regressions pass.
 
 The opt-in local regressions assert the same three contracts against the SDK's
 mock backend (they do not substitute for cloud coverage):

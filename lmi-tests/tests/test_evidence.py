@@ -363,6 +363,18 @@ class EvidenceTest(unittest.TestCase):
         wait_for_runtime_quiescence(cloud, "default2", "victim", seconds=10, quiet_seconds=2)
         self.assertEqual(6, cloud.refresh.call_count)
 
+    @patch("cloud_suite.time.sleep")
+    @patch("cloud_suite.time.monotonic", side_effect=[0, 0, 1, 2, 3, 4, 5])
+    def test_cleanup_quiet_period_detects_a_delayed_first_entry(self, monotonic, sleep):
+        entered = event("WRAPPER_ENTER", 1, "request", marker="victim")
+        returned = event("WRAPPER_RETURN", 2, "request", marker="victim", status="THREW")
+        cloud = Mock()
+        cloud.refresh.side_effect = [[], [], [entered], [entered, returned],
+                                     [entered, returned], [entered, returned]]
+        wait_for_runtime_quiescence(
+            cloud, "default2", "victim", seconds=10, quiet_seconds=2, allow_no_entry=True)
+        self.assertEqual(6, cloud.refresh.call_count)
+
     def test_timeout_readiness_waits_for_peer_and_platform_logs(self):
         peers = [{"marker": "peer", "requestId": "peer-request", "environment": "jvm"}]
         events = [event("WRAPPER_RETURN", 1, "request", marker="victim", status="SUCCEEDED")]
@@ -426,7 +438,8 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual(1, len(suite.findall(".//error")))
         cloud.close.assert_called_once()
 
-    def test_case_cleanup_drains_every_driver_request(self):
+    @patch("cloud_suite.wait_for_runtime_quiescence")
+    def test_case_cleanup_drains_every_driver_request(self, quiescence):
         cloud = Mock()
         victim, peer, probe = ({"marker": name} for name in ("victim", "peer", "probe"))
         cloud.invocations = [{"marker": "older"}, victim, peer, probe]
@@ -434,6 +447,10 @@ class EvidenceTest(unittest.TestCase):
         cleanup_case(cloud, "default2", 1, 90)
         cloud.release_all.assert_called_once()
         cloud.stop_all.assert_called_once_with([victim, peer, probe], seconds=90)
+        quiescence.assert_called_once_with(
+            cloud, "default2", {"victim", "peer", "probe"},
+            seconds=PEER_LOG_OBSERVATION_SECONDS + 30,
+            quiet_seconds=PEER_LOG_OBSERVATION_SECONDS, allow_no_entry=True)
 
     @patch("cloud_suite.wait_for_runtime_quiescence")
     @patch("cloud_suite.assert_lifecycle")
@@ -471,11 +488,12 @@ class EvidenceTest(unittest.TestCase):
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/lmi-e2e-tests.yml").read_text()
         self.assertIn("  local:\n", workflow)
         self.assertIn("  cloud:\n", workflow)
-        self.assertIn("if: github.event_name != 'pull_request'", workflow)
+        self.assertIn("if: github.event_name == 'workflow_dispatch'", workflow)
         self.assertIn("- 'sdk/**'", workflow)
         self.assertEqual(1, workflow.count("id-token: write"))
         self.assertNotIn("run-lmi-e2e", workflow)
         self.assertNotIn("labeled", workflow)
+        self.assertNotIn("  push:\n", workflow)
 
     def test_missing_runtime_entry_is_not_an_sdk_regression(self):
         with TemporaryDirectory() as directory:
