@@ -408,17 +408,18 @@ def wait_until_wall_time(cloud, fixture, wall_time, seconds, items):
     return cloud.poll(fixture, lambda events: time.time() >= wall_time, seconds=seconds, items=items)
 
 
-def runtime_requests_drained(events, markers):
+def runtime_requests_drained(events, markers, allow_no_entry=False):
     if isinstance(markers, str):
         markers = {markers}
     entered = {(e["marker"], e["environment"], e["requestId"])
                for e in selected(events, "WRAPPER_ENTER") if e["marker"] in markers}
     returned = {(e["marker"], e["environment"], e["requestId"])
                 for e in selected(events, "WRAPPER_RETURN") if e["marker"] in markers}
-    return bool(entered) and entered <= returned
+    return (allow_no_entry or bool(entered)) and entered <= returned
 
 
-def wait_for_runtime_quiescence(cloud, fixture, markers, seconds=30, quiet_seconds=10):
+def wait_for_runtime_quiescence(
+        cloud, fixture, markers, seconds=30, quiet_seconds=10, allow_no_entry=False):
     """Require every visible request to return and no request set changes during a quiet period."""
     if isinstance(markers, str):
         markers = {markers}
@@ -430,7 +431,7 @@ def wait_for_runtime_quiescence(cloud, fixture, markers, seconds=30, quiet_secon
                    for e in events if e["marker"] in markers
                    and e["kind"] in {"WRAPPER_ENTER", "WRAPPER_RETURN"}}
         now = time.monotonic()
-        if runtime_requests_drained(events, markers):
+        if runtime_requests_drained(events, markers, allow_no_entry=allow_no_entry):
             if current != previous or quiet_since is None:
                 quiet_since = now
             elif quiet_since is not None and now - quiet_since >= quiet_seconds:
@@ -475,11 +476,13 @@ def cleanup_case(cloud, fixture, invocation_start, seconds):
         cloud.stop_all(items, seconds=seconds)
     except Exception as failure:
         failures.append(failure)
-    markers = {item["marker"] for item in cloud.invocations[invocation_start:]
-               if selected(cloud.events_for(item), "WRAPPER_ENTER")}
+    markers = {item["marker"] for item in cloud.invocations[invocation_start:]}
     if markers:
         try:
-            wait_for_runtime_quiescence(cloud, fixture, markers)
+            wait_for_runtime_quiescence(
+                cloud, fixture, markers, seconds=PEER_LOG_OBSERVATION_SECONDS + 30,
+                quiet_seconds=PEER_LOG_OBSERVATION_SECONDS,
+                allow_no_entry=True)
         except Exception as failure:
             failures.append(failure)
     if failures:
