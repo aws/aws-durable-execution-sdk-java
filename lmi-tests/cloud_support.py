@@ -11,6 +11,9 @@ import tempfile
 import time
 
 
+TERMINAL_DURABLE_STATUSES = {"SUCCEEDED", "FAILED", "TIMED_OUT", "STOPPED"}
+
+
 class PreconditionError(RuntimeError):
     """The scenario did not establish the required infrastructure/placement."""
 
@@ -250,10 +253,14 @@ class Cloud:
         return selected(list(self.events.values()), marker=item["marker"])
 
     def finish(self, item, expected="SUCCEEDED", seconds=100):
+        deadline = time.monotonic() + seconds
         try:
-            result = item["future"].result(timeout=seconds)
+            result = item["future"].result(timeout=max(0, deadline - time.monotonic()))
         except (concurrent.futures.TimeoutError, subprocess.TimeoutExpired) as failure:
             raise CollectionError("Client HTTP/driver timeout; not server invocation timeout evidence") from failure
+        except Exception as failure:
+            raise CollectionError(
+                f"Invocation request failed for {item['marker']}: {scrub(str(failure))}") from failure
         events = self.events_for(item)
         arn = result["headers"].get("DurableExecutionArn")
         if not arn and events:
@@ -261,13 +268,40 @@ class Cloud:
         if not arn:
             raise CollectionError("No durable execution ARN")
         item["arn"] = arn
-        final = aws("lambda", "get-durable-execution", {"DurableExecutionArn": arn})
-        save(self.artifacts / "executions" / (item["marker"] + ".json"), final)
+        while True:
+            remaining = deadline - time.monotonic()
+            try:
+                final = aws("lambda", "get-durable-execution", {"DurableExecutionArn": arn},
+                            timeout=max(1, min(30, int(max(0, remaining)) + 1)))
+            except (RuntimeError, subprocess.TimeoutExpired) as failure:
+                raise CollectionError(
+                    f"Could not read durable execution for {item['marker']}: {scrub(str(failure))}") from failure
+            save(self.artifacts / "executions" / (item["marker"] + ".json"), final)
+            if expected is None or final.get("Status") in TERMINAL_DURABLE_STATUSES:
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AssertionError(
+                    f"{item['marker']}: durable status {final.get('Status')} did not become terminal within {seconds}s")
+            time.sleep(min(1, remaining))
         if expected:
             require(final["Status"] == expected, f"{item['marker']}: durable status {final['Status']}, expected {expected}")
             if expected == "SUCCEEDED":
                 require(json.loads(final["Result"]) == item["marker"], "Execution returned another input's result")
         return final
+
+    def finish_all(self, items, expected=None, seconds=100):
+        """Drain every invocation future, preserving the first error after all items have been observed."""
+        deadline = time.monotonic() + seconds
+        results, failures = [], []
+        for item in items:
+            try:
+                results.append(self.finish(item, expected=expected, seconds=max(0, deadline - time.monotonic())))
+            except Exception as failure:
+                failures.append(failure)
+        if failures:
+            raise failures[0]
+        return results
 
     def history(self, item):
         events, marker = [], None

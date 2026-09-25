@@ -358,9 +358,23 @@ def fixed_case(cloud, fixture, scenario):
     raise PreconditionError("Two fixed-executor roots could not meet in one JVM")
 
 
-def invocation_deadline(trace):
-    entry = selected(trace, "WRAPPER_ENTER")[0]
-    return entry["nanos"] + entry["remainingMillis"] * 1_000_000
+def request_trace(events, marker, request_id, environment):
+    """Return causally ordered events for one runtime request in one JVM."""
+    return sorted(
+        [e for e in events if e["marker"] == marker
+         and e["requestId"] == request_id and e["environment"] == environment],
+        key=lambda event: event["sequence"])
+
+
+def residual_outcome_observed(events, marker, request_id, environment):
+    trace = request_trace(events, marker, request_id, environment)
+    return bool(selected(trace, "RESIDUAL_EXIT")) and bool(
+        selected(trace, "LATE_REJECTED") or selected(trace, "LATE_ACCEPTED"))
+
+
+def wait_until_wall_time(cloud, fixture, wall_time, seconds, items):
+    """Wait on the wall clock while surfacing failures from every invocation being observed."""
+    return cloud.poll(fixture, lambda events: time.time() >= wall_time, seconds=seconds, items=items)
 
 
 def timeout_case(cloud, fixture, stubborn=False):
@@ -368,38 +382,61 @@ def timeout_case(cloud, fixture, stubborn=False):
     timeout = cloud.manifest["invocationTimeout"]
     scenario = "stubborn" if stubborn else "timeout"
     victim = cloud.launch(fixture, scenario, prefix + "-victim", hold_ms=(timeout + 20) * 1000)
-    entry = cloud.poll(fixture, lambda events: selected(events, "TASK_ENTER", victim["marker"]), category=PreconditionError, items=[victim])[0]
+    entries = cloud.poll(fixture, lambda events: selected(events, "TASK_ENTER", victim["marker"]),
+                         category=PreconditionError, items=[victim])
+    entry = min(entries, key=lambda event: event["epochMillis"])
     target = entry["environment"]
-    runtime_entry = selected(cloud.events_for(victim), "WRAPPER_ENTER")[0]
+    request_id = entry["requestId"]
+    runtime_entry = cloud.poll(
+        fixture,
+        lambda events: selected(request_trace(events, victim["marker"], request_id, target), "WRAPPER_ENTER"),
+        category=PreconditionError,
+        items=[victim])[0]
     deadline_wall = (runtime_entry["epochMillis"] + runtime_entry["remainingMillis"]) / 1000
     # Stagger admission: healthy invocations must outlive the victim's real deadline.
-    cloud.poll(fixture, lambda events: time.time() >= deadline_wall - timeout / 2, seconds=timeout)
+    wait_until_wall_time(cloud, fixture, deadline_wall - timeout / 2, timeout, [victim])
     peers, gate = healthy_peers(cloud, fixture, target, FIXTURES[fixture][0] - 1, prefix + "-peer")
     assert_overlap(list(cloud.events.values()), {victim["marker"], *(p["marker"] for p in peers)}, FIXTURES[fixture][0], target)
-    deadline = invocation_deadline(cloud.events_for(victim))
+    deadline = runtime_entry["nanos"] + runtime_entry["remainingMillis"] * 1_000_000
     # Launch probes while all other established slots remain occupied. Retry placement only.
-    cloud.poll(fixture, lambda events: time.time() >= deadline_wall - 5, seconds=timeout)
+    wait_until_wall_time(cloud, fixture, deadline_wall - 5, timeout, [victim])
     probe_gate_name = prefix + "-probe-gate"
     probe_gate = cloud.gate(probe_gate_name)
     probes = [cloud.launch(fixture, "probe", prefix + f"-probe-{i}", target=target, gate=probe_gate) for i in range(4)]
-    cloud.poll(fixture, lambda events: time.time() >= deadline_wall + 8, seconds=20)
-    cloud.gate(gate, release=True)
-    cloud.gate(probe_gate_name, release=True)
+    try:
+        wait_until_wall_time(cloud, fixture, deadline_wall + 8, 20, probes)
+    finally:
+        cloud.gate(gate, release=True)
+        cloud.gate(probe_gate_name, release=True)
+    cloud.finish_all(probes, expected=None, seconds=timeout + 30)
     for peer in peers:
         cloud.finish(peer)
     # Residual Java code is bounded, but arbitrary code cannot be forcibly killed.
-    wait_returns(cloud, fixture, [victim], seconds=timeout + 30)
+    cloud.poll(
+        fixture,
+        lambda events: selected(request_trace(events, victim["marker"], request_id, target), "WRAPPER_RETURN"),
+        seconds=timeout + 30,
+        items=[victim])
     cloud.finish(victim, expected=None)
     history = cloud.history(victim)
-    trace = cloud.events_for(victim)
+    if stubborn:
+        cloud.poll(
+            fixture,
+            lambda events: residual_outcome_observed(events, victim["marker"], request_id, target),
+            seconds=timeout + 30,
+            items=[victim])
+    all_victim_events = cloud.events_for(victim)
+    trace = request_trace(all_victim_events, victim["marker"], request_id, target)
     returned = selected(trace, "WRAPPER_RETURN")[0]
     recovered = [e for p in probes for e in selected(cloud.events_for(p), "TASK_ENTER")
                  if e["environment"] == target and e["nanos"] <= deadline + 8_000_000_000]
-    report = {"requestId": entry["requestId"], "environment": target, "deadlineNanos": deadline,
+    retry_request_ids = sorted({e["requestId"] for e in all_victim_events if e["requestId"] != request_id})
+    report = {"requestId": request_id, "environment": target, "deadlineNanos": deadline,
               "wrapperReturnNanos": returned["nanos"], "taskExits": selected(trace, "TASK_EXIT"),
               "interrupts": selected(trace, "INTERRUPTED") + selected(trace, "IGNORED_INTERRUPT"),
-              "recoveryAdmissions": recovered, "durableHistoryEvents": len(history)}
-    report["serverTimeoutLogs"] = [e for e in cloud.raw_logs.values() if entry["requestId"] in e["message"]
+              "recoveryAdmissions": recovered, "retryRequestIds": retry_request_ids,
+              "durableHistoryEvents": len(history)}
+    report["serverTimeoutLogs"] = [e for e in cloud.raw_logs.values() if request_id in e["message"]
                                    and ("timeout" in e["message"].lower() or "timed out" in e["message"].lower())]
     save(ARTIFACTS / "timeouts" / (prefix + ".json"), report)
     errors = []

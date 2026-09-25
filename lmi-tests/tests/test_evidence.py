@@ -10,7 +10,8 @@ from tempfile import TemporaryDirectory
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloud_support import (Cloud, CollectionError, PreconditionError, assert_fixed, assert_lifecycle,
                            assert_overlap, assert_replay, diagnostic, scrub)
-from cloud_suite import FIXTURES, cases_for_fixture, verify_function_scaling, run_tests, template
+from cloud_suite import (FIXTURES, cases_for_fixture, request_trace, residual_outcome_observed,
+                         verify_function_scaling, run_tests, template, wait_until_wall_time)
 from unittest.mock import Mock, patch
 
 
@@ -205,6 +206,101 @@ class EvidenceTest(unittest.TestCase):
                 cloud.refresh.assert_not_called()
             finally:
                 cloud.close()
+
+    @patch("cloud_support.time.sleep")
+    @patch("cloud_support.aws")
+    def test_finish_polls_until_durable_execution_is_terminal(self, api, sleep):
+        api.side_effect = [{"Status": "RUNNING"}, {"Status": "SUCCEEDED", "Result": json.dumps("test")}]
+        future = Future()
+        future.set_result({"headers": {"DurableExecutionArn": "arn:test"}})
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({}, directory)
+            try:
+                final = cloud.finish({"future": future, "marker": "test"}, seconds=5)
+            finally:
+                cloud.close()
+        self.assertEqual("SUCCEEDED", final["Status"])
+        self.assertEqual(2, api.call_count)
+        sleep.assert_called_once()
+
+    @patch("cloud_support.aws", return_value={"Status": "RUNNING"})
+    def test_finish_can_collect_a_nonterminal_snapshot_without_waiting(self, api):
+        future = Future()
+        future.set_result({"headers": {"DurableExecutionArn": "arn:test"}})
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({}, directory)
+            try:
+                final = cloud.finish({"future": future, "marker": "test"}, expected=None, seconds=0)
+            finally:
+                cloud.close()
+        self.assertEqual("RUNNING", final["Status"])
+        api.assert_called_once()
+
+    @patch("cloud_support.aws", return_value={"Status": "RUNNING"})
+    def test_finish_bounds_wait_for_a_terminal_status(self, api):
+        future = Future()
+        future.set_result({"headers": {"DurableExecutionArn": "arn:test"}})
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({}, directory)
+            try:
+                with self.assertRaisesRegex(AssertionError, "did not become terminal"):
+                    cloud.finish({"future": future, "marker": "test"}, seconds=0)
+            finally:
+                cloud.close()
+
+    def test_finish_all_observes_every_invocation_future_before_raising(self):
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({}, directory)
+            cloud.finish = Mock(side_effect=[CollectionError("first"), {}, {}])
+            try:
+                with self.assertRaisesRegex(CollectionError, "first"):
+                    cloud.finish_all([{"marker": str(i)} for i in range(3)])
+                self.assertEqual(3, cloud.finish.call_count)
+            finally:
+                cloud.close()
+
+    def test_finish_classifies_a_late_invocation_failure_as_collection_error(self):
+        future = Future()
+        future.set_exception(RuntimeError("Invoke denied"))
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({}, directory)
+            try:
+                with self.assertRaisesRegex(CollectionError, "Invoke denied"):
+                    cloud.finish({"future": future, "marker": "test"})
+            finally:
+                cloud.close()
+
+    def test_timeout_trace_cannot_use_a_later_retry_or_another_jvm(self):
+        events = [event("WRAPPER_ENTER", 1, "original", marker="victim"),
+                  event("WRAPPER_RETURN", 2, "retry", marker="victim", status="THREW"),
+                  event("WRAPPER_RETURN", 3, "original", "other", marker="victim", status="THREW")]
+        trace = request_trace(events, "victim", "original", "jvm")
+        self.assertEqual(["WRAPPER_ENTER"], [item["kind"] for item in trace])
+
+    def test_stubborn_outcome_must_come_from_the_original_request(self):
+        events = [event("RESIDUAL_EXIT", 1, "original", marker="victim"),
+                  event("LATE_REJECTED", 2, "retry", marker="victim")]
+        self.assertFalse(residual_outcome_observed(events, "victim", "original", "jvm"))
+        events.append(event("LATE_REJECTED", 3, "original", marker="victim"))
+        self.assertTrue(residual_outcome_observed(events, "victim", "original", "jvm"))
+
+    @patch("cloud_suite.time.time", return_value=10)
+    def test_wall_clock_wait_observes_probe_failures(self, now):
+        cloud = Mock()
+        probes = [{"marker": "probe"}]
+        wait_until_wall_time(cloud, "default2", 9, 20, probes)
+        self.assertIs(probes, cloud.poll.call_args.kwargs["items"])
+        self.assertTrue(cloud.poll.call_args.args[1]([]))
+
+    def test_workflow_separates_local_checks_from_cloud_credentials(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/lmi-e2e-tests.yml").read_text()
+        self.assertIn("  local:\n", workflow)
+        self.assertIn("  cloud:\n", workflow)
+        self.assertIn("if: github.event_name != 'pull_request'", workflow)
+        self.assertIn("- 'sdk/**'", workflow)
+        self.assertEqual(1, workflow.count("id-token: write"))
+        self.assertNotIn("run-lmi-e2e", workflow)
+        self.assertNotIn("labeled", workflow)
 
     def test_missing_runtime_entry_is_not_an_sdk_regression(self):
         with TemporaryDirectory() as directory:
