@@ -21,6 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
@@ -62,25 +63,40 @@ public final class LifecycleHandler implements RequestStreamHandler {
         var input = WIRE.deserialize(
                 new String(source.readAllBytes(), StandardCharsets.UTF_8), TypeToken.get(DurableExecutionInput.class));
         var trace = new InvocationTrace(readUserInput(input), runtime, input.durableExecutionArn());
+        var invocationExecutor = new AtomicReference<ThreadPoolExecutor>();
         trace.wrapperEnter();
         var status = "THREW";
         try {
-            var config = DurableConfig.builder()
-                    .withExecutorService(shared.getExecutorService())
-                    .withDurableExecutionClient(new ObservedClient(shared.getDurableExecutionClient(), trace))
-                    .build();
+            var configBuilder = DurableConfig.builder()
+                    .withDurableExecutionClient(new ObservedClient(shared.getDurableExecutionClient(), trace));
+            if ("invocation-fixed".equals(System.getenv("LMI_EXECUTOR"))) {
+                configBuilder.withInvocationExecutorFactory(() -> {
+                    var executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(2);
+                    invocationExecutor.set(executor);
+                    return executor;
+                });
+            } else {
+                configBuilder.withExecutorService(shared.getExecutorService());
+            }
+            var config = configBuilder.build();
             var response = DurableExecutor.execute(
                     input,
                     runtime,
                     TypeToken.get(FixtureInput.class),
-                    (value, context) -> handle(value, context, trace),
+                    (value, context) -> handle(value, context, trace, executor(invocationExecutor)),
                     config);
             destination.write(WIRE.serialize(response).getBytes(StandardCharsets.UTF_8));
             status = response.status().name();
         } finally {
-            trace.snapshot((ThreadPoolExecutor) shared.getExecutorService());
+            trace.snapshot(executor(invocationExecutor));
             trace.wrapperExit(status);
         }
+    }
+
+    private ThreadPoolExecutor executor(AtomicReference<ThreadPoolExecutor> invocationExecutor) {
+        return invocationExecutor.get() != null
+                ? invocationExecutor.get()
+                : (ThreadPoolExecutor) shared.getExecutorService();
     }
 
     private static FixtureInput readUserInput(DurableExecutionInput input) {
@@ -91,7 +107,8 @@ public final class LifecycleHandler implements RequestStreamHandler {
         return JSON.deserialize(operation.executionDetails().inputPayload(), TypeToken.get(FixtureInput.class));
     }
 
-    String handle(FixtureInput input, DurableContext context, InvocationTrace trace) {
+    String handle(
+            FixtureInput input, DurableContext context, InvocationTrace trace, ThreadPoolExecutor invocationExecutor) {
         trace.rootEnter();
         try {
             if (!context.isReplaying()
@@ -100,7 +117,7 @@ public final class LifecycleHandler implements RequestStreamHandler {
                 trace.event("PLACEMENT_MISS");
                 return "PLACEMENT_MISS";
             }
-            return runScenario(input, context, trace);
+            return runScenario(input, context, trace, invocationExecutor);
         } finally {
             if ("suspend".equals(input.scenario())) {
                 trace.event("CLEANUP_ENTER");
@@ -111,13 +128,14 @@ public final class LifecycleHandler implements RequestStreamHandler {
         }
     }
 
-    private String runScenario(FixtureInput input, DurableContext context, InvocationTrace trace) {
+    private String runScenario(
+            FixtureInput input, DurableContext context, InvocationTrace trace, ThreadPoolExecutor invocationExecutor) {
         return switch (input.scenario()) {
             case "baseline", "replay", "suspend" -> replay(input, context, trace);
             case "hold", "probe" -> context.step("held-step", String.class, step -> hold(input, trace), NO_RETRY);
             case "timeout", "failure-inflight", "return-inflight" -> inFlight(input, context, trace);
             case "stubborn" -> stubborn(input, context, trace);
-            case "fixed", "nested" -> fixed(input, context, trace);
+            case "fixed", "nested" -> fixed(input, context, trace, invocationExecutor);
             case "success" -> context.step("success", String.class, step -> body(trace, "success", input.marker()));
             case "failure" -> context.step("failure", String.class, step -> fail(trace, input.marker()), NO_RETRY);
             default -> throw new IllegalArgumentException("Unknown fixture scenario");
@@ -213,8 +231,7 @@ public final class LifecycleHandler implements RequestStreamHandler {
         return input.marker();
     }
 
-    private String fixed(FixtureInput input, DurableContext context, InvocationTrace trace) {
-        var pool = (ThreadPoolExecutor) shared.getExecutorService();
+    private String fixed(FixtureInput input, DurableContext context, InvocationTrace trace, ThreadPoolExecutor pool) {
         var barrier = BARRIERS.computeIfAbsent(input.cohort(), key -> {
             ESCAPES.schedule(() -> BARRIERS.remove(key), 20, TimeUnit.SECONDS);
             return new CountDownLatch(input.peers());

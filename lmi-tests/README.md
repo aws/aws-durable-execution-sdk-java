@@ -12,8 +12,8 @@ or accept a retry that happens to pass after a lifecycle violation.
   1, 2, or 8. Java 25 / arm64 is the initial matrix. Java 17 is not supported by
   LMI. Deployment and readback are the region/architecture capability check:
   unsupported combinations fail setup; there is no ordinary-Lambda fallback.
-* One CI job builds once, deploys all five fixture functions, runs all 13 cases,
-  then collects evidence. A persistent CloudFormation stack owns all five
+* One CI job builds once, deploys all five fixture functions, runs all 12 gating
+  cases, then collects evidence. A persistent CloudFormation stack owns all five
   functions and log groups. The stack, functions and bucket remain after both
   successful and failed test runs; later deployments update the same resources. Each uses 2 GiB / 1 vCPU and a single
   `$LATEST.PUBLISHED` version; code is not republished during the test phase, and
@@ -35,10 +35,12 @@ or accept a retry that happens to pass after a lifecycle violation.
 * A stream wrapper observes the actual SDK entry and return. Invocation-local
   root/task `finally` markers and a JVM-wide sequence establish ordering. The
   plugin end hook is deliberately not used as a completion signal.
-* A bounded same-JVM root barrier establishes the fixed-pool reproduction.
-  Other cases hold steps with private S3 control objects. The driver requires
-  distinct request IDs active in the same JVM. Placement has its own deadline
-  and failure category. Environment replacement is never worker recovery.
+* A bounded same-JVM root barrier verifies that `fixed2` gives each invocation
+  its own two-thread executor. `nested2` is retained in the persistent stack for
+  baseline diagnostics but does not produce a gating LMI case. Other cases hold
+  steps with private S3 control objects. The driver requires distinct request
+  IDs active in the same JVM. Placement has its own deadline and failure
+  category. Environment replacement is never worker recovery.
 * Timeout victims start before healthy peers, leaving the peers time to hold
   the other runtime slots during recovery. Diagnostics capture the real context
   deadline; no fake clock, context, checkpoint backend, or time-skipping runner
@@ -115,8 +117,9 @@ python3 lmi-tests/cloud_suite.py collect
 ```
 
 The deploy command creates or updates and retains `default1`, `default2`, `default8`,
-`fixed2`, and `nested2` together. The test command requires all five and runs the
-full suite. CI publishes one combined artifact, named `lmi-e2e-RUN-ATTEMPT`, with
+`fixed2`, and `nested2` together. The test command requires all five and runs 12
+gating cases; `nested2` is retained but excluded. CI publishes one combined
+artifact, named `lmi-e2e-RUN-ATTEMPT`, with
 the single `template.json` and per-function configuration snapshots. The
 CloudFormation execution role needs permission to manage the function scaling
 configuration; the driver calls `lambda:GetFunctionScalingConfig` to verify it
@@ -168,8 +171,9 @@ lifecycle assertions apply after the wrapper entry has been observed. Healthy/pr
 uses the actual runtime deadline, excluding cold-start and request-queue delay.
 A successful durable retry cannot erase an old invocation
 that exceeds the cleanup budget. No virtual-thread executor variant is deployed
-until its executor contract is defined; default cached and shared fixed pools
-are covered separately.
+until its executor contract is defined. The cloud suite gates default cached and
+invocation-local fixed pools; the shared fixed nesting fixture remains available
+as a non-gating baseline diagnostic.
 
 CloudFormation's native [FunctionScalingConfig](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-lambda-function-functionscalingconfig.html)
 sets the limits in the resource declaration. LMI provisioning and version behavior

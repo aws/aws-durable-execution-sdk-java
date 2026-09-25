@@ -141,12 +141,12 @@ def assert_fixed(events, markers):
     require(len({e["requestId"] for e in entered}) == len(markers), "Missing distinct runtime invocations")
     require(max(e["sequence"] for e in entered) < min(e["sequence"] for e in passed),
             "Root invocations did not overlap at the barrier")
-    require(not selected(events, "ESCAPE"), "Shared fixed executor starved its own queued work")
+    require(not selected(events, "ESCAPE"), "Fixed executor starved its own queued work")
     for marker in markers:
         progress = selected(events, "PROGRESS", marker)
         start = selected(events, "BARRIER_PASSED", marker)
         require(progress and (progress[-1]["nanos"] - start[0]["nanos"]) < 8_000_000_000,
-                "Shared executor did not progress within budget")
+                "Fixed executor did not progress within budget")
 
 
 class Cloud:
