@@ -23,8 +23,7 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequ
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
 import software.amazon.lambda.durable.logging.LoggerConfig;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
-import software.amazon.lambda.durable.plugin.PluginRunner;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.retry.PollingStrategy;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -100,10 +99,10 @@ public final class DurableConfig {
     private final Duration checkpointDelay;
     private final boolean deserializeAfterSerialization;
     private final boolean checkpointEmptyMap;
-    private final PluginRunner pluginRunner;
+    private final List<DurableExecutionPluginFactory> pluginFactories;
 
     private DurableConfig(Builder builder) {
-        var plugins = DynamicPluginLoader.loadConfiguredPlugins(builder.plugins);
+        this.pluginFactories = DynamicPluginLoader.loadConfiguredPluginFactories(builder.pluginFactories);
         this.durableExecutionClient = Objects.requireNonNullElseGet(
                 builder.durableExecutionClient, DurableConfig::createDefaultDurableExecutionClient);
         this.serDes = Objects.requireNonNullElseGet(builder.serDes, JacksonSerDes::new);
@@ -114,7 +113,6 @@ public final class DurableConfig {
         this.checkpointDelay = Objects.requireNonNullElseGet(builder.checkpointDelay, () -> Duration.ofSeconds(0));
         this.deserializeAfterSerialization = builder.deserializeAfterSerialization;
         this.checkpointEmptyMap = builder.checkpointEmptyMap;
-        this.pluginRunner = plugins.isEmpty() ? PluginRunner.noOp() : new PluginRunner(plugins);
 
         validateConfiguration();
     }
@@ -215,14 +213,15 @@ public final class DurableConfig {
     }
 
     /**
-     * Gets the plugin runner that dispatches lifecycle events to registered plugins.
+     * Gets the plugin factories registered via the builder or loaded dynamically, in dispatch order.
      *
-     * <p>Returns a no-op runner if no plugins were registered via the builder or loaded dynamically.
+     * <p>Each factory is called once per Lambda invocation to create that invocation's plugin instance; the SDK never
+     * shares a plugin instance across invocations.
      *
-     * @return PluginRunner instance (never null)
+     * @return immutable list of plugin factories (never null, possibly empty)
      */
-    public PluginRunner getPluginRunner() {
-        return pluginRunner;
+    public List<DurableExecutionPluginFactory> getPluginFactories() {
+        return pluginFactories;
     }
 
     public void validateConfiguration() {
@@ -321,7 +320,7 @@ public final class DurableConfig {
         private Duration checkpointDelay;
         private boolean deserializeAfterSerialization = true;
         private boolean checkpointEmptyMap = false;
-        private List<DurableExecutionPlugin> plugins = new ArrayList<>();
+        private List<DurableExecutionPluginFactory> pluginFactories = new ArrayList<>();
 
         public Builder() {}
 
@@ -459,24 +458,29 @@ public final class DurableConfig {
         }
 
         /**
-         * Registers one or more plugins for lifecycle event instrumentation.
+         * Registers one or more plugin factories for lifecycle event instrumentation.
          *
-         * <p>Plugins receive hooks at invocation, operation, and user function boundaries. Errors thrown by plugins are
-         * isolated and never disrupt SDK execution.
+         * <p>Each factory is called once per Lambda invocation, with that invocation's {@code InvocationInfo}, and the
+         * instance it returns receives only that invocation's hooks. Plugin instances can therefore keep per-invocation
+         * state in plain fields even when the execution environment runs several executions concurrently.
          *
-         * <p>Calling this method replaces any previously registered plugins. Plugins are called in registration order.
+         * <p>Plugins receive hooks at invocation, operation, and user function boundaries. Errors thrown by a factory
+         * or a hook are isolated and never disrupt SDK execution.
          *
-         * @param plugins the plugins to register
+         * <p>Calling this method replaces any previously registered factories. Plugins are called in registration
+         * order.
+         *
+         * @param pluginFactories the plugin factories to register
          * @return This builder
-         * @throws NullPointerException if any plugin is null
+         * @throws NullPointerException if any factory is null
          */
-        public Builder withPlugins(DurableExecutionPlugin... plugins) {
-            Objects.requireNonNull(plugins, "Plugins array cannot be null");
-            var newPlugins = new ArrayList<DurableExecutionPlugin>(plugins.length);
-            for (var plugin : plugins) {
-                newPlugins.add(Objects.requireNonNull(plugin, "Plugin cannot be null"));
+        public Builder withPlugins(DurableExecutionPluginFactory... pluginFactories) {
+            Objects.requireNonNull(pluginFactories, "Plugins array cannot be null");
+            var newFactories = new ArrayList<DurableExecutionPluginFactory>(pluginFactories.length);
+            for (var pluginFactory : pluginFactories) {
+                newFactories.add(Objects.requireNonNull(pluginFactory, "Plugin cannot be null"));
             }
-            this.plugins = newPlugins;
+            this.pluginFactories = newFactories;
             return this;
         }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.insight;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -13,11 +14,11 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
+import software.amazon.lambda.durable.plugin.PluginRunner;
 
 /**
  * Fix 2 — plugin {@link Throwable} containment. A plugin fault at any plugin-owned boundary (record construction, input
@@ -84,6 +85,39 @@ class PluginThrowableContainmentTest {
     }
 
     @Test
+    void aNullExecutionArnEscapesNoHook() {
+        // The SDK's contract is that a plugin fault never disrupts durable execution, so an invocation whose execution
+        // ARN the plugin cannot use must be contained rather than thrown back. It is contained one step earlier now:
+        // identity is taken when the instance is built, so the failure happens in the factory and no hook is ever
+        // dispatched. That containment belongs to the SDK, so it is asserted through the SDK's own runner — which is
+        // also what makes the old worst case ("the state removal runs last, in a finally, and a ConcurrentHashMap
+        // cannot remove a null key") unreachable: there is no map and no removal.
+        var exporter = new CapturingExporter();
+        var environment = WorkflowInsight.workflowInsight(
+                WorkflowInsightConfig.builder().addExporter(exporter).build());
+
+        InvocationInfo nullStart = new InvocationInfo("req", null, true, START, "in", ops("compute"), Map.of());
+        InvocationEndInfo nullEnd = new InvocationEndInfo(
+                "req", null, true, START, ops("compute"), InvocationStatus.SUCCEEDED, null, "in", "out");
+
+        var runner = new PluginRunner(List.of(environment));
+        assertDoesNotThrow(() -> runner.onInvocationStart(nullStart), "onInvocationStart must contain a null ARN");
+        assertDoesNotThrow(
+                () -> runner.onOperationChange(new software.amazon.lambda.durable.plugin.OperationChangeInfo(
+                        "req", null, ops("compute"), ops("compute"))),
+                "onOperationChange must contain a null ARN");
+        assertDoesNotThrow(() -> runner.onInvocationEnd(nullEnd), "onInvocationEnd must contain a null ARN");
+        assertEquals(0, exporter.records.size(), "an invocation with no usable ARN emits nothing");
+
+        // The environment is still usable afterwards: a well-formed invocation still emits and flushes.
+        var plugin = Executions.plugin(environment, ARN, START);
+        plugin.onInvocationStart(start("in"));
+        plugin.onInvocationEnd(end("in"));
+        assertEquals(1, exporter.records.size(), "the environment still works after a null-ARN invocation");
+        assertTrue(exporter.flushes > 0);
+    }
+
+    @Test
     void exporterThrowingErrorIsIsolatedAndLaterExportersStillReceiveAndFlush() {
         var throwing = new InsightExporter() {
             @Override
@@ -92,10 +126,13 @@ class PluginThrowableContainmentTest {
             }
         };
         var good = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .addExporter(throwing)
-                .addExporter(good)
-                .build());
+        var plugin = Executions.plugin(
+                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                        .addExporter(throwing)
+                        .addExporter(good)
+                        .build()),
+                ARN,
+                START);
 
         plugin.onInvocationStart(start("in"));
         plugin.onInvocationEnd(end("in"));
@@ -107,8 +144,11 @@ class PluginThrowableContainmentTest {
     @Test
     void inputSnapshotErrorOmitsInputButDoesNotDisruptExecution() {
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(
-                WorkflowInsightConfig.builder().addExporter(exporter).build());
+        var plugin = Executions.plugin(
+                WorkflowInsight.workflowInsight(
+                        WorkflowInsightConfig.builder().addExporter(exporter).build()),
+                ARN,
+                START);
 
         // Snapshotting the input fails with an Error; the hook must not propagate it.
         plugin.onInvocationStart(start(new ExplodingPayload()));
@@ -123,14 +163,17 @@ class PluginThrowableContainmentTest {
     @Test
     void throwingInputTransformOmitsInputWithoutFailure() {
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .content(ContentConfig.builder()
-                        .inputTransform(v -> {
-                            throw new AssertionError("redactor blew up");
-                        })
-                        .build())
-                .addExporter(exporter)
-                .build());
+        var plugin = Executions.plugin(
+                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                        .content(ContentConfig.builder()
+                                .inputTransform(v -> {
+                                    throw new AssertionError("redactor blew up");
+                                })
+                                .build())
+                        .addExporter(exporter)
+                        .build()),
+                ARN,
+                START);
 
         plugin.onInvocationStart(start("in"));
         plugin.onInvocationEnd(end("in"));
@@ -143,14 +186,17 @@ class PluginThrowableContainmentTest {
     @Test
     void throwingResultTransformOmitsResultWithoutFailure() {
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .content(ContentConfig.builder()
-                        .addOverride(OperationOverride.withResult("compute", r -> {
-                            throw new AssertionError("result redactor blew up");
-                        }))
-                        .build())
-                .addExporter(exporter)
-                .build());
+        var plugin = Executions.plugin(
+                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                        .content(ContentConfig.builder()
+                                .addOverride(OperationOverride.withResult("compute", r -> {
+                                    throw new AssertionError("result redactor blew up");
+                                }))
+                                .build())
+                        .addExporter(exporter)
+                        .build()),
+                ARN,
+                START);
 
         plugin.onInvocationStart(start("in"));
         plugin.onInvocationEnd(end("in"));
@@ -174,11 +220,14 @@ class PluginThrowableContainmentTest {
             }
         };
         var third = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .addExporter(first)
-                .addExporter(throwing)
-                .addExporter(third)
-                .build());
+        var plugin = Executions.plugin(
+                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                        .addExporter(first)
+                        .addExporter(throwing)
+                        .addExporter(third)
+                        .build()),
+                ARN,
+                START);
 
         plugin.onInvocationStart(start("in"));
         plugin.onInvocationEnd(end("in"));

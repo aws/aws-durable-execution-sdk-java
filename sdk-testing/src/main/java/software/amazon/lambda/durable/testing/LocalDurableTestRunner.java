@@ -21,7 +21,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 import software.amazon.lambda.durable.testing.local.OperationResult;
@@ -70,7 +70,7 @@ public class LocalDurableTestRunner<I, O> {
                     .withLoggerConfig(customerConfig.getLoggerConfig())
                     // Temporary: remove along with the checkpointEmptyMap flag in a future major version.
                     .withCheckpointEmptyMap(customerConfig.shouldCheckpointEmptyMap())
-                    .withPlugins(customerConfig.getPluginRunner().getPlugins().toArray(new DurableExecutionPlugin[0]))
+                    .withPlugins(customerConfig.getPluginFactories().toArray(new DurableExecutionPluginFactory[0]))
                     .build();
         } else {
             // Fallback to default config with in-memory client

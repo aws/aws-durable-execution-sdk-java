@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static software.amazon.lambda.durable.otel.Invocations.started;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.Attributes;
@@ -172,7 +173,7 @@ class DurableSamplerTest {
     void configuredSampler_isEvaluatedAtMostOncePerInvocation() {
         var delegate = new CountingSampler(Sampler.alwaysOn());
         var exporter = InMemorySpanExporter.create();
-        var plugin = new InvocationOtelPlugin(
+        var pluginFactory = InvocationOtelPlugin.factory(
                 SdkTracerProvider.builder().setSampler(delegate).addSpanProcessor(SimpleSpanProcessor.create(exporter)),
                 OtelPluginConfig.builder()
                         .contextExtractor(() -> null)
@@ -180,7 +181,7 @@ class DurableSamplerTest {
                         .build());
 
         // A full invocation with a Workflow span, Invocation span, operation span, and attempt span.
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(pluginFactory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onUserFunctionStart(
@@ -226,7 +227,7 @@ class DurableSamplerTest {
     private InMemorySpanExporter exportedWith(Sampler configuredSampler, ExtractedContext.Sampling sampling) {
         var exporter = InMemorySpanExporter.create();
         var extracted = new ExtractedContext(TRACE_ID, SPAN_ID, sampling);
-        var plugin = new InvocationOtelPlugin(
+        var pluginFactory = InvocationOtelPlugin.factory(
                 SdkTracerProvider.builder()
                         .setSampler(configuredSampler)
                         .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
@@ -235,7 +236,7 @@ class DurableSamplerTest {
                         .enableMdc(false)
                         .build());
 
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(pluginFactory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
         return exporter;
     }

@@ -44,10 +44,13 @@ class OperationOrderingTest {
 
     private WorkflowInsightRecord emitStart(Map<String, OperationChangeItemInfo> ops) {
         var exporter = new CapturingExporter();
-        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
-                .addExporter(exporter)
-                .build());
+        var plugin = Executions.plugin(
+                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                        .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
+                        .addExporter(exporter)
+                        .build()),
+                ARN,
+                START);
         plugin.onInvocationStart(new InvocationInfo("req", ARN, true, START, "in", ops, Map.of()));
         plugin.drainExports();
         return exporter.records.get(0);

@@ -27,7 +27,9 @@ public class PluginParallelBranchHooks extends DurableHandler<Object, List<Strin
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder().withPlugins(new BranchHooksPlugin()).build();
+        return DurableConfig.builder()
+                .withPlugins(info -> new BranchHooksPlugin())
+                .build();
     }
 
     @Override

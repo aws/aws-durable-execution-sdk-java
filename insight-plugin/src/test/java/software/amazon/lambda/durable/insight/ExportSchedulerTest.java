@@ -22,6 +22,13 @@ import org.junit.jupiter.api.Test;
 /** Contract tests for {@link ExportScheduler}: serial exports, latest-wins coalescing, drain, and exporter fan-out. */
 class ExportSchedulerTest {
 
+    /** All single-execution cases below drive one invocation's plugin instance through the scheduler. */
+    private static final String ARN = arn(0);
+
+    private static String arn(int index) {
+        return "arn:aws:lambda:us-west-2:111122223333:function:f:$LATEST/durable-execution/exec-" + index + "/inv-1";
+    }
+
     /** Runs submitted tasks only when the test asks, so pump timing is fully controlled. */
     private static final class ManualExecutor implements Executor {
         final Deque<Runnable> tasks = new ArrayDeque<>();
@@ -72,8 +79,9 @@ class ExportSchedulerTest {
         var executor = new ManualExecutor();
         var exporter = new CapturingExporter();
         var scheduler = scheduler(executor, new ArrayList<>(), exporter);
+        var execution = Executions.plugin(scheduler, ARN);
 
-        scheduler.schedule(record("RUNNING"));
+        scheduler.schedule(execution, record("RUNNING"));
         assertTrue(exporter.records.isEmpty(), "nothing exported until a worker runs");
 
         executor.runAll();
@@ -86,10 +94,11 @@ class ExportSchedulerTest {
         var executor = new ManualExecutor();
         var exporter = new CapturingExporter();
         var scheduler = scheduler(executor, new ArrayList<>(), exporter);
+        var execution = Executions.plugin(scheduler, ARN);
 
-        scheduler.schedule(record("r1"));
-        scheduler.schedule(record("r2"));
-        scheduler.schedule(record("r3"));
+        scheduler.schedule(execution, record("r1"));
+        scheduler.schedule(execution, record("r2"));
+        scheduler.schedule(execution, record("r3"));
         executor.runAll();
 
         assertEquals(1, exporter.records.size(), "one pump, one latest record");
@@ -102,10 +111,11 @@ class ExportSchedulerTest {
         var executor = new ManualExecutor();
         var exporter = new CapturingExporter();
         var scheduler = scheduler(executor, new ArrayList<>(), exporter);
+        var execution = Executions.plugin(scheduler, ARN);
 
-        scheduler.schedule(record("first"));
+        scheduler.schedule(execution, record("first"));
         executor.runAll();
-        scheduler.schedule(record("second"));
+        scheduler.schedule(execution, record("second"));
         executor.runAll();
 
         assertEquals(List.of("first", "second"), statuses(exporter));
@@ -126,14 +136,15 @@ class ExportSchedulerTest {
             }
         };
         var scheduler = scheduler(sharedWorkers(), new ArrayList<>(), exporter);
+        var execution = Executions.plugin(scheduler, ARN);
 
-        scheduler.schedule(record("first"));
+        scheduler.schedule(execution, record("first"));
         assertTrue(entered.await(5, TimeUnit.SECONDS), "first export is in flight");
-        scheduler.schedule(record("dropped-1"));
-        scheduler.schedule(record("dropped-2"));
-        scheduler.schedule(record("final"));
+        scheduler.schedule(execution, record("dropped-1"));
+        scheduler.schedule(execution, record("dropped-2"));
+        scheduler.schedule(execution, record("final"));
         release.countDown();
-        scheduler.drain();
+        scheduler.drain(execution);
 
         assertEquals(List.of("first", "final"), statuses(exporter));
     }
@@ -141,8 +152,9 @@ class ExportSchedulerTest {
     @Test
     void drainReturnsImmediatelyWhenIdle() {
         var scheduler = scheduler(new ManualExecutor(), new ArrayList<>(), new CapturingExporter());
-        scheduler.drain();
-        scheduler.drain();
+        var execution = Executions.plugin(scheduler, ARN);
+        scheduler.drain(execution);
+        scheduler.drain(execution);
     }
 
     @Test
@@ -160,14 +172,15 @@ class ExportSchedulerTest {
             }
         };
         var scheduler = scheduler(sharedWorkers(), new ArrayList<>(), exporter);
+        var execution = Executions.plugin(scheduler, ARN);
 
-        scheduler.schedule(record("slow"));
+        scheduler.schedule(execution, record("slow"));
         assertTrue(entered.await(5, TimeUnit.SECONDS));
-        scheduler.schedule(record("final"));
+        scheduler.schedule(execution, record("final"));
 
         var drained = new CountDownLatch(1);
         var drainer = new Thread(() -> {
-            scheduler.drain();
+            scheduler.drain(execution);
             drained.countDown();
         });
         drainer.start();
@@ -182,9 +195,10 @@ class ExportSchedulerTest {
     void exportersRunOffTheSchedulingThread() {
         var exporter = new CapturingExporter();
         var scheduler = scheduler(sharedWorkers(), new ArrayList<>(), exporter);
+        var execution = Executions.plugin(scheduler, ARN);
 
-        scheduler.schedule(record("RUNNING"));
-        scheduler.drain();
+        scheduler.schedule(execution, record("RUNNING"));
+        scheduler.drain(execution);
 
         assertEquals(1, exporter.threads.size());
         assertNotSame(Thread.currentThread(), exporter.threads.get(0));
@@ -198,9 +212,10 @@ class ExportSchedulerTest {
             throw new AssertionError("exporter blew up");
         };
         var scheduler = scheduler(sharedWorkers(), failures, bad, good);
+        var execution = Executions.plugin(scheduler, ARN);
 
-        scheduler.schedule(record("RUNNING"));
-        scheduler.drain();
+        scheduler.schedule(execution, record("RUNNING"));
+        scheduler.drain(execution);
 
         assertEquals(1, good.records.size());
         assertEquals(1, failures.size());
@@ -213,8 +228,9 @@ class ExportSchedulerTest {
         var fast = new CapturingExporter();
         InsightExporter slow = record -> await(release);
         var scheduler = scheduler(sharedWorkers(), new ArrayList<>(), slow, fast);
+        var execution = Executions.plugin(scheduler, ARN);
 
-        scheduler.schedule(record("RUNNING"));
+        scheduler.schedule(execution, record("RUNNING"));
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (fast.records.isEmpty() && System.nanoTime() < deadline) {
             Thread.sleep(5);
@@ -222,7 +238,7 @@ class ExportSchedulerTest {
         assertEquals(1, fast.records.size(), "fast exporter received the record while the slow one is still blocked");
 
         release.countDown();
-        scheduler.drain();
+        scheduler.drain(execution);
     }
 
     @Test
@@ -232,12 +248,13 @@ class ExportSchedulerTest {
         var failures = new ArrayList<Throwable>();
         var exporter = new CapturingExporter();
         var scheduler = scheduler(executor, failures, exporter);
+        var execution = Executions.plugin(scheduler, ARN);
 
-        scheduler.schedule(record("final"));
+        scheduler.schedule(execution, record("final"));
         assertTrue(exporter.records.isEmpty(), "the hook thread does not export");
         assertEquals(1, failures.size(), "the worker failure is reported");
 
-        scheduler.drain();
+        scheduler.drain(execution);
 
         assertEquals(List.of("final"), statuses(exporter));
         assertSame(Thread.currentThread(), exporter.threads.get(0), "the invocation boundary delivers it");
@@ -249,14 +266,15 @@ class ExportSchedulerTest {
         executor.reject = true;
         var exporter = new CapturingExporter();
         var scheduler = scheduler(executor, new ArrayList<>(), exporter);
+        var execution = Executions.plugin(scheduler, ARN);
 
-        scheduler.schedule(record("older"));
+        scheduler.schedule(execution, record("older"));
         executor.reject = false;
-        scheduler.schedule(record("newer"));
+        scheduler.schedule(execution, record("newer"));
         executor.runAll();
 
         assertEquals(List.of("newer"), statuses(exporter), "the retry exports the latest record");
-        scheduler.drain();
+        scheduler.drain(execution);
         assertEquals(1, exporter.records.size());
     }
 
@@ -272,15 +290,16 @@ class ExportSchedulerTest {
         var failures = new CopyOnWriteArrayList<Throwable>();
         var exporter = new CapturingExporter();
         var scheduler = scheduler(blockingRejector, failures, exporter);
+        var execution = Executions.plugin(scheduler, ARN);
 
-        var scheduling = new Thread(() -> scheduler.schedule(record("final")), "scheduling");
+        var scheduling = new Thread(() -> scheduler.schedule(execution, record("final")), "scheduling");
         scheduling.start();
         assertTrue(submitted.await(5, TimeUnit.SECONDS), "the pump handle is published before execute rejects");
 
         var drained = new CountDownLatch(1);
         var drainer = new Thread(
                 () -> {
-                    scheduler.drain();
+                    scheduler.drain(execution);
                     drained.countDown();
                 },
                 "drainer");
@@ -296,7 +315,7 @@ class ExportSchedulerTest {
     }
 
     @Test
-    void flushAllRunsExporterFlushesConcurrentlySoASlowFlushDoesNotDelayTheOthers() throws Exception {
+    void flushRunsExporterFlushesConcurrentlySoASlowFlushDoesNotDelayTheOthers() throws Exception {
         var release = new CountDownLatch(1);
         var fastFlushed = new CountDownLatch(1);
         var slow = new InsightExporter() {
@@ -321,19 +340,19 @@ class ExportSchedulerTest {
 
         var flushed = new CountDownLatch(1);
         new Thread(() -> {
-                    scheduler.flushAll();
+                    scheduler.flush();
                     flushed.countDown();
                 })
                 .start();
 
         assertTrue(fastFlushed.await(5, TimeUnit.SECONDS), "fast exporter flushed while the slow one is blocked");
-        assertFalse(flushed.await(100, TimeUnit.MILLISECONDS), "flushAll waits for every exporter");
+        assertFalse(flushed.await(100, TimeUnit.MILLISECONDS), "flush waits for every exporter");
         release.countDown();
         assertTrue(flushed.await(5, TimeUnit.SECONDS));
     }
 
     @Test
-    void flushAllIsolatesAFailingFlush() {
+    void flushIsolatesAFailingFlush() {
         var failures = new CopyOnWriteArrayList<Throwable>();
         var flushed = new CountDownLatch(1);
         var bad = new InsightExporter() {
@@ -356,7 +375,7 @@ class ExportSchedulerTest {
         };
         var scheduler = scheduler(sharedWorkers(), failures, bad, good);
 
-        scheduler.flushAll();
+        scheduler.flush();
 
         assertEquals(0, flushed.getCount(), "the healthy exporter still flushed");
         assertEquals(1, failures.size());

@@ -3,11 +3,14 @@
 package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static software.amazon.lambda.durable.otel.Invocations.started;
 
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
@@ -56,14 +59,14 @@ class MdcSpanEnricherTest {
     void plugin_withMdcEnabled_setsFieldsInMdc() {
         var spanExporter = InMemorySpanExporter.create();
 
-        var plugin = new InvocationOtelPlugin(
+        var pluginFactory = InvocationOtelPlugin.factory(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 OtelPluginConfig.builder()
                         .contextExtractor(() -> null)
                         .enableMdc(true)
                         .build());
 
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec-mdc-test", true, Instant.now()));
+        var plugin = started(pluginFactory, new InvocationInfo("req-1", "arn:exec-mdc-test", true, Instant.now()));
 
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "step", "STEP", "Step", null, Instant.now(), false, 1));
@@ -98,5 +101,42 @@ class MdcSpanEnricherTest {
         assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
         assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
         assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
+    }
+
+    @Test
+    void logCorrelationFollowsEachInvocationsOwnInstance() {
+        // Regression guard taken from the Python port of this refactor: there a log filter installed by the first
+        // invocation's plugin outlived that plugin and kept querying the discarded instance, so log correlation
+        // silently stopped after the first invocation. Java correlates through the SLF4J MDC, written by the hooks of
+        // whichever instance is serving the invocation, so every invocation publishes its own execution trace. This
+        // test pins that down across two invocations served by two instances of one factory.
+        var spanExporter = InMemorySpanExporter.create();
+        var pluginFactory = InvocationOtelPlugin.factory(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(true)
+                        .build());
+
+        var first = started(pluginFactory, new InvocationInfo("req-1", "arn:exec-a", true, Instant.now()));
+        var firstTraceId = MDC.get(MdcSpanEnricher.MDC_TRACE_ID);
+        first.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec-a", true, InvocationStatus.SUCCEEDED, null));
+        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID), "an invocation clears the correlation it set");
+
+        var second = started(pluginFactory, new InvocationInfo("req-2", "arn:exec-b", true, Instant.now()));
+        var secondTraceId = MDC.get(MdcSpanEnricher.MDC_TRACE_ID);
+        second.onInvocationEnd(new InvocationEndInfo("req-2", "arn:exec-b", true, InvocationStatus.SUCCEEDED, null));
+
+        assertNotNull(firstTraceId);
+        assertNotNull(secondTraceId, "log correlation must not stop after the first invocation");
+        assertNotEquals(firstTraceId, secondTraceId, "each instance publishes its own execution trace");
+        var invocationTraceIds = spanExporter.getFinishedSpanItems().stream()
+                .filter(span -> span.getName().equals("Invocation"))
+                .map(SpanData::getTraceId)
+                .toList();
+        assertEquals(
+                List.of(firstTraceId, secondTraceId),
+                invocationTraceIds,
+                "the correlated trace ID is the one on that invocation's own Invocation span");
     }
 }

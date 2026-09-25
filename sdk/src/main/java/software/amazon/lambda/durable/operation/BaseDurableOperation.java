@@ -556,10 +556,13 @@ public abstract class BaseDurableOperation {
 
     // ─── Plugin hook helpers ─────────────────────────────────────────────
 
-    /** Returns the plugin runner from config, or no-op if config is unavailable. */
+    /**
+     * Returns this invocation's plugin runner, scoped to the ExecutionManager of this invocation. Falls back to a no-op
+     * runner when the manager does not provide one (mocked managers in unit tests).
+     */
     private PluginRunner getPluginRunner() {
-        var config = getContext().getDurableConfig();
-        return config != null ? config.getPluginRunner() : PluginRunner.noOp();
+        var pluginRunner = executionManager.getPluginRunner();
+        return pluginRunner != null ? pluginRunner : PluginRunner.noOp();
     }
 
     /** Fires onOperationStart plugin hook. */

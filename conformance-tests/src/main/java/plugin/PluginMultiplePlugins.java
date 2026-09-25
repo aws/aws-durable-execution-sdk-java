@@ -52,7 +52,9 @@ public class PluginMultiplePlugins extends DurableHandler<String, String> {
     @Override
     protected DurableConfig createConfiguration() {
         return DurableConfig.builder()
-                .withPlugins(new InvocationLoggingPlugin("CONFPLUGIN-A"), new InvocationLoggingPlugin("CONFPLUGIN-B"))
+                .withPlugins(
+                        info -> new InvocationLoggingPlugin("CONFPLUGIN-A"),
+                        info -> new InvocationLoggingPlugin("CONFPLUGIN-B"))
                 .build();
     }
 

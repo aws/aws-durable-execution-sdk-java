@@ -15,7 +15,6 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.exception.DurableOperationException;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
@@ -72,8 +71,11 @@ class OperationErrorIdentityTest {
     @Test
     void operationAndExecutionErrorUseCheckpointedErrorObjectIdentity() {
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(
-                WorkflowInsightConfig.builder().addExporter(exporter).build());
+        var plugin = Executions.plugin(
+                WorkflowInsight.workflowInsight(
+                        WorkflowInsightConfig.builder().addExporter(exporter).build()),
+                ARN,
+                START);
 
         Throwable opError = wrapped("CustomerValidationError", "invalid postal code");
         Throwable execError = wrapped("OrchestrationFailure", "workflow aborted");
@@ -98,8 +100,11 @@ class OperationErrorIdentityTest {
     @Test
     void fallsBackToThrowableFieldsWhenErrorObjectFieldsMissing() {
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(
-                WorkflowInsightConfig.builder().addExporter(exporter).build());
+        var plugin = Executions.plugin(
+                WorkflowInsight.workflowInsight(
+                        WorkflowInsightConfig.builder().addExporter(exporter).build()),
+                ARN,
+                START);
 
         // ErrorObject present but errorType null: name falls back to the throwable's simple class name.
         ErrorObject partial =
