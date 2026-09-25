@@ -180,6 +180,7 @@ def deploy_fixtures(manifest, tags, seconds=1800):
     request = {"StackName": manifest["stack"], "TemplateBody": json.dumps(spec), "Tags": tags}
     if stack is None:
         request["TimeoutInMinutes"] = 25
+        request["OnFailure"] = "DO_NOTHING"
         aws("cloudformation", "create-stack", request)
         expected = "CREATE_COMPLETE"
     else:
@@ -399,6 +400,16 @@ def request_trace(events, marker, request_id, environment):
         key=lambda event: event["sequence"])
 
 
+def assert_request_lifecycles(events, marker, allow_residual_tasks=False):
+    requests = {(event["environment"], event["requestId"])
+                for event in selected(events, "WRAPPER_ENTER", marker)}
+    require(requests, f"No runtime request evidence for {marker}")
+    for environment, request_id in requests:
+        assert_lifecycle(
+            request_trace(events, marker, request_id, environment),
+            allow_residual=allow_residual_tasks)
+
+
 def residual_outcome_observed(events, marker, request_id, environment):
     trace = request_trace(events, marker, request_id, environment)
     return bool(selected(trace, "RESIDUAL_EXIT")) and bool(
@@ -523,6 +534,8 @@ def timeout_case(cloud, fixture, stubborn=False):
     victim = cloud.launch(fixture, scenario, prefix + "-victim", hold_ms=(timeout + 20) * 1000)
     target = assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim)
     cleanup_case(cloud, fixture, invocation_start, timeout + 30)
+    assert_request_lifecycles(
+        cloud.events_for(victim), victim["marker"], allow_residual_tasks=stubborn)
     # All lanes, not just one replacement invocation, must be available again.
     overlap_case(cloud, fixture, target=target)
 
