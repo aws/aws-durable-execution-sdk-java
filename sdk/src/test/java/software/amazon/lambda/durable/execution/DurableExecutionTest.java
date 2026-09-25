@@ -6,8 +6,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static software.amazon.lambda.durable.TypeToken.get;
 
 import java.time.Instant;
@@ -18,15 +27,18 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
@@ -34,6 +46,9 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationEndInfo;
+import software.amazon.lambda.durable.plugin.InvocationStatus;
 
 class DurableExecutionTest {
 
@@ -48,6 +63,57 @@ class DurableExecutionTest {
         return DurableConfig.builder()
                 .withDurableExecutionClient(TestUtils.createMockClient())
                 .build();
+    }
+
+    @Test
+    void testLargeResultCheckpointFailurePairsPluginHooks() {
+        var client = mock(DurableExecutionClient.class);
+        var failure = new IllegalStateException("large result checkpoint failed");
+        when(client.checkpoint(any(), any(), anyList())).thenThrow(failure);
+        var plugin = mock(DurableExecutionPlugin.class);
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(client)
+                .withPlugins(plugin)
+                .build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(executionOp())
+                        .build());
+        var result = "x".repeat(6 * 1024 * 1024);
+
+        var thrown = assertThrows(
+                IllegalStateException.class,
+                () -> DurableExecutor.execute(input, null, get(String.class), (userInput, ctx) -> result, config));
+
+        assertSame(failure, thrown);
+        assertLargeResultCheckpoint(client, config.getSerDes().serialize(result));
+        assertRetryingPluginLifecycle(plugin, failure);
+    }
+
+    private void assertLargeResultCheckpoint(DurableExecutionClient client, String expectedPayload) {
+        verify(client)
+                .checkpoint(
+                        eq(EXECUTION_ARN),
+                        eq("token1"),
+                        argThat(updates -> updates.size() == 1
+                                && updates.get(0).id().equals(EXECUTION_OP_ID)
+                                && updates.get(0).type() == OperationType.EXECUTION
+                                && updates.get(0).action() == OperationAction.SUCCEED
+                                && updates.get(0).payload().equals(expectedPayload)));
+    }
+
+    private void assertRetryingPluginLifecycle(DurableExecutionPlugin plugin, Throwable failure) {
+        var end = ArgumentCaptor.forClass(InvocationEndInfo.class);
+        var hooks = inOrder(plugin);
+        hooks.verify(plugin).onInvocationStart(any());
+        hooks.verify(plugin).onInvocationEnd(end.capture());
+        hooks.verifyNoMoreInteractions();
+        assertEquals(InvocationStatus.RETRYING, end.getValue().invocationStatus());
+        assertSame(failure, end.getValue().executionError());
+        assertEquals("test-input", end.getValue().executionInput());
+        assertNull(end.getValue().executionResult());
     }
 
     @Test

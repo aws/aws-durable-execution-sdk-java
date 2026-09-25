@@ -353,6 +353,43 @@ class PluginIntegrationTest {
         }
     }
 
+    @Test
+    void plugin_hooksStayPaired_whenTheResultCannotBeSerialized() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder()
+                .withPlugins(plugin)
+                .withSerDes(new ResultRejectingSerDes())
+                .build();
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> "unserializable", config);
+
+        assertThrows(Exception.class, () -> runner.run("input"));
+
+        assertEquals(1, plugin.invocationStarts.size());
+        assertEquals(1, plugin.invocationEnds.size(), "a start hook must not be left without its end hook");
+        var end = plugin.invocationEnds.get(0);
+        assertEquals(InvocationStatus.RETRYING, end.invocationStatus());
+        assertNotNull(end.executionError(), "the plugin must be told why result delivery failed");
+        assertNull(end.executionResult(), "an undelivered result must not be reported as successful");
+    }
+
+    /** SerDes that refuses to serialize the handler result. */
+    static class ResultRejectingSerDes implements SerDes {
+        private final JacksonSerDes delegate = new JacksonSerDes();
+
+        @Override
+        public String serialize(Object value) {
+            if ("unserializable".equals(value)) {
+                throw new IllegalStateException("cannot serialize the result");
+            }
+            return delegate.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            return delegate.deserialize(data, typeToken);
+        }
+    }
+
     // ─── Operation-level hooks ───────────────────────────────────────────
 
     @Test
