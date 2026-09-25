@@ -348,6 +348,20 @@ class EvidenceTest(unittest.TestCase):
         events.append(event("WRAPPER_RETURN", 4, "retry", marker="victim", status="THREW"))
         self.assertTrue(runtime_requests_drained(events, "victim"))
 
+    def test_runtime_drain_waits_for_stubborn_tasks_and_rejects_late_work(self):
+        events = [event("WRAPPER_ENTER", 1, marker="victim"),
+                  event("ROOT_ENTER", 2, marker="victim"),
+                  event("TASK_ENTER", 3, marker="victim", name="stubborn-child"),
+                  event("ROOT_EXIT", 4, marker="victim"),
+                  event("WRAPPER_RETURN", 5, marker="victim", status="THREW")]
+        self.assertFalse(runtime_requests_drained(events, "victim"))
+        events.extend([event("RESIDUAL_EXIT", 6, marker="victim"),
+                       event("LATE_REJECTED", 7, marker="victim"),
+                       event("TASK_EXIT", 8, marker="victim", name="stubborn-child")])
+        self.assertTrue(runtime_requests_drained(events, "victim"))
+        events.append(event("BODY", 9, marker="victim", name="late-work"))
+        self.assertFalse(runtime_requests_drained(events, "victim"))
+
     @patch("cloud_suite.time.sleep")
     @patch("cloud_suite.time.monotonic", side_effect=[0, 0, 1, 2, 3, 4, 5])
     def test_runtime_quiescence_resets_for_a_delayed_retry(self, monotonic, sleep):
@@ -377,45 +391,52 @@ class EvidenceTest(unittest.TestCase):
 
     def test_timeout_readiness_waits_for_peer_and_platform_logs(self):
         peers = [{"marker": "peer", "requestId": "peer-request", "environment": "jvm"}]
-        events = [event("WRAPPER_RETURN", 1, "request", marker="victim", status="SUCCEEDED")]
+        probes = [{"marker": "probe"}]
+        events = [event("WRAPPER_RETURN", 1, "request", marker="victim", status="SUCCEEDED"),
+                  event("TASK_ENTER", 2, "probe-request", marker="probe")]
         cloud = Mock()
         cloud.raw_logs = {}
         deadline = 2_500_000
         self.assertFalse(timeout_evidence_ready(
-            cloud, events, "victim", "request", "jvm", peers, deadline))
+            cloud, events, "victim", "request", "jvm", peers, probes, deadline))
         events.append(event("HEARTBEAT", 2, "peer-request", marker="peer"))
         events.append(event("HEARTBEAT", 3, "peer-request", marker="peer"))
         events.append(event("WRAPPER_RETURN", 4, "peer-request", marker="peer", status="SUCCEEDED"))
         self.assertFalse(timeout_evidence_ready(
-            cloud, events, "victim", "request", "jvm", peers, deadline))
+            cloud, events, "victim", "request", "jvm", peers, probes, deadline))
         cloud.raw_logs = {"timeout": {"message": json.dumps(
             {"type": "platform.runtimeDone", "record": {"requestId": "request", "status": "timeout"}})}}
         self.assertTrue(timeout_evidence_ready(
-            cloud, events, "victim", "request", "jvm", peers, deadline))
+            cloud, events, "victim", "request", "jvm", peers, probes, deadline))
 
     def test_explicit_cancellation_can_satisfy_timeout_readiness(self):
         peers = [{"marker": "peer", "requestId": "peer-request", "environment": "jvm"}]
+        probes = [{"marker": "probe"}]
         events = [event("INTERRUPTED", 1, "request", marker="victim"),
                   event("WRAPPER_RETURN", 2, "request", marker="victim", status="THREW"),
                   event("HEARTBEAT", 2, "peer-request", marker="peer"),
                   event("HEARTBEAT", 3, "peer-request", marker="peer"),
-                  event("WRAPPER_RETURN", 4, "peer-request", marker="peer", status="SUCCEEDED")]
+                  event("WRAPPER_RETURN", 4, "peer-request", marker="peer", status="SUCCEEDED"),
+                  event("TASK_ENTER", 5, "probe-request", marker="probe")]
         cloud = Mock()
         cloud.raw_logs = {}
         self.assertTrue(timeout_evidence_ready(
-            cloud, events, "victim", "request", "jvm", peers, 2_500_000))
+            cloud, events, "victim", "request", "jvm", peers, probes, 2_500_000))
 
     def test_timeout_readiness_rejects_another_peer_retry(self):
         peers = [{"marker": "peer", "requestId": "admitted", "environment": "jvm"}]
+        probes = [{"marker": "probe"}]
         events = [event("INTERRUPTED", 1, "victim", marker="victim"),
                   event("WRAPPER_RETURN", 2, "victim", marker="victim", status="THREW"),
                   event("WRAPPER_RETURN", 3, "retry", "other", marker="peer", status="SUCCEEDED")]
         cloud = Mock()
         cloud.raw_logs = {}
-        self.assertFalse(timeout_evidence_ready(cloud, events, "victim", "victim", "jvm", peers, 0))
+        self.assertFalse(timeout_evidence_ready(
+            cloud, events, "victim", "victim", "jvm", peers, probes, 0))
 
     def test_timeout_readiness_rejects_a_peer_admitted_after_deadline(self):
         peers = [{"marker": "peer", "requestId": "peer-request", "environment": "jvm"}]
+        probes = [{"marker": "probe"}]
         events = [event("INTERRUPTED", 1, "victim", marker="victim"),
                   event("WRAPPER_RETURN", 2, "victim", marker="victim", status="THREW"),
                   event("HEARTBEAT", 3, "peer-request", marker="peer"),
@@ -423,7 +444,24 @@ class EvidenceTest(unittest.TestCase):
         cloud = Mock()
         cloud.raw_logs = {}
         self.assertFalse(timeout_evidence_ready(
-            cloud, events, "victim", "victim", "jvm", peers, 2_500_000))
+            cloud, events, "victim", "victim", "jvm", peers, probes, 2_500_000))
+
+    def test_timeout_readiness_waits_for_delayed_probe_admission(self):
+        peers = [{"marker": "peer", "requestId": "peer-request", "environment": "jvm"}]
+        probes = [{"marker": "probe"}]
+        deadline = 2_500_000
+        events = [event("INTERRUPTED", 1, "victim", marker="victim"),
+                  event("WRAPPER_RETURN", 2, "victim", marker="victim", status="THREW"),
+                  event("HEARTBEAT", 2, "peer-request", marker="peer"),
+                  event("HEARTBEAT", 3, "peer-request", marker="peer"),
+                  event("WRAPPER_RETURN", 4, "peer-request", marker="peer", status="SUCCEEDED")]
+        cloud = Mock()
+        cloud.raw_logs = {}
+        self.assertFalse(timeout_evidence_ready(
+            cloud, events, "victim", "victim", "jvm", peers, probes, deadline))
+        events.append(event("TASK_ENTER", 5, "probe-request", marker="probe"))
+        self.assertTrue(timeout_evidence_ready(
+            cloud, events, "victim", "victim", "jvm", peers, probes, deadline))
 
     def test_case_preserves_primary_failure_when_cleanup_also_fails(self):
         cloud = Mock()
