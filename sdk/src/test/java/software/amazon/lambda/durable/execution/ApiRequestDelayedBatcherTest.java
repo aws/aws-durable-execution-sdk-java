@@ -213,6 +213,19 @@ class ApiRequestDelayedBatcherTest {
     }
 
     @Test
+    void whenDelayExceedsNinetyMinutes_firstSubmissionStillSetsFlushDeadline() throws Exception {
+        var submittedAt = System.nanoTime();
+        cut.submit(input, Duration.ofMinutes(91));
+
+        var flushTimeField = ApiRequestDelayedBatcher.class.getDeclaredField("delayedBatchFlushTime");
+        flushTimeField.setAccessible(true);
+        var flushTime = flushTimeField.getLong(cut);
+
+        assertTrue(flushTime > submittedAt + Duration.ofMinutes(90).toNanos());
+        cut.shutdown(SHUTDOWN_TIMEOUT);
+    }
+
+    @Test
     void whenNoItemsSubmitted_shutdownDoesNotInvokeBatchAction() throws Exception {
         cut.shutdown(SHUTDOWN_TIMEOUT);
         verify(doBatchAction, never()).accept(any());
