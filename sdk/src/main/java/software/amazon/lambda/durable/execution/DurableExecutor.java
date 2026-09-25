@@ -175,9 +175,36 @@ public class DurableExecutor {
                             }
                             // user handler complete successfully
                             logger.debug("Execution completed");
-                            var outputPayload = config.getSerDes().serialize(result);
-                            var output =
-                                    DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
+                            DurableExecutionOutput output = null;
+                            Throwable resultDeliveryFailure = null;
+                            try {
+                                var outputPayload = config.getSerDes().serialize(result);
+                                output = DurableExecutionOutput.success(
+                                        handleLargePayload(executionManager, outputPayload));
+                            } catch (Throwable failure) {
+                                // A failed oversized-result checkpoint arrives wrapped by join(). Report the
+                                // underlying failure to plugins, consistently with the failure branches above.
+                                resultDeliveryFailure = ExceptionHelper.unwrapCompletableFuture(failure);
+                                if (resultDeliveryFailure == null) {
+                                    resultDeliveryFailure = failure;
+                                }
+                            }
+                            if (resultDeliveryFailure != null) {
+                                // Serialization and large-result checkpointing both happen after the handler returns,
+                                // but the invocation still ends when either fails. Always pair the start hook so
+                                // plugins can finish spans and flush buffered telemetry before the failure propagates.
+                                fireOnInvocationEnd(
+                                        pluginRunner,
+                                        executionManager,
+                                        requestId,
+                                        executionArn,
+                                        isFirstInvocation,
+                                        InvocationStatus.RETRYING,
+                                        resultDeliveryFailure,
+                                        pluginExecutionInput.get(),
+                                        null);
+                                ExceptionHelper.sneakyThrow(resultDeliveryFailure);
+                            }
                             fireOnInvocationEnd(
                                     pluginRunner,
                                     executionManager,
