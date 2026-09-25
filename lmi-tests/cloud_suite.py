@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 
 from cloud_support import (Cloud, CollectionError, PreconditionError, assert_fixed,
                            assert_lifecycle, assert_overlap, assert_replay, aws,
-                           require, save, selected)
+                           platform_timeout, require, save, selected)
 
 ROOT = Path(__file__).resolve().parent
 ARTIFACTS = ROOT / "artifacts"
@@ -377,11 +377,58 @@ def wait_until_wall_time(cloud, fixture, wall_time, seconds, items):
     return cloud.poll(fixture, lambda events: time.time() >= wall_time, seconds=seconds, items=items)
 
 
+def runtime_requests_drained(events, marker):
+    entered = {(e["environment"], e["requestId"])
+               for e in selected(events, "WRAPPER_ENTER", marker)}
+    returned = {(e["environment"], e["requestId"])
+                for e in selected(events, "WRAPPER_RETURN", marker)}
+    return bool(entered) and entered <= returned
+
+
+def cleanup_timeout_case(cloud, fixture, victim, timeout, invocation_start):
+    """Release and observe every request created by a timeout case before the next case starts."""
+    failures = []
+    try:
+        cloud.release_all()
+    except Exception as failure:
+        failures.append(failure)
+    try:
+        cloud.stop(victim, seconds=timeout + 30)
+    except Exception as failure:
+        failures.append(failure)
+    others = [item for item in cloud.invocations[invocation_start:] if item is not victim]
+    try:
+        cloud.stop_all(others, seconds=timeout + 30)
+    except Exception as failure:
+        failures.append(failure)
+    if selected(cloud.events_for(victim), "WRAPPER_ENTER"):
+        try:
+            cloud.poll(
+                fixture,
+                lambda events: runtime_requests_drained(events, victim["marker"]),
+                seconds=30,
+                items=[victim])
+        except Exception as failure:
+            failures.append(failure)
+    if failures:
+        raise failures[0]
+
+
 def timeout_case(cloud, fixture, stubborn=False):
+    invocation_start = len(cloud.invocations)
     prefix = uuid.uuid4().hex[:12]
     timeout = cloud.manifest["invocationTimeout"]
     scenario = "stubborn" if stubborn else "timeout"
     victim = cloud.launch(fixture, scenario, prefix + "-victim", hold_ms=(timeout + 20) * 1000)
+    try:
+        target = assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim)
+    finally:
+        cleanup_timeout_case(cloud, fixture, victim, timeout, invocation_start)
+    # All lanes, not just one replacement invocation, must be available again.
+    overlap_case(cloud, fixture, target=target)
+
+
+def assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim):
     entries = cloud.poll(fixture, lambda events: selected(events, "TASK_ENTER", victim["marker"]),
                          category=PreconditionError, items=[victim])
     entry = min(entries, key=lambda event: event["epochMillis"])
@@ -436,8 +483,8 @@ def timeout_case(cloud, fixture, stubborn=False):
               "interrupts": selected(trace, "INTERRUPTED") + selected(trace, "IGNORED_INTERRUPT"),
               "recoveryAdmissions": recovered, "retryRequestIds": retry_request_ids,
               "durableHistoryEvents": len(history)}
-    report["serverTimeoutLogs"] = [e for e in cloud.raw_logs.values() if request_id in e["message"]
-                                   and ("timeout" in e["message"].lower() or "timed out" in e["message"].lower())]
+    report["serverTimeoutLogs"] = [e for e in cloud.raw_logs.values()
+                                   if platform_timeout(e["message"], request_id)]
     save(ARTIFACTS / "timeouts" / (prefix + ".json"), report)
     errors = []
     def check(condition, message):
@@ -463,8 +510,7 @@ def timeout_case(cloud, fixture, stubborn=False):
     if errors:
         raise AssertionError("; ".join(errors))
     assert_lifecycle(trace, allow_residual=stubborn)
-    # All lanes, not just one replacement invocation, must be available again.
-    overlap_case(cloud, fixture, target=target)
+    return target
 
 
 def inflight_case(cloud, fixture, scenario):

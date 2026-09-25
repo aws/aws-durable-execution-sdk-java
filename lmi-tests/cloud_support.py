@@ -73,6 +73,23 @@ def diagnostic(message):
         return None
 
 
+def platform_timeout(message, request_id):
+    """Recognize a structured Lambda platform timeout for one runtime request."""
+    try:
+        envelope = json.loads(message)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(envelope, dict) or envelope.get("type") not in {
+            "platform.runtimeDone", "platform.report"}:
+        return False
+    record = envelope.get("record")
+    if not isinstance(record, dict) or record.get("requestId") != request_id:
+        return False
+    outcome = " ".join(str(record.get(key, "")).lower()
+                       for key in ("status", "errorType", "errorMessage"))
+    return "timeout" in outcome or "timedout" in outcome or "timed_out" in outcome
+
+
 def selected(events, kind=None, marker=None):
     return [e for e in events if (kind is None or e["kind"] == kind)
             and (marker is None or e["marker"] == marker)]
@@ -103,7 +120,8 @@ def assert_lifecycle(events, allow_residual=False):
     for returned in returns:
         local = [e for e in events if e["requestId"] == returned["requestId"]
                  and e["environment"] == returned["environment"]]
-        if returned["status"] in {"SUCCEEDED", "FAILED", "PENDING"}:
+        requires_quiescence = not allow_residual or returned["status"] in {"SUCCEEDED", "FAILED", "PENDING"}
+        if requires_quiescence:
             require(returned["rootExited"], f"{returned['status']} returned before root exit")
             require(returned["tasks"] == 0, f"{returned['status']} returned with live invocation tasks")
             roots = selected(local, "ROOT_EXIT")
@@ -113,6 +131,10 @@ def assert_lifecycle(events, allow_residual=False):
         late = [e for e in local if e["sequence"] > returned["sequence"]
                 and e["kind"] in {"CHECKPOINT_CALL", "POLL_CALL", "CHECKPOINT_EXIT", "POLL_EXIT"}]
         require(not late, "SDK checkpoint/poll activity continued after wrapper return")
+        if not allow_residual:
+            late_work = [e for e in local if e["sequence"] > returned["sequence"]
+                         and e["kind"] in {"ROOT_EXIT", "TASK_ENTER", "TASK_EXIT", "BODY"}]
+            require(not late_work, "Invocation task/body activity continued after wrapper return")
 
 
 def assert_replay(events, history, marker):
@@ -252,8 +274,10 @@ class Cloud:
     def events_for(self, item):
         return selected(list(self.events.values()), marker=item["marker"])
 
-    def finish(self, item, expected="SUCCEEDED", seconds=100):
+    def finish(self, item, expected="SUCCEEDED", seconds=100, wait_for_terminal=None):
         deadline = time.monotonic() + seconds
+        if wait_for_terminal is None:
+            wait_for_terminal = expected is not None
         try:
             result = item["future"].result(timeout=max(0, deadline - time.monotonic()))
         except (concurrent.futures.TimeoutError, subprocess.TimeoutExpired) as failure:
@@ -277,7 +301,7 @@ class Cloud:
                 raise CollectionError(
                     f"Could not read durable execution for {item['marker']}: {scrub(str(failure))}") from failure
             save(self.artifacts / "executions" / (item["marker"] + ".json"), final)
-            if expected is None or final.get("Status") in TERMINAL_DURABLE_STATUSES:
+            if not wait_for_terminal or final.get("Status") in TERMINAL_DURABLE_STATUSES:
                 break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -290,6 +314,24 @@ class Cloud:
                 require(json.loads(final["Result"]) == item["marker"], "Execution returned another input's result")
         return final
 
+    def stop(self, item, seconds=60):
+        """Stop a nonterminal durable execution and wait until retries can no longer be scheduled."""
+        deadline = time.monotonic() + seconds
+        final = self.finish(item, expected=None, seconds=max(0, deadline - time.monotonic()))
+        if final.get("Status") in TERMINAL_DURABLE_STATUSES:
+            return final
+        try:
+            aws("lambda", "stop-durable-execution", {"DurableExecutionArn": item["arn"]},
+                timeout=max(1, min(30, int(max(0, deadline - time.monotonic())) + 1)))
+        except (RuntimeError, subprocess.TimeoutExpired) as failure:
+            latest = self.finish(item, expected=None, seconds=max(0, deadline - time.monotonic()))
+            if latest.get("Status") in TERMINAL_DURABLE_STATUSES:
+                return latest
+            raise CollectionError(
+                f"Could not stop durable execution for {item['marker']}: {scrub(str(failure))}") from failure
+        return self.finish(item, expected=None, seconds=max(0, deadline - time.monotonic()),
+                           wait_for_terminal=True)
+
     def finish_all(self, items, expected=None, seconds=100):
         """Drain every invocation future, preserving the first error after all items have been observed."""
         deadline = time.monotonic() + seconds
@@ -297,6 +339,19 @@ class Cloud:
         for item in items:
             try:
                 results.append(self.finish(item, expected=expected, seconds=max(0, deadline - time.monotonic())))
+            except Exception as failure:
+                failures.append(failure)
+        if failures:
+            raise failures[0]
+        return results
+
+    def stop_all(self, items, seconds=100):
+        """Make every execution terminal, preserving the first error after all items have been observed."""
+        deadline = time.monotonic() + seconds
+        results, failures = [], []
+        for item in items:
+            try:
+                results.append(self.stop(item, seconds=max(0, deadline - time.monotonic())))
             except Exception as failure:
                 failures.append(failure)
         if failures:

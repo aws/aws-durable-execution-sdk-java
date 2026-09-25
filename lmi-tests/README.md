@@ -47,7 +47,9 @@ or accept a retry that happens to pass after a lifecycle violation.
   deadline; no fake clock, context, checkpoint backend, or time-skipping runner
   participates. Service timeout evidence, task interruption/exit, wrapper exit,
   and restored admission are independent assertions. Durable execution status
-  is collected separately from the runtime invocation's outcome.
+  is collected separately from the runtime invocation's outcome. After evidence
+  is recorded, the driver stops any nonterminal timeout execution and drains all
+  requests launched by that case before reusing the fixture's capacity.
 * Successful and failed checkpointed steps precede a real durable wait. The
   attempt ledger records entry into user bodies, while real service history
   proves checkpoint identity and replay. Fixture business work returns an idempotent marker; BODY events form the
