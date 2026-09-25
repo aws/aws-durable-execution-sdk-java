@@ -25,7 +25,7 @@ import java.util.function.Function;
  * @param <T> Request type
  */
 public class ApiRequestDelayedBatcher<T> {
-    private static final Duration MAX_DELAY = Duration.ofMinutes(60);
+    private static final long NO_FLUSH_DEADLINE = Long.MAX_VALUE;
 
     /** Maximum items allowed in a single batch */
     private final int maxItemCount;
@@ -120,8 +120,9 @@ public class ApiRequestDelayedBatcher<T> {
     /** clear the current batch and creates a new batch */
     private void initializeDelayedBatch() {
         this.delayedBatch.clear();
-        // MAX_DELAY is longer than a single Lambda invocation
-        this.delayedBatchFlushTime = System.nanoTime() + MAX_DELAY.toNanos();
+        // No timer is scheduled until the first item supplies an actual flush deadline. Using an unbounded sentinel
+        // avoids coupling batching behavior to the maximum Lambda invocation duration.
+        this.delayedBatchFlushTime = NO_FLUSH_DEADLINE;
 
         // the timer future is created initially without a timeout until an item is added to the batch
         this.delayedBatchFlushTimer = new CompletableFuture<>();
