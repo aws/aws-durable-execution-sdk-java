@@ -19,6 +19,7 @@ import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.TimeUnit;
@@ -168,6 +169,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      * @param config the plugin configuration
      */
     public InvocationOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, OtelPluginConfig config) {
+        Objects.requireNonNull(config, "config must not be null");
         this.idGenerator = DeterministicIdGenerator.installOn(tracerProviderBuilder);
         // Wrap the configured sampler so durable spans use the execution's single precomputed decision.
         DurableSampler.installOn(tracerProviderBuilder);
@@ -189,6 +191,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      * @param config the plugin configuration
      */
     public InvocationOtelPlugin(OtelPluginConfig config) {
+        Objects.requireNonNull(config, "config must not be null");
         this.contextExtractor = config.contextExtractor();
         this.enableMdc = config.enableMdc();
         this.workflowSpanName = config.workflowSpanName();
