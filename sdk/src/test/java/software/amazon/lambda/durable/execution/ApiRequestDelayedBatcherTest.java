@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 class ApiRequestDelayedBatcherTest {
     private static final Duration SHORT_DELAY = Duration.ofMillis(5);
     private static final Duration LONG_DELAY = Duration.ofMillis(100);
+    private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(5);
     private static final int MAX_BATCH_SIZE = 3;
     private static final int MAX_BATCH_BINARY_SIZE_IN_BYTES = 200;
 
@@ -192,11 +193,11 @@ class ApiRequestDelayedBatcherTest {
     }
 
     @Test
-    void whenShutdownCalled_pendingItemsAreFlushedImmediately() {
+    void whenShutdownCalled_pendingItemsAreFlushedImmediately() throws Exception {
         var future = cut.submit(input, LONG_DELAY);
         assertFalse(future.isDone());
 
-        cut.shutdown();
+        cut.shutdown(SHUTDOWN_TIMEOUT);
 
         assertTrue(future.isDone());
         verify(doBatchAction).accept(any());
@@ -212,19 +213,19 @@ class ApiRequestDelayedBatcherTest {
     }
 
     @Test
-    void whenNoItemsSubmitted_shutdownDoesNotInvokeBatchAction() {
-        cut.shutdown();
+    void whenNoItemsSubmitted_shutdownDoesNotInvokeBatchAction() throws Exception {
+        cut.shutdown(SHUTDOWN_TIMEOUT);
         verify(doBatchAction, never()).accept(any());
     }
 
     @Test
-    void whenMultipleBatchesFlushedViaShutdown_allFuturesComplete() {
+    void whenMultipleBatchesFlushedViaShutdown_allFuturesComplete() throws Exception {
         var future1 = cut.submit(input, LONG_DELAY);
-        cut.shutdown();
+        cut.shutdown(SHUTDOWN_TIMEOUT);
         assertTrue(future1.isDone());
 
         var future2 = cut.submit(input, LONG_DELAY);
-        cut.shutdown();
+        cut.shutdown(SHUTDOWN_TIMEOUT);
         assertTrue(future2.isDone());
     }
 
