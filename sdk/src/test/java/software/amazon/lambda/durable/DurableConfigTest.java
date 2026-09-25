@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.core.client.config.SdkAdvancedClientOption;
@@ -85,6 +86,40 @@ class DurableConfigTest {
         assertEquals(mockExecutor, config.getExecutorService());
         assertNotNull(config.getDurableExecutionClient());
         assertNotNull(config.getSerDes());
+    }
+
+    @Test
+    void testBuilder_WithInvocationExecutorFactory() {
+        Supplier<ExecutorService> factory = () -> mockExecutor;
+
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withInvocationExecutorFactory(factory)
+                .build();
+
+        assertSame(factory, config.getInvocationExecutorFactory().orElseThrow());
+    }
+
+    @Test
+    void testBuilder_SharedExecutorAndInvocationFactoryAreMutuallyExclusive() {
+        var builder = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withExecutorService(mockExecutor)
+                .withInvocationExecutorFactory(() -> mock(ExecutorService.class));
+
+        var exception = assertThrows(IllegalArgumentException.class, builder::build);
+
+        assertEquals(
+                "ExecutorService and invocation executor factory cannot both be configured", exception.getMessage());
+    }
+
+    @Test
+    void testBuilder_NullInvocationExecutorFactoryThrowsException() {
+        var builder = DurableConfig.builder();
+
+        var exception = assertThrows(NullPointerException.class, () -> builder.withInvocationExecutorFactory(null));
+
+        assertEquals("Invocation executor factory cannot be null", exception.getMessage());
     }
 
     @Test
@@ -169,6 +204,7 @@ class DurableConfigTest {
         assertSame(builder, builder.withDurableExecutionClient(mockClient));
         assertSame(builder, builder.withSerDes(mockSerDes));
         assertSame(builder, builder.withExecutorService(mockExecutor));
+        assertSame(builder, builder.withInvocationExecutorFactory(() -> mock(ExecutorService.class)));
         assertSame(builder, builder.withDeserializeAfterSerialization(false));
     }
 

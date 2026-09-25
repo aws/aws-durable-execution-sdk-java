@@ -7,17 +7,20 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static software.amazon.lambda.durable.model.ExecutionStatus.PENDING;
+import static software.amazon.lambda.durable.model.ExecutionStatus.SUCCEEDED;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -26,6 +29,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
@@ -45,8 +49,6 @@ import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 
 class ExecutionManagerLifecycleTest {
     private static final String EXECUTION_ID = "execution";
-    private static final String EXECUTION_ARN =
-            "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/test/" + EXECUTION_ID;
 
     @Test
     void capturesRequestIdAndInvocationDeadline() {
@@ -350,6 +352,110 @@ class ExecutionManagerLifecycleTest {
         }
     }
 
+    @Test
+    void invocationExecutorFactoryIsolatesConcurrentRootsAndOwnsShutdown() throws Exception {
+        var executors = new CopyOnWriteArrayList<ExecutorService>();
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withInvocationExecutorFactory(() -> {
+                    var executor = Executors.newFixedThreadPool(2);
+                    executors.add(executor);
+                    return executor;
+                })
+                .build();
+        var runtime = Executors.newFixedThreadPool(2);
+        var rootsEntered = new CountDownLatch(2);
+
+        try {
+            var responses = IntStream.range(0, 2)
+                    .mapToObj(index -> runtime.submit(() -> DurableExecutor.execute(
+                            input("isolated-" + index),
+                            context(10_000),
+                            TypeToken.get(String.class),
+                            (value, durableContext) -> {
+                                rootsEntered.countDown();
+                                await(rootsEntered);
+                                return durableContext.step("step", String.class, step -> value);
+                            },
+                            config)))
+                    .toList();
+
+            for (var response : responses) {
+                assertEquals(SUCCEEDED, response.get(5, TimeUnit.SECONDS).status());
+            }
+            assertEquals(2, executors.size());
+            assertNotSame(executors.get(0), executors.get(1));
+            assertTrue(executors.stream().allMatch(ExecutorService::isShutdown));
+            assertTrue(executors.stream().allMatch(ExecutorService::isTerminated));
+        } finally {
+            stop(runtime);
+            for (var executor : executors) {
+                stop(executor);
+            }
+        }
+    }
+
+    @Test
+    void sharedExecutorRemainsCallerOwned() throws Exception {
+        var sharedExecutor = Executors.newCachedThreadPool();
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withExecutorService(sharedExecutor)
+                .build();
+
+        try {
+            var response = DurableExecutor.execute(
+                    input("shared"),
+                    context(10_000),
+                    TypeToken.get(String.class),
+                    (value, durableContext) -> value,
+                    config);
+
+            assertEquals(SUCCEEDED, response.status());
+            assertFalse(sharedExecutor.isShutdown());
+        } finally {
+            stop(sharedExecutor);
+        }
+    }
+
+    @Test
+    void invocationExecutorFactoryMustReturnUsableExecutor() {
+        var nullConfig = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withInvocationExecutorFactory(() -> null)
+                .build();
+        assertThrows(NullPointerException.class, () -> new ExecutionManager(input("null-executor"), nullConfig, null));
+
+        var shutdownExecutor = Executors.newSingleThreadExecutor();
+        shutdownExecutor.shutdown();
+        var shutdownConfig = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withInvocationExecutorFactory(() -> shutdownExecutor)
+                .build();
+        assertThrows(
+                IllegalStateException.class,
+                () -> new ExecutionManager(input("shutdown-executor"), shutdownConfig, null));
+    }
+
+    @Test
+    void invocationExecutorFactoryRejectsExecutorAlreadyLeasedToAnotherInvocation() {
+        var executor = Executors.newFixedThreadPool(2);
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withInvocationExecutorFactory(() -> executor)
+                .build();
+        var first = new ExecutionManager(input("first"), config, null);
+
+        try {
+            var exception = assertThrows(
+                    IllegalStateException.class, () -> new ExecutionManager(input("second"), config, null));
+            assertEquals("Invocation executor factory returned an executor already in use", exception.getMessage());
+        } finally {
+            first.close();
+        }
+        assertTrue(executor.isTerminated());
+    }
+
     private ExecutionManager createManager(Context context, ExecutorService executor) {
         var config = DurableConfig.builder().withDurableExecutionClient(TestUtils.createMockClient());
         if (executor != null) {
@@ -359,8 +465,12 @@ class ExecutionManagerLifecycleTest {
     }
 
     private DurableExecutionInput input() {
+        return input(EXECUTION_ID);
+    }
+
+    private DurableExecutionInput input(String executionId) {
         var execution = Operation.builder()
-                .id(EXECUTION_ID)
+                .id(executionId)
                 .type(OperationType.EXECUTION)
                 .status(OperationStatus.STARTED)
                 .startTimestamp(Instant.now())
@@ -368,7 +478,7 @@ class ExecutionManagerLifecycleTest {
                         ExecutionDetails.builder().inputPayload("\"input\"").build())
                 .build();
         return new DurableExecutionInput(
-                EXECUTION_ARN,
+                "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/test/" + executionId,
                 "token",
                 CheckpointUpdatedExecutionState.builder()
                         .operations(List.of(execution))

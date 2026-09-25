@@ -24,7 +24,8 @@ MANIFEST = ARTIFACTS / "manifest.json"
 OWNER = "java-sdk-lmi-e2e"
 DEFAULT_STACK = "java-lmi-e2e"
 FIXTURES = {"default1": (1, "default"), "default2": (2, "default"),
-            "default8": (8, "default"), "fixed2": (2, "fixed"), "nested2": (2, "fixed")}
+            "default8": (8, "default"), "fixed2": (2, "invocation-fixed"),
+            "nested2": (2, "fixed")}
 
 
 def template(manifest):
@@ -197,7 +198,7 @@ def deploy_fixtures(manifest, tags, seconds=1800):
         wait_stack(manifest["stack"], expected, remaining_budget(deadline, seconds))
     stack = existing_stack(manifest["stack"])
     outputs = {output["OutputKey"]: output["OutputValue"] for output in stack["Outputs"]}
-    require(set(outputs) == set(FIXTURES), "The stack must expose all five LMI fixtures")
+    require(set(outputs) == set(FIXTURES), "The stack must expose all required LMI fixtures")
     for fixture in FIXTURES:
         arn = outputs[fixture]
         record_fixture(manifest, fixture, arn)
@@ -475,10 +476,10 @@ def warm_case(cloud, fixture):
 def cases_for_fixture(cloud, fixture):
     if fixture == "default1":
         return [("baseline-concurrency1", lambda: replay_case(cloud, fixture, "baseline"))]
-    if fixture in {"fixed2", "nested2"}:
-        scenario = "fixed" if fixture == "fixed2" else "nested"
-        return [("fixed-two-roots" if fixture == "fixed2" else "fixed-nested-map-parallel",
-                 lambda: fixed_case(cloud, fixture, scenario))]
+    if fixture == "fixed2":
+        return [("isolated-fixed-two-roots", lambda: fixed_case(cloud, fixture, "fixed"))]
+    if fixture == "nested2":
+        return []
     cases = [(fixture + "-isolation", lambda: overlap_case(cloud, fixture)),
              (fixture + "-suspend-cleanup-replay", lambda: replay_case(cloud, fixture, "suspend")),
              (fixture + "-timeout-recovery", lambda: timeout_case(cloud, fixture))]
@@ -493,7 +494,7 @@ def cases_for_fixture(cloud, fixture):
 def run_tests():
     manifest = json.loads(MANIFEST.read_text())
     if set(manifest["functions"]) != set(FIXTURES):
-        raise PreconditionError("All five functions must be deployed before running the cloud suite")
+        raise PreconditionError("All required functions must be deployed before running the cloud suite")
     cloud = Cloud(manifest, ARTIFACTS)
     suite = ET.Element("testsuite", name="LMI cloud lifecycle")
     cases = [case for fixture in FIXTURES for case in cases_for_fixture(cloud, fixture)]

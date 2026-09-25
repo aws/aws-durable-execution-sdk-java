@@ -23,6 +23,16 @@ class PersistenceTest(unittest.TestCase):
                 "Outputs": [{"OutputKey": key, "OutputValue": "function:" + key + ":$LATEST.PUBLISHED"}
                             for key in FIXTURES]}
 
+    def test_fixed_fixture_uses_invocation_factory(self):
+        resources = template(self.manifest())["Resources"]
+
+        self.assertEqual(
+            "invocation-fixed",
+            resources["fixed2Function"]["Properties"]["Environment"]["Variables"]["LMI_EXECUTOR"])
+        self.assertEqual(
+            "fixed",
+            resources["nested2Function"]["Properties"]["Environment"]["Variables"]["LMI_EXECUTOR"])
+
     @patch("cloud_suite.save")
     @patch("cloud_suite.wait_stack")
     @patch("cloud_suite.wait_for_idle_functions")
@@ -50,7 +60,7 @@ class PersistenceTest(unittest.TestCase):
             self.assertEqual("run-2", after["Environment"]["Variables"]["LMI_TEST_RUN_ID"])
         self.assertNotIn("TimeoutInMinutes", api.call_args_list[1].args[2])
         self.assertEqual(["CREATE_COMPLETE", "UPDATE_COMPLETE"], [call.args[1] for call in wait.call_args_list])
-        self.assertEqual(10, verify.call_count)
+        self.assertEqual(2 * len(FIXTURES), verify.call_count)
         idle.assert_called_once()
 
     @patch("cloud_suite.save")
@@ -65,7 +75,7 @@ class PersistenceTest(unittest.TestCase):
         deploy_fixtures(self.manifest(), [])
         self.assertEqual("update-stack", api.call_args.args[1])
         wait.assert_not_called()
-        self.assertEqual(5, verify.call_count)
+        self.assertEqual(len(FIXTURES), verify.call_count)
 
     @patch("cloud_suite.save")
     @patch("cloud_suite.existing_stack")
