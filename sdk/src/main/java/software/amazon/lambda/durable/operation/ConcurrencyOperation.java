@@ -339,8 +339,9 @@ public abstract class ConcurrencyOperation<T> extends SerializableDurableOperati
     }
 
     private CompletionConfig.CompletionStatus completionStatus(int succeeded, int failed) {
-        return new CompletionConfig.CompletionStatus(
-                succeeded, failed, succeeded + failed, branches.size(), allItemsRegistered());
+        var registered = allItemsRegistered();
+        var total = branches.size();
+        return new CompletionConfig.CompletionStatus(succeeded, failed, succeeded + failed, total, registered);
     }
 
     private boolean allItemsRegistered() {

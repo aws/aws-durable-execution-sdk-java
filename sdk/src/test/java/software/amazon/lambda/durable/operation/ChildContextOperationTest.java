@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 
 import java.util.List;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +21,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
@@ -124,6 +126,17 @@ class ChildContextOperationTest {
                 RunInChildContextConfig.builder().serDes(SERDES).build(),
                 durableContext,
                 parent);
+    }
+
+    private ParallelOperation createCompletedParentOperation() {
+        // Child completion synchronizes on the parent's future, which a constructor-free mock leaves null.
+        var parent = new ParallelOperation(
+                OperationIdentifier.of("parent", "parent-parallel", OperationSubType.PARALLEL),
+                SERDES,
+                durableContext,
+                ParallelConfig.builder().build());
+        parent.markAlreadyCompleted();
+        return parent;
     }
 
     // ===== SUCCEEDED replay =====
@@ -348,12 +361,13 @@ class ChildContextOperationTest {
     void childSkipsSuccessCheckpointWhenParentAlreadyCompleted() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
 
-        var parent = mock(ConcurrencyOperation.class);
-        when(parent.isOperationCompleted()).thenReturn(true);
+        var parent = createCompletedParentOperation();
 
         var operation = createOperationWithParent(ctx -> "result", parent);
         operation.execute();
-        Thread.sleep(200);
+        operation.getRunningUserHandler().get(5, TimeUnit.SECONDS);
+
+        assertTrue(operation.isOperationCompleted(), "Child should complete even when its parent has completed");
 
         // sendOperationUpdate should only be called once for START, not for SUCCEED
         verify(executionManager, never())
@@ -399,8 +413,7 @@ class ChildContextOperationTest {
     void childSkipsFailureCheckpointWhenParentAlreadyCompleted() throws Exception {
         when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
 
-        var parent = mock(ConcurrencyOperation.class);
-        when(parent.isOperationCompleted()).thenReturn(true);
+        var parent = createCompletedParentOperation();
 
         var operation = createOperationWithParent(
                 ctx -> {
@@ -408,7 +421,9 @@ class ChildContextOperationTest {
                 },
                 parent);
         operation.execute();
-        Thread.sleep(200);
+        operation.getRunningUserHandler().get(5, TimeUnit.SECONDS);
+
+        assertTrue(operation.isOperationCompleted(), "Failed child should complete even when its parent has completed");
 
         // sendOperationUpdate should not be called with FAIL action
         verify(executionManager, never())
