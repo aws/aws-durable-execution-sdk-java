@@ -22,8 +22,10 @@ class RetryWaitForCallbackIntegrationTest {
                 (input, context) -> context.withRetry(
                         null,
                         (attempt, ctx) -> ctx.waitForCallback(
-                                "approval-" + attempt, String.class, (callbackId, stepCtx) -> stepCtx.getLogger()
-                                        .info("Submitting callback {}", callbackId)),
+                                "approval-" + attempt,
+                                String.class,
+                                (callbackId, stepCtx) ->
+                                        stepCtx.getLogger().info("Submitting callback {}", callbackId)),
                         WithRetryConfig.builder()
                                 .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(2)))
                                 .build()));
@@ -49,8 +51,10 @@ class RetryWaitForCallbackIntegrationTest {
                 (input, context) -> context.withRetry(
                         null,
                         (attempt, ctx) -> ctx.waitForCallback(
-                                "approval-" + attempt, String.class, (callbackId, stepCtx) -> stepCtx.getLogger()
-                                        .info("Attempt {} callback {}", attempt, callbackId)),
+                                "approval-" + attempt,
+                                String.class,
+                                (callbackId, stepCtx) ->
+                                        stepCtx.getLogger().info("Attempt {} callback {}", attempt, callbackId)),
                         WithRetryConfig.builder()
                                 .retryStrategy(RetryStrategies.fixedDelay(3, Duration.ofSeconds(2)))
                                 .build()));

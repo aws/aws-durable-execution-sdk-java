@@ -168,8 +168,10 @@ class CompletionConfigTest {
     void minSuccessful_tooFewRegisteredItems_shouldThrow() {
         var config = CompletionConfig.minSuccessful(3);
 
-        var exception = assertThrows(IllegalStateException.class, () -> config.completionDecisionFunction()
-                .apply(new CompletionConfig.CompletionStatus(2, 0, 2, 2, true)));
+        var exception = assertThrows(
+                IllegalStateException.class,
+                () -> config.completionDecisionFunction()
+                        .apply(new CompletionConfig.CompletionStatus(2, 0, 2, 2, true)));
 
         assertEquals("minSuccessful (3) exceeds the number of registered items (2)", exception.getMessage());
     }
