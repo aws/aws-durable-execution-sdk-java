@@ -826,9 +826,11 @@ def collect():
     for path in sorted((ARTIFACTS / "invocations").glob("*.json")):
         try:
             invocation = json.loads(path.read_text())
-            if invocation.get("runId") != manifest["runId"] or invocation.get("state") != "RETURNED":
+            if invocation.get("runId") != manifest["runId"]:
                 continue
-            arn = invocation.get("headers", {}).get("DurableExecutionArn")
+            arn = invocation.get("executionArn") or invocation.get("headers", {}).get("DurableExecutionArn")
+            if not arn and invocation.get("state") in {"STARTED", "REQUEST_FAILED", "RETURNED"}:
+                arn = cloud.reconcile_invocation(invocation)
             if arn:
                 executions[arn] = invocation["marker"]
         except Exception as error:

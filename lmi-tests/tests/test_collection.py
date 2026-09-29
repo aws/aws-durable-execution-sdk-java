@@ -20,7 +20,7 @@ class CollectionTest(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.artifacts = Path(directory.name)
         self.manifest = {"runId": "current", "commit": "sha", "logStartMillis": 1000, "functions": {
-            "default1": {"arn": "arn:function", "logGroup": "logs"}}}
+            "default1": {"arn": "arn:aws:lambda:us-west-2:123456789012:function:test:$LATEST.PUBLISHED", "logGroup": "logs"}}}
         save(self.artifacts / "manifest.json", self.manifest)
         self.logs = []
         self.api = Mock(side_effect=self.response)
@@ -60,11 +60,11 @@ class CollectionTest(unittest.TestCase):
         self.run_collection()
         self.assert_collected()
 
-    def test_merge_deduplicates_arns_and_ignores_other_runs_and_incomplete_records(self):
+    def test_merge_deduplicates_arns_and_ignores_other_runs(self):
         self.accepted()
         self.accepted("old", "previous")
         save(self.artifacts / "invocations/unfinished.json", {
-            "runId": "current", "marker": "unfinished", "state": "STARTED"})
+            "runId": "previous", "marker": "unfinished", "state": "STARTED"})
         diagnostic = event("WRAPPER_ENTER", 1, marker="silent", executionArn="arn:silent",
                            runId="current", deploymentRunId="current", commit="sha")
         self.logs = [{"eventId": "one", "message": "LMI_TEST " + json.dumps(diagnostic)}]
@@ -129,6 +129,26 @@ class CollectionTest(unittest.TestCase):
         self.assertEqual([], json.loads((self.artifacts / "diagnostics.json").read_text()))
         logs = json.loads((self.artifacts / "cloudwatch.json").read_text())
         self.assertEqual(["current"], [e["eventId"] for e in logs])
+
+    def test_collection_reconciles_lost_responses_and_interrupted_invocations(self):
+        for state in ("REQUEST_FAILED", "STARTED"):
+            with self.subTest(state=state):
+                marker = state.lower()
+                record = {"runId": "current", "fixture": "default1", "marker": marker, "state": state,
+                          "functionArn": self.manifest["functions"]["default1"]["arn"],
+                          "executionName": "current-" + marker, "error": "response lost"}
+                save(self.artifacts / "invocations" / (marker + ".json"), record)
+                def reconcile(service, operation, *args, **kwargs):
+                    if operation == "list-durable-executions-by-function":
+                        return {"DurableExecutions": [{"DurableExecutionName": args[0]["DurableExecutionName"],
+                                                       "DurableExecutionArn": "arn:" + marker}]}
+                    return self.response(service, operation, *args, **kwargs)
+                self.api.side_effect = reconcile
+                self.run_collection()
+                self.assert_collected(marker)
+                stored = json.loads((self.artifacts / "invocations" / (marker + ".json")).read_text())
+                self.assertEqual(state, stored["state"])
+                self.assertEqual("arn:" + marker, stored["executionArn"])
 
 
 if __name__ == "__main__":

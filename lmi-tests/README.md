@@ -85,10 +85,16 @@ or accept a retry that happens to pass after a lifecycle violation.
   lifecycle assertions; they cannot turn the reproduced bug into a pass.
 * Every invocation supplies a stable durable execution name derived from its run
   ID and marker, so CLI retries cannot start another execution for the same marker.
+  If every invoke response is lost, cleanup and collection reconcile the execution
+  by its exact name and published qualifier, including bounded polling for delayed
+  visibility. The recovered ARN is persisted while the original transport failure
+  remains a collection error in the test result.
   Final collection merges execution ARNs from current-run invocation response
   artifacts and diagnostics, including executions that never emitted fixture logs.
   It restores cached diagnostics and raw logs before refreshing, preserving evidence
   from a fixture whose log query fails while retaining new data from other fixtures.
+  Successfully released control gates are removed from cleanup tracking; failed
+  releases remain tracked, and cleanup still attempts every other held gate.
 * CloudWatch collection polls for causal evidence and deduplicates JVM sequence
   numbers. Test reports distinguish setup, placement, assertion, collection,
   and teardown failures. Raw histories, configuration, and diagnostic logs are
@@ -157,7 +163,7 @@ the single `template.json` and per-function configuration snapshots. The
 CloudFormation execution role needs permission to manage the function scaling
 configuration; the driver calls `lambda:GetFunctionScalingConfig` to verify it
 and `lambda:ListDurableExecutionsByFunction` to wait for earlier runs before an
-update. A changed jar gets a new S3 key so CloudFormation actually updates code,
+update and reconcile ambiguous invocation acceptance during cleanup/collection. A changed jar gets a new S3 key so CloudFormation actually updates code,
 not just metadata. Updates with no changes are accepted.
 
 Deployment records `lmi-tests/artifacts/manifest.json`, including the stack, functions, commit, jar

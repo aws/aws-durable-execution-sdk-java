@@ -90,6 +90,10 @@ def platform_timeout(message, request_id):
     return "timeout" in outcome or "timedout" in outcome or "timed_out" in outcome
 
 
+def invocation_name(run_id, marker):
+    return run_id + "-" + marker
+
+
 def selected(events, kind=None, marker=None):
     return [e for e in events if (kind is None or e["kind"] == kind)
             and (marker is None or e["marker"] == marker)]
@@ -266,13 +270,15 @@ class Cloud:
         return errors
 
     def gate(self, name, release=False):
-        self.gates.add(name)
+        if not release:
+            self.gates.add(name)
         with tempfile.NamedTemporaryFile(mode="w") as body:
             body.write("release" if release else "hold")
             body.flush()
             aws("s3api", "put-object", {"Bucket": self.manifest["bucket"], "Key": "control/" + self.manifest["runId"] + "/" + name},
                 extra=["--body", body.name])
         if release:
+            self.gates.discard(name)
             return None
         return aws("s3", "presign", extra=[f"s3://{self.manifest['bucket']}/control/{self.manifest['runId']}/{name}",
                                            "--expires-in", "3600"], raw=True)
@@ -291,7 +297,8 @@ class Cloud:
         artifact = self.artifacts / "invocations" / (payload["marker"] + ".json")
         details = {"fixture": fixture, "functionArn": self.manifest["functions"][fixture]["arn"],
                    "runId": payload["runId"], "scenario": payload["scenario"],
-                   "marker": payload["marker"], "started": started}
+                   "marker": payload["marker"], "started": started,
+                   "executionName": invocation_name(payload["runId"], payload["marker"])}
         save(artifact, {**details, "state": "STARTED"})
         try:
             result = self._invoke_request(fixture, payload)
@@ -311,7 +318,7 @@ class Cloud:
             # fileb:// sends the original JSON bytes regardless of the user's CLI binary-format setting.
             headers = aws("lambda", "invoke", extra=[
                 "--function-name", self.manifest["functions"][fixture]["arn"],
-                "--durable-execution-name", payload["runId"] + "-" + payload["marker"],
+                "--durable-execution-name", invocation_name(payload["runId"], payload["marker"]),
                 "--invocation-type", "Event" if payload["scenario"] in {"timeout", "stubborn"} else "RequestResponse",
                 "--payload", "fileb://" + str(source), str(path)], timeout=150)
             try:
@@ -319,6 +326,62 @@ class Cloud:
             except ValueError:
                 body = path.read_text()
             return {"headers": headers, "body": body}
+
+    def reconcile_invocation(self, item, seconds=20):
+        """Resolve ambiguous acceptance by the exact name without erasing the original request failure."""
+        path = self.artifacts / "invocations" / (item["marker"] + ".json")
+        try:
+            record = json.loads(path.read_text())
+            function = self.manifest["functions"][record["fixture"]]["arn"]
+            name = invocation_name(self.manifest["runId"], item["marker"])
+            if (record["runId"] != self.manifest["runId"] or record["functionArn"] != function
+                    or record.get("executionName", name) != name):
+                raise ValueError("Invocation metadata does not match this run and function")
+        except Exception as error:
+            raise CollectionError(f"Could not read invocation metadata for {item['marker']}: {error}") from error
+        arn = record.get("executionArn") or record.get("headers", {}).get("DurableExecutionArn")
+        if not arn:
+            try:
+                observed = {e["executionArn"] for e in self.events_for(item)}
+                if len(observed) > 1:
+                    raise CollectionError("Multiple executions observed for the invocation marker")
+                arn = next(iter(observed)) if observed else self._lookup_execution(function, name, seconds)
+            except Exception as error:
+                record["reconciliationError"] = scrub(str(error))
+                save(path, record)
+                raise CollectionError(f"Could not reconcile invocation {name}: {scrub(str(error))}") from error
+            record.update(executionName=name, executionArn=arn, reconciled=True)
+            record.pop("reconciliationError", None)
+            save(path, record)
+        item["arn"] = arn
+        return arn
+
+    def _lookup_execution(self, function, name, seconds):
+        function, qualifier = function.rsplit(":", 1)
+        deadline = time.monotonic() + seconds
+        while True:
+            matches, marker = set(), None
+            while True:
+                request = {"FunctionName": function, "Qualifier": qualifier, "DurableExecutionName": name}
+                if marker:
+                    request["Marker"] = marker
+                response = aws("lambda", "list-durable-executions-by-function", request, extra=["--no-paginate"],
+                               timeout=max(1, min(20, int(max(0, deadline - time.monotonic())) + 1)))
+                matches.update(e["DurableExecutionArn"] for e in response.get("DurableExecutions", [])
+                               if e.get("DurableExecutionName") == name)
+                marker = response.get("NextMarker")
+                if not marker:
+                    break
+                if time.monotonic() >= deadline:
+                    raise CollectionError("Execution lookup pagination exceeded its budget")
+            if len(matches) == 1:
+                return next(iter(matches))
+            if len(matches) > 1:
+                raise CollectionError("Multiple executions matched the invocation name")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CollectionError("Acceptance is still unknown after the execution lookup budget")
+            time.sleep(min(1, remaining))
 
     def refresh(self, fixture):
         group = self.manifest["functions"][fixture]["logGroup"]
@@ -359,21 +422,27 @@ class Cloud:
     def events_for(self, item):
         return selected(list(self.events.values()), marker=item["marker"])
 
-    def finish(self, item, expected="SUCCEEDED", seconds=100, wait_for_terminal=None):
+    def finish(self, item, expected="SUCCEEDED", seconds=100, wait_for_terminal=None, recover_request=False):
         deadline = time.monotonic() + seconds
         if wait_for_terminal is None:
             wait_for_terminal = expected is not None
         try:
             result = item["future"].result(timeout=max(0, deadline - time.monotonic()))
         except (concurrent.futures.TimeoutError, subprocess.TimeoutExpired) as failure:
-            raise CollectionError("Client HTTP/driver timeout; not server invocation timeout evidence") from failure
+            if not recover_request:
+                raise CollectionError("Client HTTP/driver timeout; not server invocation timeout evidence") from failure
+            result = {"headers": {}}
         except Exception as failure:
-            raise CollectionError(
-                f"Invocation request failed for {item['marker']}: {scrub(str(failure))}") from failure
+            if not recover_request:
+                raise CollectionError(
+                    f"Invocation request failed for {item['marker']}: {scrub(str(failure))}") from failure
+            result = {"headers": {}}
         events = self.events_for(item)
-        arn = result["headers"].get("DurableExecutionArn")
+        arn = item.get("arn") or result["headers"].get("DurableExecutionArn")
         if not arn and events:
             arn = events[0]["executionArn"]
+        if not arn and recover_request:
+            arn = self.reconcile_invocation(item, seconds=max(0, deadline - time.monotonic()))
         if not arn:
             raise CollectionError("No durable execution ARN")
         item["arn"] = arn
@@ -402,20 +471,20 @@ class Cloud:
     def stop(self, item, seconds=60):
         """Stop a nonterminal durable execution and wait until retries can no longer be scheduled."""
         deadline = time.monotonic() + seconds
-        final = self.finish(item, expected=None, seconds=max(0, deadline - time.monotonic()))
+        final = self.finish(item, expected=None, seconds=max(0, deadline - time.monotonic()), recover_request=True)
         if final.get("Status") in TERMINAL_DURABLE_STATUSES:
             return final
         try:
             aws("lambda", "stop-durable-execution", {"DurableExecutionArn": item["arn"]},
                 timeout=max(1, min(30, int(max(0, deadline - time.monotonic())) + 1)))
         except (RuntimeError, subprocess.TimeoutExpired) as failure:
-            latest = self.finish(item, expected=None, seconds=max(0, deadline - time.monotonic()))
+            latest = self.finish(item, expected=None, seconds=max(0, deadline - time.monotonic()), recover_request=True)
             if latest.get("Status") in TERMINAL_DURABLE_STATUSES:
                 return latest
             raise CollectionError(
                 f"Could not stop durable execution for {item['marker']}: {scrub(str(failure))}") from failure
         return self.finish(item, expected=None, seconds=max(0, deadline - time.monotonic()),
-                           wait_for_terminal=True)
+                           wait_for_terminal=True, recover_request=True)
 
     def finish_all(self, items, expected=None, seconds=100):
         """Drain every invocation future, preserving the first error after all items have been observed."""
@@ -459,11 +528,18 @@ class Cloud:
         return events
 
     def release_all(self):
+        failures = []
         for gate in list(self.gates):
-            self.gate(gate, release=True)
-        self.gates.clear()
+            try:
+                self.gate(gate, release=True)
+            except Exception as failure:
+                failures.append(failure)
+        if failures:
+            raise failures[0]
 
     def close(self):
-        self.release_all()
-        # All calls have finite HTTP and subprocess budgets; preserve late evidence before teardown.
-        self.pool.shutdown(wait=True)
+        try:
+            self.release_all()
+        finally:
+            # All calls have finite HTTP and subprocess budgets; preserve late evidence before teardown.
+            self.pool.shutdown(wait=True)

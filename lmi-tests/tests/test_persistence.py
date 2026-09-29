@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloud_suite import FIXTURES, OWNER, deploy_fixtures, ensure_bucket, template, wait_for_idle_functions
@@ -151,6 +151,81 @@ class PersistenceTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Access denied"):
             ensure_bucket(self.manifest(), [])
         self.assertEqual(1, api.call_count)
+
+    @patch("cloud_support.aws", return_value="https://example.test/control")
+    def test_successful_gate_release_is_not_repeated_by_cleanup(self, api):
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({"runId": "run", "bucket": "bucket"}, directory)
+            try:
+                cloud.gate("gate")
+                cloud.gate("gate", release=True)
+                api.reset_mock()
+                api.side_effect = RuntimeError("redundant release failed")
+                cloud.release_all()
+                api.assert_not_called()
+                self.assertEqual(set(), cloud.gates)
+            finally:
+                api.side_effect = None
+                cloud.close()
+
+    @patch("cloud_support.aws", return_value="https://example.test/control")
+    def test_failed_gate_release_stays_tracked_until_a_successful_retry(self, api):
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({"runId": "run", "bucket": "bucket"}, directory)
+            try:
+                cloud.gate("gate")
+                api.side_effect = RuntimeError("release failed")
+                with self.assertRaisesRegex(RuntimeError, "release failed"):
+                    cloud.gate("gate", release=True)
+                self.assertEqual({"gate"}, cloud.gates)
+                api.side_effect = None
+                api.reset_mock()
+                cloud.release_all()
+                self.assertEqual(1, api.call_count)
+                self.assertEqual(set(), cloud.gates)
+            finally:
+                api.side_effect = None
+                cloud.close()
+
+    @patch("cloud_support.aws", side_effect=RuntimeError("hold response lost"))
+    def test_ambiguous_hold_write_remains_tracked_for_cleanup(self, api):
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({"runId": "run", "bucket": "bucket"}, directory)
+            try:
+                with self.assertRaisesRegex(RuntimeError, "hold response lost"):
+                    cloud.gate("gate")
+                self.assertEqual({"gate"}, cloud.gates)
+            finally:
+                api.side_effect = None
+                cloud.close()
+
+    @patch("cloud_support.aws")
+    def test_cleanup_attempts_all_gates_and_keeps_only_failed_releases(self, api):
+        def release(service, operation, data, **kwargs):
+            if data["Key"].endswith("/bad"):
+                raise RuntimeError("release failed")
+            return {}
+        api.side_effect = release
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({"runId": "run", "bucket": "bucket"}, directory)
+            cloud.gates.update({"good", "bad"})
+            try:
+                with self.assertRaisesRegex(RuntimeError, "release failed"):
+                    cloud.release_all()
+                self.assertEqual(2, api.call_count)
+                self.assertEqual({"bad"}, cloud.gates)
+            finally:
+                api.side_effect = None
+                cloud.close()
+
+    def test_close_drains_invocation_futures_even_if_gate_release_fails(self):
+        with TemporaryDirectory() as directory:
+            cloud = Cloud({}, directory)
+            cloud.release_all = Mock(side_effect=RuntimeError("release failed"))
+            with patch.object(cloud.pool, "shutdown", wraps=cloud.pool.shutdown) as shutdown:
+                with self.assertRaisesRegex(RuntimeError, "release failed"):
+                    cloud.close()
+                shutdown.assert_called_once_with(wait=True)
 
     @patch("cloud_support.aws", return_value="https://example.test/control")
     def test_control_objects_are_scoped_to_the_run(self, api):
