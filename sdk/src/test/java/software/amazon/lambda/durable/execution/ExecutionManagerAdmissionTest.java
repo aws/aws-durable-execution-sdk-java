@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -37,6 +38,7 @@ import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 
 class ExecutionManagerAdmissionTest {
@@ -54,20 +56,7 @@ class ExecutionManagerAdmissionTest {
                 .withCheckpointDelay(Duration.ofHours(1))
                 .withPollingStrategy(attempt -> Duration.ofHours(1))
                 .build());
-        var execution = Operation.builder()
-                .id("execution")
-                .type(OperationType.EXECUTION)
-                .status(OperationStatus.STARTED)
-                .build();
-        manager = new ExecutionManager(
-                new DurableExecutionInput(
-                        "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/test/execution",
-                        "token",
-                        CheckpointUpdatedExecutionState.builder()
-                                .operations(execution)
-                                .build()),
-                config,
-                null);
+        manager = createManager();
         manager.registerActiveThread(null);
         when(client.checkpoint(any(), any(), any())).thenReturn(response());
     }
@@ -193,6 +182,122 @@ class ExecutionManagerAdmissionTest {
         assertThrows(RejectedExecutionException.class, () -> manager.submitRootTask(() -> null));
         manager.close();
         assertThrows(RejectedExecutionException.class, () -> manager.submitOperationTask(registered, () -> {}));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void admittedContextTasksCanRegisterDescendantsWithoutLeakingAdmission(boolean coordinator) throws Exception {
+        var executor = Executors.newSingleThreadExecutor();
+        when(config.getExecutorService()).thenReturn(executor);
+        var parent =
+                contextOperation("parent", coordinator ? OperationSubType.MAP : OperationSubType.RUN_IN_CHILD_CONTEXT);
+        var descendant = step("descendant");
+        manager.registerOperation(parent);
+        manager.beginDraining();
+        try {
+            manager.submitOperationTask(parent, () -> manager.registerOperation(descendant))
+                    .get(5, TimeUnit.SECONDS);
+            manager.submitOperationTask(descendant, () -> {}).get(5, TimeUnit.SECONDS);
+            executor.submit(() -> assertThrows(
+                            RejectedExecutionException.class, () -> manager.registerOperation(step("unrelated"))))
+                    .get(5, TimeUnit.SECONDS);
+        } finally {
+            stop(executor);
+        }
+    }
+
+    @Test
+    void admittedTaskCannotRegisterOperationsInAnotherDrainingInvocation() throws Exception {
+        var other = createManager();
+        var parent = contextOperation("parent", OperationSubType.RUN_IN_CHILD_CONTEXT);
+        manager.registerOperation(parent);
+        manager.beginDraining();
+        other.beginDraining();
+        try {
+            manager.submitOperationTask(parent, () -> {
+                        assertThrows(RejectedExecutionException.class, () -> other.registerOperation(step("foreign")));
+                        manager.registerOperation(step("owned"));
+                    })
+                    .get(5, TimeUnit.SECONDS);
+        } finally {
+            other.close();
+        }
+    }
+
+    @Test
+    void inlineNestedInvocationCannotUseItsCallersDrainingPermission() throws Exception {
+        var inline = mock(ExecutorService.class);
+        when(inline.submit(any(Runnable.class))).thenAnswer(invocation -> {
+            invocation.getArgument(0, Runnable.class).run();
+            return CompletableFuture.completedFuture(null);
+        });
+        when(config.getExecutorService()).thenReturn(inline);
+        var other = createManager();
+        var parent = contextOperation("parent", OperationSubType.RUN_IN_CHILD_CONTEXT);
+        var nested = contextOperation("nested", OperationSubType.RUN_IN_CHILD_CONTEXT);
+        manager.registerOperation(parent);
+        other.registerOperation(nested);
+        manager.beginDraining();
+        other.beginDraining();
+        try {
+            manager.submitOperationTask(parent, () -> {
+                        other.submitOperationTask(
+                                        nested,
+                                        () -> assertThrows(
+                                                RejectedExecutionException.class,
+                                                () -> manager.registerOperation(step("foreign"))))
+                                .join();
+                        manager.registerOperation(step("restored-owner"));
+                    })
+                    .get(5, TimeUnit.SECONDS);
+        } finally {
+            other.close();
+        }
+    }
+
+    @Test
+    void alreadyRunningRootCannotAdmitOperationsAfterDrainingStarts() throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var root = manager.submitRootTask(() -> {
+            entered.countDown();
+            await(release);
+            assertThrows(RejectedExecutionException.class, () -> manager.registerOperation(step("late-root")));
+            return null;
+        });
+        try {
+            await(entered);
+            manager.beginDraining();
+            release.countDown();
+            root.get(5, TimeUnit.SECONDS);
+        } finally {
+            release.countDown();
+        }
+    }
+
+    private ExecutionManager createManager() {
+        var execution = Operation.builder()
+                .id("execution")
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .build();
+        return new ExecutionManager(
+                new DurableExecutionInput(
+                        "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/test/execution",
+                        "token",
+                        CheckpointUpdatedExecutionState.builder()
+                                .operations(execution)
+                                .build()),
+                config,
+                null);
+    }
+
+    private static BaseDurableOperation contextOperation(String id, OperationSubType subType) {
+        var operation = mock(BaseDurableOperation.class);
+        when(operation.getOperationId()).thenReturn(id);
+        when(operation.getType()).thenReturn(OperationType.CONTEXT);
+        when(operation.getSubType()).thenReturn(subType);
+        return operation;
     }
 
     private void awaitClosedAdmission() {

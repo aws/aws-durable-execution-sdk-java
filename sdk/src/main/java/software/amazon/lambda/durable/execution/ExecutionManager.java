@@ -15,9 +15,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -71,8 +71,8 @@ public class ExecutionManager implements SafeCloseable {
         OPEN,
 
         /**
-         * Invocation shutdown has started. New operations and root tasks are rejected, while registered operations may
-         * still submit tasks, checkpoint, or poll as they finish.
+         * Invocation shutdown has started. Admitted child/coordinator tasks may create descendants, and registered
+         * operations may submit tasks, checkpoint, or poll as they finish. New root and unrelated work is rejected.
          */
         DRAINING,
 
@@ -98,6 +98,8 @@ public class ExecutionManager implements SafeCloseable {
     private final Long deadlineNanos;
     private final AtomicLong taskSequence = new AtomicLong();
     private final Map<Long, ExecutorTaskHandle<?>> activeExecutorTasks = new ConcurrentHashMap<>();
+    // The current task is shared across managers on a thread; admission verifies the exact handle's owner.
+    private static final ThreadLocal<ExecutorTaskHandle<?>> currentExecutorTask = new ThreadLocal<>();
     private LifecycleState lifecycleState = LifecycleState.OPEN;
     // Guarded by admissionLock. Counts enqueue calls, not the lifetime of their returned futures.
     private int checkpointAdmissionsInFlight;
@@ -228,7 +230,7 @@ public class ExecutionManager implements SafeCloseable {
     /** Registers an operation so it can receive checkpoint completion notifications. */
     public void registerOperation(BaseDurableOperation operation) {
         synchronized (admissionLock) {
-            requireOpen("durable operation");
+            requireOperationAdmission();
             registeredOperations.put(operation.getOperationId(), operation);
         }
     }
@@ -267,11 +269,25 @@ public class ExecutionManager implements SafeCloseable {
         }
 
         try {
-            task.bindExecution(executor.submit(() -> task.run(action)));
+            task.bindExecution(executor.submit(() -> runExecutorTask(task, action)));
             return task.completion();
         } catch (RuntimeException | Error failure) {
             task.submissionFailed(failure);
             throw failure;
+        }
+    }
+
+    private <T> void runExecutorTask(ExecutorTaskHandle<T> task, Supplier<T> action) {
+        var previous = currentExecutorTask.get();
+        currentExecutorTask.set(task);
+        try {
+            task.run(action);
+        } finally {
+            if (previous == null) {
+                currentExecutorTask.remove();
+            } else {
+                currentExecutorTask.set(previous);
+            }
         }
     }
 
@@ -570,6 +586,20 @@ public class ExecutionManager implements SafeCloseable {
         }
     }
 
+    private void requireOperationAdmission() {
+        var task = currentExecutorTask.get();
+        if (lifecycleState == LifecycleState.DRAINING
+                && task != null
+                && task.state() == ExecutorTaskHandle.State.RUNNING
+                && activeExecutorTasks.get(task.id()) == task
+                && (task.role() == ExecutorTaskHandle.Role.CHILD_CONTEXT
+                        || task.role() == ExecutorTaskHandle.Role.COORDINATOR)) {
+            // Descendants are part of the admitted task's work, including branches that start during draining.
+            return;
+        }
+        requireOpen("durable operation");
+    }
+
     private void requireTaskAdmission(BaseDurableOperation operation) {
         if (lifecycleState == LifecycleState.DRAINING
                 && operation != null
@@ -592,22 +622,13 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private void validateRunningThreads() {
-        // This will detect stuck user thread and thread leaks in the thread pool
-        for (BaseDurableOperation op : registeredOperations.values()) {
-            var userHandlerFuture = op.getRunningUserHandler();
-            if (userHandlerFuture != null && !userHandlerFuture.isDone()) {
-                // Some user threads can still be running because
-                // the operations that run them have never been waiting for and the execution has completed.
-                logger.info("Waiting for operation to complete before shutting down: {}", op.getOperationId());
-                try {
-                    userHandlerFuture.get();
-                } catch (InterruptedException | CancellationException e) {
-                    // if the user handler is stuck
-                    throw new IllegalStateException(
-                            "Stuck running user handler when shutting down: " + op.getOperationId());
-                } catch (Exception e) {
-                    // ok if the future completed exceptionally
-                }
+        while (true) {
+            var tasks = operationTasksToDrain();
+            if (tasks.isEmpty()) {
+                break;
+            }
+            for (var task : tasks) {
+                awaitTaskExit(task);
             }
         }
 
@@ -618,6 +639,30 @@ public class ExecutionManager implements SafeCloseable {
             if (threadCount > 0) {
                 logger.warn("{} active threads in user executor pool when shutting down", threadCount);
             }
+        }
+    }
+
+    private List<ExecutorTaskHandle<?>> operationTasksToDrain() {
+        synchronized (admissionLock) {
+            var tasks = activeExecutorTasks.values().stream()
+                    .filter(task -> task.role() != ExecutorTaskHandle.Role.ROOT)
+                    .toList();
+            if (tasks.isEmpty()) {
+                // Close under the submission lock so no task can enter after the final empty snapshot.
+                lifecycleState = LifecycleState.CLOSED;
+            }
+            return tasks;
+        }
+    }
+
+    private void awaitTaskExit(ExecutorTaskHandle<?> task) {
+        try {
+            task.exit().get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while draining operation task: " + task.operationId(), e);
+        } catch (ExecutionException e) {
+            throw new IllegalStateException("Could not drain operation task: " + task.operationId(), e);
         }
     }
 
