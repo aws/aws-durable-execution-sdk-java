@@ -12,8 +12,10 @@ or accept a retry that happens to pass after a lifecycle violation.
   1, 2, or 8. Java 25 / arm64 is the initial matrix. Java 17 is not supported by
   LMI. Deployment and readback are the region/architecture capability check:
   unsupported combinations fail setup; there is no ordinary-Lambda fallback.
-* Pull requests run a local CI job that builds the fixtures and validates the
-  evidence assertions without cloud credentials. On manual dispatch, a separate
+* Pull requests run a local CI job on Java 17 that builds the fixtures and
+  validates the evidence assertions without cloud credentials. Compiling on the
+  SDK's minimum JDK prevents fixture-only changes from introducing newer JDK APIs
+  into the shared Maven reactor. On manual dispatch, a separate
   serialized cloud job builds the selected commit, deploys all five
   fixture functions, runs all 13 cases, then collects evidence. A persistent
   CloudFormation stack owns all five

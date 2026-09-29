@@ -22,7 +22,8 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: corretto
-          java-version: '25'
+          # Enforce the SDK's minimum JDK API compatibility for fixture-only changes.
+          java-version: '17'
           cache: maven
       - name: Build fixtures and validate evidence assertions
         run: |
