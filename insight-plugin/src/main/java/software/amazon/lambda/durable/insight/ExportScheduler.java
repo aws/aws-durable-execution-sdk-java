@@ -2,14 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.insight;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -26,8 +30,9 @@ import java.util.function.Consumer;
  * when updates arrive faster than the exporters can keep up, and it keeps exporter I/O off the SDK threads that deliver
  * plugin hooks.
  *
- * <p>Exports are otherwise fire-and-forget; {@link #drain()} is called before the invocation returns to guarantee the
- * final record is delivered.
+ * <p>Exports are otherwise fire-and-forget; {@link #drain()} is called before the invocation returns so the final
+ * record is delivered first, waiting at most {@link #DEFAULT_WAIT} so an unresponsive destination cannot hold the
+ * invocation until the function times out.
  */
 final class ExportScheduler {
 
@@ -40,10 +45,18 @@ final class ExportScheduler {
         return thread;
     });
 
+    /**
+     * Longest {@link #drain()} and {@link #flushAll()} each wait for exporters. A slow or unresponsive destination must
+     * not hold the invocation until the function's own timeout; once the bound passes, the wait is abandoned and
+     * reported through the failure handler while the worker keeps running.
+     */
+    static final Duration DEFAULT_WAIT = Duration.ofSeconds(5);
+
     private final List<InsightExporter> exporters;
     private final BiConsumer<WorkflowInsightRecord, InsightExporter> exportOne;
     private final Consumer<Throwable> failureHandler;
     private final Executor executor;
+    private final Duration wait;
 
     /** Completes when the current pump finishes; {@code null} while idle. Guarded by {@code this}. */
     private CompletableFuture<Void> inFlight;
@@ -58,7 +71,7 @@ final class ExportScheduler {
             List<InsightExporter> exporters,
             BiConsumer<WorkflowInsightRecord, InsightExporter> exportOne,
             Consumer<Throwable> failureHandler) {
-        this(exporters, exportOne, failureHandler, WORKERS);
+        this(exporters, exportOne, failureHandler, WORKERS, DEFAULT_WAIT);
     }
 
     ExportScheduler(
@@ -66,10 +79,20 @@ final class ExportScheduler {
             BiConsumer<WorkflowInsightRecord, InsightExporter> exportOne,
             Consumer<Throwable> failureHandler,
             Executor executor) {
+        this(exporters, exportOne, failureHandler, executor, DEFAULT_WAIT);
+    }
+
+    ExportScheduler(
+            List<InsightExporter> exporters,
+            BiConsumer<WorkflowInsightRecord, InsightExporter> exportOne,
+            Consumer<Throwable> failureHandler,
+            Executor executor,
+            Duration wait) {
         this.exporters = List.copyOf(exporters);
         this.exportOne = exportOne;
         this.failureHandler = failureHandler;
         this.executor = executor;
+        this.wait = wait;
     }
 
     /**
@@ -105,10 +128,13 @@ final class ExportScheduler {
     }
 
     /**
-     * Waits for any in-flight and pending exports to complete. Safe to call when idle. Used before the invocation
-     * returns to guarantee the final record is delivered.
+     * Waits for any in-flight and pending exports to complete, for at most the configured wait. Safe to call when idle.
+     * Used before the invocation returns to guarantee the final record is delivered. When the wait expires the pump
+     * keeps running on its worker; the timeout is reported and the caller returns. The bound does not apply when no
+     * worker could be started: pending records are then exported inline on the calling thread.
      */
     void drain() {
+        long deadline = System.nanoTime() + wait.toNanos();
         while (true) {
             CompletableFuture<Void> handle;
             boolean runInline = false;
@@ -126,9 +152,25 @@ final class ExportScheduler {
             }
             if (runInline) {
                 pump(handle);
-            } else {
-                handle.join();
+            } else if (!awaitUntil(handle, deadline)) {
+                reportFailure(new TimeoutException("export still running after " + wait + "; not waiting further"));
+                return;
             }
+        }
+    }
+
+    /** Waits for the future until the deadline; returns {@code false} if the deadline passed first. */
+    private static boolean awaitUntil(CompletableFuture<?> future, long deadline) {
+        try {
+            future.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            return true;
+        } catch (TimeoutException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (ExecutionException e) {
+            return true; // completed; its failure was already reported by the task
         }
     }
 
@@ -165,11 +207,19 @@ final class ExportScheduler {
     }
 
     /**
-     * Flushes every exporter, each on its own worker, and waits for all of them to settle. A slow or failing flush on
-     * one exporter never delays or fails the others.
+     * Flushes every exporter, each on its own worker, and waits at most the configured wait for all of them to settle.
+     * A slow or failing flush on one exporter never delays or fails the others; a flush still running when the wait
+     * expires is reported and left to finish on its worker. Skipped, and reported, while an export abandoned by
+     * {@link #drain()} is still running, so an exporter never sees {@code flush()} overlap its own {@code export()}.
      */
     void flushAll() {
-        forEachExporterSettled(InsightExporter::flush);
+        synchronized (this) {
+            if (inFlight != null) {
+                reportFailure(new TimeoutException("export still running after " + wait + "; skipping flush"));
+                return;
+            }
+        }
+        forEachExporterSettled(InsightExporter::flush, System.nanoTime() + wait.toNanos());
     }
 
     /**
@@ -177,12 +227,15 @@ final class ExportScheduler {
      * slow exporter never blocks or fails the others, and an export error never propagates into the execution.
      */
     private void exportToAll(WorkflowInsightRecord record) {
-        forEachExporterSettled(exporter -> exportOne.accept(record, exporter));
+        forEachExporterSettled(exporter -> exportOne.accept(record, exporter), null);
     }
 
-    /** Runs the action for every exporter concurrently and returns once all have settled, reporting each failure. */
-    private void forEachExporterSettled(Consumer<InsightExporter> action) {
-        if (exporters.size() == 1) {
+    /**
+     * Runs the action for every exporter concurrently and returns once all have settled, reporting each failure. With a
+     * deadline, waits no longer than that and reports the exporters still running; without one, waits indefinitely.
+     */
+    private void forEachExporterSettled(Consumer<InsightExporter> action, Long deadline) {
+        if (exporters.size() == 1 && deadline == null) {
             runSafely(() -> action.accept(exporters.get(0)));
             return;
         }
@@ -197,7 +250,12 @@ final class ExportScheduler {
             }
         }
         for (CompletableFuture<Void> task : settled) {
-            runSafely(task::join);
+            if (deadline == null) {
+                runSafely(task::join);
+            } else if (!awaitUntil(task, deadline)) {
+                reportFailure(
+                        new TimeoutException("exporter flush still running after " + wait + "; not waiting further"));
+            }
         }
     }
 
