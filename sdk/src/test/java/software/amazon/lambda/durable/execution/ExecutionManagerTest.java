@@ -7,8 +7,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -58,6 +62,17 @@ class ExecutionManagerTest {
         return Operation.builder()
                 .id(id)
                 .type(OperationType.STEP)
+                .status(status)
+                .build();
+    }
+
+    /** Step operation carrying the name and subType that replay validation compares against. */
+    private Operation namedStepOp(String id, OperationStatus status) {
+        return Operation.builder()
+                .id(id)
+                .name(id)
+                .type(OperationType.STEP)
+                .subType(OperationSubType.STEP.getValue())
                 .status(status)
                 .build();
     }
@@ -407,6 +422,63 @@ class ExecutionManagerTest {
         assertTrue(operation.getCompletionFuture().isDone());
     }
 
+    @Test
+    void childRegistrationNeverPublishesATemporaryCompletionLock() throws Exception {
+        var manager = new LockPublicationExecutionManager(
+                new DurableExecutionInput(
+                        EXECUTION_ARN,
+                        "test-token",
+                        CheckpointUpdatedExecutionState.builder()
+                                .operations(List.of(
+                                        executionOp(),
+                                        namedStepOp("parent", OperationStatus.PENDING),
+                                        namedStepOp("child", OperationStatus.PENDING)))
+                                .build()),
+                DurableConfig.builder()
+                        .withDurableExecutionClient(TestUtils.createMockClient())
+                        .build());
+        var durableContext = mock(DurableContextImpl.class);
+        when(durableContext.getExecutionManager()).thenReturn(manager);
+
+        class TestOperation extends BaseDurableOperation {
+            TestOperation(String operationId, BaseDurableOperation parent) {
+                super(OperationIdentifier.of(operationId, operationId, OperationSubType.STEP), durableContext, parent);
+            }
+
+            @Override
+            protected void start() {}
+
+            @Override
+            protected void replay(Operation existing) {
+                markAlreadyCompleted();
+            }
+        }
+
+        var parent = new TestOperation("parent", null);
+        manager.pauseLockResolutionFor("parent");
+
+        // Park the child registration at the point where it resolves the parent completion lock, then deliver a
+        // terminal child checkpoint from another thread.
+        var childRegistration = CompletableFuture.supplyAsync(() -> new TestOperation("child", parent));
+        assertTrue(manager.awaitPausedLockResolution());
+        CompletableFuture.runAsync(
+                        () -> manager.onCheckpointComplete(List.of(namedStepOp("child", OperationStatus.SUCCEEDED))))
+                .get(5, TimeUnit.SECONDS);
+
+        manager.resumeLockResolution();
+        var child = childRegistration.get(5, TimeUnit.SECONDS);
+
+        var childLock = manager.completionLockFor(child);
+        assertSame(manager.completionLockFor(parent), childLock, "child must share the parent completion lock");
+        assertTrue(
+                manager.locksResolvedFor("child").stream().allMatch(lock -> lock == childLock),
+                "a temporary child completion lock was published and later replaced");
+
+        // The checkpoint arrived before the child was registered, so the child picks the terminal state up on replay.
+        child.execute();
+        assertTrue(child.getCompletionFuture().isDone());
+    }
+
     private static final class BlockingReactivationExecutionManager extends ExecutionManager {
         private final String callerThread;
         private final CountDownLatch callerDeregistered = new CountDownLatch(1);
@@ -456,6 +528,54 @@ class ExecutionManagerTest {
             if (callerThread.equals(threadId)) {
                 callerDeregistered.countDown();
             }
+        }
+    }
+
+    /** Records every completion lock handed out per operation id, and can park one resolution on request. */
+    private static final class LockPublicationExecutionManager extends ExecutionManager {
+        private final Map<String, List<Object>> resolvedLocks = new ConcurrentHashMap<>();
+        private final CountDownLatch lockResolutionPaused = new CountDownLatch(1);
+        private final CountDownLatch resumeLockResolution = new CountDownLatch(1);
+        private volatile String pausedOperationId;
+
+        private LockPublicationExecutionManager(DurableExecutionInput input, DurableConfig config) {
+            super(input, config, null);
+        }
+
+        void pauseLockResolutionFor(String operationId) {
+            pausedOperationId = operationId;
+        }
+
+        boolean awaitPausedLockResolution() throws InterruptedException {
+            return lockResolutionPaused.await(5, TimeUnit.SECONDS);
+        }
+
+        void resumeLockResolution() {
+            resumeLockResolution.countDown();
+        }
+
+        List<Object> locksResolvedFor(String operationId) {
+            return resolvedLocks.getOrDefault(operationId, List.of());
+        }
+
+        @Override
+        Object completionLockFor(BaseDurableOperation operation) {
+            var operationId = operation.getOperationId();
+            if (operationId.equals(pausedOperationId)) {
+                pausedOperationId = null;
+                lockResolutionPaused.countDown();
+                try {
+                    assertTrue(resumeLockResolution.await(5, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            }
+            var lock = super.completionLockFor(operation);
+            resolvedLocks
+                    .computeIfAbsent(operationId, ignored -> Collections.synchronizedList(new ArrayList<>()))
+                    .add(lock);
+            return lock;
         }
     }
 }

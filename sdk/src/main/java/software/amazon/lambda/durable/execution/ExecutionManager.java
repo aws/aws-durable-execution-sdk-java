@@ -215,10 +215,12 @@ public class ExecutionManager implements SafeCloseable {
      * @param completionLockParent parent operation whose completion lock should also serialize this operation, or null
      */
     public void registerOperation(BaseDurableOperation operation, BaseDurableOperation completionLockParent) {
-        registeredOperations.put(operation.getOperationId(), operation);
-        var completionLock =
-                completionLockParent == null ? completionLockFor(operation) : completionLockFor(completionLockParent);
-        operationCompletionLocks.put(operation.getOperationId(), completionLock);
+        var operationId = operation.getOperationId();
+        var completionLock = completionLockParent == null
+                ? operationCompletionLocks.computeIfAbsent(operationId, ignored -> new Object())
+                : completionLockFor(completionLockParent);
+        operationCompletionLocks.put(operationId, completionLock);
+        registeredOperations.put(operationId, operation);
     }
 
     // ===== Checkpoint Completion Handler =====
