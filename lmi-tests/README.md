@@ -38,6 +38,13 @@ or accept a retry that happens to pass after a lifecycle violation.
 * A stream wrapper observes the actual SDK entry and return. Invocation-local
   root/task `finally` markers and a JVM-wide sequence establish ordering. The
   plugin end hook is deliberately not used as a completion signal.
+  Every diagnostic contributes its request identity, including root/task activity
+  whose wrapper logs have not arrived. Lifecycle validation and the cleanup quiet
+  period require matching wrapper boundaries for every observed request. Concurrency
+  requires distinct execution markers as well as distinct request IDs, so retries of
+  one execution cannot substitute for another execution. Suspension cleanup and its
+  healthy-peer heartbeat are paired within their original request and JVM; delayed
+  logs cannot combine cleanup boundaries from different invocations.
   Each real checkpoint/poll call has a request-local call ID paired with its
   `finally` exit. Missing or mismatched exits prevent cleanup from reusing the
   fixture, and an exit after wrapper return remains a lifecycle failure.
@@ -185,8 +192,9 @@ outcomes come from request-correlated runtime logs. Invocation request failures
 are saved in `invocations/*.json` with the function ARN, scenario, start time,
 request state, elapsed time, and CLI exit code/error when available. The driver
 checks the invocation Future during evidence polling so an API/CLI failure is
-reported immediately. Missing runtime-entry evidence is a collection error;
-lifecycle assertions apply after the wrapper entry has been observed. Healthy/probe scheduling
+reported immediately. Missing runtime-entry evidence during admission is a collection error;
+once any request activity is observed, lifecycle and drain checks require its
+wrapper entry and return. Healthy/probe scheduling
 uses the actual runtime deadline, excluding cold-start and request-queue delay.
 A successful durable retry cannot erase an old invocation
 that exceeds the cleanup budget. No virtual-thread executor variant is deployed

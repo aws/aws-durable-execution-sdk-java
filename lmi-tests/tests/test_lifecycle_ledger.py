@@ -19,9 +19,9 @@ class BackendCallLedgerTest(unittest.TestCase):
                 event(api + "_CALL", 3, callId=1), event(api + "_EXIT", 4, callId=1),
                 event("ROOT_EXIT", 5), event("WRAPPER_RETURN", 6, status="SUCCEEDED")]
 
-    def check_incomplete(self, events):
+    def check_incomplete(self, events, message="checkpoint/poll"):
         self.assertFalse(runtime_requests_drained(events, "a"))
-        with self.assertRaisesRegex(AssertionError, "checkpoint/poll"):
+        with self.assertRaisesRegex(AssertionError, message):
             assert_lifecycle(events)
 
     def test_every_backend_call_needs_its_own_finally_exit(self):
@@ -53,7 +53,8 @@ class BackendCallLedgerTest(unittest.TestCase):
             with self.subTest(update=update):
                 trace = self.trace("CHECKPOINT")
                 trace[3].update(update)
-                self.check_incomplete(trace)
+                missing_request = any(key in update for key in ("requestId", "marker", "environment"))
+                self.check_incomplete(trace, "without wrapper entry" if missing_request else "checkpoint/poll")
 
     def test_duplicate_calls_exits_and_reused_ids_are_invalid(self):
         for extra in (event("CHECKPOINT_CALL", 3, callId=1), event("CHECKPOINT_EXIT", 4, callId=1),

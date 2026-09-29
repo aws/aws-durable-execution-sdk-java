@@ -95,6 +95,11 @@ def selected(events, kind=None, marker=None):
             and (marker is None or e["marker"] == marker)]
 
 
+def request_identities(events):
+    """Every diagnostic is request activity, even if wrapper logs have not arrived."""
+    return {(e["marker"], e["environment"], e["requestId"]) for e in events}
+
+
 def api_calls_complete(events):
     """Pair actual backend calls, not logical SDK futures, within their originating request.
 
@@ -134,23 +139,26 @@ def assert_overlap(events, markers, count, environment=None):
     for env, entries in points.items():
         active = {}
         for event in sorted(entries, key=lambda e: e["sequence"]):
-            key = event["requestId"]
+            key = (event["marker"], event["requestId"])
             active[key] = active.get(key, 0) + (1 if event["kind"] == "TASK_ENTER" else -1)
-            if sum(n > 0 for n in active.values()) >= count:
+            live = {key for key, tasks in active.items() if tasks > 0}
+            if len({marker for marker, _ in live}) >= count and len({request for _, request in live}) >= count:
                 return env
-    raise PreconditionError(f"No evidence of {count} overlapping request IDs in one JVM")
+    raise PreconditionError(f"No evidence of {count} distinct executions overlapping in one JVM")
 
 
 def assert_lifecycle(events, allow_residual=False):
-    entered = {(e["marker"], e["environment"], e["requestId"])
-               for e in selected(events, "WRAPPER_ENTER")}
+    requests = request_identities(events)
+    entered = request_identities(selected(events, "WRAPPER_ENTER"))
     returns = selected(events, "WRAPPER_RETURN")
-    returned = {(e["marker"], e["environment"], e["requestId"]) for e in returns}
+    returned = request_identities(returns)
     require(not entered - returned, f"Runtime requests entered without wrapper return: {sorted(entered - returned)}")
     require(not returned - entered, f"Runtime requests returned without wrapper entry: {sorted(returned - entered)}")
+    require(not requests - entered, f"Runtime activity without wrapper entry: {sorted(requests - entered)}")
     require(returns, "No SDK wrapper return observed")
     for return_event in returns:
-        local = [e for e in events if e["requestId"] == return_event["requestId"]
+        local = [e for e in events if e["marker"] == return_event["marker"]
+                 and e["requestId"] == return_event["requestId"]
                  and e["environment"] == return_event["environment"]]
         require(return_event["rootExited"], f"{return_event['status']} returned before root exit")
         roots = selected(local, "ROOT_EXIT")

@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 
 from cloud_support import (Cloud, CollectionError, PreconditionError, api_calls_complete, assert_fixed,
                            assert_lifecycle, assert_nested_reached, assert_overlap, assert_replay, aws,
-                           platform_timeout, require, save, selected)
+                           platform_timeout, request_identities, require, save, selected)
 
 ROOT = Path(__file__).resolve().parent
 ARTIFACTS = ROOT / "artifacts"
@@ -339,14 +339,10 @@ def replay_case(cloud, fixture, scenario):
     assert_replay(events, history, victim["marker"])
     if scenario == "suspend":
         if anchor:
-            cleanup = selected(events, "CLEANUP_ENTER")[0]
-            exits = selected(events, "CLEANUP_EXIT")
-            anchor_events = request_trace(
-                cloud.events_for(anchor), anchor["marker"], anchor["requestId"], anchor["environment"])
-            require(any(e["environment"] == target and cleanup["nanos"] <= e["nanos"] <= exits[0]["nanos"]
-                        for e in selected(anchor_events, "HEARTBEAT")),
-                    "Healthy invocation did not progress during root cleanup")
-        assert_lifecycle(events)
+            cloud.poll(
+                fixture, lambda events: cleanup_progress_observed(events, victim["marker"], anchor),
+                seconds=PEER_LOG_OBSERVATION_SECONDS, items=[victim, anchor])
+        assert_lifecycle(cloud.events_for(victim))
 
 
 def overlap_case(cloud, fixture, target=None):
@@ -412,12 +408,26 @@ def request_trace(events, marker, request_id, environment):
         key=lambda event: event["sequence"])
 
 
+def cleanup_progress_observed(events, marker, peer):
+    """Pair the original JVM's first suspension cleanup with its admitted healthy peer."""
+    suspensions = [e for e in selected(events, "WRAPPER_RETURN", marker)
+                   if e["environment"] == peer["environment"] and e.get("status") == "PENDING"]
+    if not suspensions:
+        return False
+    suspended = min(suspensions, key=lambda e: e["sequence"])
+    trace = request_trace(events, marker, suspended["requestId"], suspended["environment"])
+    starts, ends = selected(trace, "CLEANUP_ENTER"), selected(trace, "CLEANUP_EXIT")
+    if len(starts) != 1 or len(ends) != 1 or starts[0]["sequence"] >= ends[0]["sequence"]:
+        return False
+    peer_trace = request_trace(events, peer["marker"], peer["requestId"], peer["environment"])
+    return any(starts[0]["sequence"] < e["sequence"] < ends[0]["sequence"]
+               for e in selected(peer_trace, "HEARTBEAT"))
+
+
 def assert_request_lifecycles(events, marker, allow_residual_tasks=False):
-    requests = {(event["environment"], event["requestId"])
-                for event in events if event["marker"] == marker
-                and event["kind"] in {"WRAPPER_ENTER", "WRAPPER_RETURN"}}
+    requests = request_identities(selected(events, marker=marker))
     require(requests, f"No runtime request evidence for {marker}")
-    for environment, request_id in requests:
+    for _, environment, request_id in requests:
         assert_lifecycle(
             request_trace(events, marker, request_id, environment),
             allow_residual=allow_residual_tasks)
@@ -437,15 +447,16 @@ def wait_until_wall_time(cloud, fixture, wall_time, seconds, items):
 def runtime_requests_drained(events, markers, allow_no_entry=False):
     if isinstance(markers, str):
         markers = {markers}
-    entered = {(e["marker"], e["environment"], e["requestId"])
-               for e in selected(events, "WRAPPER_ENTER") if e["marker"] in markers}
-    returned = {(e["marker"], e["environment"], e["requestId"])
-                for e in selected(events, "WRAPPER_RETURN") if e["marker"] in markers}
-    if not (allow_no_entry or entered) or entered != returned:
+    events = [e for e in events if e["marker"] in markers]
+    requests = request_identities(events)
+    entered = request_identities(selected(events, "WRAPPER_ENTER"))
+    returned = request_identities(selected(events, "WRAPPER_RETURN"))
+    # allow_no_entry permits an entirely unseen request, never activity with missing wrapper logs.
+    if not (allow_no_entry or requests) or requests != entered or requests != returned:
         return False
-    if not api_calls_complete([e for e in events if e["marker"] in markers]):
+    if not api_calls_complete(events):
         return False
-    for marker, environment, request_id in entered:
+    for marker, environment, request_id in requests:
         trace = request_trace(events, marker, request_id, environment)
         wrapper_returns = selected(trace, "WRAPPER_RETURN")
         if not wrapper_returns:
@@ -473,9 +484,7 @@ def wait_for_runtime_quiescence(
     previous, quiet_since = None, None
     while True:
         events = cloud.refresh(fixture)
-        current = {(e["marker"], e["environment"], e["requestId"])
-                   for e in events if e["marker"] in markers
-                   and e["kind"] in {"WRAPPER_ENTER", "WRAPPER_RETURN"}}
+        current = request_identities([e for e in events if e["marker"] in markers])
         now = time.monotonic()
         if runtime_requests_drained(events, markers, allow_no_entry=allow_no_entry):
             if current != previous or quiet_since is None:
