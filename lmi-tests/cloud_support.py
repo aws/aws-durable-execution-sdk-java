@@ -147,6 +147,7 @@ def assert_lifecycle(events, allow_residual=False):
     returns = selected(events, "WRAPPER_RETURN")
     returned = {(e["marker"], e["environment"], e["requestId"]) for e in returns}
     require(not entered - returned, f"Runtime requests entered without wrapper return: {sorted(entered - returned)}")
+    require(not returned - entered, f"Runtime requests returned without wrapper entry: {sorted(returned - entered)}")
     require(returns, "No SDK wrapper return observed")
     for return_event in returns:
         local = [e for e in events if e["requestId"] == return_event["requestId"]

@@ -56,7 +56,8 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual("jvm", assert_overlap(events, {"a", "b"}, 2))
 
     def test_rejects_pending_before_actual_root_exit(self):
-        events = [event("WRAPPER_RETURN", 1, status="PENDING", rootExited=False), event("ROOT_EXIT", 2)]
+        events = [event("WRAPPER_ENTER", 0), event("WRAPPER_RETURN", 1, status="PENDING", rootExited=False),
+                  event("ROOT_EXIT", 2)]
         with self.assertRaisesRegex(AssertionError, "before root exit"):
             assert_lifecycle(events)
 
@@ -67,24 +68,26 @@ class EvidenceTest(unittest.TestCase):
             assert_lifecycle([event("WRAPPER_RETURN", 1, status="PENDING")])
 
     def test_log_arrival_order_does_not_change_causal_order(self):
-        assert_lifecycle([event("WRAPPER_RETURN", 2, status="PENDING"), event("ROOT_EXIT", 1)])
+        assert_lifecycle([event("WRAPPER_RETURN", 2, status="PENDING"), event("ROOT_EXIT", 1),
+                          event("WRAPPER_ENTER", 0)])
 
     def test_rejects_late_checkpoints_even_after_final_success(self):
-        events = [event("ROOT_EXIT", 1), event("WRAPPER_RETURN", 2, status="SUCCEEDED"), event("CHECKPOINT_CALL", 3)]
+        events = [event("WRAPPER_ENTER", 0), event("ROOT_EXIT", 1),
+                  event("WRAPPER_RETURN", 2, status="SUCCEEDED"), event("CHECKPOINT_CALL", 3)]
         with self.assertRaisesRegex(AssertionError, "continued after"):
             assert_lifecycle(events)
 
     def test_rejects_live_tasks_at_normal_return(self):
-        events = [event("ROOT_EXIT", 1), event("WRAPPER_RETURN", 2, status="SUCCEEDED", tasks=1)]
+        events = [event("WRAPPER_ENTER", 0), event("ROOT_EXIT", 1), event("WRAPPER_RETURN", 2, status="SUCCEEDED", tasks=1)]
         with self.assertRaisesRegex(AssertionError, "live invocation tasks"):
             assert_lifecycle(events)
 
     def test_exceptional_return_must_also_be_quiescent(self):
-        events = [event("WRAPPER_RETURN", 1, status="THREW", rootExited=False, tasks=1),
+        events = [event("WRAPPER_ENTER", 0), event("WRAPPER_RETURN", 1, status="THREW", rootExited=False, tasks=1),
                   event("ROOT_EXIT", 2), event("TASK_EXIT", 3)]
         with self.assertRaisesRegex(AssertionError, "before root exit"):
             assert_lifecycle(events)
-        assert_lifecycle([event("ROOT_EXIT", 1), event("WRAPPER_RETURN", 2, status="THREW")])
+        assert_lifecycle([event("WRAPPER_ENTER", 0), event("ROOT_EXIT", 1), event("WRAPPER_RETURN", 2, status="THREW")])
 
     def test_lifecycle_rejects_an_entered_request_hidden_by_a_later_retry(self):
         events = [event("WRAPPER_ENTER", 1, "lost", marker="victim"),
@@ -372,6 +375,45 @@ class EvidenceTest(unittest.TestCase):
         self.assertFalse(runtime_requests_drained(events, "victim"))
         events.append(event("WRAPPER_RETURN", 4, "retry", marker="victim", status="THREW"))
         self.assertTrue(runtime_requests_drained(events, "victim"))
+
+    def test_return_without_entry_cannot_hide_a_retry(self):
+        original = [event("WRAPPER_ENTER", 1, "original", marker="victim"),
+                    event("ROOT_ENTER", 2, "original", marker="victim"),
+                    event("ROOT_EXIT", 3, "original", marker="victim"),
+                    event("WRAPPER_RETURN", 4, "original", marker="victim", status="THREW")]
+        for environment in ("jvm", "replacement"):
+            retry = [event("ROOT_ENTER", 6, "retry", environment, marker="victim"),
+                     event("ROOT_EXIT", 7, "retry", environment, marker="victim"),
+                     event("WRAPPER_RETURN", 8, "retry", environment, marker="victim", status="THREW")]
+            for prior in ([], original):
+                for allow_residual in (False, True):
+                    with self.subTest(environment=environment, prior=bool(prior), residual=allow_residual):
+                        events = prior + retry
+                        with self.assertRaisesRegex(AssertionError, "returned without wrapper entry"):
+                            assert_lifecycle(events, allow_residual=allow_residual)
+                        with self.assertRaisesRegex(AssertionError, "returned without wrapper entry"):
+                            assert_request_lifecycles(events, "victim", allow_residual_tasks=allow_residual)
+                        for allow_no_entry in (False, True):
+                            self.assertFalse(runtime_requests_drained(
+                                events, "victim", allow_no_entry=allow_no_entry))
+                        events.append(event("WRAPPER_ENTER", 5, "retry", environment, marker="victim"))
+                        assert_request_lifecycles(events, "victim", allow_residual_tasks=allow_residual)
+                        self.assertTrue(runtime_requests_drained(events, "victim"))
+
+    def test_allow_no_entry_only_accepts_no_wrapper_evidence(self):
+        self.assertTrue(runtime_requests_drained([], "victim", allow_no_entry=True))
+        self.assertFalse(runtime_requests_drained([], "victim"))
+
+    @patch("cloud_suite.time.sleep")
+    @patch("cloud_suite.time.monotonic", side_effect=[0, 0, 1, 2, 3, 4])
+    def test_delayed_entry_starts_a_new_cleanup_quiet_period(self, monotonic, sleep):
+        returned = event("WRAPPER_RETURN", 2, marker="victim", status="THREW")
+        complete = [returned, event("WRAPPER_ENTER", 1, marker="victim")]
+        cloud = Mock()
+        cloud.refresh.side_effect = [[], [returned], complete, complete, complete]
+        wait_for_runtime_quiescence(
+            cloud, "default2", "victim", seconds=10, quiet_seconds=2, allow_no_entry=True)
+        self.assertEqual(5, cloud.refresh.call_count)
 
     def test_runtime_drain_waits_for_stubborn_tasks_and_rejects_late_work(self):
         events = [event("WRAPPER_ENTER", 1, marker="victim"),

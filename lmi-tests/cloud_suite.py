@@ -414,7 +414,8 @@ def request_trace(events, marker, request_id, environment):
 
 def assert_request_lifecycles(events, marker, allow_residual_tasks=False):
     requests = {(event["environment"], event["requestId"])
-                for event in selected(events, "WRAPPER_ENTER", marker)}
+                for event in events if event["marker"] == marker
+                and event["kind"] in {"WRAPPER_ENTER", "WRAPPER_RETURN"}}
     require(requests, f"No runtime request evidence for {marker}")
     for environment, request_id in requests:
         assert_lifecycle(
@@ -440,7 +441,7 @@ def runtime_requests_drained(events, markers, allow_no_entry=False):
                for e in selected(events, "WRAPPER_ENTER") if e["marker"] in markers}
     returned = {(e["marker"], e["environment"], e["requestId"])
                 for e in selected(events, "WRAPPER_RETURN") if e["marker"] in markers}
-    if not (allow_no_entry or entered) or not entered <= returned:
+    if not (allow_no_entry or entered) or entered != returned:
         return False
     if not api_calls_complete([e for e in events if e["marker"] in markers]):
         return False
