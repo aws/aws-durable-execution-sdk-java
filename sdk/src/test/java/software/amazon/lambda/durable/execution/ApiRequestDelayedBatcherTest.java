@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.Test;
 class ApiRequestDelayedBatcherTest {
     private static final Duration SHORT_DELAY = Duration.ofMillis(5);
     private static final Duration LONG_DELAY = Duration.ofMillis(100);
+    private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(5);
     private static final int MAX_BATCH_SIZE = 3;
     private static final int MAX_BATCH_BINARY_SIZE_IN_BYTES = 200;
 
@@ -191,11 +193,11 @@ class ApiRequestDelayedBatcherTest {
     }
 
     @Test
-    void whenShutdownCalled_pendingItemsAreFlushedImmediately() {
+    void whenShutdownCalled_pendingItemsAreFlushedImmediately() throws Exception {
         var future = cut.submit(input, LONG_DELAY);
         assertFalse(future.isDone());
 
-        cut.shutdown();
+        cut.shutdown(SHUTDOWN_TIMEOUT);
 
         assertTrue(future.isDone());
         verify(doBatchAction).accept(any());
@@ -211,19 +213,57 @@ class ApiRequestDelayedBatcherTest {
     }
 
     @Test
-    void whenNoItemsSubmitted_shutdownDoesNotInvokeBatchAction() {
-        cut.shutdown();
+    void whenDelayExceedsNinetyMinutes_firstSubmissionStillSetsFlushDeadline() throws Exception {
+        var submittedAt = System.nanoTime();
+        cut.submit(input, Duration.ofMinutes(91));
+
+        var flushTimeField = ApiRequestDelayedBatcher.class.getDeclaredField("delayedBatchFlushTime");
+        flushTimeField.setAccessible(true);
+        var flushTime = flushTimeField.getLong(cut);
+
+        assertTrue(flushTime > submittedAt + Duration.ofMinutes(90).toNanos());
+        cut.shutdown(SHUTDOWN_TIMEOUT);
+    }
+
+    @Test
+    void whenNoItemsSubmitted_shutdownDoesNotInvokeBatchAction() throws Exception {
+        cut.shutdown(SHUTDOWN_TIMEOUT);
         verify(doBatchAction, never()).accept(any());
     }
 
     @Test
-    void whenMultipleBatchesFlushedViaShutdown_allFuturesComplete() {
+    void whenMultipleBatchesFlushedViaShutdown_allFuturesComplete() throws Exception {
         var future1 = cut.submit(input, LONG_DELAY);
-        cut.shutdown();
+        cut.shutdown(SHUTDOWN_TIMEOUT);
         assertTrue(future1.isDone());
 
         var future2 = cut.submit(input, LONG_DELAY);
-        cut.shutdown();
+        cut.shutdown(SHUTDOWN_TIMEOUT);
         assertTrue(future2.isDone());
+    }
+
+    @Test
+    void shutdownHonorsTimeoutWhileBatchActionIsBlocked() throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var batcher = new ApiRequestDelayedBatcher<Input>(
+                MAX_BATCH_SIZE, MAX_BATCH_BINARY_SIZE_IN_BYTES, item -> 0, items -> {
+                    entered.countDown();
+                    try {
+                        release.await();
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+        var future = batcher.submit(input, Duration.ZERO);
+        assertTrue(entered.await(5, TimeUnit.SECONDS));
+
+        try {
+            assertThrows(TimeoutException.class, () -> batcher.shutdown(Duration.ofMillis(50)));
+            assertFalse(future.isDone());
+        } finally {
+            release.countDown();
+        }
+        future.get(5, TimeUnit.SECONDS);
     }
 }
