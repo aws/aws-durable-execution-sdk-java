@@ -315,4 +315,67 @@ class ExecutionManagerTest {
         operation.execute();
         assertTrue(operation.getCompletionFuture().isDone());
     }
+
+    @Test
+    void tracksRootStepChildAndCoordinatorTasks() throws Exception {
+        var manager = createManager(List.of(executionOp()));
+        var entered = new CountDownLatch(5);
+        var release = new CountDownLatch(1);
+        try {
+            var root = manager.submitRootTask(() -> {
+                waitForRelease(entered, release);
+                return "root-result";
+            });
+            var step = manager.submitOperationTask(
+                    operation("step", OperationSubType.STEP), () -> waitForRelease(entered, release));
+            var waitForCondition = manager.submitOperationTask(
+                    operation("wait", OperationSubType.WAIT_FOR_CONDITION), () -> waitForRelease(entered, release));
+            var child = manager.submitOperationTask(
+                    operation("child", OperationSubType.RUN_IN_CHILD_CONTEXT), () -> waitForRelease(entered, release));
+            var coordinator = manager.submitOperationTask(
+                    operation("map", OperationSubType.MAP), () -> waitForRelease(entered, release));
+
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+
+            var tasks = manager.getActiveExecutorTasks();
+            assertEquals(
+                    List.of(
+                            ExecutorTaskHandle.Role.ROOT,
+                            ExecutorTaskHandle.Role.STEP,
+                            ExecutorTaskHandle.Role.STEP,
+                            ExecutorTaskHandle.Role.CHILD_CONTEXT,
+                            ExecutorTaskHandle.Role.COORDINATOR),
+                    tasks.stream().map(ExecutorTaskHandle::role).toList());
+            assertTrue(tasks.stream().allMatch(task -> task.state() == ExecutorTaskHandle.State.RUNNING));
+
+            release.countDown();
+            assertEquals("root-result", root.get(5, TimeUnit.SECONDS));
+            step.get(5, TimeUnit.SECONDS);
+            waitForCondition.get(5, TimeUnit.SECONDS);
+            child.get(5, TimeUnit.SECONDS);
+            coordinator.get(5, TimeUnit.SECONDS);
+            assertTrue(manager.getActiveExecutorTasks().isEmpty());
+        } finally {
+            release.countDown();
+            manager.close();
+        }
+    }
+
+    private void waitForRelease(CountDownLatch entered, CountDownLatch release) {
+        entered.countDown();
+        try {
+            assertTrue(release.await(5, TimeUnit.SECONDS));
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(interrupted);
+        }
+    }
+
+    private BaseDurableOperation operation(String id, OperationSubType subType) {
+        var operation = mock(BaseDurableOperation.class);
+        when(operation.getOperationId()).thenReturn(id);
+        when(operation.getSubType()).thenReturn(subType);
+        when(operation.getType()).thenReturn(subType.getOperationType());
+        return operation;
+    }
 }

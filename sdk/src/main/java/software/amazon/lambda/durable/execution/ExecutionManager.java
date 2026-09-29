@@ -3,20 +3,28 @@
 package software.amazon.lambda.durable.execution;
 
 import com.amazonaws.services.lambda.runtime.Context;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,7 +46,8 @@ import software.amazon.lambda.durable.plugin.PluginInfoConverter;
  *
  * <ul>
  *   <li>Execution state (operations, checkpoint token)
- *   <li>Thread lifecycle (registration/deregistration)
+ *   <li>Logical thread and executor-task lifecycle
+ *   <li>Invocation deadline and work admission
  *   <li>Checkpoint batching (via CheckpointManager)
  *   <li>Checkpoint result handling (CheckpointManager callback)
  *   <li>Polling (for waits and retries)
@@ -55,6 +64,23 @@ import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 public class ExecutionManager implements SafeCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(ExecutionManager.class);
+    private static final AtomicLong LOCAL_INVOCATION_SEQUENCE = new AtomicLong();
+
+    enum LifecycleState {
+        /** The invocation accepts new durable operations, executor tasks, checkpoints, and polls. */
+        OPEN,
+
+        /**
+         * Invocation shutdown has started. Admitted child/coordinator tasks may create descendants, and registered
+         * operations may submit tasks, checkpoint, or poll as they finish. New root and unrelated work is rejected.
+         */
+        DRAINING,
+
+        /**
+         * Work admission has ended; cleanup finishes enqueueing and flushing already-admitted checkpoints and polls.
+         */
+        CLOSED
+    }
 
     // ===== Execution State =====
     private final Map<String, Operation> operationStorage;
@@ -65,6 +91,18 @@ public class ExecutionManager implements SafeCloseable {
     private final DurableConfig durableConfig;
     private final Set<String> updatedOperationIdsSinceLastInvocation;
     private final Set<String> initialOperationIds;
+
+    // ===== Invocation Lifecycle =====
+    private final Object admissionLock = new Object();
+    private final String invocationId;
+    private final Long deadlineNanos;
+    private final AtomicLong taskSequence = new AtomicLong();
+    private final Map<Long, ExecutorTaskHandle<?>> activeExecutorTasks = new ConcurrentHashMap<>();
+    // The current task is shared across managers on a thread; admission verifies the exact handle's owner.
+    private static final ThreadLocal<ExecutorTaskHandle<?>> currentExecutorTask = new ThreadLocal<>();
+    private LifecycleState lifecycleState = LifecycleState.OPEN;
+    // Guarded by admissionLock. Counts enqueue calls, not the lifetime of their returned futures.
+    private int checkpointAdmissionsInFlight;
 
     // ===== Thread Coordination =====
     private final Map<String, BaseDurableOperation> registeredOperations = new ConcurrentHashMap<>();
@@ -81,6 +119,8 @@ public class ExecutionManager implements SafeCloseable {
         durableConfig = config;
         this.durableExecutionArn = input.durableExecutionArn();
         this.lambdaContext = lambdaContext;
+        this.invocationId = resolveInvocationId(lambdaContext, durableExecutionArn);
+        this.deadlineNanos = resolveDeadlineNanos(lambdaContext);
 
         // Store the set of operation IDs updated since the last successful invocation
         this.updatedOperationIdsSinceLastInvocation =
@@ -189,7 +229,89 @@ public class ExecutionManager implements SafeCloseable {
 
     /** Registers an operation so it can receive checkpoint completion notifications. */
     public void registerOperation(BaseDurableOperation operation) {
-        registeredOperations.put(operation.getOperationId(), operation);
+        synchronized (admissionLock) {
+            requireOperationAdmission();
+            registeredOperations.put(operation.getOperationId(), operation);
+        }
+    }
+
+    /** Submits the invocation's root handler and records its executor task separately from its logical result. */
+    <T> CompletableFuture<T> submitRootTask(Supplier<T> action) {
+        return submitExecutorTask(ExecutorTaskHandle.Role.ROOT, null, durableConfig.getExecutorService(), action);
+    }
+
+    /** Submits an operation handler and records its executor task separately from its logical result. */
+    public CompletableFuture<Void> submitOperationTask(BaseDurableOperation operation, Runnable action) {
+        var role = operation.getType() == OperationType.STEP
+                ? ExecutorTaskHandle.Role.STEP
+                : switch (operation.getSubType()) {
+                    case MAP, PARALLEL -> ExecutorTaskHandle.Role.COORDINATOR;
+                    default -> ExecutorTaskHandle.Role.CHILD_CONTEXT;
+                };
+        return submitExecutorTask(role, operation, durableConfig.getExecutorService(), () -> {
+            action.run();
+            return null;
+        });
+    }
+
+    private <T> CompletableFuture<T> submitExecutorTask(
+            ExecutorTaskHandle.Role role,
+            BaseDurableOperation operation,
+            ExecutorService executor,
+            Supplier<T> action) {
+        ExecutorTaskHandle<T> task;
+        synchronized (admissionLock) {
+            requireTaskAdmission(operation);
+            var taskId = taskSequence.incrementAndGet();
+            var operationId = operation == null ? null : operation.getOperationId();
+            task = new ExecutorTaskHandle<>(taskId, role, operationId, () -> activeExecutorTasks.remove(taskId));
+            activeExecutorTasks.put(task.id(), task);
+        }
+
+        try {
+            task.bindExecution(executor.submit(() -> runExecutorTask(task, action)));
+            return task.completion();
+        } catch (RuntimeException | Error failure) {
+            task.submissionFailed(failure);
+            throw failure;
+        }
+    }
+
+    private <T> void runExecutorTask(ExecutorTaskHandle<T> task, Supplier<T> action) {
+        var previous = currentExecutorTask.get();
+        currentExecutorTask.set(task);
+        try {
+            task.run(action);
+        } finally {
+            if (previous == null) {
+                currentExecutorTask.remove();
+            } else {
+                currentExecutorTask.set(previous);
+            }
+        }
+    }
+
+    String getInvocationId() {
+        return invocationId;
+    }
+
+    Optional<Duration> getRemainingInvocationTime() {
+        if (deadlineNanos == null) {
+            return Optional.empty();
+        }
+        return Optional.of(Duration.ofNanos(Math.max(0, deadlineNanos - System.nanoTime())));
+    }
+
+    LifecycleState getLifecycleState() {
+        synchronized (admissionLock) {
+            return lifecycleState;
+        }
+    }
+
+    List<ExecutorTaskHandle<?>> getActiveExecutorTasks() {
+        return activeExecutorTasks.values().stream()
+                .sorted(Comparator.comparingLong(ExecutorTaskHandle::id))
+                .toList();
     }
 
     // ===== Checkpoint Completion Handler =====
@@ -380,7 +502,7 @@ public class ExecutionManager implements SafeCloseable {
     // This method will checkpoint the operation updates to the durable backend and return a future which completes
     // when the checkpoint completes.
     public CompletableFuture<Void> sendOperationUpdate(OperationUpdate update) {
-        return checkpointManager.checkpoint(update);
+        return admitCheckpoint(() -> checkpointManager.checkpoint(update));
     }
 
     // ===== Polling =====
@@ -391,7 +513,7 @@ public class ExecutionManager implements SafeCloseable {
     // wait while another thread is still running, and we therefore are not
     // re-invoked because we never suspended.
     public CompletableFuture<Operation> pollForOperationUpdates(String operationId) {
-        return checkpointManager.pollForUpdate(operationId);
+        return admitCheckpoint(() -> checkpointManager.pollForUpdate(operationId));
     }
 
     /**
@@ -402,35 +524,111 @@ public class ExecutionManager implements SafeCloseable {
      * @return a completable future that completes with the operation update
      */
     public CompletableFuture<Operation> pollForOperationUpdates(String operationId, Instant at) {
-        return checkpointManager.pollForUpdate(operationId, at);
+        return admitCheckpoint(() -> checkpointManager.pollForUpdate(operationId, at));
     }
 
     // ===== Utilities =====
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-        validateRunningThreads();
-
+        beginDraining();
+        try {
+            validateRunningThreads();
+        } finally {
+            closeLifecycle();
+        }
         checkpointManager.shutdown();
     }
 
-    private void validateRunningThreads() {
-        // This will detect stuck user thread and thread leaks in the thread pool
-        for (BaseDurableOperation op : registeredOperations.values()) {
-            var userHandlerFuture = op.getRunningUserHandler();
-            if (userHandlerFuture != null && !userHandlerFuture.isDone()) {
-                // Some user threads can still be running because
-                // the operations that run them have never been waiting for and the execution has completed.
-                logger.info("Waiting for operation to complete before shutting down: {}", op.getOperationId());
+    void beginDraining() {
+        synchronized (admissionLock) {
+            if (lifecycleState == LifecycleState.OPEN) {
+                lifecycleState = LifecycleState.DRAINING;
+            }
+        }
+    }
+
+    private void closeLifecycle() {
+        var interrupted = false;
+        synchronized (admissionLock) {
+            lifecycleState = LifecycleState.CLOSED;
+            // Admission must stop before the final flush, including calls admitted before CLOSED but not yet enqueued.
+            while (checkpointAdmissionsInFlight > 0) {
                 try {
-                    userHandlerFuture.get();
-                } catch (InterruptedException | CancellationException e) {
-                    // if the user handler is stuck
-                    throw new IllegalStateException(
-                            "Stuck running user handler when shutting down: " + op.getOperationId());
-                } catch (Exception e) {
-                    // ok if the future completed exceptionally
+                    admissionLock.wait();
+                } catch (InterruptedException e) {
+                    interrupted = true;
                 }
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private <T> T admitCheckpoint(Supplier<T> request) {
+        synchronized (admissionLock) {
+            if (lifecycleState == LifecycleState.CLOSED) {
+                throw rejected("checkpoint request");
+            }
+            checkpointAdmissionsInFlight++;
+        }
+        try {
+            // CheckpointManager completes continuations under its polling monitor. Those continuations may submit
+            // tasks or poll again, so never call it while holding admissionLock.
+            return request.get();
+        } finally {
+            synchronized (admissionLock) {
+                if (--checkpointAdmissionsInFlight == 0) {
+                    admissionLock.notifyAll();
+                }
+            }
+        }
+    }
+
+    private void requireOperationAdmission() {
+        var task = currentExecutorTask.get();
+        if (lifecycleState == LifecycleState.DRAINING
+                && task != null
+                && task.state() == ExecutorTaskHandle.State.RUNNING
+                && activeExecutorTasks.get(task.id()) == task
+                && (task.role() == ExecutorTaskHandle.Role.CHILD_CONTEXT
+                        || task.role() == ExecutorTaskHandle.Role.COORDINATOR)) {
+            // Descendants are part of the admitted task's work, including branches that start during draining.
+            return;
+        }
+        requireOpen("durable operation");
+    }
+
+    private void requireTaskAdmission(BaseDurableOperation operation) {
+        if (lifecycleState == LifecycleState.DRAINING
+                && operation != null
+                && registeredOperations.get(operation.getOperationId()) == operation) {
+            // Map/parallel branches are registered before their coordinator submits them to the executor.
+            return;
+        }
+        requireOpen("task");
+    }
+
+    private void requireOpen(String workType) {
+        if (lifecycleState != LifecycleState.OPEN) {
+            throw rejected(workType);
+        }
+    }
+
+    private RejectedExecutionException rejected(String workType) {
+        return new RejectedExecutionException(
+                "Invocation " + invocationId + " is " + lifecycleState + "; cannot admit new " + workType);
+    }
+
+    private void validateRunningThreads() {
+        while (true) {
+            var tasks = operationTasksToDrain();
+            if (tasks.isEmpty()) {
+                break;
+            }
+            for (var task : tasks) {
+                awaitTaskExit(task);
             }
         }
 
@@ -441,6 +639,30 @@ public class ExecutionManager implements SafeCloseable {
             if (threadCount > 0) {
                 logger.warn("{} active threads in user executor pool when shutting down", threadCount);
             }
+        }
+    }
+
+    private List<ExecutorTaskHandle<?>> operationTasksToDrain() {
+        synchronized (admissionLock) {
+            var tasks = activeExecutorTasks.values().stream()
+                    .filter(task -> task.role() != ExecutorTaskHandle.Role.ROOT)
+                    .toList();
+            if (tasks.isEmpty()) {
+                // Close under the submission lock so no task can enter after the final empty snapshot.
+                lifecycleState = LifecycleState.CLOSED;
+            }
+            return tasks;
+        }
+    }
+
+    private void awaitTaskExit(ExecutorTaskHandle<?> task) {
+        try {
+            task.exit().get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while draining operation task: " + task.operationId(), e);
+        } catch (ExecutionException e) {
+            throw new IllegalStateException("Could not drain operation task: " + task.operationId(), e);
         }
     }
 
@@ -505,5 +727,25 @@ public class ExecutionManager implements SafeCloseable {
             }
             return null;
         });
+    }
+
+    private static String resolveInvocationId(Context lambdaContext, String durableExecutionArn) {
+        if (lambdaContext != null) {
+            var requestId = lambdaContext.getAwsRequestId();
+            if (requestId != null && !requestId.isBlank()) {
+                return requestId;
+            }
+        }
+        return durableExecutionArn + "#local-" + LOCAL_INVOCATION_SEQUENCE.incrementAndGet();
+    }
+
+    private static Long resolveDeadlineNanos(Context lambdaContext) {
+        if (lambdaContext == null) {
+            return null;
+        }
+        var remainingMillis = Math.max(0L, lambdaContext.getRemainingTimeInMillis());
+        var remainingNanos = TimeUnit.MILLISECONDS.toNanos(remainingMillis);
+        var now = System.nanoTime();
+        return now > Long.MAX_VALUE - remainingNanos ? Long.MAX_VALUE : now + remainingNanos;
     }
 }

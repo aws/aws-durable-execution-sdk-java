@@ -329,8 +329,7 @@ public abstract class BaseDurableOperation {
         // registerActiveThread is idempotent (no-op if already registered).
         registerActiveThread(operationId);
 
-        runningUserHandler.set(CompletableFuture.runAsync(
-                wrapped, getContext().getDurableConfig().getExecutorService()));
+        runningUserHandler.set(executionManager.submitOperationTask(this, wrapped));
     }
 
     /**
