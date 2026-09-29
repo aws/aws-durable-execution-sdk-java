@@ -34,7 +34,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     needs: local
     runs-on: ubuntu-latest
-    timeout-minutes: 85
+    timeout-minutes: 95
     permissions:
       contents: read
       id-token: write
