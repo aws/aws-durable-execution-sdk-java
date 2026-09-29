@@ -272,7 +272,8 @@ class Cloud:
         started = time.time()
         artifact = self.artifacts / "invocations" / (payload["marker"] + ".json")
         details = {"fixture": fixture, "functionArn": self.manifest["functions"][fixture]["arn"],
-                   "scenario": payload["scenario"], "marker": payload["marker"], "started": started}
+                   "runId": payload["runId"], "scenario": payload["scenario"],
+                   "marker": payload["marker"], "started": started}
         save(artifact, {**details, "state": "STARTED"})
         try:
             result = self._invoke_request(fixture, payload)
@@ -292,6 +293,7 @@ class Cloud:
             # fileb:// sends the original JSON bytes regardless of the user's CLI binary-format setting.
             headers = aws("lambda", "invoke", extra=[
                 "--function-name", self.manifest["functions"][fixture]["arn"],
+                "--durable-execution-name", payload["runId"] + "-" + payload["marker"],
                 "--invocation-type", "Event" if payload["scenario"] in {"timeout", "stubborn"} else "RequestResponse",
                 "--payload", "fileb://" + str(source), str(path)], timeout=150)
             try:

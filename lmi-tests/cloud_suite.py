@@ -821,6 +821,16 @@ def collect():
         except Exception as error:
             errors.append(str(error))
     executions = {e["executionArn"]: e["marker"] for e in cloud.events.values()}
+    for path in sorted((ARTIFACTS / "invocations").glob("*.json")):
+        try:
+            invocation = json.loads(path.read_text())
+            if invocation.get("runId") != manifest["runId"] or invocation.get("state") != "RETURNED":
+                continue
+            arn = invocation.get("headers", {}).get("DurableExecutionArn")
+            if arn:
+                executions[arn] = invocation["marker"]
+        except Exception as error:
+            errors.append(f"{path.name}: {error}")
     for arn, marker in executions.items():
         try:
             cloud.history({"arn": arn, "marker": marker})

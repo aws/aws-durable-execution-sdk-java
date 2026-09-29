@@ -29,9 +29,14 @@ class AwsCliInvocationTest(unittest.TestCase):
                 body = self.rfile.read(int(self.headers["Content-Length"]))
                 payload = json.loads(body)
                 invocation_type = self.headers["X-Amz-Invocation-Type"]
-                received.append((unquote(self.path), payload, invocation_type, self.headers.get("Authorization")))
+                retry = any(entry[1]["marker"] == payload["marker"] for entry in received)
+                received.append((unquote(self.path), payload, invocation_type, self.headers.get("Authorization"),
+                                 self.headers.get("X-Amz-Durable-Execution-Name")))
                 response = json.dumps(payload["marker"]).encode() if invocation_type == "RequestResponse" else b""
-                self.send_response(200 if invocation_type == "RequestResponse" else 202)
+                # Simulate an accepted request whose response failed, forcing the real CLI to retry.
+                if not retry:
+                    response = b'{"message":"transient response failure"}'
+                self.send_response((200 if invocation_type == "RequestResponse" else 202) if retry else 503)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(response)))
                 self.send_header("X-Amz-Durable-Execution-Arn", execution_arn)
@@ -59,18 +64,22 @@ class AwsCliInvocationTest(unittest.TestCase):
                 try:
                     for scenario, invocation_type in [("baseline", "RequestResponse"), ("timeout", "Event")]:
                         with self.subTest(scenario=scenario):
-                            payload = {"runId": "test", "scenario": scenario, "marker": scenario + "-λ",
+                            payload = {"runId": "test", "scenario": scenario, "marker": scenario + "-marker", "cohort": "cohort-λ",
                                        "controlUrl": "https://example.test/control?signature=example"}
                             result = cloud._invoke("default1", payload)
-                            path, body, actual_type, authorization = received[-1]
+                            path, body, actual_type, authorization, name = received[-1]
                             self.assertIn(function_arn, path)
                             self.assertEqual(payload, body)
                             self.assertEqual(invocation_type, actual_type)
                             self.assertIsNone(authorization)
+                            attempts = [entry for entry in received if entry[1]["marker"] == payload["marker"]]
+                            self.assertEqual(2, len(attempts))
+                            self.assertEqual({"test-" + payload["marker"]}, {entry[4] for entry in attempts})
                             self.assertEqual(execution_arn, result["headers"]["DurableExecutionArn"])
                             self.assertEqual(payload["marker"] if invocation_type == "RequestResponse" else "", result["body"])
                             report = json.loads((Path(directory) / "invocations" / (payload["marker"] + ".json")).read_text())
                             self.assertEqual("RETURNED", report["state"])
+                            self.assertEqual(payload["runId"], report["runId"])
                             self.assertEqual(function_arn, report["functionArn"])
                 finally:
                     cloud.close()

@@ -80,6 +80,10 @@ or accept a retry that happens to pass after a lifecycle violation.
   instrumentation. They never choose operation names or business branches.
   Deliberately blocked tasks have finite escape timers. Escape diagnostics fail
   lifecycle assertions; they cannot turn the reproduced bug into a pass.
+* Every invocation supplies a stable durable execution name derived from its run
+  ID and marker, so CLI retries cannot start another execution for the same marker.
+  Final collection merges execution ARNs from current-run invocation response
+  artifacts and diagnostics, including executions that never emitted fixture logs.
 * CloudWatch collection polls for causal evidence and deduplicates JVM sequence
   numbers. Test reports distinguish setup, placement, assertion, collection,
   and teardown failures. Raw histories, configuration, and diagnostic logs are

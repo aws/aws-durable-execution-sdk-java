@@ -255,7 +255,7 @@ class EvidenceTest(unittest.TestCase):
             cloud = Cloud({"functions": {"default1": {"arn": "function"}}}, directory)
             try:
                 with self.assertRaisesRegex(RuntimeError, "Invoke denied"):
-                    cloud._invoke("default1", {"marker": "test", "scenario": "baseline"})
+                    cloud._invoke("default1", {"runId": "run", "marker": "test", "scenario": "baseline"})
                 report = (Path(directory) / "invocations/test.json").read_text()
                 self.assertIn("Invoke denied", report)
                 self.assertNotIn("private-value", report)
