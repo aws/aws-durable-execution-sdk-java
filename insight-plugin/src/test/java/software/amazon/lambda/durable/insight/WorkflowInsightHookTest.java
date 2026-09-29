@@ -60,12 +60,75 @@ class WorkflowInsightHookTest {
     }
 
     private InvocationInfo start(boolean first) {
-        return new InvocationInfo("req", ARN, first, START, "in", ops("greet", OperationStatus.STARTED), Map.of());
+        return start(ARN, first);
+    }
+
+    private InvocationInfo start(String arn, boolean first) {
+        return new InvocationInfo("req", arn, first, START, "in", ops("greet", OperationStatus.STARTED), Map.of());
     }
 
     private InvocationEndInfo end(InvocationStatus status, Object result, Throwable error) {
+        return end(ARN, status, result, error);
+    }
+
+    private InvocationEndInfo end(String arn, InvocationStatus status, Object result, Throwable error) {
         return new InvocationEndInfo(
-                "req", ARN, true, START, ops("greet", OperationStatus.SUCCEEDED), status, error, "in", result);
+                "req", arn, true, START, ops("greet", OperationStatus.SUCCEEDED), status, error, "in", result);
+    }
+
+    @Test
+    void anotherExecutionsChangeHookDuringTheEndDrainCannotDropTheFinalRecord() throws Exception {
+        String arnA = ARN;
+        String arnB = ARN.replace("exec-1", "exec-2");
+        var exportingA = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var exporter = new CapturingExporter() {
+            @Override
+            public void export(WorkflowInsightRecord record) {
+                super.export(record);
+                // Block a's first export so a's final record has to wait in the pending slot while b keeps emitting.
+                if (records.size() == 1) {
+                    exportingA.countDown();
+                    try {
+                        assertTrue(release.await(5, TimeUnit.SECONDS));
+                    } catch (InterruptedException e) {
+                        throw new AssertionError(e);
+                    }
+                }
+            }
+        };
+        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
+                .addExporter(exporter)
+                .build());
+
+        plugin.onInvocationStart(start(arnA, true));
+        assertTrue(exportingA.await(5, TimeUnit.SECONDS));
+        plugin.onInvocationStart(start(arnB, true));
+
+        // a ends: its SUCCEEDED record is pending behind the blocked export, and a's end hook blocks in the drain.
+        var endingA = new Thread(() -> plugin.onInvocationEnd(end(arnA, InvocationStatus.SUCCEEDED, "out", null)));
+        endingA.start();
+        Thread.sleep(100);
+        // b's change hook arrives while a's final record is still pending; it must not displace it.
+        plugin.onOperationChange(new OperationChangeInfo(
+                "req", arnB, ops("greet", OperationStatus.SUCCEEDED), ops("greet", OperationStatus.SUCCEEDED)));
+        release.countDown();
+        endingA.join(5_000);
+        assertFalse(endingA.isAlive());
+        plugin.onInvocationEnd(end(arnB, InvocationStatus.SUCCEEDED, "out", null));
+
+        var aStatuses = exporter.records.stream()
+                .filter(r -> arnA.equals(r.executionArn()))
+                .map(WorkflowInsightRecord::status)
+                .toList();
+        var bStatuses = exporter.records.stream()
+                .filter(r -> arnB.equals(r.executionArn()))
+                .map(WorkflowInsightRecord::status)
+                .toList();
+        assertEquals(List.of("RUNNING", "SUCCEEDED"), aStatuses, "a's final record is delivered");
+        assertEquals("SUCCEEDED", bStatuses.get(bStatuses.size() - 1), "b's final record is delivered last");
+        assertTrue(bStatuses.subList(0, bStatuses.size() - 1).stream().allMatch("RUNNING"::equals));
     }
 
     @Test
