@@ -351,6 +351,8 @@ def overlap_case(cloud, fixture, target=None):
     gate_name = prefix + "-anchor"
     anchor = cloud.launch(fixture, "hold", prefix + "-anchor", target=target, gate=cloud.gate(gate_name))
     heartbeat = cloud.poll(fixture, lambda events: selected(events, "HEARTBEAT", anchor["marker"]), category=PreconditionError, items=[anchor])[0]
+    require(target is None or heartbeat["environment"] == target,
+            "Overlap anchor did not enter the requested original environment")
     peers, peer_gate = healthy_peers(cloud, fixture, heartbeat["environment"], count - 1, prefix + "-peer")
     items = [anchor] + peers
     assert_overlap(list(cloud.events.values()), {i["marker"] for i in items}, count, heartbeat["environment"])
@@ -814,7 +816,7 @@ def write_junit(suite):
 def collect():
     manifest = json.loads(MANIFEST.read_text())
     cloud = Cloud(manifest, ARTIFACTS)
-    errors = []
+    errors = cloud.restore_evidence()
     for fixture in manifest["functions"]:
         try:
             cloud.refresh(fixture)

@@ -38,7 +38,9 @@ or accept a retry that happens to pass after a lifecycle violation.
   changes that limit. Invocation concurrency remains 1, 2, or 8 per environment,
   and same-JVM overlap must still be proven.
 * A stream wrapper observes the actual SDK entry and return. Invocation-local
-  root/task `finally` markers and a JVM-wide sequence establish ordering. The
+  root/task `finally` markers and a JVM-wide sequence establish ordering. Boundary
+  counter changes, sequence assignment and event snapshots share one JVM-wide lock,
+  so requests cannot record an order inconsistent with their counters. The
   plugin end hook is deliberately not used as a completion signal.
   Every diagnostic contributes its request identity, including root/task activity
   whose wrapper logs have not arrived. Lifecycle validation and the cleanup quiet
@@ -71,7 +73,8 @@ or accept a retry that happens to pass after a lifecycle violation.
   the qualifying probe admission in the same JVM. A peer's early exit, missing
   exit log, or successful later retry cannot establish that occupancy. After evidence
   is recorded, the driver stops any nonterminal timeout execution and drains all
-  requests launched by that case before reusing the fixture's capacity.
+  requests launched by that case before reusing the fixture's capacity. The final
+  full-concurrency probe also requires the original JVM, including after replay.
 * Successful and failed checkpointed steps precede a real durable wait. The
   attempt ledger records entry into user bodies, while real service history
   proves checkpoint identity and replay. Fixture business work returns an idempotent marker; BODY events form the
@@ -84,6 +87,8 @@ or accept a retry that happens to pass after a lifecycle violation.
   ID and marker, so CLI retries cannot start another execution for the same marker.
   Final collection merges execution ARNs from current-run invocation response
   artifacts and diagnostics, including executions that never emitted fixture logs.
+  It restores cached diagnostics and raw logs before refreshing, preserving evidence
+  from a fixture whose log query fails while retaining new data from other fixtures.
 * CloudWatch collection polls for causal evidence and deduplicates JVM sequence
   numbers. Test reports distinguish setup, placement, assertion, collection,
   and teardown failures. Raw histories, configuration, and diagnostic logs are

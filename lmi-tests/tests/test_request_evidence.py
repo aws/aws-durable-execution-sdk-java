@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloud_support import PreconditionError, assert_lifecycle, assert_overlap
-from cloud_suite import (assert_request_lifecycles, cleanup_progress_observed, replay_case, runtime_requests_drained,
+from cloud_suite import (assert_request_lifecycles, cleanup_progress_observed, overlap_case, replay_case, runtime_requests_drained,
                          wait_for_runtime_quiescence)
 from test_evidence import event
 
@@ -87,6 +87,33 @@ class ExecutionOverlapTest(unittest.TestCase):
                   event("TASK_ENTER", 4, "other", marker="b"),
                   event("TASK_EXIT", 5, "retry", marker="a")]
         self.assertEqual("jvm", assert_overlap(events[::-1], {"a", "b"}, 2))
+
+
+class OriginalEnvironmentTest(unittest.TestCase):
+    @patch("cloud_suite.healthy_peers")
+    def test_replayed_anchor_in_replacement_cannot_prove_original_recovery(self, peers):
+        cloud = Mock()
+        cloud.launch.return_value = {"marker": "anchor"}
+        # The handler's first-invocation placement gate does not run on replay.
+        cloud.poll.return_value = [event("HEARTBEAT", 5, "resume", "replacement", marker="anchor")]
+        with self.assertRaisesRegex(AssertionError, "original environment"):
+            overlap_case(cloud, "default2", target="original")
+        peers.assert_not_called()
+
+    @patch("cloud_suite.assert_lifecycle")
+    @patch("cloud_suite.assert_overlap")
+    @patch("cloud_suite.wait_returns")
+    @patch("cloud_suite.wait_for_runtime_quiescence")
+    @patch("cloud_suite.healthy_peers", return_value=([], "gate"))
+    def test_matching_or_unspecified_target_uses_the_admitted_environment(self, peers, quiet, returns, overlap, lifecycle):
+        for target in (None, "original"):
+            cloud = Mock()
+            cloud.launch.return_value = {"marker": "anchor"}
+            cloud.poll.return_value = [event("HEARTBEAT", 5, environment="original", marker="anchor")]
+            cloud.events = {}
+            overlap_case(cloud, "default1", target=target)
+            self.assertEqual("original", peers.call_args.args[2])
+            self.assertEqual("original", overlap.call_args.args[3])
 
 
 class SuspensionCleanupTest(unittest.TestCase):

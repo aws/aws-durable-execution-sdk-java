@@ -247,6 +247,24 @@ class Cloud:
         self.start_ms = manifest.get("logStartMillis", int(time.time() * 1000))
         self.gates = set()
 
+    def restore_evidence(self):
+        """Seed final collection before refresh can overwrite evidence from a failed log read."""
+        errors = []
+        for filename in ("diagnostics.json", "cloudwatch.json"):
+            path = self.artifacts / filename
+            if not path.exists():
+                continue
+            try:
+                for event in json.loads(path.read_text()):
+                    if filename == "diagnostics.json":
+                        if event.get("runId") == self.manifest["runId"] and event.get("fixture") in self.manifest["functions"]:
+                            self.events[(event["environment"], event["sequence"])] = event
+                    elif event["timestamp"] >= self.start_ms:
+                        self.raw_logs[event["eventId"]] = event
+            except Exception as error:
+                errors.append(f"{filename}: {error}")
+        return errors
+
     def gate(self, name, release=False):
         self.gates.add(name)
         with tempfile.NamedTemporaryFile(mode="w") as body:

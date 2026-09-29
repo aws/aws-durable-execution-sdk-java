@@ -19,7 +19,7 @@ class CollectionTest(unittest.TestCase):
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.artifacts = Path(directory.name)
-        self.manifest = {"runId": "current", "commit": "sha", "functions": {
+        self.manifest = {"runId": "current", "commit": "sha", "logStartMillis": 1000, "functions": {
             "default1": {"arn": "arn:function", "logGroup": "logs"}}}
         save(self.artifacts / "manifest.json", self.manifest)
         self.logs = []
@@ -92,6 +92,43 @@ class CollectionTest(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "partial.json"):
             self.run_collection()
         self.assert_collected()
+
+    def test_partial_refresh_preserves_cached_diagnostics_and_platform_logs(self):
+        self.manifest["functions"]["default2"] = {"arn": "arn:function2", "logGroup": "logs2"}
+        save(self.artifacts / "manifest.json", self.manifest)
+        cached = [event("WRAPPER_ENTER", i, marker=marker, executionArn="arn:" + marker,
+                        runId="current", deploymentRunId="current", commit="sha", fixture=fixture)
+                  for i, marker, fixture in [(1, "cached-a", "default1"), (2, "cached-b", "default2")]]
+        raw = [{"eventId": "platform-a", "timestamp": 2000, "message": "platform timeout"}]
+        save(self.artifacts / "diagnostics.json", cached)
+        save(self.artifacts / "cloudwatch.json", raw)
+        new = {**cached[1], "sequence": 3, "kind": "ROOT_ENTER"}
+        self.logs = [{"eventId": "new-b", "timestamp": 3000, "message": "LMI_TEST " + json.dumps(new)}]
+        def fail_one_fixture(service, operation, *args, **kwargs):
+            if operation == "filter-log-events" and args[0]["logGroupName"] == "logs":
+                raise RuntimeError("logs unavailable")
+            return self.response(service, operation, *args, **kwargs)
+        self.api.side_effect = fail_one_fixture
+        with self.assertRaisesRegex(AssertionError, "logs unavailable"):
+            self.run_collection()
+        diagnostics = json.loads((self.artifacts / "diagnostics.json").read_text())
+        self.assertEqual({1, 2, 3}, {e["sequence"] for e in diagnostics})
+        logs = json.loads((self.artifacts / "cloudwatch.json").read_text())
+        self.assertEqual({"platform-a", "new-b"}, {e["eventId"] for e in logs})
+        self.assert_collected("cached-a")
+        self.assert_collected("cached-b")
+
+    def test_cached_evidence_is_filtered_to_the_current_run_and_log_window(self):
+        stale = event("WRAPPER_ENTER", 1, marker="old", executionArn="arn:old",
+                      runId="previous", deploymentRunId="previous", commit="sha", fixture="default1")
+        save(self.artifacts / "diagnostics.json", [stale])
+        save(self.artifacts / "cloudwatch.json", [
+            {"eventId": "old", "timestamp": 500, "message": "old run"},
+            {"eventId": "current", "timestamp": 1500, "message": "current platform record"}])
+        self.run_collection()
+        self.assertEqual([], json.loads((self.artifacts / "diagnostics.json").read_text()))
+        logs = json.loads((self.artifacts / "cloudwatch.json").read_text())
+        self.assertEqual(["current"], [e["eventId"] for e in logs])
 
 
 if __name__ == "__main__":
