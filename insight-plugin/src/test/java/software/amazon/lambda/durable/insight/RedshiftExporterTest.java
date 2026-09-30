@@ -161,11 +161,13 @@ class RedshiftExporterTest {
                                         .dbUser("admin"),
                                 sampleRecord())
                         .dbUser());
-        assertThrows(IllegalArgumentException.class, () -> RedshiftExporter.builder()
-                .workgroupName("wg")
-                .database("insight")
-                .schema("public; DROP")
-                .build());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> RedshiftExporter.builder()
+                        .workgroupName("wg")
+                        .database("insight")
+                        .schema("public; DROP")
+                        .build());
         assertEquals(
                 1_000_000,
                 RedshiftExporter.builder()

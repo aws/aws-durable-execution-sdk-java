@@ -22,9 +22,11 @@ class DurationValidationIntegrationTest {
 
     @Test
     void callbackConfig_withInvalidHeartbeatTimeout_shouldThrow() {
-        var exception = assertThrows(IllegalArgumentException.class, () -> CallbackConfig.builder()
-                .heartbeatTimeout(Duration.ofMillis(999))
-                .build());
+        var exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> CallbackConfig.builder()
+                        .heartbeatTimeout(Duration.ofMillis(999))
+                        .build());
 
         assertTrue(exception.getMessage().contains("Heartbeat timeout"));
         assertTrue(exception.getMessage().contains("at least 1 second"));

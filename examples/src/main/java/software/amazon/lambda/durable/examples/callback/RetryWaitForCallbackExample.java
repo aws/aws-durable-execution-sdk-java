@@ -36,7 +36,9 @@ public class RetryWaitForCallbackExample extends DurableHandler<ApprovalRequest,
         var approvalResult = context.withRetry(
                 null,
                 (attempt, ctx) -> ctx.waitForCallback(
-                        "approval-" + attempt, String.class, (callbackId, stepCtx) -> stepCtx.getLogger()
+                        "approval-" + attempt,
+                        String.class,
+                        (callbackId, stepCtx) -> stepCtx.getLogger()
                                 .info("Attempt {}: sending callback {} to approval system", attempt, callbackId)),
                 WithRetryConfig.builder()
                         .retryStrategy((error, attempt) -> attempt < MAX_ATTEMPTS
