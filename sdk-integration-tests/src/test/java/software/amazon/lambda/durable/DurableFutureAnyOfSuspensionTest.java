@@ -40,8 +40,9 @@ class DurableFutureAnyOfSuspensionTest {
 
     @Test
     void singleFutureGetSuspends() {
-        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> unresolvedCallback(context, "cb1")
-                .get());
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> unresolvedCallback(context, "cb1").get());
 
         var result = assertTimeoutPreemptively(DEADLINE, () -> runner.run("test"));
 
