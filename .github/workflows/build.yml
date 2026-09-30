@@ -81,12 +81,23 @@ jobs:
       - name: Build and test
         run: mvn -B install --file pom.xml
 
+      - name: Setup uv for coverage badge
+        if: ${{ matrix.java == 17 }}
+        # cicirello/jacoco-badge-generator is a Docker-based action; the
+        # CodeBuild Lambda-compute runner has no docker, so run the same tool
+        # from PyPI via uv instead. uv provides Python on the Amazon Linux image
+        # (actions/setup-python ships only Ubuntu builds).
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
       - name: Generate JaCoCo Badge
         if: ${{ matrix.java == 17 }}
-        uses: cicirello/jacoco-badge-generator@72266185b7ee48a6fd74eaf0238395cc8b14fef8 # v2
-        with:
-          jacoco-csv-file: coverage-report/target/site/jacoco-aggregate/jacoco.csv
-          badges-directory: coverage-report/target/site/jacoco-aggregate
+        # Equivalent to cicirello/jacoco-badge-generator@v2 with the two inputs
+        # this workflow set (jacoco-csv-file, badges-directory); writes
+        # jacoco.svg into the badges directory, matching the action's default.
+        run: |
+          uv run --with jacoco-badge-generator python -m jacoco_badge_generator \
+            -j coverage-report/target/site/jacoco-aggregate/jacoco.csv \
+            -d coverage-report/target/site/jacoco-aggregate
 
       - name: Generate javadoc site
         if: ${{ matrix.java == 17 }}
