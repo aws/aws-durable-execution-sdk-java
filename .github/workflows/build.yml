@@ -110,8 +110,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          TITLE=$(gh api repos/${{ github.repository }}/milestones \
-            --jq '[.[] | select(.state == "open" and .due_on != null)] | sort_by(.due_on) | .[0].title // empty')
+          # Use curl + jq rather than the GitHub CLI: gh is not preinstalled on
+          # the CodeBuild runner image. GITHUB_API_URL/GH_TOKEN are provided by
+          # Actions; the jq filter matches the previous `gh api --jq` behavior.
+          TITLE=$(curl -sfL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${{ github.repository }}/milestones?state=open&per_page=100" \
+            | jq -r '[.[] | select(.state == "open" and .due_on != null)] | sort_by(.due_on) | .[0].title // empty')
 
           if [ -z "$TITLE" ]; then
             URL="https://img.shields.io/badge/Next%20Milestone-No%20milestone-lightgrey"
