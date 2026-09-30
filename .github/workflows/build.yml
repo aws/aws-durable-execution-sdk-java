@@ -53,7 +53,11 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # CodeBuild-hosted runner in the Java testing account (Lambda compute,
+    # corretto21 image). Fork PRs stay on GitHub-hosted runners so untrusted
+    # fork code never executes inside the testing account; same-repo PRs, push
+    # and workflow_dispatch use the ephemeral CodeBuild runner.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || format('codebuild-github-actions-runner-{0}-{1}', github.run_id, github.run_attempt) }}
     strategy:
       fail-fast: false
       matrix:
@@ -131,7 +135,8 @@ jobs:
   deploy-pages:
     if: ${{ github.event_name == 'milestone' || github.ref == 'refs/heads/main' }}
     needs: build
-    runs-on: ubuntu-latest
+    # Never fork-reachable (main/milestone only); runs only actions/deploy-pages.
+    runs-on: ${{ format('codebuild-github-actions-runner-{0}-{1}', github.run_id, github.run_attempt) }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
