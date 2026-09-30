@@ -30,7 +30,11 @@ permissions:
 
 jobs:
   spotless-check:
-    runs-on: ubuntu-latest
+    # CodeBuild-hosted runner in the Java testing account (Lambda compute,
+    # corretto21 image with Maven preinstalled). The label must match the
+    # CodeBuild project name exactly.
+    runs-on:
+      - codebuild-github-actions-runner-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
