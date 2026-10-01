@@ -1756,9 +1756,10 @@ class MapIntegrationTest {
                     words,
                     String.class,
                     (item, index, ctx) -> {
-                        return ctx.step("reverse-" + index, String.class, stepCtx -> new StringBuilder(item)
-                                .reverse()
-                                .toString());
+                        return ctx.step(
+                                "reverse-" + index,
+                                String.class,
+                                stepCtx -> new StringBuilder(item).reverse().toString());
                     },
                     MapConfig.builder().nestingType(nestingType).build());
 
