@@ -96,19 +96,25 @@ class OpenSearchExporterTest {
 
     @Test
     void sigv4RequiresRegionAtBuildTime() {
-        assertThrows(NullPointerException.class, () -> OpenSearchExporter.builder()
-                .endpoint("https://d.us-east-1.es.amazonaws.com")
-                .build());
-        assertThrows(NullPointerException.class, () -> OpenSearchExporter.builder()
-                .endpoint("https://d.us-east-1.es.amazonaws.com")
-                .auth(OpenSearchExporter.Auth.BASIC)
-                .password("p")
-                .build());
-        assertThrows(NullPointerException.class, () -> OpenSearchExporter.builder()
-                .endpoint("https://d.us-east-1.es.amazonaws.com")
-                .auth(OpenSearchExporter.Auth.BASIC)
-                .username("u")
-                .build());
+        assertThrows(
+                NullPointerException.class,
+                () -> OpenSearchExporter.builder()
+                        .endpoint("https://d.us-east-1.es.amazonaws.com")
+                        .build());
+        assertThrows(
+                NullPointerException.class,
+                () -> OpenSearchExporter.builder()
+                        .endpoint("https://d.us-east-1.es.amazonaws.com")
+                        .auth(OpenSearchExporter.Auth.BASIC)
+                        .password("p")
+                        .build());
+        assertThrows(
+                NullPointerException.class,
+                () -> OpenSearchExporter.builder()
+                        .endpoint("https://d.us-east-1.es.amazonaws.com")
+                        .auth(OpenSearchExporter.Auth.BASIC)
+                        .username("u")
+                        .build());
         assertEquals(OpenSearchExporter.Auth.BASIC, OpenSearchExporter.Auth.fromValue("basic"));
         assertThrows(IllegalArgumentException.class, () -> OpenSearchExporter.Auth.fromValue("oauth"));
     }

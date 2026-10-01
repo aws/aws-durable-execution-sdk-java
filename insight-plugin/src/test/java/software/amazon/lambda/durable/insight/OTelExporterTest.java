@@ -155,10 +155,12 @@ class OTelExporterTest {
 
     @Test
     void protobufIsRejectedAtBuildTime() {
-        assertThrows(IllegalArgumentException.class, () -> OTelExporter.builder()
-                .endpoint("http://127.0.0.1:1/v1/logs")
-                .protocol(OTelExporter.Protocol.HTTP_PROTOBUF)
-                .build());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> OTelExporter.builder()
+                        .endpoint("http://127.0.0.1:1/v1/logs")
+                        .protocol(OTelExporter.Protocol.HTTP_PROTOBUF)
+                        .build());
         assertEquals(OTelExporter.Protocol.HTTP_JSON, OTelExporter.Protocol.fromValue("http/json"));
         assertThrows(IllegalArgumentException.class, () -> OTelExporter.Protocol.fromValue("grpc"));
     }

@@ -111,9 +111,11 @@ class AuroraExporterTest {
 
     @Test
     void rejectsUnsafeTableNameAtBuildTime() {
-        assertThrows(IllegalArgumentException.class, () -> base().engine(AuroraExporter.Engine.MYSQL)
-                .table("t; DROP TABLE x")
-                .build());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> base().engine(AuroraExporter.Engine.MYSQL)
+                        .table("t; DROP TABLE x")
+                        .build());
         assertThrows(NullPointerException.class, () -> base().build(), "engine is required");
         assertEquals(
                 1_000_000, base().engine(AuroraExporter.Engine.MYSQL).build().maxRecordSizeBytes());
