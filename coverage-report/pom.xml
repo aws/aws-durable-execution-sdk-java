@@ -37,6 +37,11 @@
             <artifactId>aws-durable-execution-sdk-java-examples</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>software.amazon.lambda.durable</groupId>
+            <artifactId>aws-durable-execution-sdk-java-extra-filesystem-serdes</artifactId>
+            <version>${project.version}</version>
+        </dependency>
     </dependencies>
 
     <build>

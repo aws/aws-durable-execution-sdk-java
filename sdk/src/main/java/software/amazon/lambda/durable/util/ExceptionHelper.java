@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.concurrent.CompletionException;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
 
 /** Utility class for handling exceptions */
 public class ExceptionHelper {
@@ -44,10 +45,19 @@ public class ExceptionHelper {
      * @return the ErrorObject
      */
     public static ErrorObject buildErrorObject(Throwable throwable, SerDes serDes) {
+        return buildErrorObject(throwable, serDes.serialize(throwable));
+    }
+
+    /** Builds an error using the operation's context-aware serializer. */
+    public static ErrorObject buildErrorObject(Throwable throwable, SerDes serDes, SerDesContext context) {
+        return buildErrorObject(throwable, serDes.serialize(throwable, context));
+    }
+
+    private static ErrorObject buildErrorObject(Throwable throwable, String errorData) {
         return ErrorObject.builder()
                 .errorType(throwable.getClass().getName())
                 .errorMessage(throwable.getMessage())
-                .errorData(serDes.serialize(throwable))
+                .errorData(errorData)
                 .stackTrace(serializeStackTrace(throwable.getStackTrace()))
                 .build();
     }
