@@ -8,6 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static software.amazon.lambda.durable.TypeToken.get;
 
 import java.time.Instant;
@@ -18,15 +23,19 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
@@ -34,6 +43,9 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationEndInfo;
+import software.amazon.lambda.durable.plugin.InvocationStatus;
 
 class DurableExecutionTest {
 
@@ -446,6 +458,524 @@ class DurableExecutionTest {
         // Verify both executions completed successfully and used the same executor
         assertTrue(output1.result().contains("Result 1: test-input-1"));
         assertTrue(output2.result().contains("Result 2: test-input-2"));
+    }
+
+    /**
+     * A checkpoint response with no checkpointToken for a non-terminal update must abandon the execution (PENDING)
+     * rather than continue issuing further checkpoint or getExecutionState calls with the now-spent token.
+     */
+    @Test
+    void checkpointTokenRevoked_nonTerminalUpdate_suspendsExecutionAsPending() {
+        var client = mock(DurableExecutionClient.class);
+        var revokeNextStep = new java.util.concurrent.atomic.AtomicBoolean(false);
+        when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
+            List<OperationUpdate> updates = invocation.getArgument(2);
+            var responseOperations = new java.util.ArrayList<Operation>();
+            for (var update : updates) {
+                var opBuilder = Operation.builder()
+                        .id(update.id())
+                        .name(update.name())
+                        .subType(update.subType())
+                        .type(update.type());
+                if (update.action() == software.amazon.awssdk.services.lambda.model.OperationAction.START) {
+                    opBuilder.status(OperationStatus.STARTED);
+                } else if (update.action() == software.amazon.awssdk.services.lambda.model.OperationAction.SUCCEED) {
+                    opBuilder.status(OperationStatus.SUCCEEDED);
+                    opBuilder.stepDetails(
+                            StepDetails.builder().result(update.payload()).build());
+                }
+                responseOperations.add(opBuilder.build());
+            }
+            var responseBuilder = CheckpointDurableExecutionResponse.builder()
+                    .newExecutionState(CheckpointUpdatedExecutionState.builder()
+                            .operations(responseOperations)
+                            .build());
+            if (revokeNextStep.get()) {
+                // No checkpointToken: the service has revoked this execution's checkpoint token.
+                return responseBuilder.build();
+            }
+            revokeNextStep.set(true);
+            return responseBuilder.checkpointToken("token-after-step1").build();
+        });
+
+        var config = DurableConfig.builder().withDurableExecutionClient(client).build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp()))
+                        .build());
+
+        var output = DurableExecutor.execute(
+                input,
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    ctx.step("step1", String.class, stepCtx -> "first");
+                    // step2's checkpoint round-trip returns a token-less response: this must
+                    // surface as a suspension (PENDING), never as an exception escaping to the
+                    // caller and never as a further API call with the now-spent token.
+                    ctx.step("step2", String.class, stepCtx -> "second");
+                    return "unreachable";
+                },
+                config);
+
+        assertEquals(ExecutionStatus.PENDING, output.status());
+        assertNull(output.result());
+        verify(client, times(0)).getExecutionState(any(), any(), any());
+    }
+
+    /**
+     * A checkpoint response with no checkpointToken during a wait operation must abandon the execution (PENDING) the
+     * same way a revoked token during a step does.
+     */
+    @Test
+    void checkpointTokenRevoked_duringWait_suspendsExecutionAsPending() {
+        var client = mock(DurableExecutionClient.class);
+        when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
+            List<OperationUpdate> updates = invocation.getArgument(2);
+            var responseBuilder = CheckpointDurableExecutionResponse.builder();
+            var isWaitBatch = updates.stream().anyMatch(update -> update.type() == OperationType.WAIT);
+            if (isWaitBatch) {
+                // No checkpointToken: the service has revoked this execution's checkpoint token.
+                return responseBuilder.build();
+            }
+            return responseBuilder.checkpointToken("token-x").build();
+        });
+
+        var config = DurableConfig.builder().withDurableExecutionClient(client).build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp()))
+                        .build());
+
+        var output = DurableExecutor.execute(
+                input,
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    // The wait's checkpoint round-trip returns a token-less response: this must surface
+                    // as a suspension (PENDING), never as an exception escaping to the caller.
+                    ctx.wait(null, java.time.Duration.ofSeconds(60));
+                    return "unreachable";
+                },
+                config);
+
+        assertEquals(ExecutionStatus.PENDING, output.status());
+        assertNull(output.result());
+        assertNull(output.error());
+    }
+
+    /**
+     * A checkpoint response with no checkpointToken during a callback operation must abandon the execution (PENDING)
+     * the same way a revoked token during a step does.
+     */
+    @Test
+    void checkpointTokenRevoked_duringCallback_suspendsExecutionAsPending() {
+        var client = mock(DurableExecutionClient.class);
+        when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
+            List<OperationUpdate> updates = invocation.getArgument(2);
+            var responseBuilder = CheckpointDurableExecutionResponse.builder();
+            var isCallbackBatch = updates.stream().anyMatch(update -> update.type() == OperationType.CALLBACK);
+            if (isCallbackBatch) {
+                // No checkpointToken: the service has revoked this execution's checkpoint token.
+                return responseBuilder.build();
+            }
+            return responseBuilder.checkpointToken("token-x").build();
+        });
+
+        var config = DurableConfig.builder().withDurableExecutionClient(client).build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp()))
+                        .build());
+
+        var output = DurableExecutor.execute(
+                input,
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    // The callback's checkpoint round-trip returns a token-less response: this must surface
+                    // as a suspension (PENDING), never as an exception escaping to the caller.
+                    ctx.createCallback("callback1", String.class).get();
+                    return "unreachable";
+                },
+                config);
+
+        assertEquals(ExecutionStatus.PENDING, output.status());
+        assertNull(output.result());
+        assertNull(output.error());
+    }
+
+    /**
+     * A checkpoint response with no checkpointToken for one branch of a parallel operation must abandon the execution
+     * (PENDING), pinning the current behavior where a branch's revoked-token failure is never surfaced as a FAILED
+     * branch result.
+     */
+    @Test
+    void checkpointTokenRevoked_duringParallelBranch_suspendsExecutionAsPending() {
+        var client = mock(DurableExecutionClient.class);
+        when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
+            List<OperationUpdate> updates = invocation.getArgument(2);
+            var responseBuilder = CheckpointDurableExecutionResponse.builder();
+            var isRevokedBranchStep = updates.stream().anyMatch(update -> "branch-step".equals(update.name()));
+            if (isRevokedBranchStep) {
+                // No checkpointToken: the service has revoked this execution's checkpoint token.
+                return responseBuilder.build();
+            }
+            return responseBuilder.checkpointToken("token-x").build();
+        });
+
+        var config = DurableConfig.builder().withDurableExecutionClient(client).build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp()))
+                        .build());
+
+        var output = DurableExecutor.execute(
+                input,
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    // The branch's step checkpoint round-trip returns a token-less response: this must surface
+                    // as a suspension (PENDING), never as a FAILED branch result.
+                    try (var parallel = ctx.parallel("parallel1")) {
+                        parallel.branch(
+                                "branch1",
+                                String.class,
+                                branchCtx -> branchCtx.step("branch-step", String.class, stepCtx -> "branch-result"));
+                        return parallel.get().toString();
+                    }
+                },
+                config);
+
+        assertEquals(ExecutionStatus.PENDING, output.status());
+        assertNull(output.result());
+        assertNull(output.error());
+    }
+
+    /**
+     * A checkpoint response with no checkpointToken for one branch of a map operation must abandon the execution
+     * (PENDING), the same way a revoked token during a parallel branch does.
+     */
+    @Test
+    void checkpointTokenRevoked_duringMapBranch_suspendsExecutionAsPending() {
+        var client = mock(DurableExecutionClient.class);
+        when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
+            List<OperationUpdate> updates = invocation.getArgument(2);
+            var responseBuilder = CheckpointDurableExecutionResponse.builder();
+            var isRevokedItemStep = updates.stream().anyMatch(update -> "map-item-step".equals(update.name()));
+            if (isRevokedItemStep) {
+                // No checkpointToken: the service has revoked this execution's checkpoint token.
+                return responseBuilder.build();
+            }
+            return responseBuilder.checkpointToken("token-x").build();
+        });
+
+        var config = DurableConfig.builder().withDurableExecutionClient(client).build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp()))
+                        .build());
+
+        var output = DurableExecutor.execute(
+                input,
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    // The map item's step checkpoint round-trip returns a token-less response: this must surface
+                    // as a suspension (PENDING), never as a FAILED item result.
+                    var result = ctx.map(
+                            "map1",
+                            List.of("item1"),
+                            String.class,
+                            (item, index, itemCtx) ->
+                                    itemCtx.step("map-item-step", String.class, stepCtx -> "item-result"));
+                    return result.toString();
+                },
+                config);
+
+        assertEquals(ExecutionStatus.PENDING, output.status());
+        assertNull(output.result());
+        assertNull(output.error());
+    }
+
+    /**
+     * A checkpoint response with no checkpointToken is not a revocation when the batch contains the terminal EXECUTION
+     * update: the execution has already finished, so the accepted result stands and the run reports SUCCEEDED.
+     */
+    @Test
+    void checkpointTokenRevoked_terminalExecutionUpdate_stillReportsSucceeded() {
+        var client = mock(DurableExecutionClient.class);
+        when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
+            List<OperationUpdate> updates = invocation.getArgument(2);
+            var responseOperations = new java.util.ArrayList<Operation>();
+            for (var update : updates) {
+                var opBuilder = Operation.builder()
+                        .id(update.id())
+                        .name(update.name())
+                        .subType(update.subType())
+                        .type(update.type());
+                if (update.action() == software.amazon.awssdk.services.lambda.model.OperationAction.START) {
+                    opBuilder.status(OperationStatus.STARTED);
+                } else if (update.action() == software.amazon.awssdk.services.lambda.model.OperationAction.SUCCEED) {
+                    opBuilder.status(OperationStatus.SUCCEEDED);
+                    if (update.type() == OperationType.STEP) {
+                        opBuilder.stepDetails(
+                                StepDetails.builder().result(update.payload()).build());
+                    }
+                }
+                responseOperations.add(opBuilder.build());
+            }
+            var responseBuilder = CheckpointDurableExecutionResponse.builder()
+                    .newExecutionState(CheckpointUpdatedExecutionState.builder()
+                            .operations(responseOperations)
+                            .build());
+            var isTerminalExecutionBatch =
+                    updates.stream().anyMatch(update -> update.type() == OperationType.EXECUTION);
+            if (isTerminalExecutionBatch) {
+                // No checkpointToken, but this batch includes the terminal EXECUTION update:
+                // treat the accepted result as final rather than as a revoked-token suspension.
+                return responseBuilder.build();
+            }
+            return responseBuilder.checkpointToken("token-x").build();
+        });
+
+        var config = DurableConfig.builder().withDurableExecutionClient(client).build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp()))
+                        .build());
+
+        var output = DurableExecutor.execute(
+                input,
+                null,
+                get(String.class),
+                (userInput, ctx) -> ctx.step("step1", String.class, stepCtx -> "done"),
+                config);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertNotNull(output.result());
+    }
+
+    /**
+     * A checkpoint the handler never awaited is still in flight -- and comes back token-less -- when the handler itself
+     * throws. The invocation must report PENDING (not FAILED), the response itself carries no error, but the handler's
+     * real error must still reach plugins.
+     */
+    @Test
+    void checkpointTokenRevoked_whileHandlerErrorInFlight_reportsPendingButStillNotifiesPluginOfRealError()
+            throws Exception {
+        var client = mock(DurableExecutionClient.class);
+        when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
+            List<OperationUpdate> updates = invocation.getArgument(2);
+            var isBackgroundBatch = updates.stream().anyMatch(update -> "bg-op".equals(update.id()));
+            var responseBuilder = CheckpointDurableExecutionResponse.builder();
+            if (isBackgroundBatch) {
+                // Token-less response: the service revoked this execution's checkpoint token.
+                return responseBuilder.build();
+            }
+            return responseBuilder.checkpointToken("token-x").build();
+        });
+
+        var invocationEndInfo = new AtomicReference<InvocationEndInfo>();
+        DurableExecutionPlugin plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationEnd(InvocationEndInfo info) {
+                invocationEndInfo.set(info);
+            }
+        };
+
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(client)
+                .withPlugins(plugin)
+                .build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp()))
+                        .build());
+
+        var output = DurableExecutor.execute(
+                input,
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    var executionManager = ((DurableContextImpl) ctx).getExecutionManager();
+                    // Fire-and-forget: the handler never awaits this checkpoint.
+                    executionManager.sendOperationUpdate(OperationUpdate.builder()
+                            .id("bg-op")
+                            .type(OperationType.STEP)
+                            .action(OperationAction.START)
+                            .build());
+
+                    var deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                    while (!executionManager.isCheckpointTokenRevoked() && System.nanoTime() < deadlineNanos) {
+                        Thread.onSpinWait();
+                    }
+                    assertTrue(
+                            executionManager.isCheckpointTokenRevoked(),
+                            "Timed out waiting for the background checkpoint to revoke the token");
+
+                    throw new RuntimeException("handler failed while a checkpoint was still in flight");
+                },
+                config);
+
+        assertEquals(ExecutionStatus.PENDING, output.status());
+        assertNull(output.result());
+        assertNull(output.error());
+
+        assertNotNull(invocationEndInfo.get());
+        assertEquals(InvocationStatus.PENDING, invocationEndInfo.get().invocationStatus());
+        assertNotNull(invocationEndInfo.get().executionError());
+        assertEquals(
+                "handler failed while a checkpoint was still in flight",
+                invocationEndInfo.get().executionError().getMessage());
+    }
+
+    /**
+     * An oversized result whose checkpoint batch is abandoned because the token was already revoked. The invocation
+     * must report PENDING and return promptly rather than block until the Lambda timeout.
+     */
+    @Test
+    void checkpointTokenRevoked_beforeOversizedResultCheckpoint_returnsPendingPromptly() throws Exception {
+        var client = mock(DurableExecutionClient.class);
+        when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
+            List<OperationUpdate> updates = invocation.getArgument(2);
+            var isBackgroundBatch = updates.stream().anyMatch(update -> "bg-op".equals(update.id()));
+            var responseBuilder = CheckpointDurableExecutionResponse.builder();
+            if (isBackgroundBatch) {
+                return responseBuilder.build();
+            }
+            return responseBuilder.checkpointToken("token-x").build();
+        });
+
+        var config = DurableConfig.builder().withDurableExecutionClient(client).build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp()))
+                        .build());
+
+        var startNanos = System.nanoTime();
+        var output = DurableExecutor.execute(
+                input,
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    var executionManager = ((DurableContextImpl) ctx).getExecutionManager();
+                    executionManager.sendOperationUpdate(OperationUpdate.builder()
+                            .id("bg-op")
+                            .type(OperationType.STEP)
+                            .action(OperationAction.START)
+                            .build());
+
+                    var deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                    while (!executionManager.isCheckpointTokenRevoked() && System.nanoTime() < deadlineNanos) {
+                        Thread.onSpinWait();
+                    }
+                    assertTrue(
+                            executionManager.isCheckpointTokenRevoked(),
+                            "Timed out waiting for the background checkpoint to revoke the token");
+
+                    // Oversized result: handleLargePayload's own checkpoint call must be abandoned by the
+                    // top-of-method latch guard before it ever reaches the client.
+                    return "x".repeat(7 * 1024 * 1024);
+                },
+                config);
+        var elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000;
+
+        assertEquals(ExecutionStatus.PENDING, output.status());
+        assertNull(output.result());
+        assertTrue(elapsedMillis < 5_000, "Expected a prompt PENDING response, took " + elapsedMillis + "ms");
+        // Only the background batch reached the client; the oversized-result checkpoint never did.
+        verify(client, times(1)).checkpoint(any(), any(), any());
+    }
+
+    /**
+     * A background checkpoint the handler never awaited comes back token-less while the handler itself returns a small,
+     * non-oversized result. The invocation must report PENDING (not SUCCEEDED), the result must not be serialized or
+     * checkpointed, and plugins must see the same PENDING outcome as the other revocation paths.
+     */
+    @Test
+    void checkpointTokenRevoked_whileSmallResultInFlight_reportsPendingInsteadOfSucceeded() throws Exception {
+        var client = mock(DurableExecutionClient.class);
+        when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
+            List<OperationUpdate> updates = invocation.getArgument(2);
+            var isBackgroundBatch = updates.stream().anyMatch(update -> "bg-op".equals(update.id()));
+            var responseBuilder = CheckpointDurableExecutionResponse.builder();
+            if (isBackgroundBatch) {
+                // Token-less response: the service revoked this execution's checkpoint token.
+                return responseBuilder.build();
+            }
+            return responseBuilder.checkpointToken("token-x").build();
+        });
+
+        var invocationEndInfo = new AtomicReference<InvocationEndInfo>();
+        DurableExecutionPlugin plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationEnd(InvocationEndInfo info) {
+                invocationEndInfo.set(info);
+            }
+        };
+
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(client)
+                .withPlugins(plugin)
+                .build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp()))
+                        .build());
+
+        var output = DurableExecutor.execute(
+                input,
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    var executionManager = ((DurableContextImpl) ctx).getExecutionManager();
+                    // Fire-and-forget: the handler never awaits this checkpoint.
+                    executionManager.sendOperationUpdate(OperationUpdate.builder()
+                            .id("bg-op")
+                            .type(OperationType.STEP)
+                            .action(OperationAction.START)
+                            .build());
+
+                    var deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                    while (!executionManager.isCheckpointTokenRevoked() && System.nanoTime() < deadlineNanos) {
+                        Thread.onSpinWait();
+                    }
+                    assertTrue(
+                            executionManager.isCheckpointTokenRevoked(),
+                            "Timed out waiting for the background checkpoint to revoke the token");
+
+                    // Small, non-oversized result: this must not be serialized or checkpointed.
+                    return "small-result";
+                },
+                config);
+
+        assertEquals(ExecutionStatus.PENDING, output.status());
+        assertNull(output.result());
+        // Only the background batch reached the client; the small result's own terminal update never did.
+        verify(client, times(1)).checkpoint(any(), any(), any());
+
+        assertNotNull(invocationEndInfo.get());
+        assertEquals(InvocationStatus.PENDING, invocationEndInfo.get().invocationStatus());
+        assertNull(invocationEndInfo.get().executionError());
     }
 
     private Operation executionOp() {

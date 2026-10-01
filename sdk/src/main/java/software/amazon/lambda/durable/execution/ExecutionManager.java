@@ -109,7 +109,8 @@ public class ExecutionManager implements SafeCloseable {
                 input.checkpointToken(),
                 this::onCheckpointComplete,
                 this::tryStartCheckpointProcessing,
-                this::finishCheckpointProcessing);
+                this::finishCheckpointProcessing,
+                this::signalSuspensionForRevokedCheckpointToken);
 
         this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()
                 .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
@@ -663,11 +664,33 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     /**
+     * Signals suspension without throwing. CheckpointManager calls this from inside its checkpoint-response handling
+     * when a checkpoint response omits the checkpoint token. That call site must not itself be interrupted by control
+     * flow: it still has its own cleanup to run (skipping the token-less response's execution state) and throws its own
+     * descriptive SuspendExecutionException afterward. This wrapper only flips the shared suspend state so blocked
+     * operations wake the same way suspension already wakes them.
+     */
+    void signalSuspensionForRevokedCheckpointToken() {
+        signalSuspension();
+    }
+
+    /**
      * returns {@code true} if the execution is terminated exceptionally (with a {@link SuspendExecutionException} or an
      * unrecoverable error).
      */
     public boolean isExecutionCompletedExceptionally() {
         return executionExceptionFuture.isCompletedExceptionally();
+    }
+
+    /**
+     * Returns {@code true} once a checkpoint response has omitted this invocation's checkpoint token. When a checkpoint
+     * response does not include a checkpoint token, the current invocation must return PENDING and must not issue
+     * further checkpoints. DurableExecutor consults this before any exit that would otherwise report SUCCEEDED or
+     * FAILED, because the token is spent and resending it, or reporting an outcome the service was never told about, is
+     * not possible once this is {@code true}.
+     */
+    public boolean isCheckpointTokenRevoked() {
+        return checkpointManager.isCheckpointTokenRevoked();
     }
 
     private void stopAllOperations(Throwable cause) {

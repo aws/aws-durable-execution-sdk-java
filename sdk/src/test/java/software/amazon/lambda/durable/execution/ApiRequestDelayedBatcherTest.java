@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -18,9 +19,12 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -188,6 +192,83 @@ class ApiRequestDelayedBatcherTest {
         });
 
         CompletableFuture.allOf(resultFuture1, resultFuture2, resultFuture3).join();
+    }
+
+    @Test
+    void whenAbandoned_delayedItemsFailWithoutExecutingBatch() {
+        Supplier<RuntimeException> cause = () -> new RuntimeException("abandoned");
+        var future1 = cut.submit(input, LONG_DELAY);
+        var future2 = cut.submit(input, LONG_DELAY);
+
+        cut.abandon(cause);
+
+        var exception1 = assertThrows(Exception.class, () -> future1.get(50, TimeUnit.MILLISECONDS));
+        var exception2 = assertThrows(Exception.class, () -> future2.get(50, TimeUnit.MILLISECONDS));
+        assertEquals("abandoned", exception1.getCause().getMessage());
+        assertEquals("abandoned", exception2.getCause().getMessage());
+        // Each rejected caller gets its own exception, so a stack trace points at the caller that was waiting.
+        assertNotSame(exception1.getCause(), exception2.getCause());
+        verify(doBatchAction, never()).accept(any());
+    }
+
+    @Test
+    void whenAbandoned_flushingQueueItemsFailWithoutExecuting() throws Exception {
+        var firstBatchStarted = new CountDownLatch(1);
+        var releaseFirstBatch = new CountDownLatch(1);
+        var executions = new AtomicInteger();
+        Consumer<List<Input>> blockingBatchAction = requests -> {
+            executions.incrementAndGet();
+            firstBatchStarted.countDown();
+            try {
+                assertTrue(releaseFirstBatch.await(5, TimeUnit.SECONDS));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+        };
+        var singleItemCut =
+                new ApiRequestDelayedBatcher<>(1, MAX_BATCH_BINARY_SIZE_IN_BYTES, item -> 0, blockingBatchAction);
+        var firstFuture = singleItemCut.submit(input, LONG_DELAY);
+        var queuedFuture1 = singleItemCut.submit(input, LONG_DELAY);
+        var queuedFuture2 = singleItemCut.submit(input, SHORT_DELAY);
+        assertTrue(firstBatchStarted.await(5, TimeUnit.SECONDS));
+
+        Supplier<RuntimeException> cause = () -> new RuntimeException("abandoned");
+        singleItemCut.abandon(cause);
+
+        var exception1 = assertThrows(Exception.class, () -> queuedFuture1.get(50, TimeUnit.MILLISECONDS));
+        var exception2 = assertThrows(Exception.class, () -> queuedFuture2.get(50, TimeUnit.MILLISECONDS));
+        assertEquals("abandoned", exception1.getCause().getMessage());
+        assertEquals("abandoned", exception2.getCause().getMessage());
+        assertNotSame(exception1.getCause(), exception2.getCause());
+        assertFalse(firstFuture.isDone());
+        assertEquals(1, executions.get());
+
+        releaseFirstBatch.countDown();
+        firstFuture.get(50, TimeUnit.MILLISECONDS);
+    }
+
+    @Test
+    void whenAbandoned_newItemsFailWithoutExecutingBatch() {
+        cut.abandon(() -> new RuntimeException("abandoned"));
+
+        var future = cut.submit(input, SHORT_DELAY);
+
+        var exception = assertThrows(Exception.class, () -> future.get(50, TimeUnit.MILLISECONDS));
+        assertEquals("abandoned", exception.getCause().getMessage());
+        verify(doBatchAction, never()).accept(any());
+    }
+
+    @Test
+    void whenAbandonedMultipleTimes_firstCauseWins() {
+        cut.abandon(() -> new RuntimeException("first"));
+
+        cut.abandon(() -> new RuntimeException("second"));
+        var future = cut.submit(input, SHORT_DELAY);
+
+        var exception = assertThrows(Exception.class, () -> future.get(50, TimeUnit.MILLISECONDS));
+        assertEquals("first", exception.getCause().getMessage());
+        verify(doBatchAction, never()).accept(any());
     }
 
     @Test

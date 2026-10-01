@@ -13,11 +13,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.retry.PollingStrategies;
@@ -34,6 +36,8 @@ class CheckpointManager {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
     private static final int MAX_ITEM_COUNT = 200; // max updates in one batch
     private static final int FIRST_ATTEMPT = 1;
+    private static final String REVOKED_CHECKPOINT_TOKEN_MESSAGE =
+            "The checkpoint response did not include a checkpoint token";
     private static final Logger logger = LoggerFactory.getLogger(CheckpointManager.class);
 
     private final Consumer<List<Operation>> callback;
@@ -43,14 +47,18 @@ class CheckpointManager {
     private final DurableConfig config;
     private final BooleanSupplier tryStartCheckpointProcessing;
     private final Runnable finishCheckpointProcessing;
+    private final Runnable signalSuspensionForRevokedCheckpointToken;
     private String checkpointToken;
+    // Latched true the moment a checkpoint response omits the checkpoint token. Never cleared: once that happens,
+    // this invocation must not record anything further on this token, on any API.
+    private volatile boolean checkpointTokenRevoked;
 
     CheckpointManager(
             DurableConfig config,
             String durableExecutionArn,
             String checkpointToken,
             Consumer<List<Operation>> callback) {
-        this(config, durableExecutionArn, checkpointToken, callback, () -> true, () -> {});
+        this(config, durableExecutionArn, checkpointToken, callback, () -> true, () -> {}, () -> {});
     }
 
     CheckpointManager(
@@ -59,15 +67,22 @@ class CheckpointManager {
             String checkpointToken,
             Consumer<List<Operation>> callback,
             BooleanSupplier tryStartCheckpointProcessing,
-            Runnable finishCheckpointProcessing) {
+            Runnable finishCheckpointProcessing,
+            Runnable signalSuspensionForRevokedCheckpointToken) {
         this.config = config;
         this.durableExecutionArn = durableExecutionArn;
         this.callback = callback;
         this.checkpointToken = checkpointToken;
         this.tryStartCheckpointProcessing = tryStartCheckpointProcessing;
         this.finishCheckpointProcessing = finishCheckpointProcessing;
+        this.signalSuspensionForRevokedCheckpointToken = signalSuspensionForRevokedCheckpointToken;
         this.checkpointApiRequestDelayedBatcher = new ApiRequestDelayedBatcher<>(
                 MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointManager::estimateSize, this::checkpointBatch);
+    }
+
+    /** Returns {@code true} once the service has withdrawn this invocation's checkpoint token. */
+    boolean isCheckpointTokenRevoked() {
+        return checkpointTokenRevoked;
     }
 
     /**
@@ -150,7 +165,11 @@ class CheckpointManager {
 
     /** Cancels all polling futures and waits for all pending checkpoint requests to complete */
     void shutdown() {
-        // complete all polling futures with an exception
+        failPollingFutures(() -> new IllegalStateException("CheckpointManager shutdown"));
+        checkpointApiRequestDelayedBatcher.shutdown();
+    }
+
+    private void failPollingFutures(Supplier<? extends Throwable> cause) {
         List<List<CompletableFuture<Operation>>> allFutures;
         synchronized (pollingFutures) {
             allFutures = new ArrayList<>(pollingFutures.values());
@@ -158,11 +177,8 @@ class CheckpointManager {
         }
 
         for (var futures : allFutures) {
-            futures.forEach(f -> f.completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
+            futures.forEach(future -> future.completeExceptionally(cause.get()));
         }
-
-        // wait for all non-polling checkpoint requests to complete
-        checkpointApiRequestDelayedBatcher.shutdown();
     }
 
     /**
@@ -206,6 +222,17 @@ class CheckpointManager {
                 return;
             }
 
+            // An earlier batch already came back without a checkpoint token, so this invocation must not issue
+            // further checkpoints: resending the spent token would fail one call later with
+            // InvalidParameterValueException, so nothing in this batch can go out. Throw rather than return: a plain
+            // return would let the batcher mark this batch's futures successful (see
+            // ApiRequestDelayedBatcher#flushQueue), falsely telling callers like handleLargePayload that unsent work
+            // was recorded. This check must run before tryStartCheckpointProcessing, which is paired with
+            // finishCheckpointProcessing in the finally block below and must not be started without also finishing.
+            if (checkpointTokenRevoked) {
+                throw new SuspendExecutionException("The checkpoint response did not include a checkpoint token");
+            }
+
             // Starting the backend request is coordinated with the last-thread suspension decision. Once suspension
             // wins that race, no later poll/checkpoint may advance backend state behind the PENDING response.
             if (!tryStartCheckpointProcessing.getAsBoolean()) {
@@ -227,8 +254,38 @@ class CheckpointManager {
                 logger.debug(
                         "Durable checkpoint API called (latency={}ns): {}.", System.nanoTime() - startTime, response);
 
-                // Notify callback of completion
-                checkpointToken = response.checkpointToken();
+                if (response.checkpointToken() == null) {
+                    // The response omitted the checkpoint token. If this batch carried the execution's own
+                    // terminal update, the execution is already finished, so the call reports success instead: fall
+                    // through and process the response as usual. Otherwise, this invocation must return PENDING and
+                    // must not issue further checkpoints: never send the spent token again, on this API or on
+                    // GetDurableExecutionState pagination.
+                    var isTerminalExecutionUpdate =
+                            request.stream().anyMatch(update -> update.type() == OperationType.EXECUTION);
+                    if (!isTerminalExecutionUpdate) {
+                        handleRevokedCheckpointToken();
+                        // The updates in THIS batch were durably recorded by the service -- that is a server-side
+                        // fact and nothing here changes it. But resolving this batch's futures successfully would let
+                        // the handler thread run on: StepOperation.executeStepLogic(), for example, calls
+                        // checkpointStarted() and then runs the user function, whose result can never be recorded
+                        // once the token is gone. On replay that step would run again (AT_LEAST_ONCE) or never run
+                        // (AT_MOST_ONCE) while its side effect already happened. So this batch's own futures must
+                        // complete exceptionally too, exactly like every other termination path: throwing here
+                        // (instead of leaving them unresolved, which would block the invocation until the Lambda
+                        // timeout) reaches BaseDurableOperation.java:290-297, which treats SuspendExecutionException
+                        // as expected control flow, not a customer-visible error. Do not apply this response's new
+                        // execution state, resolve pollers, or paginate -- the handler must not observe anything past
+                        // the point where the service stopped accepting checkpoints from this invocation.
+                        throw new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE);
+                    }
+                    logger.info(
+                            "Checkpoint token withheld on durable execution {}'s terminal update; execution is"
+                                    + " finished, nothing left to suspend.",
+                            durableExecutionArn);
+                } else {
+                    checkpointToken = response.checkpointToken();
+                }
+
                 if (response.newExecutionState() != null) {
                     // fetch all pages of operations
                     var operations = fetchAllPages(response.newExecutionState());
@@ -260,6 +317,26 @@ class CheckpointManager {
                 finishCheckpointProcessing.run();
             }
         }
+    }
+
+    // Latches checkpointTokenRevoked and signals suspension. Called only when the batch that surfaced the
+    // token-less response did not carry the execution's own terminal update.
+    private void handleRevokedCheckpointToken() {
+        checkpointTokenRevoked = true;
+        logger.warn(
+                "The checkpoint response for durable execution {} did not include a checkpoint token. The SDK will"
+                        + " stop checkpointing and report the invocation as PENDING.",
+                durableExecutionArn);
+        // Runs the shared suspend mechanism (stopAllOperations + executionExceptionFuture) without throwing: this
+        // call site still has cleanup of its own to do and throws its own descriptive SuspendExecutionException
+        // right after, so ExecutionManager's copy of the exception must not propagate from here instead.
+        signalSuspensionForRevokedCheckpointToken.run();
+        // A fresh exception per rejected caller, so each stack trace is the waiting caller's own rather than this
+        // detecting thread's.
+        Supplier<SuspendExecutionException> cause =
+                () -> new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE);
+        failPollingFutures(cause);
+        checkpointApiRequestDelayedBatcher.abandon(cause);
     }
 
     private static int estimateSize(OperationUpdate update) {

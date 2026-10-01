@@ -7,4 +7,9 @@ public class SuspendExecutionException extends DurableExecutionError {
     public SuspendExecutionException() {
         super("Execution suspended for wait operation");
     }
+
+    /** @param message identifies why the invocation is being suspended, for log correlation. */
+    public SuspendExecutionException(String message) {
+        super(message);
+    }
 }

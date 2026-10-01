@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -79,7 +80,13 @@ class CheckpointManagerTest {
     void checkpoint_skipsApiCallWhenExecutionAlreadyCompleted() throws Exception {
         var finishCheckpointProcessing = mock(Runnable.class);
         var guardedBatcher = new CheckpointManager(
-                config, "arn:test", "token-1", callbackOperations::addAll, () -> false, finishCheckpointProcessing);
+                config,
+                "arn:test",
+                "token-1",
+                callbackOperations::addAll,
+                () -> false,
+                finishCheckpointProcessing,
+                () -> {});
         var update = OperationUpdate.builder()
                 .id("op-1")
                 .type(OperationType.STEP)
@@ -660,6 +667,187 @@ class CheckpointManagerTest {
 
         var ex = assertThrows(Exception.class, () -> future.get(200, TimeUnit.MILLISECONDS));
         assertInstanceOf(UnrecoverableDurableExecutionException.class, ex.getCause());
+    }
+
+    // --- Checkpoint token revocation tests (a checkpoint response with no checkpoint token) ---
+
+    @Test
+    void checkpointBatch_revokedToken_updatesAreDurableButWaitersCompleteExceptionally() throws Exception {
+        var signalSuspension = mock(Runnable.class);
+        var revocableBatcher = new CheckpointManager(
+                config, "arn:test", "token-1", callbackOperations::addAll, () -> true, () -> {}, signalSuspension);
+
+        when(client.checkpoint(anyString(), anyString(), anyList()))
+                .thenReturn(CheckpointDurableExecutionResponse.builder()
+                        .newExecutionState(CheckpointUpdatedExecutionState.builder()
+                                .operations(
+                                        List.of(Operation.builder().id("op-1").build()))
+                                .build())
+                        .build());
+
+        var future = revocableBatcher.checkpoint(OperationUpdate.builder()
+                .id("op-1")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build());
+
+        // The update itself was durably recorded by the service -- that is a server-side fact, independent of what
+        // the local future does. But the future must still complete exceptionally: resolving it successfully would
+        // let the handler thread run on (e.g. execute a step's user function) past the point where the service can
+        // ever be told the result, which is the exact bug this fix removes.
+        var ex = assertThrows(Exception.class, () -> future.get(200, TimeUnit.MILLISECONDS));
+        assertInstanceOf(SuspendExecutionException.class, ex.getCause());
+
+        assertTrue(revocableBatcher.isCheckpointTokenRevoked());
+        verify(signalSuspension).run();
+        // The response's new execution state must not be applied: it belongs to a token this invocation can no
+        // longer act on, and applying it would let the handler run on past the point where the service can still be
+        // told anything.
+        assertTrue(callbackOperations.isEmpty());
+    }
+
+    @Test
+    void checkpointBatch_revokedTokenOnTerminalExecutionUpdate_returnsNormally() throws Exception {
+        var signalSuspension = mock(Runnable.class);
+        var revocableBatcher = new CheckpointManager(
+                config, "arn:test", "token-1", callbackOperations::addAll, () -> true, () -> {}, signalSuspension);
+
+        when(client.checkpoint(anyString(), anyString(), anyList()))
+                .thenReturn(CheckpointDurableExecutionResponse.builder().build());
+
+        var future = revocableBatcher.checkpoint(OperationUpdate.builder()
+                .id("exec-op")
+                .type(OperationType.EXECUTION)
+                .action(OperationAction.SUCCEED)
+                .payload("\"result\"")
+                .build());
+
+        // The execution's own terminal update was accepted; nothing left to suspend.
+        future.get(200, TimeUnit.MILLISECONDS);
+
+        assertFalse(revocableBatcher.isCheckpointTokenRevoked());
+        verify(signalSuspension, never()).run();
+    }
+
+    @Test
+    void checkpointBatch_revokedToken_abandonsDelayedCheckpoints() throws Exception {
+        var revocationStarted = new CountDownLatch(1);
+        var returnRevokedResponse = new CountDownLatch(1);
+        var revocableBatcher = new CheckpointManager(
+                config, "arn:test", "token-1", callbackOperations::addAll, () -> true, () -> {}, () -> {});
+
+        when(client.checkpoint(anyString(), anyString(), anyList())).thenAnswer(invocation -> {
+            revocationStarted.countDown();
+            assertTrue(returnRevokedResponse.await(5, TimeUnit.SECONDS));
+            return CheckpointDurableExecutionResponse.builder().build();
+        });
+
+        var firstFuture = revocableBatcher.checkpoint(OperationUpdate.builder()
+                .id("op-1")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build());
+        assertTrue(revocationStarted.await(5, TimeUnit.SECONDS));
+
+        var delayedFuture = revocableBatcher.checkpoint(OperationUpdate.builder()
+                .id("op-2")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build());
+        returnRevokedResponse.countDown();
+
+        var firstException = assertThrows(Exception.class, () -> firstFuture.get(200, TimeUnit.MILLISECONDS));
+        var delayedException = assertThrows(Exception.class, () -> delayedFuture.get(200, TimeUnit.MILLISECONDS));
+        assertInstanceOf(SuspendExecutionException.class, firstException.getCause());
+        assertInstanceOf(SuspendExecutionException.class, delayedException.getCause());
+        // A distinct exception per caller, so each stack trace is the waiting caller's own.
+        assertNotSame(firstException.getCause(), delayedException.getCause());
+        verify(client, times(1)).checkpoint(anyString(), anyString(), anyList());
+    }
+
+    @Test
+    void checkpointBatch_revokedToken_failsPendingPollersWithSuspendExecutionException() throws Exception {
+        var revocableBatcher = new CheckpointManager(
+                config, "arn:test", "token-1", callbackOperations::addAll, () -> true, () -> {}, () -> {});
+        when(client.checkpoint(anyString(), anyString(), anyList()))
+                .thenReturn(CheckpointDurableExecutionResponse.builder().build());
+
+        var pollingFuture =
+                revocableBatcher.pollForUpdate("poll-op", Instant.now().plusSeconds(10));
+        var checkpointFuture = revocableBatcher.checkpoint(OperationUpdate.builder()
+                .id("checkpoint-op")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build());
+
+        var checkpointException = assertThrows(Exception.class, () -> checkpointFuture.get(200, TimeUnit.MILLISECONDS));
+        var pollingException = assertThrows(Exception.class, () -> pollingFuture.get(200, TimeUnit.MILLISECONDS));
+        assertInstanceOf(SuspendExecutionException.class, checkpointException.getCause());
+        assertInstanceOf(SuspendExecutionException.class, pollingException.getCause());
+        assertNotSame(checkpointException.getCause(), pollingException.getCause());
+        verify(client, times(1)).checkpoint(anyString(), anyString(), anyList());
+    }
+
+    @Test
+    void checkpointBatch_afterRevocation_makesNoFurtherApiCalls() throws Exception {
+        var revocableBatcher = new CheckpointManager(
+                config, "arn:test", "token-1", callbackOperations::addAll, () -> true, () -> {}, () -> {});
+
+        when(client.checkpoint(anyString(), anyString(), anyList()))
+                .thenReturn(CheckpointDurableExecutionResponse.builder().build());
+
+        var firstUpdate = OperationUpdate.builder()
+                .id("op-1")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build();
+        var firstFuture = revocableBatcher.checkpoint(firstUpdate);
+        // The service responded to this batch, so the update is durably recorded, but the future must still
+        // complete exceptionally: it must not let the handler thread run on past the revoked token.
+        var firstEx = assertThrows(Exception.class, () -> firstFuture.get(200, TimeUnit.MILLISECONDS));
+        assertInstanceOf(SuspendExecutionException.class, firstEx.getCause());
+
+        verify(client, times(1)).checkpoint(anyString(), anyString(), anyList());
+
+        // A second batch, submitted after the token was withdrawn, must never reach the client: resending the
+        // spent token is exactly the bug this fix removes.
+        var secondUpdate = OperationUpdate.builder()
+                .id("op-2")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build();
+        var secondFuture = revocableBatcher.checkpoint(secondUpdate);
+        var ex = assertThrows(Exception.class, () -> secondFuture.get(200, TimeUnit.MILLISECONDS));
+        assertInstanceOf(SuspendExecutionException.class, ex.getCause());
+
+        verify(client, times(1)).checkpoint(anyString(), anyString(), anyList());
+    }
+
+    @Test
+    void checkpointBatch_afterRevocation_fetchAllPagesIsNeverInvokedWithSpentToken() throws Exception {
+        var revocableBatcher = new CheckpointManager(
+                config, "arn:test", "token-1", callbackOperations::addAll, () -> true, () -> {}, () -> {});
+
+        when(client.checkpoint(anyString(), anyString(), anyList()))
+                .thenReturn(CheckpointDurableExecutionResponse.builder().build());
+
+        var update = OperationUpdate.builder()
+                .id("op-1")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build();
+        var future = revocableBatcher.checkpoint(update);
+        assertThrows(Exception.class, () -> future.get(200, TimeUnit.MILLISECONDS));
+
+        // A second, later batch must never call getExecutionState with the now-spent token.
+        var secondFuture = revocableBatcher.checkpoint(OperationUpdate.builder()
+                .id("op-2")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build());
+        assertThrows(Exception.class, () -> secondFuture.get(200, TimeUnit.MILLISECONDS));
+
+        verify(client, never()).getExecutionState(anyString(), anyString(), anyString());
     }
 
     @Test
