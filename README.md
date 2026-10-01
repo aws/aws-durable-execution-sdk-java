@@ -79,8 +79,8 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 
 ## Filesystem Serialization
 
-For large operation payloads, the optional [Filesystem SerDes module](extra-filesystem-serdes/README.md)
-stores values on a durable shared mount and checkpoints a small file reference.
+For large operation payloads, the SDK includes [Filesystem SerDes](docs/advanced/filesystem-serdes.md),
+which stores values on a durable shared mount and checkpoints a small file reference.
 
 ## Deployment
 

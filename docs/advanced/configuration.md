@@ -97,9 +97,8 @@ Provider-specific settings can use namespaced environment variables. If an appli
 
 ## Filesystem serialization
 
-The optional [Filesystem SerDes module](../../extra-filesystem-serdes/README.md)
-provides `ALWAYS` and `OVERFLOW` modes, URI/hash paths, delegate serializers, and
-previews. Configure it per operation with `serDes(...)`; keep the global serializer
+The SDK includes [Filesystem SerDes](filesystem-serdes.md), which provides
+`ALWAYS` and `OVERFLOW` modes, URI/hash paths, delegate serializers, and previews. Configure it per operation with `serDes(...)`; keep the global serializer
 for normal Lambda input/output. It requires a durable shared mount and external
 file retention.
 

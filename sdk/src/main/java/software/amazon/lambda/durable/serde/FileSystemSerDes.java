@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.extra.filesystem;
+package software.amazon.lambda.durable.serde;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
@@ -29,9 +29,6 @@ import java.util.Map;
 import java.util.function.Function;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.SerDesException;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
-import software.amazon.lambda.durable.serde.SerDes;
-import software.amazon.lambda.durable.serde.SerDesContext;
 
 /**
  * Stores operation payloads on a durable shared filesystem, retaining a small JSON envelope in checkpoints.

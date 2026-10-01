@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.extra.filesystem;
+package software.amazon.lambda.durable.serde;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -20,8 +20,6 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.SerDesException;
-import software.amazon.lambda.durable.serde.JacksonSerDes;
-import software.amazon.lambda.durable.serde.SerDesContext;
 
 class FileSystemSerDesTest {
     private static final SerDesContext CONTEXT = new SerDesContext(

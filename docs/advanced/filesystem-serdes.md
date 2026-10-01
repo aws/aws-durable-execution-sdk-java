@@ -4,14 +4,14 @@
 checkpoints a small JSON file reference. It follows the .NET SDK's per-operation
 serializer model and the JavaScript/Python SDKs' always/overflow storage modes.
 
-## Dependency
+## Availability
 
-Use the same version as your core SDK:
+`FileSystemSerDes` is included in the main SDK artifact:
 
 ```xml
 <dependency>
     <groupId>software.amazon.lambda.durable</groupId>
-    <artifactId>aws-durable-execution-sdk-java-extra-filesystem-serdes</artifactId>
+    <artifactId>aws-durable-execution-sdk-java</artifactId>
     <version>VERSION</version>
 </dependency>
 ```
@@ -22,9 +22,9 @@ Use the same version as your core SDK:
 import java.nio.file.Path;
 import java.util.Map;
 import software.amazon.lambda.durable.config.StepConfig;
-import software.amazon.lambda.durable.extra.filesystem.FileSystemPathEncoding;
-import software.amazon.lambda.durable.extra.filesystem.FileSystemSerDes;
-import software.amazon.lambda.durable.extra.filesystem.FileSystemStorageMode;
+import software.amazon.lambda.durable.serde.FileSystemPathEncoding;
+import software.amazon.lambda.durable.serde.FileSystemSerDes;
+import software.amazon.lambda.durable.serde.FileSystemStorageMode;
 
 var files = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
         .storageMode(FileSystemStorageMode.OVERFLOW)
@@ -137,7 +137,7 @@ format uses base64 bytes.
 ## Validation
 
 ```bash
-mvn -pl extra-filesystem-serdes -am \
+mvn -pl sdk-integration-tests -am \
     -Dtest=FileSystemSerDesTest,FileSystemSerDesIntegrationTest \
     -Dsurefire.failIfNoSpecifiedTests=false test
 ```

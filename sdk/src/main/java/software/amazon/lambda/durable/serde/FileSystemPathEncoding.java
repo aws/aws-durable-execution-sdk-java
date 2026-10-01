@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-package software.amazon.lambda.durable.extra.filesystem;
+package software.amazon.lambda.durable.serde;
 
 /** Controls the encoding of execution and entity identities in filesystem paths. */
 public enum FileSystemPathEncoding {

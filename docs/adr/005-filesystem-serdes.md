@@ -32,10 +32,12 @@ retries and polling can serialize more than one value for an identity. External
 callback/invoke results can have a different producer identity from their consumer.
 References must therefore be self-contained and remain readable after later writes.
 
-Publish `FileSystemSerDes` in the optional
-`aws-durable-execution-sdk-java-extra-filesystem-serdes` artifact, with package
-`software.amazon.lambda.durable.extra.filesystem`. Core depends only on the
-context contract; it has no filesystem implementation dependency.
+Include `FileSystemSerDes` and its storage/path options in the main
+`aws-durable-execution-sdk-java` artifact under
+`software.amazon.lambda.durable.serde`, alongside the existing serializers.
+The implementation uses only the JDK and Jackson already required by the SDK,
+so a separate artifact would add packaging and release overhead without reducing
+dependencies.
 
 The filesystem serializer wraps a configurable delegate, supports `ALWAYS` and
 `OVERFLOW` modes, URI/hash paths, and optional custom previews. Overflow measures
@@ -65,8 +67,9 @@ arrange compatible envelopes and shared storage on both sides of those boundarie
   do this; delayed mount synchronization can also lose recent writes.
 - The application controls the mount. Path confinement and symlink checks protect
   against malformed references but do not sandbox another process with mount access.
-- The optional artifact participates in formatting, unit/integration tests,
-  aggregated coverage, and Maven publication. No third-party library is added.
+- Filesystem serialization uses the existing SDK build, coverage, and publication.
+  Unit tests live in `sdk`; local-runner integration tests live in
+  `sdk-integration-tests`. No module or third-party library is added.
 
 ## Alternatives
 
@@ -82,5 +85,5 @@ Overwriting one file per entity uses less storage but can corrupt an older
 checkpoint when a write succeeds and checkpoint publication fails. Immutable
 references are required instead.
 
-See the [filesystem module guide](../../extra-filesystem-serdes/README.md) for
+See the [filesystem serialization guide](../advanced/filesystem-serdes.md) for
 configuration, wire format, storage lifetime, and validation.
