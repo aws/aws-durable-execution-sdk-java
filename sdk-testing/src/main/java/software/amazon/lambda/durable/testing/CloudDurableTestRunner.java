@@ -161,7 +161,7 @@ public class CloudDurableTestRunner<I, O> {
 
             // Process events into TestResult
             var processor = new HistoryEventProcessor();
-            var result = processor.processEvents(events, outputType, serDes);
+            var result = processor.processEvents(events, outputType, serDes, executionArn);
             this.lastResult = result;
             return result;
         } catch (Exception e) {
