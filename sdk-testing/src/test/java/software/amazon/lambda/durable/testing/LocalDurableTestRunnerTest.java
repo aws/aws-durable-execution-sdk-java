@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
@@ -113,5 +114,57 @@ class LocalDurableTestRunnerTest {
         assertEquals(2, executionStartTimes.size());
         assertNotNull(executionStartTimes.get(0));
         assertEquals(executionStartTimes.get(0), executionStartTimes.get(1));
+    }
+
+    @Test
+    void pausedExecutionReportsPendingAndResumeReplaysTheAbandonedWork() {
+        var stepRuns = new AtomicInteger();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            ctx.step("only-step", String.class, stepCtx -> {
+                stepRuns.incrementAndGet();
+                return "stepped";
+            });
+            return "done";
+        });
+
+        runner.pauseExecution();
+        var paused = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.PENDING, paused.getStatus());
+
+        runner.resumeExecution();
+        var resumed = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, resumed.getStatus());
+        assertEquals("done", resumed.getResult(String.class));
+        assertEquals("stepped", runner.getOperation("only-step").getStepResult(String.class));
+        // Once in the paused invocation, whose result could not be recorded, and once on replay after the resume.
+        assertEquals(2, stepRuns.get());
+    }
+
+    @Test
+    void runUntilCompleteStopsWhilePausedAndFinishesAfterResume() {
+        var stepRuns = new AtomicInteger();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            ctx.wait("hold", Duration.ofMinutes(5));
+            return ctx.step("after-wait", String.class, stepCtx -> {
+                stepRuns.incrementAndGet();
+                return "done";
+            });
+        });
+
+        assertEquals(ExecutionStatus.PENDING, runner.run("input").getStatus());
+
+        runner.pauseExecution();
+        assertEquals(ExecutionStatus.PENDING, runner.runUntilComplete("input").getStatus());
+        // The wait is advanceable, so without the paused check runUntilComplete would advance it and re-invoke,
+        // running the step body for a result that no checkpoint could record.
+        assertEquals(0, stepRuns.get());
+
+        runner.resumeExecution();
+        var resumed = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, resumed.getStatus());
+        assertEquals("done", resumed.getResult(String.class));
     }
 }

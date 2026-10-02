@@ -18,6 +18,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
@@ -265,14 +266,39 @@ public class LocalDurableTestRunner<I, O> {
         for (int i = 0; i < MAX_INVOCATIONS; i++) {
             result = run(input);
 
-            if (result.getStatus() != ExecutionStatus.PENDING || !storage.advanceTime()) {
+            if (result.getStatus() != ExecutionStatus.PENDING || storage.isPaused() || !storage.advanceTime()) {
                 // break the loop if
                 // - Return SUCCEEDED or FAILED - we're done
+                // - Paused: no checkpoint can be recorded, so every further invocation would report PENDING again
                 // - Return PENDING and let test manually advance operations if no operations can be auto advanced
                 break;
             }
         }
         return result;
+    }
+
+    /**
+     * Answers every later checkpoint without a checkpoint token, until {@link #resumeExecution()}.
+     *
+     * <p>The invocation running at the time stops checkpointing and returns PENDING. The checkpoint that received the
+     * token-less response was recorded, so its updates survive; work the SDK had not yet sent is abandoned and replays
+     * after {@link #resumeExecution()}. {@link #runUntilComplete(Object)} returns as soon as it sees that PENDING,
+     * because no further invocation could record anything either.
+     *
+     * <p>Advance waits and complete callbacks while paused as usual; the next invocation observes them only once the
+     * execution is resumed, since this runner invokes the handler only when a test asks it to.
+     *
+     * <p>Idempotent.
+     */
+    @Experimental
+    public void pauseExecution() {
+        storage.pause();
+    }
+
+    /** Answers checkpoints with a checkpoint token again, so the next {@code run} replays the abandoned work. */
+    @Experimental
+    public void resumeExecution() {
+        storage.resume();
     }
 
     /** Resets a named step operation to STARTED status, simulating a checkpoint failure. */

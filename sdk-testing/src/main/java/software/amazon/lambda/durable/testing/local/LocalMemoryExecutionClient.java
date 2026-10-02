@@ -38,27 +38,46 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     private final List<OperationUpdate> operationUpdates = new CopyOnWriteArrayList<>();
     private final Map<String, Operation> updatedOperations = new HashMap<>();
     private final Set<String> operationIdsUpdatedSinceLastInvocation = new HashSet<>();
+    private volatile boolean paused;
 
     @Override
     public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {
         operationUpdates.addAll(updates);
         updates.forEach(update -> applyUpdate(update, true));
 
-        var newToken = UUID.randomUUID().toString();
-
         CheckpointDurableExecutionResponse response;
         synchronized (updatedOperations) {
-            response = CheckpointDurableExecutionResponse.builder()
-                    .checkpointToken(newToken)
+            var responseBuilder = CheckpointDurableExecutionResponse.builder()
                     .newExecutionState(CheckpointUpdatedExecutionState.builder()
                             .operations(updatedOperations.values())
-                            .build())
-                    .build();
+                            .build());
+            if (!paused) {
+                responseBuilder.checkpointToken(UUID.randomUUID().toString());
+            }
+            response = responseBuilder.build();
 
             // updatedOperations was copied into response, so clearing it is safe here
             updatedOperations.clear();
         }
         return response;
+    }
+
+    /**
+     * Answers every later checkpoint without a checkpoint token, until {@link #resume()}. Those checkpoints are still
+     * recorded, so the next invocation replays them.
+     */
+    public void pause() {
+        paused = true;
+    }
+
+    /** Answers checkpoints with a checkpoint token again. */
+    public void resume() {
+        paused = false;
+    }
+
+    /** Returns {@code true} while checkpoints are answered without a checkpoint token. */
+    public boolean isPaused() {
+        return paused;
     }
 
     @Override

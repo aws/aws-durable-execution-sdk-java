@@ -10,6 +10,7 @@ import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.InvocationType;
 import software.amazon.awssdk.services.lambda.model.InvokeRequest;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.cloud.HistoryEventProcessor;
@@ -215,5 +216,22 @@ public class CloudDurableTestRunner<I, O> {
             throw new IllegalStateException("No execution has been run yet");
         }
         return lastResult.getOperation(name);
+    }
+
+    /**
+     * Always throws. Withholding a checkpoint token is a behaviour of the in-memory checkpoint client, and a cloud
+     * execution checkpoints against the service instead.
+     */
+    @Experimental
+    public void pauseExecution() {
+        throw new UnsupportedOperationException(
+                "pauseExecution is supported by LocalDurableTestRunner only, not by CloudDurableTestRunner");
+    }
+
+    /** Always throws, for the same reason as {@link #pauseExecution()}. */
+    @Experimental
+    public void resumeExecution() {
+        throw new UnsupportedOperationException(
+                "resumeExecution is supported by LocalDurableTestRunner only, not by CloudDurableTestRunner");
     }
 }
