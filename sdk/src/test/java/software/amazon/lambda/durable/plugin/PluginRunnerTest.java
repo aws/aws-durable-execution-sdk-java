@@ -12,6 +12,18 @@ import org.junit.jupiter.api.Test;
 
 class PluginRunnerTest {
 
+    @Test
+    void exclusiveGroupsRejectDuplicatesButAllowUnrelatedPlugins() {
+        var exclusive = new DurableExecutionPlugin() {
+            @Override
+            public String getExclusiveGroup() {
+                return "example";
+            }
+        };
+        assertThrows(IllegalArgumentException.class, () -> new PluginRunner(List.of(exclusive, exclusive)));
+        assertDoesNotThrow(() -> new PluginRunner(List.of(exclusive, new DurableExecutionPlugin() {})));
+    }
+
     // ─── No-op / empty behavior ──────────────────────────────────────────
 
     @Test

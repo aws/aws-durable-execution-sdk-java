@@ -104,6 +104,7 @@ public final class DurableConfig {
 
     private DurableConfig(Builder builder) {
         var plugins = DynamicPluginLoader.loadConfiguredPlugins(builder.plugins);
+        this.pluginRunner = plugins.isEmpty() ? PluginRunner.noOp() : new PluginRunner(plugins);
         this.durableExecutionClient = Objects.requireNonNullElseGet(
                 builder.durableExecutionClient, DurableConfig::createDefaultDurableExecutionClient);
         this.serDes = Objects.requireNonNullElseGet(builder.serDes, JacksonSerDes::new);
@@ -114,7 +115,6 @@ public final class DurableConfig {
         this.checkpointDelay = Objects.requireNonNullElseGet(builder.checkpointDelay, () -> Duration.ofSeconds(0));
         this.deserializeAfterSerialization = builder.deserializeAfterSerialization;
         this.checkpointEmptyMap = builder.checkpointEmptyMap;
-        this.pluginRunner = plugins.isEmpty() ? PluginRunner.noOp() : new PluginRunner(plugins);
 
         validateConfiguration();
     }
@@ -463,6 +463,10 @@ public final class DurableConfig {
          *
          * <p>Plugins receive hooks at invocation, operation, and user function boundaries. Errors thrown by plugins are
          * isolated and never disrupt SDK execution.
+         *
+         * <p>The effective list, including environment-selected plugins, may contain at most one member of each
+         * {@link DurableExecutionPlugin#getExclusiveGroup() exclusive group}. Conflicts are rejected by
+         * {@link #build()}.
          *
          * <p>Calling this method replaces any previously registered plugins. Plugins are called in registration order.
          *

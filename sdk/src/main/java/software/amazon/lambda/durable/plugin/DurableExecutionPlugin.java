@@ -15,6 +15,15 @@ package software.amazon.lambda.durable.plugin;
  */
 public interface DurableExecutionPlugin {
 
+    /**
+     * Optional exclusive registration group. At most one plugin in a group may be configured for an invocation. Return
+     * null (the default) for plugins that can coexist freely. This configuration metadata must be stable and
+     * side-effect-free; it is read before lifecycle hooks run, and conflicts fail configuration immediately.
+     */
+    default String getExclusiveGroup() {
+        return null;
+    }
+
     // ─── Invocation-level hooks ──────────────────────────────────────────
 
     /**

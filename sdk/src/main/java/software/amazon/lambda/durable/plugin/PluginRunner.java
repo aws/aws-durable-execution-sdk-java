@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.plugin;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
@@ -25,6 +26,24 @@ public class PluginRunner {
 
     public PluginRunner(List<DurableExecutionPlugin> plugins) {
         this.plugins = plugins != null ? List.copyOf(plugins) : Collections.emptyList();
+        validateExclusiveGroups();
+    }
+
+    private void validateExclusiveGroups() {
+        var groups = new HashMap<String, DurableExecutionPlugin>();
+        for (var plugin : plugins) {
+            var group = plugin.getExclusiveGroup();
+            if (group == null) {
+                continue;
+            }
+            var previous = groups.putIfAbsent(group, plugin);
+            if (previous != null) {
+                throw new IllegalArgumentException(
+                        "Conflicting plugins " + previous.getClass().getSimpleName()
+                                + " and " + plugin.getClass().getSimpleName() + " in exclusive group '" + group
+                                + "'. Configure only one plugin from this group.");
+            }
+        }
     }
 
     /** Returns a no-op runner that does nothing. */

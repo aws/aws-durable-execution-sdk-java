@@ -40,6 +40,15 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 </dependency>
 ```
 
+## Choose one durable OTel view
+
+Configure exactly one of `InvocationOtelPlugin` or `ExecutionOtelPlugin` when enabling durable tracing.
+The invocation view groups work by Lambda invocation; the execution view groups operations under the durable Workflow.
+Both create Workflow and Invocation telemetry and manage log correlation, so combining them is unsupported.
+`DurableConfig.build()` rejects conflicting views before lifecycle hooks run and names both plugins in the diagnostic.
+This applies to explicit registration, `DURABLE_EXECUTION_PLUGINS=otel-invocation,otel-execution`, and mixed registration.
+Registering the same view twice is also rejected. Zero OTel plugins, either single view, and unrelated plugins remain valid.
+
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
 1. Add the ADOT Lambda Layer to your function

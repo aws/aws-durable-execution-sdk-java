@@ -203,6 +203,12 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         this.idGenerator = OtelPluginSupport.createDefaultIdGenerator();
     }
 
+    /** The two bundled durable OTel views are alternatives and cannot be registered together. */
+    @Override
+    public final String getExclusiveGroup() {
+        return "durable-otel-view";
+    }
+
     // ─── Invocation hooks ────────────────────────────────────────────────
 
     @Override
