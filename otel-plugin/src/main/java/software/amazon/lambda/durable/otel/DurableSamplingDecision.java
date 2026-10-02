@@ -32,15 +32,16 @@ import io.opentelemetry.sdk.trace.samplers.SamplingResult;
  *       the full {@link SamplingResult}, including any attributes a custom sampler attached.
  *   <li><b>Thread-scoped system property</b> — a cross-class-loader fallback modelled on
  *       {@link DeterministicIdGenerator}'s scoped-ID bridge. The intent is published on the thread that creates the
- *       durable span for the synchronous duration of {@code startSpan()} (the sampler runs on that same thread), keyed
- *       by thread ID under a bootstrap-visible {@link System} property so both class loaders read the same value. A
- *       resolved decision bridges its {@link SamplingDecision} name (the three built-in decisions carry no attributes,
- *       so reconstructing them is faithful); a deferral bridges a sentinel plus the canonical trace ID.
+ *       durable span until its sampler consumes the value (before synchronous span processors run), keyed by thread ID
+ *       under a bootstrap-visible {@link System} property so both class loaders read the same value. A resolved
+ *       decision bridges its {@link SamplingDecision} name (the three built-in decisions carry no attributes, so
+ *       reconstructing them is faithful); a deferral bridges a sentinel plus the canonical trace ID.
  * </ol>
  *
  * <p>The scope is opened immediately around each durable {@code startSpan()} call and closed right after, so the
- * property never leaks beyond the span it applies to. Nothing is persisted across invocations; cross-invocation
- * consistency comes from recomputing the intent from stable inputs, not from sharing state.
+ * property is consumed once by the sampler before callbacks can create unrelated spans. Nothing is persisted across
+ * invocations; cross-invocation consistency comes from recomputing the intent from stable inputs, not from sharing
+ * state.
  */
 final class DurableSamplingDecision {
 
@@ -107,6 +108,15 @@ final class DurableSamplingDecision {
             return fromContext;
         }
         return fromScopedProperty();
+    }
+
+    /** Resolves this span's intent and consumes the cross-loader bridge before sampler/processor callbacks run. */
+    static Intent consume(Context context) {
+        try {
+            return get(context);
+        } finally {
+            System.clearProperty(scopedProperty());
+        }
     }
 
     private static String encode(Intent intent) {

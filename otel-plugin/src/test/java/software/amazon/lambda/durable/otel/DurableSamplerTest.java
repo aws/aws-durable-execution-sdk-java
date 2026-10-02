@@ -62,6 +62,32 @@ class DurableSamplerTest {
         OtelPluginAutoConfigurationState.resetInstalledForTest();
     }
 
+    @Test
+    void consumingContextIntentAlsoClearsCrossLoaderFallback() {
+        var delegate = new CountingSampler(Sampler.alwaysOff());
+        var sampler = DurableSampler.wrap(delegate);
+        var parent = DurableSamplingDecision.store(
+                Context.root(), DurableSamplingDecision.Intent.resolved(SamplingResult.recordOnly()));
+        try (var ignored = DurableSamplingDecision.openScope(
+                DurableSamplingDecision.Intent.resolved(SamplingResult.recordAndSample()))) {
+            assertEquals(
+                    SamplingDecision.RECORD_ONLY,
+                    sampler.shouldSample(parent, TRACE_ID, "durable", SpanKind.INTERNAL, Attributes.empty(), List.of())
+                            .getDecision());
+            assertEquals(
+                    SamplingDecision.DROP,
+                    sampler.shouldSample(
+                                    Context.root(),
+                                    TRACE_ID,
+                                    "callback",
+                                    SpanKind.INTERNAL,
+                                    Attributes.empty(),
+                                    List.of())
+                            .getDecision());
+            assertEquals(1, delegate.count(), "The unrelated callback must use its own sampler");
+        }
+    }
+
     // ─── Unit tests for the wrapper ──────────────────────────────────────
 
     @Test

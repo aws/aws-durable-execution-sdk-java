@@ -237,8 +237,8 @@ class ExecutionRootTest {
     }
 
     @ParameterizedTest
-    @ValueSource(booleans = {true, false})
-    void processorSpansDoNotInheritDurableSamplingOverride(boolean executionView) {
+    @CsvSource({"true,true", "true,false", "false,true", "false,false"})
+    void processorSpansDoNotInheritDurableSamplingOverride(boolean executionView, boolean observeStart) {
         var exporter = InMemorySpanExporter.create();
         var observed = new AtomicReference<SpanContext>();
         try (var unrelated = SdkTracerProvider.builder()
@@ -246,7 +246,7 @@ class ExecutionRootTest {
                 .build()) {
             var builder = SdkTracerProvider.builder()
                     .setSampler(Sampler.alwaysOff())
-                    .addSpanProcessor(new SamplingObserver(unrelated, observed))
+                    .addSpanProcessor(new SamplingObserver(unrelated, observed, observeStart))
                     .addSpanProcessor(SimpleSpanProcessor.create(exporter));
             var config = OtelPluginConfig.builder()
                     .enableMdc(false)
@@ -259,23 +259,34 @@ class ExecutionRootTest {
             assertTrue(named(exporter.getFinishedSpanItems(), "DurableExecutionRoot")
                     .getSpanContext()
                     .isSampled());
-            assertNotNull(observed.get(), "Root end processor must have run");
+            assertNotNull(observed.get(), "Root processor callback must have run");
             assertFalse(observed.get().isSampled(), "Processor's unrelated span must retain its always-off policy");
         }
     }
 
-    private record SamplingObserver(SdkTracerProvider provider, AtomicReference<SpanContext> observed)
+    private record SamplingObserver(
+            SdkTracerProvider provider, AtomicReference<SpanContext> observed, boolean observeStart)
             implements SpanProcessor {
         @Override
-        public void onStart(Context parent, ReadWriteSpan span) {}
+        public void onStart(Context parent, ReadWriteSpan span) {
+            if (observeStart) {
+                observe(span);
+            }
+        }
 
         @Override
         public boolean isStartRequired() {
-            return false;
+            return observeStart;
         }
 
         @Override
         public void onEnd(ReadableSpan span) {
+            if (!observeStart) {
+                observe(span);
+            }
+        }
+
+        private void observe(ReadableSpan span) {
             if (span.getName().equals("DurableExecutionRoot")) {
                 var callback =
                         provider.get("processor").spanBuilder("unrelated").startSpan();
@@ -286,7 +297,7 @@ class ExecutionRootTest {
 
         @Override
         public boolean isEndRequired() {
-            return true;
+            return !observeStart;
         }
     }
 
