@@ -88,14 +88,18 @@ jobs:
         # from PyPI via uv instead. uv provides Python on the Amazon Linux image
         # (actions/setup-python ships only Ubuntu builds).
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.22"
 
       - name: Generate JaCoCo Badge
         if: ${{ matrix.java == 17 }}
         # Equivalent to cicirello/jacoco-badge-generator@v2 with the two inputs
         # this workflow set (jacoco-csv-file, badges-directory); writes
         # jacoco.svg into the badges directory, matching the action's default.
+        # The package version is pinned so this step stays reproducible, as the
+        # SHA-pinned action was.
         run: |
-          uv run --with jacoco-badge-generator python -m jacoco_badge_generator \
+          uv run --with jacoco-badge-generator==2.12.1 python -m jacoco_badge_generator \
             -j coverage-report/target/site/jacoco-aggregate/jacoco.csv \
             -d coverage-report/target/site/jacoco-aggregate
 
