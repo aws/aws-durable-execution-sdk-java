@@ -338,6 +338,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             }
             workflowSpan.end();
         }
+        OtelPluginSupport.exportExecutionRoot(
+                tracer, idGenerator, executionAncestor, durableExecutionArn, executionStartTime, samplingIntent);
         workflowSpanContext = null;
         executionAncestor = null;
         executionStartTime = null;
