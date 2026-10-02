@@ -66,7 +66,7 @@ public class LocalDurableTestRunner<I, O> {
         // Create config that uses customer's configuration but overrides the client with in-memory storage
         if (customerConfig != null) {
             // Use customer's config but override the client with our in-memory implementation
-            this.customerConfig = copyConfiguration(customerConfig)
+            this.customerConfig = copyConfiguration(customerConfig, DurableConfig.class)
                     .withDurableExecutionClient(storage)
                     .build();
         } else {
@@ -78,10 +78,10 @@ public class LocalDurableTestRunner<I, O> {
     }
 
     /** Uses the resolved-list copy capability when present, retaining the prior copy path for older cores. */
-    private static DurableConfig.Builder copyConfiguration(DurableConfig config) {
+    static DurableConfig.Builder copyConfiguration(DurableConfig config, Class<?> configurationApi) {
         try {
             return (DurableConfig.Builder)
-                    DurableConfig.class.getMethod("toBuilder").invoke(config);
+                    configurationApi.getMethod("toBuilder").invoke(config);
         } catch (NoSuchMethodException olderCore) {
             return DurableConfig.builder()
                     .withSerDes(config.getSerDes())
