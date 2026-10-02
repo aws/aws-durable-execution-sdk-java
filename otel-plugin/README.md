@@ -93,11 +93,14 @@ Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-exe
 ### Invocation-local headers on Lambda Managed Instances
 
 The SDK captures `Context.getXrayTraceId()` before dispatching the handler to a worker thread and exposes it as
-`InvocationInfo.xRayTraceId()`. The default extractor prefers this header, preserving Root, Parent, and Sampled.
+`InvocationRuntimeContext.xRayTraceId()` through the additive
+`onInvocationStart(InvocationInfo, InvocationRuntimeContext)` hook. The default extractor prefers this header, preserving Root, Parent, and Sampled.
 When it is absent or empty, ordinary Lambda continues to use `com.amazonaws.xray.traceHeader`, then
 `_X_AMZN_TRACE_ID`. A present but invalid invocation header uses deterministic fallback, without adopting a stale
 global header. No global carrier is modified. Custom `ContextExtractor` implementations may override
-`extract(InvocationInfo)`; existing no-argument extractors continue to work.
+`extract(InvocationInfo, InvocationRuntimeContext)`; existing no-argument extractors and one-argument plugin hooks
+continue to work, including subclass overrides. The seven-component `InvocationInfo` record is unchanged, preserving
+Java 21 record-pattern source compatibility.
 
 ### 2. AWS X-Ray Active Tracing
 

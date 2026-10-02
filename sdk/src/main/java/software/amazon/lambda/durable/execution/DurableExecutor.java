@@ -28,6 +28,7 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.plugin.InvocationRuntimeContext;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 import software.amazon.lambda.durable.plugin.PluginRunner;
@@ -61,7 +62,8 @@ public class DurableExecutor {
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             var executionArn = input.durableExecutionArn();
             // Capture on the runtime thread before dispatch: LMI trace carriers can be thread-local.
-            var xRayTraceId = lambdaContext != null ? lambdaContext.getXrayTraceId() : null;
+            var runtimeContext =
+                    new InvocationRuntimeContext(lambdaContext != null ? lambdaContext.getXrayTraceId() : null);
 
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
@@ -90,19 +92,22 @@ public class DurableExecutor {
                         // inject ThreadLocal objects, update MDC, etc.
                         // executionStartTime comes from the initial EXECUTION operation in the first backend event.
                         if (!pluginRunner.isEmpty()) {
-                            pluginRunner.onInvocationStart(new InvocationInfo(
-                                    requestId,
-                                    executionArn,
-                                    isFirstInvocation,
-                                    executionManager.getExecutionOperation().startTimestamp(),
-                                    userInput,
-                                    PluginInfoConverter.toOperationItemMap(
-                                            executionManager.getOperationsSnapshot(),
-                                            executionManager.getInitialOperationIds()),
-                                    PluginInfoConverter.toOperationItemMap(
-                                            executionManager.getUpdatedOperationsSnapshot(),
-                                            executionManager.getInitialOperationIds()),
-                                    xRayTraceId));
+                            pluginRunner.onInvocationStart(
+                                    new InvocationInfo(
+                                            requestId,
+                                            executionArn,
+                                            isFirstInvocation,
+                                            executionManager
+                                                    .getExecutionOperation()
+                                                    .startTimestamp(),
+                                            userInput,
+                                            PluginInfoConverter.toOperationItemMap(
+                                                    executionManager.getOperationsSnapshot(),
+                                                    executionManager.getInitialOperationIds()),
+                                            PluginInfoConverter.toOperationItemMap(
+                                                    executionManager.getUpdatedOperationsSnapshot(),
+                                                    executionManager.getInitialOperationIds())),
+                                    runtimeContext);
                         }
                         if (inputFailure != null) {
                             ExceptionHelper.sneakyThrow(inputFailure);

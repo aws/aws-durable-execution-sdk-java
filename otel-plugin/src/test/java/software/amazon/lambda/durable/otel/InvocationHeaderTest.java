@@ -9,15 +9,16 @@ import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import java.time.Instant;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.plugin.InvocationRuntimeContext;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 
 class InvocationHeaderTest {
@@ -28,6 +29,42 @@ class InvocationHeaderTest {
         var sampled = CompletableFuture.runAsync(() -> runInvocations(executionView, true, barrier));
         var unsampled = CompletableFuture.runAsync(() -> runInvocations(executionView, false, barrier));
         CompletableFuture.allOf(sampled, unsampled).get(20, TimeUnit.SECONDS);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void runtimeOverloadPreservesLegacyPluginSubclassDispatch(boolean executionView) {
+        var exporter = InMemorySpanExporter.create();
+        var builder = SdkTracerProvider.builder()
+                .setSampler(Sampler.alwaysOn())
+                .addSpanProcessor(SimpleSpanProcessor.create(exporter));
+        var config = OtelPluginConfig.builder().enableMdc(false).build();
+        var calls = new AtomicInteger();
+        DurableExecutionPlugin plugin = executionView
+                ? new ExecutionOtelPlugin(builder, config) {
+                    @Override
+                    public void onInvocationStart(InvocationInfo info) {
+                        calls.incrementAndGet();
+                        super.onInvocationStart(info);
+                    }
+                }
+                : new InvocationOtelPlugin(builder, config) {
+                    @Override
+                    public void onInvocationStart(InvocationInfo info) {
+                        calls.incrementAndGet();
+                        super.onInvocationStart(info);
+                    }
+                };
+        var info = new InvocationInfo("request", "arn", true, Instant.EPOCH);
+        var runtime = new InvocationRuntimeContext("Root=1-6955b900-123456789012345678901234;Sampled=0");
+        plugin.onInvocationStart(info, runtime);
+        plugin.onInvocationEnd(new InvocationEndInfo("request", "arn", true, InvocationStatus.SUCCEEDED, null));
+        assertEquals(1, calls.get());
+        assertTrue(exporter.getFinishedSpanItems().isEmpty());
+        plugin.onInvocationStart(info); // An ordinary direct call must not retain the previous invocation's header.
+        plugin.onInvocationEnd(new InvocationEndInfo("request", "arn", true, InvocationStatus.SUCCEEDED, null));
+        assertEquals(2, calls.get());
+        assertEquals(2, exporter.getFinishedSpanItems().size());
     }
 
     private static void runInvocations(boolean executionView, boolean sampled, CyclicBarrier barrier) {
@@ -43,15 +80,10 @@ class InvocationHeaderTest {
                 + ";Parent=1234567890123456;Sampled=" + (sampled ? "1" : "0");
         var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/test/" + sampled;
         for (int invocation = 0; invocation < 2; invocation++) {
-            plugin.onInvocationStart(new InvocationInfo(
-                    "request-" + invocation,
-                    arn,
-                    invocation == 0,
-                    Instant.parse("2026-10-02T00:00:00Z"),
-                    null,
-                    Map.of(),
-                    Map.of(),
-                    header));
+            plugin.onInvocationStart(
+                    new InvocationInfo(
+                            "request-" + invocation, arn, invocation == 0, Instant.parse("2026-10-02T00:00:00Z")),
+                    new InvocationRuntimeContext(header));
             await(barrier);
             plugin.onInvocationEnd(new InvocationEndInfo(
                     "request-" + invocation,

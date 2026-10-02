@@ -5,14 +5,15 @@ package software.amazon.lambda.durable.otel;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.Instant;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.plugin.InvocationRuntimeContext;
 
 class XRayContextExtractorTest {
+    private static final InvocationInfo INFO = new InvocationInfo("request", "arn", true, Instant.EPOCH);
 
     @ParameterizedTest
     @ValueSource(strings = {"0", "1"})
@@ -20,13 +21,13 @@ class XRayContextExtractorTest {
         System.setProperty("com.amazonaws.xray.traceHeader", "Root=1-ffffffff-ffffffffffffffffffffffff;Sampled=1");
         try {
             var header = "Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=" + sampled;
-            var extracted = new XRayContextExtractor().extract(invocation(header));
+            var extracted = new XRayContextExtractor().extract(INFO, invocation(header));
             assertEquals("6955b900123456789012345678901234", extracted.traceId());
             assertEquals("1234567890123456", extracted.parentSpanId());
             assertEquals(
                     sampled.equals("1") ? ExtractedContext.Sampling.SAMPLED : ExtractedContext.Sampling.NOT_SAMPLED,
                     extracted.sampling());
-            assertNull(new XRayContextExtractor().extract(invocation("malformed")));
+            assertNull(new XRayContextExtractor().extract(INFO, invocation("malformed")));
         } finally {
             System.clearProperty("com.amazonaws.xray.traceHeader");
         }
@@ -39,7 +40,7 @@ class XRayContextExtractorTest {
         try {
             assertEquals(
                     ExtractedContext.Sampling.NOT_SAMPLED,
-                    new XRayContextExtractor().extract(invocation(header)).sampling());
+                    new XRayContextExtractor().extract(INFO, invocation(header)).sampling());
         } finally {
             System.clearProperty("com.amazonaws.xray.traceHeader");
         }
@@ -50,7 +51,7 @@ class XRayContextExtractorTest {
         var expected =
                 new ExtractedContext("6955b900123456789012345678901234", null, ExtractedContext.Sampling.SAMPLED);
         ContextExtractor custom = () -> expected;
-        assertSame(expected, custom.extract(invocation("ignored")));
+        assertSame(expected, custom.extract(INFO, invocation("ignored")));
     }
 
     @Test
@@ -66,6 +67,7 @@ class XRayContextExtractorTest {
         assertSame(
                 expected,
                 extractor.extract(
+                        INFO,
                         invocation("Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=1")));
     }
 
@@ -82,14 +84,14 @@ class XRayContextExtractorTest {
             }
         };
         var header = "Root=1-6955b900-123456789012345678901234;Sampled=";
-        assertNotNull(extractor.extract(invocation(header + "1")));
+        assertNotNull(extractor.extract(INFO, invocation(header + "1")));
         assertNull(extractor.extract());
-        assertThrows(IllegalArgumentException.class, () -> extractor.extract(invocation(header + "0")));
+        assertThrows(IllegalArgumentException.class, () -> extractor.extract(INFO, invocation(header + "0")));
         assertNull(extractor.extract());
     }
 
-    private static InvocationInfo invocation(String header) {
-        return new InvocationInfo("request", "arn", true, Instant.EPOCH, null, Map.of(), Map.of(), header);
+    private static InvocationRuntimeContext invocation(String header) {
+        return new InvocationRuntimeContext(header);
     }
 
     @Test

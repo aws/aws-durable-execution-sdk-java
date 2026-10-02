@@ -21,7 +21,6 @@ import software.amazon.lambda.durable.annotations.Experimental;
  *     experimental
  * @param updatedOperations operations changed externally since the previous invocation, keyed by operation ID; this
  *     component is experimental
- * @param xRayTraceId the invocation-local X-Ray header captured from the Lambda context, or null when unavailable
  */
 public record InvocationInfo(
         String requestId,
@@ -30,33 +29,12 @@ public record InvocationInfo(
         Instant executionStartTime,
         @Experimental Object executionInput,
         @Experimental Map<String, OperationChangeItemInfo> operations,
-        @Experimental Map<String, OperationChangeItemInfo> updatedOperations,
-        String xRayTraceId) {
+        @Experimental Map<String, OperationChangeItemInfo> updatedOperations) {
 
     public InvocationInfo {
         requireNonNull(executionStartTime, "executionStartTime");
         requireNonNull(operations, "operations");
         requireNonNull(updatedOperations, "updatedOperations");
-    }
-
-    /** Creates invocation information without an invocation-local trace header. */
-    public InvocationInfo(
-            String requestId,
-            String durableExecutionArn,
-            boolean isFirstInvocation,
-            Instant executionStartTime,
-            Object executionInput,
-            Map<String, OperationChangeItemInfo> operations,
-            Map<String, OperationChangeItemInfo> updatedOperations) {
-        this(
-                requestId,
-                durableExecutionArn,
-                isFirstInvocation,
-                executionStartTime,
-                executionInput,
-                operations,
-                updatedOperations,
-                null);
     }
 
     /** Creates invocation information without payload or operation snapshots. */

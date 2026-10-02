@@ -39,6 +39,7 @@ import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.plugin.InvocationRuntimeContext;
 
 class DurableExecutionTest {
 
@@ -68,9 +69,9 @@ class DurableExecutionTest {
         var seen = new AtomicReference<String>();
         var plugin = new DurableExecutionPlugin() {
             @Override
-            public void onInvocationStart(InvocationInfo info) {
+            public void onInvocationStart(InvocationInfo info, InvocationRuntimeContext runtimeContext) {
                 assertFalse(runtimeThread == Thread.currentThread());
-                seen.set(info.xRayTraceId());
+                seen.set(runtimeContext.xRayTraceId());
             }
         };
         var executionOp = Operation.builder()
