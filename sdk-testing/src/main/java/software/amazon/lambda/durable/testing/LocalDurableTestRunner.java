@@ -21,7 +21,6 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 import software.amazon.lambda.durable.testing.local.OperationResult;
@@ -64,16 +63,8 @@ public class LocalDurableTestRunner<I, O> {
         // Create config that uses customer's configuration but overrides the client with in-memory storage
         if (customerConfig != null) {
             // Use customer's config but override the client with our in-memory implementation
-            this.customerConfig = DurableConfig.builder()
+            this.customerConfig = customerConfig.toBuilder()
                     .withDurableExecutionClient(storage)
-                    .withSerDes(customerConfig.getSerDes())
-                    .withExecutorService(customerConfig.getExecutorService())
-                    .withPollingStrategy(customerConfig.getPollingStrategy())
-                    .withCheckpointDelay(customerConfig.getCheckpointDelay())
-                    .withLoggerConfig(customerConfig.getLoggerConfig())
-                    // Temporary: remove along with the checkpointEmptyMap flag in a future major version.
-                    .withCheckpointEmptyMap(customerConfig.shouldCheckpointEmptyMap())
-                    .withPlugins(customerConfig.getPluginRunner().getPlugins().toArray(new DurableExecutionPlugin[0]))
                     .build();
         } else {
             // Fallback to default config with in-memory client

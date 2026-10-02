@@ -12,11 +12,16 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.MDC;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.otel.ExecutionOtelPlugin;
@@ -103,6 +108,59 @@ class OtelViewRegistrationTest {
                 1, spans.stream().filter(s -> s.getName().equals("Workflow")).count());
         assertEquals(
                 2, spans.stream().filter(s -> s.getName().equals("Invocation")).count());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"otel-invocation", "otel-execution"})
+    void environmentSelectedSingleViewCanBeCopiedIntoLocalRunner(String provider, @TempDir Path directory)
+            throws Exception {
+        var java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        var classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
+        var output = directory.resolve("child.log");
+        var builder = new ProcessBuilder(java, "-cp", classpath, EnvironmentRunnerCheck.class.getName())
+                .redirectErrorStream(true)
+                .redirectOutput(output.toFile());
+        builder.environment().put("DURABLE_EXECUTION_PLUGINS", provider);
+        var child = builder.start();
+        try {
+            assertTrue(child.waitFor(30, TimeUnit.SECONDS), "Child JVM did not finish");
+            assertEquals(0, child.exitValue(), () -> read(output));
+        } finally {
+            child.destroyForcibly();
+        }
+    }
+
+    private static String read(Path path) {
+        try {
+            return Files.readString(path);
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    public static class EnvironmentRunnerCheck {
+        public static void main(String[] args) {
+            var config = DurableConfig.builder()
+                    .withDeserializeAfterSerialization(false)
+                    .build();
+            assertEquals(1, config.getPluginRunner().getPlugins().size());
+            var copy = config.toBuilder().build();
+            assertEquals(
+                    config.getPluginRunner().getPlugins(),
+                    copy.getPluginRunner().getPlugins());
+            assertFalse(copy.shouldDeserializeAfterSerialization());
+            var runner = LocalDurableTestRunner.create(
+                    String.class,
+                    (input, ctx) -> {
+                        ctx.wait("pause", Duration.ofSeconds(1));
+                        return input;
+                    },
+                    config);
+            assertEquals(ExecutionStatus.PENDING, runner.run("input").getStatus());
+            runner.advanceTime();
+            assertEquals(
+                    ExecutionStatus.SUCCEEDED, runner.runUntilComplete("input").getStatus());
+        }
     }
 
     private static DurableExecutionPlugin plugin(boolean executionView, InMemorySpanExporter exporter) {

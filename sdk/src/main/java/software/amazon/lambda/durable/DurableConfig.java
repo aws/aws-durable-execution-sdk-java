@@ -103,7 +103,9 @@ public final class DurableConfig {
     private final PluginRunner pluginRunner;
 
     private DurableConfig(Builder builder) {
-        var plugins = DynamicPluginLoader.loadConfiguredPlugins(builder.plugins);
+        var plugins = builder.loadDynamicPlugins
+                ? DynamicPluginLoader.loadConfiguredPlugins(builder.plugins)
+                : List.copyOf(builder.plugins);
         this.pluginRunner = plugins.isEmpty() ? PluginRunner.noOp() : new PluginRunner(plugins);
         this.durableExecutionClient = Objects.requireNonNullElseGet(
                 builder.durableExecutionClient, DurableConfig::createDefaultDurableExecutionClient);
@@ -225,6 +227,25 @@ public final class DurableConfig {
         return pluginRunner;
     }
 
+    /**
+     * Copies this configuration into a builder, preserving the effective plugin instances without repeating dynamic
+     * discovery. Calling {@code withPlugins} on the copy replaces that complete plugin list.
+     */
+    public Builder toBuilder() {
+        var builder = new Builder()
+                .withDurableExecutionClient(durableExecutionClient)
+                .withSerDes(serDes)
+                .withExecutorService(executorService)
+                .withLoggerConfig(loggerConfig)
+                .withPollingStrategy(pollingStrategy)
+                .withCheckpointDelay(checkpointDelay)
+                .withDeserializeAfterSerialization(deserializeAfterSerialization)
+                .withCheckpointEmptyMap(checkpointEmptyMap);
+        builder.plugins = new ArrayList<>(pluginRunner.getPlugins());
+        builder.loadDynamicPlugins = false;
+        return builder;
+    }
+
     public void validateConfiguration() {
         if (getDurableExecutionClient() == null) {
             throw new IllegalStateException("DurableExecutionClient configuration failed");
@@ -322,6 +343,7 @@ public final class DurableConfig {
         private boolean deserializeAfterSerialization = true;
         private boolean checkpointEmptyMap = false;
         private List<DurableExecutionPlugin> plugins = new ArrayList<>();
+        private boolean loadDynamicPlugins = true;
 
         public Builder() {}
 
