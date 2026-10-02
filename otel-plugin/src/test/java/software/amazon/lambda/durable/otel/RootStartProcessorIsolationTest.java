@@ -38,14 +38,20 @@ class RootStartProcessorIsolationTest {
                 .flatMap(view -> Stream.of(true, false)
                         .flatMap(sampled -> Stream.of(true, false)
                                 .flatMap(shared -> Stream.of(true, false)
-                                        .map(recordOnly -> Arguments.of(view, sampled, shared, recordOnly)))));
+                                        .flatMap(recordOnly -> Stream.of(true, false)
+                                                .map(forwardParent -> Arguments.of(
+                                                        view, sampled, shared, recordOnly, forwardParent))))));
     }
 
     @ParameterizedTest
     @MethodSource("cases")
     void rootStartCallbacksRetainTheirOwnSamplingAndRandomIds(
-            boolean executionView, boolean sampled, boolean sharedGenerator, boolean rootRecordOnly) {
-        var observer = new StartObserver();
+            boolean executionView,
+            boolean sampled,
+            boolean sharedGenerator,
+            boolean rootRecordOnly,
+            boolean forwardParent) {
+        var observer = new StartObserver(forwardParent);
         var policy = sampled ? Sampler.alwaysOn() : Sampler.alwaysOff();
         var builder = SdkTracerProvider.builder()
                 .setSampler(rootSampler(rootRecordOnly, policy))
@@ -142,6 +148,12 @@ class RootStartProcessorIsolationTest {
 
     private static final class StartObserver implements SpanProcessor {
         private Tracer tracer;
+        private final boolean forwardParent;
+
+        private StartObserver(boolean forwardParent) {
+            this.forwardParent = forwardParent;
+        }
+
         private final List<SpanContext> roots = new ArrayList<>();
         private final List<SpanContext> callbacks = new ArrayList<>();
         private final List<Boolean> recording = new ArrayList<>();
@@ -151,7 +163,8 @@ class RootStartProcessorIsolationTest {
             // The name guard permits exactly one unrelated span per root and prevents processor recursion.
             if (!span.getName().equals("DurableExecutionRoot")) return;
             roots.add(span.getSpanContext());
-            var callback = tracer.spanBuilder("unrelated-onStart").setNoParent().startSpan();
+            var builder = tracer.spanBuilder("unrelated-onStart");
+            var callback = (forwardParent ? builder.setParent(parent) : builder.setNoParent()).startSpan();
             callbacks.add(callback.getSpanContext());
             recording.add(callback.isRecording());
             callback.end();

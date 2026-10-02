@@ -150,9 +150,10 @@ class DurableSamplerTest {
         // A stateful/quota delegate must be consulted once per execution (trace ID), not per durable span.
         var delegate = new CountingSampler(Sampler.alwaysOn());
         var sampler = DurableSampler.wrap(delegate);
-        var parent = DurableSamplingDecision.store(Context.root(), DurableSamplingDecision.Intent.deferred(TRACE_ID));
-
         for (var i = 0; i < 4; i++) {
+            // Each SDK-owned span receives its own one-shot carrier, while the resolved decision stays execution-wide.
+            var parent =
+                    DurableSamplingDecision.store(Context.root(), DurableSamplingDecision.Intent.deferred(TRACE_ID));
             sampler.shouldSample(parent, TRACE_ID, "op" + i, SpanKind.INTERNAL, Attributes.empty(), List.of());
         }
 
