@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -33,6 +34,27 @@ import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class OtelViewRegistrationTest {
+    @Test
+    void existingSubclassGroupMethodsRemainCompatible() {
+        // Downstream subclasses could already declare this method before group metadata joined the plugin API.
+        var invocation = new InvocationOtelPlugin() {
+            @Override
+            public String getExclusiveGroup() {
+                return "custom-tracing";
+            }
+        };
+        var execution = new ExecutionOtelPlugin() {
+            @Override
+            public String getExclusiveGroup() {
+                return "custom-tracing";
+            }
+        };
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DurableConfig.builder().withPlugins(invocation, execution).build());
+        assertDoesNotThrow(() -> DurableConfig.builder().withPlugins(invocation).build());
+    }
+
     @ParameterizedTest
     @CsvSource({"explicit,false", "explicit,true", "dynamic,false", "dynamic,true", "mixed,false", "mixed,true"})
     void rejectsBothViewsBeforeEmissionAndLeavesContextUntouched(String path, boolean reversed) {

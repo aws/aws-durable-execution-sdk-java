@@ -198,7 +198,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     /** The two bundled durable OTel views are alternatives and cannot be registered together. */
     @Override
-    public final String getExclusiveGroup() {
+    public String getExclusiveGroup() {
         return "durable-otel-view";
     }
 
