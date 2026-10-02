@@ -40,6 +40,19 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 </dependency>
 ```
 
+## Fallback execution roots
+
+When the backend supplies no complete remote parent, both views export an `DurableExecutionRoot` anchor before the first
+invocation returns, including when it suspends with `PENDING` or fails with `RETRYING`.
+The anchor is marked `durable.execution.synthetic_root=true`. Its trace and span IDs are deterministic and its start
+and end timestamps are the checkpointed execution start. It does not report execution status or duration; `Workflow`
+continues to report those at terminal completion. Complete remote parents remain externally owned and are never exported.
+
+Every invocation may re-export the anchor to recover from an earlier interrupted or lost export. Re-exports retain the
+same identity, timestamps, and attributes. The existing provider resource still applies. Each execution ARN owns its
+own anchor even when multiple executions share a propagated trace ID without a parent; they are not collapsed into one
+execution. Upstream sampling and configured fallback sampling apply to anchors and their descendants together.
+
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
 1. Add the ADOT Lambda Layer to your function

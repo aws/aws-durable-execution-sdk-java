@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
+import static software.amazon.lambda.durable.otel.SpanAttributes.DURABLE_EXECUTION_ARN;
+import static software.amazon.lambda.durable.otel.SpanAttributes.DURABLE_EXECUTION_SYNTHETIC_ROOT;
+
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
@@ -13,12 +17,40 @@ import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.Collections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** Shared utilities for OTel plugin default constructor support (ADOT Java agent SPI path). */
 final class OtelPluginSupport {
+
+    /**
+     * Exports the SDK-owned fallback ancestor before each invocation returns, including PENDING. It is a zero-duration
+     * identity anchor at the checkpointed execution start, not a completion summary. Recovery re-exports use identical
+     * identity and timestamps; Workflow alone carries execution duration and outcome. Remote parents are never owned.
+     */
+    static void exportExecutionRoot(
+            Tracer tracer,
+            DeterministicIdGenerator idGenerator,
+            SpanContext ancestor,
+            String arn,
+            Instant start,
+            DurableSamplingDecision.Intent intent) {
+        if (ancestor == null || ancestor.isRemote()) {
+            return;
+        }
+        var builder = tracer.spanBuilder("DurableExecutionRoot")
+                .setSpanKind(SpanKind.INTERNAL)
+                .setParent(DurableSamplingDecision.store(Context.root(), intent))
+                .setAttribute(DURABLE_EXECUTION_ARN, arn)
+                .setAttribute(DURABLE_EXECUTION_SYNTHETIC_ROOT, true)
+                .setStartTimestamp(start);
+        try (var ignored = DurableSamplingDecision.openScope(intent)) {
+            var root = idGenerator.startSpan(builder, ancestor.getTraceId(), ancestor.getSpanId());
+            root.end(start);
+        }
+    }
 
     private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);
 
