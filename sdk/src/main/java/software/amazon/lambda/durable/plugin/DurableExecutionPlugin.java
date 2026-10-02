@@ -15,6 +15,27 @@ package software.amazon.lambda.durable.plugin;
  */
 public interface DurableExecutionPlugin {
 
+    /**
+     * Optionally supplies operation-level trace propagation metadata synchronously. Return null to abstain. This
+     * groundwork hook is not yet called by production invoke START requests; client-model support and backend rollout
+     * are pending. Implementations must not mutate execution state or create side effects to produce metadata.
+     */
+    default PropagationMetadata providePropagationMetadata(PropagationInput input) {
+        var header = providePropagationMetadata(
+                input.executionArn(), input.operationId(), input.parentOperationId(), input.targetFunctionName());
+        return header != null ? new PropagationMetadata(header) : null;
+    }
+
+    /**
+     * Optional layer-compatible X-Ray producer capability. String-only linkage lets a new plugin layer keep loading on
+     * older cores that do not know PropagationInput/PropagationMetadata; those cores simply never call this hook. The
+     * typed hook above is the preferred core contract and adapts this capability into its immutable result.
+     */
+    default String providePropagationMetadata(
+            String executionArn, String operationId, String parentOperationId, String targetFunctionName) {
+        return null;
+    }
+
     // ─── Invocation-level hooks ──────────────────────────────────────────
 
     /**

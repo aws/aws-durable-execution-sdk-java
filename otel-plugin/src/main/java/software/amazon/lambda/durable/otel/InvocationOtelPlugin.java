@@ -352,6 +352,26 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         }
     }
 
+    /** Produces metadata without creating spans or changing the configured provider/resource. */
+    @Override
+    public String providePropagationMetadata(
+            String executionArn, String operationId, String parentOperationId, String targetFunctionName) {
+        if (!tracingEnabled || !executionArn.equals(durableExecutionArn)) return null;
+        var trace = executionTrace;
+        if (trace == null) return null;
+        // An observed operation's actual context is authoritative, including invocation-view continuation segments.
+        var context = operationContexts.get(operationId);
+        if (context == null) {
+            // Before a new operation starts, use the same deterministic ID its initial span will receive.
+            context = SpanContext.create(
+                    trace.traceId(),
+                    idGenerator.generateSpanIdForOperation(durableExecutionArn, operationId),
+                    effectiveTraceFlags(),
+                    effectiveTraceState());
+        }
+        return OtelPropagationMetadata.fromContext(context);
+    }
+
     // ─── Operation hooks ─────────────────────────────────────────────────
 
     @Override

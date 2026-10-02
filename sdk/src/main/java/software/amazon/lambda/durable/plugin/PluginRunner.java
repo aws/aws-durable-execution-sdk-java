@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.plugin;
 
+import static java.util.Objects.requireNonNull;
+
 import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
@@ -40,6 +42,56 @@ public class PluginRunner {
     /** Returns the list of registered plugins. */
     public List<DurableExecutionPlugin> getPlugins() {
         return plugins;
+    }
+
+    /**
+     * Collects supported metadata in configured order on the caller's thread. First non-null member wins; matching
+     * later values are harmless. Ordinary plugin/invalid-result failures are logged and skipped, matching the event
+     * hooks' Exception containment policy; Errors continue to propagate. No production START path calls this yet.
+     */
+    public PropagationMetadata providePropagationMetadata(PropagationInput input) {
+        requireNonNull(input, "input");
+        String selected = null;
+        String owner = null;
+        var conflicts = 0;
+        for (var index = 0; index < plugins.size(); index++) {
+            var plugin = plugins.get(index);
+            var identity = plugin.getClass().getName() + "[" + index + "]";
+            try {
+                var candidate = propagationHeader(plugin, input);
+                if (candidate == null) continue;
+                if (selected == null) {
+                    selected = candidate;
+                    owner = identity;
+                } else if (!selected.equals(candidate)) {
+                    warnPropagation(
+                            "Conflicting xAmznTraceId from plugin {}; retaining plugin {} (conflict count: {})",
+                            identity,
+                            owner,
+                            ++conflicts);
+                }
+            } catch (Exception failure) {
+                warnPropagation("Propagation metadata from plugin {} failed; skipping contribution", identity, failure);
+            }
+        }
+        return selected != null ? new PropagationMetadata(selected) : null;
+    }
+
+    private static String propagationHeader(DurableExecutionPlugin plugin, PropagationInput input) {
+        var metadata = plugin.providePropagationMetadata(input);
+        var header = metadata != null ? metadata.xAmznTraceId() : null;
+        if (header != null && header.isBlank()) {
+            throw new IllegalArgumentException("xAmznTraceId must not be blank");
+        }
+        return header;
+    }
+
+    private static void warnPropagation(String message, Object... arguments) {
+        try {
+            logger.warn(message, arguments);
+        } catch (RuntimeException ignored) {
+            // A failed logging backend cannot change optional metadata collection or the handler's result.
+        }
     }
 
     // ─── Event hooks ─────────────────────────────────────────────────────
