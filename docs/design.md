@@ -702,6 +702,8 @@ The SDK round-trips generated operation results through the selected serializer 
 
 Root handler input, output, and exception serialization use the global serializer's original context-free methods. `DurableInputOutputSerDes` separately handles the internal `DurableExecutionInput` and `DurableExecutionOutput` protocol envelopes. Protocol fields, including checkpoint tokens, are not routed through user payload serializers.
 
+Test runners attach the execution ARN to each `TestOperation` snapshot. `getStepResult(type, serDes)` selects an explicit operation serializer and supplies the same `operation/<operation-id>/result` context as the runtime. The local runner uses its stable execution identity; cloud history processing uses the ARN returned by the invocation, including asynchronous snapshots. Reads without an override retain the runner's global serializer, and handler input/output remains context-free. Serializer selection is explicit because checkpoint payloads do not identify their custom serializer. See [custom SerDes inspection](advanced/testing.md#inspecting-results-with-a-custom-serdes).
+
 ### FileSystemSerDes
 
 `FileSystemSerDes`, `FileSystemStorageMode`, and `FileSystemPathEncoding` live in the main `sdk` module under `software.amazon.lambda.durable.serde`. They use the JDK and the SDK's existing Jackson dependency and are included in the normal SDK artifact.

@@ -86,10 +86,18 @@ offloaded response, explicitly set `InvokeConfig.payloadSerDes(new JacksonSerDes
 and `.serDes(files)`. Offloading the request itself with `.payloadSerDes(files)`
 requires the invoked function to explicitly decode that envelope.
 
-Test runners retain their configured global serializer when inspecting step
-results. For a step with a custom filesystem serializer, inspect
-`getStepDetails().result()` and decode it with the same serializer and a
-`SerDesContext(executionArn, "operation/" + operationId + "/result")`.
+Test runners support an explicit serializer when inspecting a step result:
+
+```java
+var document = result.getOperation("load-document").getStepResult(String.class, files);
+```
+
+The runner supplies the execution ARN and operation entity ID. This works with
+local and cloud snapshots, including asynchronous cloud executions; cloud reads
+require access to the same mounted payload files. The global serializer still
+handles ordinary handler input/output and result reads without an override.
+Use `getStepDetails().result()` to inspect the raw checkpoint string. See
+[custom SerDes inspection](testing.md#inspecting-results-with-a-custom-serdes).
 
 ## Storage and replay
 
