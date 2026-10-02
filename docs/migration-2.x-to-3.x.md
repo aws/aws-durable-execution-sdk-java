@@ -184,7 +184,7 @@ Migration rules for this shape:
 - Delete the ARN-keyed map. There is nothing left to key: the instance belongs to one invocation.
 - Delete the entry-removal code in `onInvocationEnd`. The SDK drops the instance when the invocation returns.
 - Move anything the map's value type held into instance fields, and assign them in the constructor from the `InvocationInfo` the factory received.
-- Prefer constructor assignment over assignment in `onInvocationStart`. The SDK publishes the plugin instance to the operation, checkpoint, and user function threads with a volatile write before firing the first hook, so a field assigned in the constructor is visible to those threads without being `volatile`. A field assigned inside `onInvocationStart` has no such guarantee for a thread that already existed.
+- Constructors and start hooks run in registration order: construct A, start A, construct B, start B. A later factory can observe context installed by an earlier start hook. After startup, the SDK publishes the instance list with a volatile write before handler/operation dispatch; both constructor and completed start-hook assignments are visible to SDK consumers. Mutable fields updated later still need appropriate synchronization.
 - Collections that hooks mutate still need to be concurrent. Hooks for one invocation fire on several threads.
 
 Caveat about resumes: a plugin instance does not survive suspension. When an execution suspends on a `wait()` or a callback and later resumes, the resume is a new invocation with a new plugin instance, and any state accumulated in the previous instance is gone. State that has to be stable across the whole execution must be derivable from the `InvocationInfo` of each invocation, not accumulated. `InvocationInfo.executionStartTime()` is stable across all invocations of an execution for exactly this reason, and `InvocationInfo.operations()` carries the checkpointed operations delivered at invocation start. A sampling decision should be computed deterministically from the execution ARN rather than stored.
@@ -377,3 +377,11 @@ A useful pre-deployment check is to run one execution locally with the provider 
 - `DurableExecutionPluginProvider` keeps only `getName()` and inherits `createPlugin(InvocationInfo)`; `API_VERSION`, `getApiVersion()`, `getPluginType()`, and the zero-argument `createPlugin()` are removed
 - A provider selected through `DURABLE_EXECUTION_PLUGINS` that was not rebuilt fails startup with an `IllegalStateException` naming the provider and its JAR; a stale provider registered directly through `withPlugins(...)` instead produces no instrumentation and only logs a warning, so rebuild and redeploy every provider JAR
 - There is no compatibility bridge, and recompilation against `3.x` is required
+
+## Fatal invocation failures
+
+`VirtualMachineError` and `ThreadDeath` are not converted to ordinary durable failure results. The SDK finalizes
+published plugins with `RETRYING`, releases invocation state, and rethrows the fatal cause from the invocation boundary.
+Fatal failures also escape the SDK's asynchronous executor runnable, so the default thread-pool executor terminates
+that worker. A supplied executor retains its own task-exception policy. With a direct executor, rethrow is deferred to the invocation boundary to allow finalization first. Ordinary
+handler failures and nonfatal plugin/factory containment retain their existing behavior.

@@ -69,15 +69,8 @@ class PluginRunnerTest {
     }
 
     @Test
-    void everyFactoryRunsBeforeAnyStartHook_andNoPluginSeesAnothersHookState() {
-        // The order is part of the contract, so it is pinned rather than left to the reply on a review thread. Every
-        // factory runs, then every start hook, and a plugin therefore cannot observe what another plugin's start hook
-        // installed. That is deliberate: a plugin that depended on it would be depending on the order entries appear in
-        // a customer's withPlugins call, and instrumentation that changes what other instrumentation records is not
-        // something the SDK can promise across three languages.
-        //
-        // Both run on the same thread, so the ThreadLocal below is visible where it is set; only the interleaving is
-        // being asserted, not visibility.
+    void startupFollowsRegistrationOrder_andLaterFactorySeesEarlierHookState() {
+        // Factories and hooks share the handler thread; earlier startup state must be available to later factories.
         var order = new ArrayList<String>();
         var seenByLaterConstructor = new ArrayList<String>();
         var installed = new ThreadLocal<String>();
@@ -109,8 +102,8 @@ class PluginRunnerTest {
             installed.remove();
         }
 
-        assertEquals(List.of("construct:first", "construct:second", "start:first", "start:second"), order);
-        assertEquals(List.of("null"), seenByLaterConstructor, "a constructor must not observe another plugin's hook");
+        assertEquals(List.of("construct:first", "start:first", "construct:second", "start:second"), order);
+        assertEquals(List.of("from-first-start-hook"), seenByLaterConstructor);
     }
 
     @Test
@@ -437,11 +430,14 @@ class PluginRunnerTest {
 
         assertThrows(OutOfMemoryError.class, () -> runner.onInvocationStart(invocationInfo()));
 
-        // The start hook never ran -- the fatal throw left createPlugins -- but the instance exists and its end hook
+        // The earlier start hook ran before the later fatal factory failure; its end hook
         // must still reach it.
-        assertEquals(List.of(), calls);
+        assertEquals(List.of("p1:onInvocationStart"), calls);
         runner.onInvocationEnd(invocationEndInfo());
-        assertEquals(List.of("p1:onInvocationEnd"), calls, "an instance already built must still be finalized");
+        assertEquals(
+                List.of("p1:onInvocationStart", "p1:onInvocationEnd"),
+                calls,
+                "an instance already built must still be finalized");
     }
 
     @Test

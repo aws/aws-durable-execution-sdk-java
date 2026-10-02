@@ -7,8 +7,10 @@ import com.amazonaws.services.lambda.runtime.RequestHandler;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -66,7 +68,7 @@ public class DurableExecutor {
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
             var pluginExecutionInput = new AtomicReference<>();
-            var handlerFuture = CompletableFuture.supplyAsync(
+            var handlerFuture = supplyAsync(
                     () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
 
@@ -126,6 +128,23 @@ public class DurableExecutor {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
                                 Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);
+
+                                if (isFatal(cause)) {
+                                    try {
+                                        fireOnInvocationEnd(
+                                                pluginRunner,
+                                                executionManager,
+                                                requestId,
+                                                executionArn,
+                                                isFirstInvocation,
+                                                InvocationStatus.RETRYING,
+                                                cause,
+                                                pluginExecutionInput.get(),
+                                                null);
+                                    } finally {
+                                        rethrowFatal(cause);
+                                    }
+                                }
 
                                 // return PENDING if it's SuspendExecutionException
                                 if (cause instanceof SuspendExecutionException) {
@@ -235,6 +254,37 @@ public class DurableExecutor {
                 return null;
             }
         }
+    }
+
+    /** Completes the observation future without absorbing fatal failures on an executor worker. */
+    private static <T> CompletableFuture<T> supplyAsync(Supplier<T> task, Executor executor) {
+        var result = new CompletableFuture<T>();
+        var caller = Thread.currentThread();
+        Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
+            try {
+                result.complete(task.get());
+            } catch (Throwable failure) {
+                result.completeExceptionally(failure);
+                // A direct executor is already on the invocation caller; its fatal result is rethrown below after
+                // finalization. On an asynchronous executor it must also escape the runnable so the worker terminates.
+                if (Thread.currentThread() != caller) {
+                    rethrowFatal(ExceptionHelper.unwrapCompletableFuture(failure));
+                }
+            }
+        };
+        executor.execute(work);
+        return result;
+    }
+
+    @SuppressWarnings("removal")
+    private static boolean isFatal(Throwable failure) {
+        return failure instanceof VirtualMachineError || failure instanceof ThreadDeath;
+    }
+
+    @SuppressWarnings("removal")
+    private static void rethrowFatal(Throwable failure) {
+        if (failure instanceof VirtualMachineError fatal) throw fatal;
+        if (failure instanceof ThreadDeath fatal) throw fatal;
     }
 
     private static void fireOnInvocationEnd(

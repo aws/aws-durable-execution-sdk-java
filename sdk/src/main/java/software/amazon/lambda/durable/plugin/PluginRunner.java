@@ -13,10 +13,10 @@ import org.slf4j.LoggerFactory;
  * Dispatches the lifecycle hooks of a single Lambda invocation to that invocation's plugin instances.
  *
  * <p>A runner is created per invocation from the configured {@link DurableExecutionPluginFactory factories} and holds
- * no plugin instances until {@link #onInvocationStart(InvocationInfo)} materializes them — once, before the first hook
- * fires, from the very {@link InvocationInfo} the first hook then receives. {@link #releasePlugins()} drops them when
- * the invocation returns, so a plugin instance is never shared between invocations and never needs to key its state by
- * execution ARN.
+ * no plugin instances until {@link #onInvocationStart(InvocationInfo)} materializes and starts each plugin in
+ * configured order, from the very {@link InvocationInfo} the first hook then receives. {@link #releasePlugins()} drops
+ * them when the invocation returns, so a plugin instance is never shared between invocations and never needs to key its
+ * state by execution ARN.
  *
  * <p>Event hooks are fire-and-forget: each plugin is called in order, errors are swallowed. A factory that throws or
  * returns {@code null} is contained the same way — the plugin is skipped for the invocation. Containment covers every
@@ -59,8 +59,9 @@ public class PluginRunner {
     /**
      * Creates this invocation's plugin instances, one per registered factory.
      *
-     * <p>Called from {@link #onInvocationStart(InvocationInfo)} so the instances exist before any hook is dispatched.
-     * Factories that throw or return null are logged and skipped.
+     * <p>Called from {@link #onInvocationStart(InvocationInfo)}. Each start hook runs before constructing the next
+     * plugin, preserving startup context installed by earlier registrations. Factories that throw or return null are
+     * logged and skipped.
      *
      * <p>Every non-fatal throwable is contained, not just {@link Exception}. The contract says a factory failure is
      * skipped and never disrupts the execution, and a throwable that escapes here fails an execution the plugin was
@@ -77,24 +78,27 @@ public class PluginRunner {
         var created = new ArrayList<DurableExecutionPlugin>(pluginFactories.size());
         try {
             for (var factory : pluginFactories) {
-                try {
-                    var plugin = factory.createPlugin(info);
-                    if (plugin == null) {
-                        logger.warn("Plugin factory {} returned null; skipping it for this invocation", factory);
-                        continue;
-                    }
-                    created.add(plugin);
-                } catch (Throwable t) {
-                    contain(t, "Plugin factory failed; skipping it for this invocation");
-                }
+                var plugin = createPlugin(factory, info);
+                if (plugin == null) continue;
+                created.add(plugin);
+                runPlugin(plugin, p -> p.onInvocationStart(info));
             }
         } finally {
-            // Published even when a factory failure is fatal and propagates. A plugin constructor is where both OTel
-            // plugins bind their tracer and start the Invocation span, so an instance built before the fatal one
-            // already owns spans that only onInvocationEnd ends and flushes. Assigning after the loop meant a
-            // VirtualMachineError or ThreadDeath from a later factory left the runner looking empty, so the end hook
-            // the failure path fires reached nothing and those spans were dropped un-ended.
+            // Even a fatal constructor/start failure must leave already-created instances available for finalization.
+            // Publishing after startup also makes state assigned by start hooks visible to later SDK threads.
             this.plugins = List.copyOf(created);
+        }
+    }
+
+    private static DurableExecutionPlugin createPlugin(DurableExecutionPluginFactory factory, InvocationInfo info) {
+        try {
+            var plugin = factory.createPlugin(info);
+            if (plugin == null)
+                logger.warn("Plugin factory {} returned null; skipping it for this invocation", factory);
+            return plugin;
+        } catch (Throwable failure) {
+            contain(failure, "Plugin factory failed; skipping it for this invocation");
+            return null;
         }
     }
 
@@ -121,11 +125,15 @@ public class PluginRunner {
      */
     private void run(Consumer<DurableExecutionPlugin> hook) {
         for (var plugin : plugins) {
-            try {
-                hook.accept(plugin);
-            } catch (Throwable t) {
-                contain(t, "Plugin hook failed");
-            }
+            runPlugin(plugin, hook);
+        }
+    }
+
+    private static void runPlugin(DurableExecutionPlugin plugin, Consumer<DurableExecutionPlugin> hook) {
+        try {
+            hook.accept(plugin);
+        } catch (Throwable failure) {
+            contain(failure, "Plugin hook failed");
         }
     }
 
@@ -185,7 +193,6 @@ public class PluginRunner {
      */
     public void onInvocationStart(InvocationInfo info) {
         createPlugins(info);
-        run(p -> p.onInvocationStart(info));
     }
 
     /**
