@@ -4,12 +4,58 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.time.Instant;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
 
 class XRayContextExtractorTest {
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "1"})
+    void invocationHeaderOverridesGlobalCarrier(String sampled) {
+        System.setProperty("com.amazonaws.xray.traceHeader", "Root=1-ffffffff-ffffffffffffffffffffffff;Sampled=1");
+        try {
+            var header = "Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=" + sampled;
+            var extracted = new XRayContextExtractor().extract(invocation(header));
+            assertEquals("6955b900123456789012345678901234", extracted.traceId());
+            assertEquals("1234567890123456", extracted.parentSpanId());
+            assertEquals(
+                    sampled.equals("1") ? ExtractedContext.Sampling.SAMPLED : ExtractedContext.Sampling.NOT_SAMPLED,
+                    extracted.sampling());
+            assertNull(new XRayContextExtractor().extract(invocation("malformed")));
+        } finally {
+            System.clearProperty("com.amazonaws.xray.traceHeader");
+        }
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    void missingInvocationHeaderRetainsOrdinaryLambdaFallback(String header) {
+        System.setProperty("com.amazonaws.xray.traceHeader", "Root=1-6955b900-123456789012345678901234;Sampled=0");
+        try {
+            assertEquals(
+                    ExtractedContext.Sampling.NOT_SAMPLED,
+                    new XRayContextExtractor().extract(invocation(header)).sampling());
+        } finally {
+            System.clearProperty("com.amazonaws.xray.traceHeader");
+        }
+    }
+
+    @Test
+    void existingCustomExtractorStillReceivesOneCall() {
+        var expected =
+                new ExtractedContext("6955b900123456789012345678901234", null, ExtractedContext.Sampling.SAMPLED);
+        ContextExtractor custom = () -> expected;
+        assertSame(expected, custom.extract(invocation("ignored")));
+    }
+
+    private static InvocationInfo invocation(String header) {
+        return new InvocationInfo("request", "arn", true, Instant.EPOCH, null, Map.of(), Map.of(), header);
+    }
 
     @Test
     void extract_withoutEnvVar_returnsNull() {

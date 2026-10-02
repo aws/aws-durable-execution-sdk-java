@@ -207,7 +207,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
         this.durableExecutionArn = info.durableExecutionArn();
 
-        var extracted = contextExtractor.extract();
+        var extracted = contextExtractor.extract(info);
 
         // Resolve the execution ancestor the Workflow span parents onto so it joins the stable-per-execution trace.
         var canonicalTraceId = ExecutionTraceContext.canonicalTraceId(

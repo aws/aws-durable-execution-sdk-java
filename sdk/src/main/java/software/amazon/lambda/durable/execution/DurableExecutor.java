@@ -60,6 +60,8 @@ public class DurableExecutor {
             var isFirstInvocation = !executionManager.isReplaying();
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             var executionArn = input.durableExecutionArn();
+            // Capture on the runtime thread before dispatch: LMI trace carriers can be thread-local.
+            var xRayTraceId = lambdaContext != null ? lambdaContext.getXrayTraceId() : null;
 
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
@@ -99,7 +101,8 @@ public class DurableExecutor {
                                             executionManager.getInitialOperationIds()),
                                     PluginInfoConverter.toOperationItemMap(
                                             executionManager.getUpdatedOperationsSnapshot(),
-                                            executionManager.getInitialOperationIds())));
+                                            executionManager.getInitialOperationIds()),
+                                    xRayTraceId));
                         }
                         if (inputFailure != null) {
                             ExceptionHelper.sneakyThrow(inputFailure);

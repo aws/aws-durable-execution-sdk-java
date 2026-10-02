@@ -216,7 +216,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
         // Resolve the one execution ancestor both spans parent onto, so they share a stable-per-execution trace and a
         // sampling decision.
-        var extracted = contextExtractor.extract();
+        var extracted = contextExtractor.extract(info);
         var canonicalTraceId =
                 ExecutionTraceContext.canonicalTraceId(extracted, arn(), info.executionStartTime(), idGenerator);
         // Resolve the execution's sampling decision once for this invocation as a full SamplingResult, then apply it to
