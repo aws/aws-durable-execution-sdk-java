@@ -375,7 +375,7 @@ class WaitForConditionOperationTest {
 
     @Test
     void startNormalizesInitialStateThroughSerDes() throws Exception {
-        var mockSerDes = mock(SerDes.class);
+        var mockSerDes = mock(SerDes.class, CALLS_REAL_METHODS);
         when(mockSerDes.serialize(42)).thenReturn("42-normalized");
         when(mockSerDes.deserialize(eq("42-normalized"), any())).thenReturn(99);
 
@@ -407,7 +407,7 @@ class WaitForConditionOperationTest {
 
     @Test
     void startSerializesInitialStateButSkipsDeserializeWhenDisabled() throws Exception {
-        var mockSerDes = mock(SerDes.class);
+        var mockSerDes = mock(SerDes.class, CALLS_REAL_METHODS);
         when(mockSerDes.serialize(42)).thenReturn("42-normalized");
         when(mockSerDes.deserialize(eq("42-normalized"), any())).thenReturn(99);
 
