@@ -46,10 +46,12 @@ final class OtelPluginSupport {
                 .setAttribute(DURABLE_EXECUTION_ARN, arn)
                 .setAttribute(DURABLE_EXECUTION_SYNTHETIC_ROOT, true)
                 .setStartTimestamp(start);
+        Span root;
         try (var ignored = DurableSamplingDecision.openScope(intent)) {
-            var root = idGenerator.startSpan(builder, ancestor.getTraceId(), ancestor.getSpanId());
-            root.end(start);
+            root = idGenerator.startSpan(builder, ancestor.getTraceId(), ancestor.getSpanId());
         }
+        // End processors/exporters may create unrelated spans; they must not inherit this sampling override.
+        root.end(start);
     }
 
     private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);

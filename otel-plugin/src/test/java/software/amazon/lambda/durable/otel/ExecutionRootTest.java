@@ -9,12 +9,17 @@ import static software.amazon.lambda.durable.otel.SpanAttributes.DURABLE_EXECUTI
 
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.context.Context;
 import io.opentelemetry.sdk.common.CompletableResultCode;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
+import io.opentelemetry.sdk.trace.ReadWriteSpan;
+import io.opentelemetry.sdk.trace.ReadableSpan;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
+import io.opentelemetry.sdk.trace.SpanProcessor;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
@@ -26,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -228,6 +234,60 @@ class ExecutionRootTest {
 
     private static Resource environmentResource(String instance) {
         return Resource.create(Attributes.of(AttributeKey.stringKey("faas.instance"), instance));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void processorSpansDoNotInheritDurableSamplingOverride(boolean executionView) {
+        var exporter = InMemorySpanExporter.create();
+        var observed = new AtomicReference<SpanContext>();
+        try (var unrelated = SdkTracerProvider.builder()
+                .setSampler(DurableSampler.wrap(Sampler.alwaysOff()))
+                .build()) {
+            var builder = SdkTracerProvider.builder()
+                    .setSampler(Sampler.alwaysOff())
+                    .addSpanProcessor(new SamplingObserver(unrelated, observed))
+                    .addSpanProcessor(SimpleSpanProcessor.create(exporter));
+            var config = OtelPluginConfig.builder()
+                    .enableMdc(false)
+                    .contextExtractor(() -> new ExtractedContext(TRACE, null, ExtractedContext.Sampling.SAMPLED))
+                    .build();
+            DurableExecutionPlugin plugin = executionView
+                    ? new ExecutionOtelPlugin(builder, config)
+                    : new InvocationOtelPlugin(builder, config);
+            invoke(plugin, ARN, true, InvocationStatus.PENDING);
+            assertTrue(named(exporter.getFinishedSpanItems(), "DurableExecutionRoot")
+                    .getSpanContext()
+                    .isSampled());
+            assertNotNull(observed.get(), "Root end processor must have run");
+            assertFalse(observed.get().isSampled(), "Processor's unrelated span must retain its always-off policy");
+        }
+    }
+
+    private record SamplingObserver(SdkTracerProvider provider, AtomicReference<SpanContext> observed)
+            implements SpanProcessor {
+        @Override
+        public void onStart(Context parent, ReadWriteSpan span) {}
+
+        @Override
+        public boolean isStartRequired() {
+            return false;
+        }
+
+        @Override
+        public void onEnd(ReadableSpan span) {
+            if (span.getName().equals("DurableExecutionRoot")) {
+                var callback =
+                        provider.get("processor").spanBuilder("unrelated").startSpan();
+                observed.set(callback.getSpanContext());
+                callback.end();
+            }
+        }
+
+        @Override
+        public boolean isEndRequired() {
+            return true;
+        }
     }
 
     private static void assertStable(SpanData first, SpanData replay) {
