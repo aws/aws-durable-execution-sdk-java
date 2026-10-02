@@ -7,14 +7,23 @@ import static software.amazon.lambda.durable.otel.SpanAttributes.DURABLE_EXECUTI
 import static software.amazon.lambda.durable.otel.SpanAttributes.DURABLE_EXECUTION_STATUS;
 import static software.amazon.lambda.durable.otel.SpanAttributes.DURABLE_EXECUTION_SYNTHETIC_ROOT;
 
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.sdk.common.CompletableResultCode;
+import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import io.opentelemetry.sdk.trace.data.SpanData;
+import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import io.opentelemetry.sdk.trace.export.SpanExporter;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -123,13 +132,16 @@ class ExecutionRootTest {
             assertTrue(exporter.getFinishedSpanItems().isEmpty());
         }
         var exporter = InMemorySpanExporter.create();
-        var plugin = plugin(
-                executionView,
-                exporter,
-                new ExtractedContext(TRACE, null, ExtractedContext.Sampling.SAMPLED),
-                Sampler.alwaysOff());
-        invoke(plugin, ARN, true, InvocationStatus.SUCCEEDED);
-        invoke(plugin, ARN + "-other", true, InvocationStatus.SUCCEEDED);
+        var extracted = new ExtractedContext(TRACE, null, ExtractedContext.Sampling.SAMPLED);
+        for (var service : List.of("caller", "callee")) {
+            var builder = SdkTracerProvider.builder()
+                    .setResource(Resource.create(Attributes.of(AttributeKey.stringKey("service.name"), service)))
+                    .setSampler(Sampler.alwaysOff())
+                    .addSpanProcessor(SimpleSpanProcessor.create(exporter));
+            var plugin = plugin(executionView, builder, extracted);
+            var start = service.equals("caller") ? START : START.plusSeconds(10);
+            invoke(plugin, ARN + "-" + service, true, InvocationStatus.SUCCEEDED, start);
+        }
         var roots = exporter.getFinishedSpanItems().stream()
                 .filter(span -> span.getName().equals("DurableExecutionRoot"))
                 .toList();
@@ -139,14 +151,106 @@ class ExecutionRootTest {
         assertNotEquals(
                 roots.get(0).getAttributes().get(DURABLE_EXECUTION_ARN),
                 roots.get(1).getAttributes().get(DURABLE_EXECUTION_ARN));
+        assertNotEquals(roots.get(0).getStartEpochNanos(), roots.get(1).getStartEpochNanos());
+        assertNotEquals(roots.get(0).getResource(), roots.get(1).getResource());
+        for (var root : roots) {
+            var workflow = exporter.getFinishedSpanItems().stream()
+                    .filter(span -> span.getName().equals("Workflow"))
+                    .filter(span -> span.getAttributes()
+                            .get(DURABLE_EXECUTION_ARN)
+                            .equals(root.getAttributes().get(DURABLE_EXECUTION_ARN)))
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals(root.getSpanContext(), workflow.getParentSpanContext());
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"true,true", "true,false", "false,true", "false,false"})
+    void failedFirstFlushIsRecoveredInAnotherEnvironment(boolean executionView, boolean success) {
+        var first = failedSuspendedAnchor(executionView);
+        var exporter = InMemorySpanExporter.create();
+        var builder = SdkTracerProvider.builder()
+                .setResource(environmentResource("resumed"))
+                .setSampler(Sampler.alwaysOn())
+                .addSpanProcessor(SimpleSpanProcessor.create(exporter));
+        invoke(
+                plugin(executionView, builder, null),
+                ARN,
+                false,
+                success ? InvocationStatus.SUCCEEDED : InvocationStatus.FAILED);
+        var recovered = named(exporter.getFinishedSpanItems(), "DurableExecutionRoot");
+        assertStableSpanFields(first, recovered);
+        assertNotEquals(first.getResource(), recovered.getResource());
+        assertEquals(
+                recovered.getSpanContext(),
+                named(exporter.getFinishedSpanItems(), "Workflow").getParentSpanContext());
+    }
+
+    private static SpanData failedSuspendedAnchor(boolean executionView) {
+        var attempted = new ArrayList<SpanData>();
+        try (var processor = BatchSpanProcessor.builder(failingExporter(attempted))
+                .setScheduleDelay(Duration.ofDays(1))
+                .build()) {
+            var builder = SdkTracerProvider.builder()
+                    .setResource(environmentResource("first"))
+                    .setSampler(Sampler.alwaysOn())
+                    .addSpanProcessor(processor);
+            invoke(plugin(executionView, builder, null), ARN, true, InvocationStatus.PENDING);
+            // The end hook's forceFlush attempts the anchor export before returning, even without a terminal hook.
+            assertTrue(attempted.stream().noneMatch(span -> span.getName().equals("Workflow")));
+            assertEquals(
+                    START.getEpochSecond() * 1_000_000_000L,
+                    named(attempted, "DurableExecutionRoot").getStartEpochNanos());
+        }
+        return named(attempted, "DurableExecutionRoot");
+    }
+
+    private static SpanExporter failingExporter(List<SpanData> attempted) {
+        return new SpanExporter() {
+            @Override
+            public CompletableResultCode export(Collection<SpanData> spans) {
+                attempted.addAll(spans);
+                return CompletableResultCode.ofFailure();
+            }
+
+            @Override
+            public CompletableResultCode flush() {
+                return CompletableResultCode.ofFailure();
+            }
+
+            @Override
+            public CompletableResultCode shutdown() {
+                return CompletableResultCode.ofSuccess();
+            }
+        };
+    }
+
+    private static Resource environmentResource(String instance) {
+        return Resource.create(Attributes.of(AttributeKey.stringKey("faas.instance"), instance));
     }
 
     private static void assertStable(SpanData first, SpanData replay) {
+        assertStableSpanFields(first, replay);
+        assertEquals(first.getResource(), replay.getResource());
+    }
+
+    private static void assertStableSpanFields(SpanData first, SpanData replay) {
         assertEquals(first.getSpanContext(), replay.getSpanContext());
+        assertEquals(first.getParentSpanContext(), replay.getParentSpanContext());
+        assertEquals(first.getName(), replay.getName());
+        assertEquals(first.getKind(), replay.getKind());
         assertEquals(first.getStartEpochNanos(), replay.getStartEpochNanos());
         assertEquals(first.getEndEpochNanos(), replay.getEndEpochNanos());
         assertEquals(first.getAttributes(), replay.getAttributes());
-        assertEquals(first.getResource(), replay.getResource());
+        assertEquals(first.getStatus(), replay.getStatus());
+        assertEquals(first.getEvents(), replay.getEvents());
+        assertEquals(first.getLinks(), replay.getLinks());
+        assertEquals(first.hasEnded(), replay.hasEnded());
+        assertEquals(first.getTotalAttributeCount(), replay.getTotalAttributeCount());
+        assertEquals(first.getTotalRecordedEvents(), replay.getTotalRecordedEvents());
+        assertEquals(first.getTotalRecordedLinks(), replay.getTotalRecordedLinks());
+        assertEquals(first.getInstrumentationScopeInfo(), replay.getInstrumentationScopeInfo());
     }
 
     private static SpanData named(List<SpanData> spans, String name) {
@@ -157,7 +261,12 @@ class ExecutionRootTest {
     }
 
     private static void invoke(DurableExecutionPlugin plugin, String arn, boolean first, InvocationStatus status) {
-        plugin.onInvocationStart(new InvocationInfo("request", arn, first, START));
+        invoke(plugin, arn, first, status, START);
+    }
+
+    private static void invoke(
+            DurableExecutionPlugin plugin, String arn, boolean first, InvocationStatus status, Instant start) {
+        plugin.onInvocationStart(new InvocationInfo("request", arn, first, start));
         plugin.onInvocationEnd(new InvocationEndInfo("request", arn, first, status, null));
     }
 
@@ -165,6 +274,11 @@ class ExecutionRootTest {
             boolean executionView, InMemorySpanExporter exporter, ExtractedContext extracted, Sampler sampler) {
         var builder =
                 SdkTracerProvider.builder().setSampler(sampler).addSpanProcessor(SimpleSpanProcessor.create(exporter));
+        return plugin(executionView, builder, extracted);
+    }
+
+    private static DurableExecutionPlugin plugin(
+            boolean executionView, SdkTracerProviderBuilder builder, ExtractedContext extracted) {
         var config = OtelPluginConfig.builder()
                 .contextExtractor(() -> extracted)
                 .enableMdc(false)
