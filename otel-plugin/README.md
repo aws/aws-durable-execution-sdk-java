@@ -40,6 +40,12 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 </dependency>
 ```
 
+## Chained-invoke propagation groundwork
+
+The SDK exposes a draft, synchronous metadata contract and both views provide pure X-Ray metadata producers.
+Production invoke START integration and supported public client models are still pending; this does not enable
+outbound propagation. See [the scope and remaining dependencies](../docs/advanced/propagation-metadata.md).
+
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
 1. Add the ADOT Lambda Layer to your function
