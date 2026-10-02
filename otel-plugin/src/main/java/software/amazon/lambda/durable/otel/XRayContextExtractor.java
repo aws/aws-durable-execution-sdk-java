@@ -29,15 +29,31 @@ public class XRayContextExtractor implements ContextExtractor {
     private static final Pattern HEX_32 = Pattern.compile("[0-9a-f]{32}");
     private static final Pattern HEX_16 = Pattern.compile("[0-9a-f]{16}");
 
+    // Scoped only around extraction so legacy no-argument overrides retain virtual dispatch.
+    private final ThreadLocal<String> invocationTraceHeader = new ThreadLocal<>();
+
     @Override
     public ExtractedContext extract(InvocationInfo info) {
-        var header = info.xRayTraceId();
-        // A present invocation header is authoritative, even if malformed. Never replace it with stale global data.
-        return header == null || header.isEmpty() ? extract() : parseHeader(header);
+        var previous = invocationTraceHeader.get();
+        invocationTraceHeader.set(info.xRayTraceId());
+        try {
+            return extract();
+        } finally {
+            if (previous == null) {
+                invocationTraceHeader.remove();
+            } else {
+                invocationTraceHeader.set(previous);
+            }
+        }
     }
 
     @Override
     public ExtractedContext extract() {
+        var invocationHeader = invocationTraceHeader.get();
+        // A present invocation header is authoritative, even if malformed. Never replace it with stale global data.
+        if (invocationHeader != null && !invocationHeader.isEmpty()) {
+            return parseHeader(invocationHeader);
+        }
         // Try system property first — the Lambda runtime interface client updates this per invocation, so it reflects
         // the current invocation and avoids the JVM's process-lifetime environment-variable caching.
         var traceHeader = System.getProperty(XRAY_SYSTEM_PROPERTY);

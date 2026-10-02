@@ -53,6 +53,41 @@ class XRayContextExtractorTest {
         assertSame(expected, custom.extract(invocation("ignored")));
     }
 
+    @Test
+    void existingNoArgumentSubclassOverrideKeepsControlWithInvocationHeader() {
+        var expected =
+                new ExtractedContext("6955b900aaaaaaaaaaaaaaaaaaaaaaaa", null, ExtractedContext.Sampling.NOT_SAMPLED);
+        var extractor = new XRayContextExtractor() {
+            @Override
+            public ExtractedContext extract() {
+                return expected;
+            }
+        };
+        assertSame(
+                expected,
+                extractor.extract(
+                        invocation("Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=1")));
+    }
+
+    @Test
+    void delegatingSubclassUsesInvocationHeaderAndClearsItAfterExtraction() {
+        var extractor = new XRayContextExtractor() {
+            @Override
+            public ExtractedContext extract() {
+                var extracted = super.extract();
+                if (extracted != null && extracted.sampling() == ExtractedContext.Sampling.NOT_SAMPLED) {
+                    throw new IllegalArgumentException("custom extraction failure");
+                }
+                return extracted;
+            }
+        };
+        var header = "Root=1-6955b900-123456789012345678901234;Sampled=";
+        assertNotNull(extractor.extract(invocation(header + "1")));
+        assertNull(extractor.extract());
+        assertThrows(IllegalArgumentException.class, () -> extractor.extract(invocation(header + "0")));
+        assertNull(extractor.extract());
+    }
+
     private static InvocationInfo invocation(String header) {
         return new InvocationInfo("request", "arn", true, Instant.EPOCH, null, Map.of(), Map.of(), header);
     }
