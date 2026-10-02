@@ -18,7 +18,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
-import software.amazon.lambda.durable.plugin.InvocationRuntimeContext;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 
 class InvocationHeaderTest {
@@ -56,7 +55,7 @@ class InvocationHeaderTest {
                     }
                 };
         var info = new InvocationInfo("request", "arn", true, Instant.EPOCH);
-        var runtime = new InvocationRuntimeContext("Root=1-6955b900-123456789012345678901234;Sampled=0");
+        var runtime = ("Root=1-6955b900-123456789012345678901234;Sampled=0");
         plugin.onInvocationStart(info, runtime);
         plugin.onInvocationEnd(new InvocationEndInfo("request", "arn", true, InvocationStatus.SUCCEEDED, null));
         assertEquals(1, calls.get());
@@ -83,7 +82,7 @@ class InvocationHeaderTest {
             plugin.onInvocationStart(
                     new InvocationInfo(
                             "request-" + invocation, arn, invocation == 0, Instant.parse("2026-10-02T00:00:00Z")),
-                    new InvocationRuntimeContext(header));
+                    header);
             await(barrier);
             plugin.onInvocationEnd(new InvocationEndInfo(
                     "request-" + invocation,

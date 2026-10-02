@@ -8,7 +8,6 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
-import software.amazon.lambda.durable.plugin.InvocationRuntimeContext;
 
 /**
  * Extracts OTel trace context from the invocation-local X-Ray header, falling back to ordinary Lambda carriers.
@@ -34,9 +33,9 @@ public class XRayContextExtractor implements ContextExtractor {
     private final ThreadLocal<String> invocationTraceHeader = new ThreadLocal<>();
 
     @Override
-    public ExtractedContext extract(InvocationInfo info, InvocationRuntimeContext runtimeContext) {
+    public ExtractedContext extract(InvocationInfo info, String xRayTraceId) {
         var previous = invocationTraceHeader.get();
-        invocationTraceHeader.set(runtimeContext.xRayTraceId());
+        invocationTraceHeader.set(xRayTraceId);
         try {
             return extract();
         } finally {

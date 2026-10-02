@@ -10,7 +10,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
-import software.amazon.lambda.durable.plugin.InvocationRuntimeContext;
 
 class XRayContextExtractorTest {
     private static final InvocationInfo INFO = new InvocationInfo("request", "arn", true, Instant.EPOCH);
@@ -90,8 +89,8 @@ class XRayContextExtractorTest {
         assertNull(extractor.extract());
     }
 
-    private static InvocationRuntimeContext invocation(String header) {
-        return new InvocationRuntimeContext(header);
+    private static String invocation(String header) {
+        return header;
     }
 
     @Test

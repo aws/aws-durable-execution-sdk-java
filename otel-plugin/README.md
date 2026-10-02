@@ -93,14 +93,16 @@ Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-exe
 ### Invocation-local headers on Lambda Managed Instances
 
 The SDK captures `Context.getXrayTraceId()` before dispatching the handler to a worker thread and exposes it as
-`InvocationRuntimeContext.xRayTraceId()` through the additive
-`onInvocationStart(InvocationInfo, InvocationRuntimeContext)` hook. The default extractor prefers this header, preserving Root, Parent, and Sampled.
+an immutable String through the additive
+`onInvocationStart(InvocationInfo, String)` hook. The default extractor prefers this header, preserving Root, Parent, and Sampled.
 When it is absent or empty, ordinary Lambda continues to use `com.amazonaws.xray.traceHeader`, then
 `_X_AMZN_TRACE_ID`. A present but invalid invocation header uses deterministic fallback, without adopting a stale
 global header. No global carrier is modified. Custom `ContextExtractor` implementations may override
-`extract(InvocationInfo, InvocationRuntimeContext)`; existing no-argument extractors and one-argument plugin hooks
+`extract(InvocationInfo, String)`; existing no-argument extractors and one-argument plugin hooks
 continue to work, including subclass overrides. The seven-component `InvocationInfo` record is unchanged, preserving
-Java 21 record-pattern source compatibility.
+Java 21 record-pattern source compatibility. Older cores still load new plugin layers and use the original hook and
+ordinary carriers; consuming an LMI invocation header requires a core that dispatches the new overload. Older visible
+Lambda Context APIs without the optional accessor also retain ordinary carrier fallback.
 
 ### 2. AWS X-Ray Active Tracing
 
@@ -384,3 +386,11 @@ var otelPlugin = new InvocationOtelPlugin(
 ## License
 
 Apache-2.0
+
+### Installed core/plugin layer compatibility checks
+
+`src/test/compatibility/run_matrix.py` compiles a caller against a supplied released core JAR, then checks old/old,
+old/new, new/old and new/new core/plugin pairs for both views. Plugins load in a separate layer classloader through
+ServiceLoader, and ordinary tracing plus optional new header dispatch are checked. Supply released JARs, built current
+artifacts and an existing dependency classpath file; the check performs no downloads or AWS calls. Older cores retain
+ordinary tracing rather than being rejected for lacking the optional header capability.

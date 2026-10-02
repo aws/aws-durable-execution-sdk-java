@@ -22,7 +22,7 @@ class PluginRunnerTest {
             }
         };
         var info = invocationInfo();
-        new PluginRunner(List.of(legacy)).onInvocationStart(info, new InvocationRuntimeContext("header"));
+        new PluginRunner(List.of(legacy)).onInvocationStart(info, "header");
         assertEquals(List.of(info), calls);
     }
 

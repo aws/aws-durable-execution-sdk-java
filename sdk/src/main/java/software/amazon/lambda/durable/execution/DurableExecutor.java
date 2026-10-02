@@ -28,7 +28,6 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
-import software.amazon.lambda.durable.plugin.InvocationRuntimeContext;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 import software.amazon.lambda.durable.plugin.PluginRunner;
@@ -62,8 +61,7 @@ public class DurableExecutor {
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             var executionArn = input.durableExecutionArn();
             // Capture on the runtime thread before dispatch: LMI trace carriers can be thread-local.
-            var runtimeContext =
-                    new InvocationRuntimeContext(lambdaContext != null ? lambdaContext.getXrayTraceId() : null);
+            var xRayTraceId = RuntimeTraceHeader.capture(lambdaContext);
 
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
@@ -107,7 +105,7 @@ public class DurableExecutor {
                                             PluginInfoConverter.toOperationItemMap(
                                                     executionManager.getUpdatedOperationsSnapshot(),
                                                     executionManager.getInitialOperationIds())),
-                                    runtimeContext);
+                                    xRayTraceId);
                         }
                         if (inputFailure != null) {
                             ExceptionHelper.sneakyThrow(inputFailure);

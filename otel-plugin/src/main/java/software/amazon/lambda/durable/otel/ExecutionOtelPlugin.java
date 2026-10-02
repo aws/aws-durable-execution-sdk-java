@@ -27,7 +27,6 @@ import org.slf4j.MDC;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
-import software.amazon.lambda.durable.plugin.InvocationRuntimeContext;
 import software.amazon.lambda.durable.plugin.OperationEndInfo;
 import software.amazon.lambda.durable.plugin.OperationInfo;
 import software.amazon.lambda.durable.plugin.UserFunctionEndInfo;
@@ -205,19 +204,19 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     }
 
     // Scoped only around the start hook so inherited overloads still dispatch to legacy subclass overrides.
-    private final ThreadLocal<InvocationRuntimeContext> invocationRuntimeContext = new ThreadLocal<>();
+    private final ThreadLocal<String> invocationTraceHeader = new ThreadLocal<>();
 
     @Override
-    public void onInvocationStart(InvocationInfo info, InvocationRuntimeContext runtimeContext) {
-        var previous = invocationRuntimeContext.get();
-        invocationRuntimeContext.set(runtimeContext);
+    public void onInvocationStart(InvocationInfo info, String xRayTraceId) {
+        var previous = invocationTraceHeader.get();
+        invocationTraceHeader.set(xRayTraceId);
         try {
             onInvocationStart(info);
         } finally {
             if (previous == null) {
-                invocationRuntimeContext.remove();
+                invocationTraceHeader.remove();
             } else {
-                invocationRuntimeContext.set(previous);
+                invocationTraceHeader.set(previous);
             }
         }
     }
@@ -235,9 +234,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
         // Resolve the one execution ancestor both spans parent onto, so they share a stable-per-execution trace and a
         // sampling decision.
-        var runtimeContext = invocationRuntimeContext.get();
-        var extracted = contextExtractor.extract(
-                info, runtimeContext != null ? runtimeContext : InvocationRuntimeContext.EMPTY);
+        var extracted = contextExtractor.extract(info, invocationTraceHeader.get());
         var canonicalTraceId =
                 ExecutionTraceContext.canonicalTraceId(extracted, arn(), info.executionStartTime(), idGenerator);
         // Resolve the execution's sampling decision once for this invocation as a full SamplingResult, then apply it to

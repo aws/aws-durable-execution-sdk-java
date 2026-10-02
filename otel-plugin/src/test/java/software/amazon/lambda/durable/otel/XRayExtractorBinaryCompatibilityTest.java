@@ -16,7 +16,6 @@ import javax.tools.ToolProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
-import software.amazon.lambda.durable.plugin.InvocationRuntimeContext;
 
 class XRayExtractorBinaryCompatibilityTest {
     @Test
@@ -51,8 +50,7 @@ class XRayExtractorBinaryCompatibilityTest {
             var type = loader.loadClass("LegacyExtractor");
             var extractor = (XRayContextExtractor) type.getConstructor().newInstance();
             var info = new InvocationInfo("request", "arn", true, Instant.EPOCH);
-            var runtime = new InvocationRuntimeContext(
-                    "Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=1");
+            var runtime = ("Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=1");
             var extracted = extractor.extract(info, runtime);
             assertEquals("6955b900aaaaaaaaaaaaaaaaaaaaaaaa", extracted.traceId());
             assertEquals(ExtractedContext.Sampling.NOT_SAMPLED, extracted.sampling());

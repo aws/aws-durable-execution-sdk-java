@@ -3,7 +3,6 @@
 package software.amazon.lambda.durable.otel;
 
 import software.amazon.lambda.durable.plugin.InvocationInfo;
-import software.amazon.lambda.durable.plugin.InvocationRuntimeContext;
 
 /**
  * Extracts the durable execution's propagated trace context from the Lambda runtime environment.
@@ -11,9 +10,9 @@ import software.amazon.lambda.durable.plugin.InvocationRuntimeContext;
  * <p>Implementations read trace context from various sources (X-Ray trace header, W3C traceparent, etc.) and return an
  * {@link ExtractedContext} containing the trace ID and optional parent span ID.
  *
- * <p><strong>When it is called:</strong> the plugin invokes {@link #extract(InvocationInfo, InvocationRuntimeContext)}
- * once at the start of every invocation, unconditionally — including when an ambient OpenTelemetry span is active. The
- * extracted context is the durable execution's identity and is resolved with the following precedence:
+ * <p><strong>When it is called:</strong> the plugin invokes {@link #extract(InvocationInfo, String)} once at the start
+ * of every invocation, unconditionally — including when an ambient OpenTelemetry span is active. The extracted context
+ * is the durable execution's identity and is resolved with the following precedence:
  *
  * <ol>
  *   <li>a valid extracted backend context anchors the execution trace (this is what makes the durable spans share one
@@ -39,10 +38,10 @@ public interface ContextExtractor {
     ExtractedContext extract();
 
     /**
-     * Extracts context using the invocation snapshot. Existing extractors retain their no-argument behavior;
-     * implementations that need invocation-local carriers can override this method.
+     * Extracts context using the invocation and its immutable X-Ray header snapshot. Existing extractors retain their
+     * no-argument behavior; implementations that need invocation-local carriers can override this method.
      */
-    default ExtractedContext extract(InvocationInfo info, InvocationRuntimeContext runtimeContext) {
+    default ExtractedContext extract(InvocationInfo info, String xRayTraceId) {
         return extract();
     }
 }

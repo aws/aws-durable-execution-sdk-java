@@ -60,8 +60,8 @@ public class PluginRunner {
     }
 
     /** Dispatches the invocation snapshot while preserving legacy hooks through default-method delegation. */
-    public void onInvocationStart(InvocationInfo info, InvocationRuntimeContext runtimeContext) {
-        run(p -> p.onInvocationStart(info, runtimeContext));
+    public void onInvocationStart(InvocationInfo info, String xRayTraceId) {
+        run(p -> p.onInvocationStart(info, xRayTraceId));
     }
 
     /**

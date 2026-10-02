@@ -31,7 +31,7 @@ public interface DurableExecutionPlugin {
      * Implementations that override this overload can consume invocation-local carriers without changing
      * InvocationInfo.
      */
-    default void onInvocationStart(InvocationInfo info, InvocationRuntimeContext runtimeContext) {
+    default void onInvocationStart(InvocationInfo info, String xRayTraceId) {
         onInvocationStart(info);
     }
 
