@@ -14,15 +14,13 @@ class PluginRunnerTest {
 
     @Test
     void exclusiveGroupsRejectDuplicatesButAllowUnrelatedPlugins() {
-        var exclusive = new DurableExecutionPlugin() {
-            @Override
-            public String getExclusiveGroup() {
-                return "example";
-            }
-        };
+        var exclusive = new ExclusivePlugin();
         assertThrows(IllegalArgumentException.class, () -> new PluginRunner(List.of(exclusive, exclusive)));
         assertDoesNotThrow(() -> new PluginRunner(List.of(exclusive, new DurableExecutionPlugin() {})));
     }
+
+    @ExclusivePluginGroup("example")
+    private static class ExclusivePlugin implements DurableExecutionPlugin {}
 
     // ─── No-op / empty behavior ──────────────────────────────────────────
 

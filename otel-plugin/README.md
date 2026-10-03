@@ -381,3 +381,8 @@ var otelPlugin = new InvocationOtelPlugin(
 ## License
 
 Apache-2.0
+
+View exclusivity is declared with inherited `@ExclusivePluginGroup("durable-otel-view")` metadata.
+Configuration reads this explicit opt-in annotation; it does not call application methods that happen to be named
+`getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled view restriction.
+Older cores ignore the optional annotation and retain their prior behavior; no provider-version floor is raised.

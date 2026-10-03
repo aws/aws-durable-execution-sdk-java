@@ -32,10 +32,11 @@ public class PluginRunner {
     private void validateExclusiveGroups() {
         var groups = new HashMap<String, DurableExecutionPlugin>();
         for (var plugin : plugins) {
-            var group = plugin.getExclusiveGroup();
-            if (group == null) {
+            var metadata = plugin.getClass().getAnnotation(ExclusivePluginGroup.class);
+            if (metadata == null) {
                 continue;
             }
+            var group = metadata.value();
             var previous = groups.putIfAbsent(group, plugin);
             if (previous != null) {
                 throw new IllegalArgumentException(

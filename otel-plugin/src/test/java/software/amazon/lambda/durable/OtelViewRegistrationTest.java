@@ -38,17 +38,17 @@ class OtelViewRegistrationTest {
     void existingSubclassGroupMethodsRemainCompatible() {
         // Downstream subclasses could already declare this method before group metadata joined the plugin API.
         var invocation = new InvocationOtelPlugin() {
-            @Override
             public String getExclusiveGroup() {
-                return "custom-tracing";
+                return "legacy application group";
             }
         };
         var execution = new ExecutionOtelPlugin() {
-            @Override
             public String getExclusiveGroup() {
-                return "custom-tracing";
+                return null;
             }
         };
+        assertEquals("legacy application group", invocation.getExclusiveGroup());
+        assertNull(execution.getExclusiveGroup());
         assertThrows(
                 IllegalArgumentException.class,
                 () -> DurableConfig.builder().withPlugins(invocation, execution).build());

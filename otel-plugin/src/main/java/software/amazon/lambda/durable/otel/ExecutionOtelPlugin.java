@@ -25,6 +25,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.ExclusivePluginGroup;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.OperationEndInfo;
@@ -88,6 +89,7 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
  */
+@ExclusivePluginGroup("durable-otel-view")
 public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     private static final Logger logger = LoggerFactory.getLogger(ExecutionOtelPlugin.class);
@@ -201,12 +203,6 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         this.workflowSpanName = config.workflowSpanName();
         this.instrumentationName = config.instrumentationName();
         this.idGenerator = OtelPluginSupport.createDefaultIdGenerator();
-    }
-
-    /** The two bundled durable OTel views are alternatives and cannot be registered together. */
-    @Override
-    public String getExclusiveGroup() {
-        return "durable-otel-view";
     }
 
     // ─── Invocation hooks ────────────────────────────────────────────────

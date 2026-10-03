@@ -24,6 +24,7 @@ import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
 import software.amazon.lambda.durable.logging.LoggerConfig;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.ExclusivePluginGroup;
 import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.retry.PollingStrategy;
@@ -487,8 +488,7 @@ public final class DurableConfig {
          * isolated and never disrupt SDK execution.
          *
          * <p>The effective list, including environment-selected plugins, may contain at most one member of each
-         * {@link DurableExecutionPlugin#getExclusiveGroup() exclusive group}. Conflicts are rejected by
-         * {@link #build()}.
+         * {@link ExclusivePluginGroup exclusive group}. Conflicts are rejected by {@link #build()}.
          *
          * <p>Calling this method replaces any previously registered plugins. Plugins are called in registration order.
          *
