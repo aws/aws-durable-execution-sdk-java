@@ -309,10 +309,20 @@ public class PluginRunner {
 
     /**
      * Called at the end of each invocation. Awaited — the SDK blocks until all plugins return, allowing plugins to
-     * flush spans/metrics before Lambda freezes.
+     * flush spans/metrics before Lambda freezes. A fatal end-hook failure is rethrown after the remaining plugins have
+     * had their one finalization opportunity, without changing the invocation-end snapshot.
      */
+    @SuppressWarnings("removal")
     public void onInvocationEnd(InvocationEndInfo info) {
-        run(p -> p.onInvocationEnd(info));
+        Error firstFatal = null;
+        for (var plugin : plugins) {
+            try {
+                runPlugin(plugin, p -> p.onInvocationEnd(info));
+            } catch (VirtualMachineError | ThreadDeath fatal) {
+                if (firstFatal == null) firstFatal = fatal;
+            }
+        }
+        if (firstFatal != null) throw firstFatal;
     }
 
     @SuppressWarnings("removal")

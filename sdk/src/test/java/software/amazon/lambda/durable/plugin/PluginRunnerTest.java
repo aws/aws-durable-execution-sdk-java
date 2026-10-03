@@ -28,6 +28,30 @@ class PluginRunnerTest {
         assertEquals(List.of(info), calls);
     }
 
+    @Test
+    @SuppressWarnings("removal")
+    void invocationEndAttemptsEveryPluginAndPreservesFirstFatal() {
+        var first = new InternalError("first fatal");
+        var calls = new ArrayList<String>();
+        var runner = new PluginRunner(List.of(
+                endingPlugin("first", calls, first),
+                endingPlugin("linkage", calls, new NoSuchMethodError("optional API")),
+                endingPlugin("second", calls, new ThreadDeath()),
+                endingPlugin("healthy", calls, null)));
+        runner.onInvocationStart(invocationInfo());
+        assertSame(first, assertThrows(InternalError.class, () -> runner.onInvocationEnd(invocationEndInfo())));
+        assertEquals(List.of("first", "linkage", "second", "healthy"), calls);
+    }
+
+    private static DurableExecutionPluginFactory endingPlugin(String name, List<String> calls, Error failure) {
+        return info -> new DurableExecutionPlugin() {
+            public void onInvocationEnd(InvocationEndInfo end) {
+                calls.add(name);
+                if (failure != null) throw failure;
+            }
+        };
+    }
+
     // ─── No-op / empty behavior ──────────────────────────────────────────
 
     @Test

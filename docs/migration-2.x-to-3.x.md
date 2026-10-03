@@ -418,3 +418,5 @@ The first plugin-owned fatal cause aborts operation waits and bypasses user-oper
 checkpoint batching fails queued work rather than continuing after that reported fatal. Unrelated user-body failures
 retain their existing operation semantics. Invocation-end information remains a snapshot at dispatch: a fatal reported
 only during subsequent resource shutdown is rethrown before the response, without replaying an already delivered end hook.
+If an invocation-end hook itself throws a fatal error, the remaining end hooks are still attempted once in registration
+order with that same snapshot before the first fatal is rethrown. Ordinary event hooks retain immediate fatal propagation.
