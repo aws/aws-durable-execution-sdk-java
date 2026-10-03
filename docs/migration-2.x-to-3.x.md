@@ -412,3 +412,9 @@ resources remain owned by the environment. The model-blocked outbound propagatio
 Exclusive instrumentation metadata belongs to `DurableExecutionPluginFactory.getExclusiveGroup()` in 3.x, not the
 per-invocation plugin instance. Declare or forward the group on custom factory wrappers so configuration can validate
 it before construction. The 2.x minor release declares instance groups with inherited `@ExclusivePluginGroup` metadata; migrate that declaration to the factory in3.x so conflicts can be rejected before instances exist. Instance annotations are not a3.x factory registration contract.
+
+Fatal operation/user-function hook errors are reported to the invocation before they are rethrown on the hook thread.
+The first plugin-owned fatal cause aborts operation waits and bypasses user-operation retry and error serialization;
+checkpoint batching fails queued work rather than continuing after that reported fatal. Unrelated user-body failures
+retain their existing operation semantics. Invocation-end information remains a snapshot at dispatch: a fatal reported
+only during subsequent resource shutdown is rethrown before the response, without replaying an already delivered end hook.

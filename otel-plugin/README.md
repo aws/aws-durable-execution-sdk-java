@@ -151,17 +151,20 @@ Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-exe
 
 ### Invocation-local headers on Lambda Managed Instances
 
-The SDK captures `Context.getXrayTraceId()` on the runtime thread before dispatching user work. It passes the
-immutable String to `createPlugin(InvocationInfo, String)` before a built-in factory constructs any spans, then to
-the additive start-hook overload. Custom factories can override the runtime-header overload; its default delegates
-to the original factory method. The default extractor prefers the invocation header, retaining Root, Parent and Sampled.
-Absent/empty headers use the ordinary system-property then environment carriers; malformed present headers do not
-adopt stale global context. No global header is modified.
+The SDK captures `Context.getXrayTraceId()` on the runtime thread before dispatching user work when an actual
+runtime implementation overrides the accessor. It passes the immutable String to `createPlugin(InvocationInfo, String)`
+before a built-in factory constructs any spans, then to the additive start-hook overload. Custom factories can override
+the runtime-header overload; its default delegates to the original factory method.
+
+An override returning null/empty is represented by an empty String and is authoritative absence: deterministic fallback
+is used without reading stale global context. An unavailable accessor, or only Lambda Core1.4's inherited null-returning
+default, is represented by null and retains ordinary system-property then environment fallback. A malformed captured
+header also never adopts the global carrier. No global header is modified.
 
 No-argument extractor overrides and one-argument plugin hooks remain supported. `InvocationInfo` retains seven
-components, including Java21 record-pattern source shape. Older Lambda Context APIs lacking the optional accessor
-retain ordinary carrier fallback. Core/plugin artifacts follow the explicit3.x factory migration boundary: rebuild
-providers and layers against3.x, as described in the migration guide;2.x and3.x plugin artifacts are not interchangeable.
+components, including Java21 record-pattern source shape. Core/plugin artifacts follow the explicit3.x factory migration
+boundary: rebuild providers and layers against3.x as described in the migration guide;2.x and3.x plugin artifacts are not
+interchangeable.
 
 ### 2. AWS X-Ray Active Tracing
 

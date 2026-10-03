@@ -59,7 +59,7 @@ class DurableExecutionTest {
     void capturesTraceHeaderOnRuntimeThreadBeforeDispatch() {
         var runtimeThread = Thread.currentThread();
         var header = "Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=0";
-        var lambdaContext = mock(Context.class);
+        var lambdaContext = mock(RuntimeContext.class);
         when(lambdaContext.getXrayTraceId()).thenAnswer(ignored -> {
             assertEquals(runtimeThread, Thread.currentThread());
             return header;
@@ -457,7 +457,7 @@ class DurableExecutionTest {
                 (userInput, ctx) -> ctx.step("test1", String.class, stepCtx -> "Result 1: " + userInput),
                 config);
 
-        assertEquals(ExecutionStatus.SUCCEEDED, output1.status());
+        assertEquals(ExecutionStatus.SUCCEEDED, output1.status(), () -> "First invocation error: " + output1.error());
         assertFalse(sharedExecutor.isShutdown(), "Executor should not be shutdown after first execution");
 
         // Create second input with different execution operation
@@ -486,12 +486,19 @@ class DurableExecutionTest {
                 (userInput, ctx) -> ctx.step("test2", String.class, stepCtx -> "Result 2: " + userInput),
                 config);
 
-        assertEquals(ExecutionStatus.SUCCEEDED, output2.status());
+        assertEquals(ExecutionStatus.SUCCEEDED, output2.status(), () -> "Second invocation error: " + output2.error());
         assertFalse(sharedExecutor.isShutdown(), "Executor should not be shutdown after second execution");
 
         // Verify both executions completed successfully and used the same executor
         assertTrue(output1.result().contains("Result 1: test-input-1"));
         assertTrue(output2.result().contains("Result 2: test-input-2"));
+    }
+
+    private abstract static class RuntimeContext implements Context {
+        @Override
+        public String getXrayTraceId() {
+            return null;
+        }
     }
 
     private Operation executionOp() {

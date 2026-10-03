@@ -66,8 +66,8 @@ public class DurableExecutor {
             TypeToken<I> inputType,
             BiFunction<I, DurableContext, O> handler,
             DurableConfig config) {
-        var scopeFatal = new AtomicReference<Error>();
-        try (var executionManager = new ExecutionManager(input, config, lambdaContext)) {
+        var pluginFatal = new AtomicReference<Error>();
+        try (var executionManager = new ExecutionManager(input, config, lambdaContext, pluginFatal)) {
             // Scoped to this invocation: the runner creates this invocation's plugin instances from the configured
             // factories when onInvocationStart fires below, and releases them when the manager closes.
             var pluginRunner = executionManager.getPluginRunner();
@@ -134,7 +134,7 @@ public class DurableExecutor {
                             return pluginRunner.runHandler(
                                     () -> handler.apply(handlerInput, context),
                                     () -> hasHandlerScope.set(true),
-                                    fatal -> scopeFatal.compareAndSet(null, fatal));
+                                    fatal -> pluginFatal.compareAndSet(null, fatal));
                         }
                     },
                     config.getExecutorService()); // Get executor from config for running user code
@@ -149,7 +149,7 @@ public class DurableExecutor {
                                 hasHandlerScope,
                                 lambdaContext,
                                 config.getPluginFactories().size(),
-                                scopeFatal)
+                                pluginFatal)
                         .handle((result, ex) -> {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
@@ -280,9 +280,9 @@ public class DurableExecutor {
                 return null;
             }
         } finally {
-            // Resource shutdown may wait for other work after the bounded handoff. Observe any scope fatal
+            // Resource shutdown may wait for other work after the bounded handoff. Observe any plugin fatal
             // reported during that existing wait before the caller commits its response, without waiting again.
-            throwIfScopeFatal(scopeFatal);
+            throwIfPluginFatal(pluginFatal);
         }
     }
 
@@ -323,11 +323,12 @@ public class DurableExecutor {
             AtomicBoolean hasHandlerScope,
             Context lambdaContext,
             int pluginCount,
-            AtomicReference<Error> scopeFatal) {
+            AtomicReference<Error> pluginFatal) {
         // This method runs on the invocation caller, never as a callback on the signaling handler worker.
-        // Preserve the winning outcome except for an observed fatal error from the new scope callbacks.
+        // Preserve the winning outcome except for an observed fatal error positively reported by plugin
+        // instrumentation.
         var failure = executionFuture.handle((result, error) -> error).join();
-        var fatal = scopeFatal.get();
+        var fatal = pluginFatal.get();
         if (fatal != null) return CompletableFuture.failedFuture(fatal);
         if (failure == null || !hasHandlerScope.get()) return executionFuture;
         var reserve = SHUTDOWN_RESPONSE_RESERVE_MILLIS + PLUGIN_FINALIZATION_RESERVE_MILLIS * pluginCount;
@@ -345,12 +346,12 @@ public class DurableExecutor {
             logger.warn("Could not observe handler scope cleanup; preserving the execution outcome", e);
         }
         // The major lifecycle finalizes created plugins once before propagating an observed fatal.
-        fatal = scopeFatal.get();
+        fatal = pluginFatal.get();
         return fatal == null ? executionFuture : CompletableFuture.failedFuture(fatal);
     }
 
-    private static void throwIfScopeFatal(AtomicReference<Error> scopeFatal) {
-        var fatal = scopeFatal.get();
+    private static void throwIfPluginFatal(AtomicReference<Error> pluginFatal) {
+        var fatal = pluginFatal.get();
         if (fatal != null) throw fatal;
     }
 

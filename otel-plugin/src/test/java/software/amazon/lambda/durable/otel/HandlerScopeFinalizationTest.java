@@ -153,6 +153,8 @@ class HandlerScopeFinalizationTest {
         var ownerFinished = new CountDownLatch(1);
         var shutdownEntered = new AtomicBoolean();
         var ended = new AtomicBoolean();
+        var endCalls = new AtomicInteger();
+        var endInfo = new AtomicReference<InvocationEndInfo>();
         var fatal = new InternalError("scope failure during manager shutdown");
         var plugin = new ScopedPlugin() {
             public AutoCloseable openHandlerScope() {
@@ -164,6 +166,8 @@ class HandlerScopeFinalizationTest {
 
             public void onInvocationEnd(InvocationEndInfo info) {
                 ended.set(true);
+                endCalls.incrementAndGet();
+                endInfo.set(info);
             }
         };
         var workers =
@@ -213,6 +217,12 @@ class HandlerScopeFinalizationTest {
                                     },
                                     config(workers, info -> plugin))));
             assertTrue(shutdownEntered.get());
+            assertEquals(1, endCalls.get(), "a late fatal must not replay already delivered end hooks");
+            assertEquals(
+                    InvocationStatus.PENDING,
+                    endInfo.get().invocationStatus(),
+                    "snapshot reflects outcome known at dispatch");
+            assertNull(endInfo.get().executionError(), "the fatal is reported only later, during shutdown");
         } finally {
             releaseScope.countDown();
             workers.shutdown();

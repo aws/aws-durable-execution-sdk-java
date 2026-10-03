@@ -9,8 +9,10 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Batches API requests to optimize throughput by grouping individual calls into batch operations. Batches are flushed
@@ -33,6 +35,9 @@ public class ApiRequestDelayedBatcher<T> {
     private final Function<T, Integer> calculateItemSize;
     /** Executes the batch operation */
     private final Consumer<List<T>> executeBatch;
+
+    private final Supplier<Error> pluginFatal;
+    private final AtomicReference<Error> terminalFailure = new AtomicReference<>();
 
     /** Accumulated requests to be executed in future */
     private final List<Item<T>> delayedBatch;
@@ -64,6 +69,16 @@ public class ApiRequestDelayedBatcher<T> {
             int maxBatchBytes,
             Function<T, Integer> calculateItemSize,
             Consumer<List<T>> executeBatch) {
+        this(maxItemCount, maxBatchBytes, calculateItemSize, executeBatch, () -> null);
+    }
+
+    ApiRequestDelayedBatcher(
+            int maxItemCount,
+            int maxBatchBytes,
+            Function<T, Integer> calculateItemSize,
+            Consumer<List<T>> executeBatch,
+            Supplier<Error> pluginFatal) {
+        this.pluginFatal = pluginFatal;
         this.maxItemCount = maxItemCount;
         this.maxBatchBytes = maxBatchBytes;
         this.calculateItemSize = calculateItemSize;
@@ -85,6 +100,8 @@ public class ApiRequestDelayedBatcher<T> {
      */
     CompletableFuture<Void> submit(T request, Duration flushDelay) {
         synchronized (delayedBatch) {
+            var fatal = terminalFailure.get();
+            if (fatal != null) return CompletableFuture.failedFuture(fatal);
             // add the request to the current batch
             CompletableFuture<Void> future = new CompletableFuture<>();
             delayedBatch.add(new Item<>(request, future));
@@ -189,8 +206,26 @@ public class ApiRequestDelayedBatcher<T> {
                     for (Item<T> item : flushingItems) {
                         item.result().completeExceptionally(ex);
                     }
+                    var fatal = pluginFatal.get();
+                    if (fatal != null) {
+                        abortPending(fatal);
+                        throw fatal;
+                    }
                 }
             }
         }
+    }
+
+    private void abortPending(Error fatal) {
+        terminalFailure.compareAndSet(null, fatal);
+        var pending = new ArrayList<Item<T>>();
+        synchronized (delayedBatch) {
+            delayedBatchFlushTimer.cancel(false);
+            pending.addAll(delayedBatch);
+            delayedBatch.clear();
+            Item<T> item;
+            while ((item = flushingQueue.poll()) != null) pending.add(item);
+        }
+        pending.forEach(item -> item.result().completeExceptionally(fatal));
     }
 }

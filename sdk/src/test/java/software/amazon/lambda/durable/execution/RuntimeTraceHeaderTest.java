@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.lang.reflect.Proxy;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -41,11 +42,131 @@ class RuntimeTraceHeaderTest {
     }
 
     @Test
+    void preAccessorContextBinaryRetainsFallbackWithNewDefaultInterface(@TempDir Path directory) throws Exception {
+        var oldApi = Files.createDirectories(directory.resolve("old-api"));
+        var classes = Files.createDirectories(directory.resolve("classes"));
+        var apiSource = directory.resolve("Context.java");
+        Files.writeString(apiSource, """
+                package com.amazonaws.services.lambda.runtime;
+                public interface Context {
+                    String getAwsRequestId(); String getLogGroupName(); String getLogStreamName();
+                    String getFunctionName(); String getFunctionVersion(); String getInvokedFunctionArn();
+                    CognitoIdentity getIdentity(); ClientContext getClientContext();
+                    int getRemainingTimeInMillis(); int getMemoryLimitInMB(); LambdaLogger getLogger();
+                }
+                """);
+        var compiler = ToolProvider.getSystemJavaCompiler();
+        var classpath = System.getProperty("java.class.path");
+        var errors = new ByteArrayOutputStream();
+        assertEquals(
+                0,
+                compiler.run(
+                        null,
+                        null,
+                        errors,
+                        "--release",
+                        "17",
+                        "-cp",
+                        classpath,
+                        "-d",
+                        oldApi.toString(),
+                        apiSource.toString()),
+                errors.toString(StandardCharsets.UTF_8));
+        var legacySource = directory.resolve("LegacyContext.java");
+        Files.writeString(legacySource, """
+                import com.amazonaws.services.lambda.runtime.*;
+                public class LegacyContext implements Context {
+                    public String getAwsRequestId() { return "legacy"; }
+                    public String getLogGroupName() { return null; }
+                    public String getLogStreamName() { return null; }
+                    public String getFunctionName() { return null; }
+                    public String getFunctionVersion() { return null; }
+                    public String getInvokedFunctionArn() { return null; }
+                    public CognitoIdentity getIdentity() { return null; }
+                    public ClientContext getClientContext() { return null; }
+                    public int getRemainingTimeInMillis() { return 30000; }
+                    public int getMemoryLimitInMB() { return 128; }
+                    public LambdaLogger getLogger() { return null; }
+                }
+                """);
+        assertEquals(
+                0,
+                compiler.run(
+                        null,
+                        null,
+                        errors,
+                        "--release",
+                        "17",
+                        "-cp",
+                        oldApi + File.pathSeparator + classpath,
+                        "-d",
+                        classes.toString(),
+                        legacySource.toString()),
+                errors.toString(StandardCharsets.UTF_8));
+        var overrideSource = directory.resolve("ExplicitNullContext.java");
+        Files.writeString(overrideSource, """
+                public class ExplicitNullContext extends LegacyContext {
+                    @Override public String getXrayTraceId() { return null; }
+                }
+                """);
+        var inheritedSource = directory.resolve("InheritedNullContext.java");
+        Files.writeString(inheritedSource, "public class InheritedNullContext extends ExplicitNullContext {}");
+        assertEquals(
+                0,
+                compiler.run(
+                        null,
+                        null,
+                        errors,
+                        "--release",
+                        "17",
+                        "-cp",
+                        classes + File.pathSeparator + classpath,
+                        "-d",
+                        classes.toString(),
+                        overrideSource.toString(),
+                        inheritedSource.toString()),
+                errors.toString(StandardCharsets.UTF_8));
+        try (var loader = new URLClassLoader(new URL[] {classes.toUri().toURL()}, Context.class.getClassLoader())) {
+            var legacy =
+                    (Context) loader.loadClass("LegacyContext").getConstructor().newInstance();
+            assertEquals(
+                    Context.class, legacy.getClass().getMethod("getXrayTraceId").getDeclaringClass());
+            assertNull(legacy.getXrayTraceId(), "the new interface default returns null");
+            assertNull(RuntimeTraceHeader.capture(legacy), "inherited interface default is not a runtime carrier");
+            var explicit = (Context)
+                    loader.loadClass("ExplicitNullContext").getConstructor().newInstance();
+            assertEquals(
+                    "",
+                    RuntimeTraceHeader.capture(explicit),
+                    "actual runtime override is authoritative even when null");
+            var inherited = (Context)
+                    loader.loadClass("InheritedNullContext").getConstructor().newInstance();
+            assertEquals("", RuntimeTraceHeader.capture(inherited), "an inherited runtime override remains available");
+        }
+    }
+
+    @Test
+    void availableAccessorWithNoHeaderIsDistinctFromUnavailableApi() {
+        var context = mock(RuntimeContext.class);
+        when(context.getXrayTraceId()).thenReturn(null, "");
+        assertEquals("", RuntimeTraceHeader.capture(context));
+        assertEquals("", RuntimeTraceHeader.capture(context));
+        assertNull(RuntimeTraceHeader.capture(null), "no runtime snapshot retains legacy fallback");
+    }
+
+    @Test
     void fatalRuntimeFailuresStillPropagate() {
-        var context = mock(Context.class);
+        var context = mock(RuntimeContext.class);
         var fatal = new OutOfMemoryError("simulated");
         when(context.getXrayTraceId()).thenThrow(fatal);
         assertSame(fatal, assertThrows(OutOfMemoryError.class, () -> RuntimeTraceHeader.capture(context)));
+    }
+
+    private abstract static class RuntimeContext implements Context {
+        @Override
+        public String getXrayTraceId() {
+            return null;
+        }
     }
 
     private static URLClassLoader oldRuntimeLoader(Path directory) throws Exception {

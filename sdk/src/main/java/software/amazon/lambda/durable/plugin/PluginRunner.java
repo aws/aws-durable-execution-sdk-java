@@ -39,6 +39,7 @@ public class PluginRunner {
     private static final Logger logger = LoggerFactory.getLogger(PluginRunner.class);
 
     private final List<DurableExecutionPluginFactory> pluginFactories;
+    private final Consumer<Error> operationFatalObserver;
 
     /**
      * This invocation's plugin instances. Written once on the thread that fires {@code onInvocationStart}, read from
@@ -47,6 +48,12 @@ public class PluginRunner {
     private volatile List<DurableExecutionPlugin> plugins = List.of();
 
     public PluginRunner(List<DurableExecutionPluginFactory> pluginFactories) {
+        this(pluginFactories, fatal -> {});
+    }
+
+    /** Reports fatal operation-hook failures to their invocation before rethrowing on the calling thread. */
+    public PluginRunner(List<DurableExecutionPluginFactory> pluginFactories, Consumer<Error> operationFatalObserver) {
+        this.operationFatalObserver = operationFatalObserver;
         this.pluginFactories = pluginFactories != null ? List.copyOf(pluginFactories) : Collections.emptyList();
         validateExclusiveGroups(this.pluginFactories);
     }
@@ -308,23 +315,33 @@ public class PluginRunner {
         run(p -> p.onInvocationEnd(info));
     }
 
+    @SuppressWarnings("removal")
+    private void runOperationHook(Consumer<DurableExecutionPlugin> hook) {
+        try {
+            run(hook);
+        } catch (VirtualMachineError | ThreadDeath fatal) {
+            operationFatalObserver.accept(fatal);
+            throw fatal;
+        }
+    }
+
     public void onOperationStart(OperationInfo info) {
-        run(p -> p.onOperationStart(info));
+        runOperationHook(p -> p.onOperationStart(info));
     }
 
     public void onOperationEnd(OperationEndInfo info) {
-        run(p -> p.onOperationEnd(info));
+        runOperationHook(p -> p.onOperationEnd(info));
     }
 
     public void onOperationChange(OperationChangeInfo info) {
-        run(p -> p.onOperationChange(info));
+        runOperationHook(p -> p.onOperationChange(info));
     }
 
     public void onUserFunctionStart(UserFunctionStartInfo info) {
-        run(p -> p.onUserFunctionStart(info));
+        runOperationHook(p -> p.onUserFunctionStart(info));
     }
 
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
-        run(p -> p.onUserFunctionEnd(info));
+        runOperationHook(p -> p.onUserFunctionEnd(info));
     }
 }

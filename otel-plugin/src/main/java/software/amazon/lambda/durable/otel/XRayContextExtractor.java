@@ -10,7 +10,8 @@ import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 
 /**
- * Extracts OTel trace context from the invocation-local X-Ray header, falling back to ordinary Lambda carriers.
+ * Extracts OTel trace context from the invocation-local X-Ray header, using ordinary Lambda carriers only when no
+ * runtime snapshot is available.
  *
  * <p>This extractor parses the Lambda/X-Ray header and returns the trace ID in OTel format (32 hex chars) along with
  * the parent span ID (16 hex chars). Plugins use it as a fallback parent for Invocation spans; the deterministic
@@ -50,8 +51,8 @@ public class XRayContextExtractor implements ContextExtractor {
     @Override
     public ExtractedContext extract() {
         var invocationHeader = invocationTraceHeader.get();
-        // A present invocation header is authoritative, even if malformed. Never replace it with stale global data.
-        if (invocationHeader != null && !invocationHeader.isEmpty()) {
+        // A captured snapshot is authoritative even when empty or malformed; only null permits legacy fallback.
+        if (invocationHeader != null) {
             return parseHeader(invocationHeader);
         }
         // Try system property first — the Lambda runtime interface client updates this per invocation, so it reflects
