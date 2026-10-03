@@ -21,10 +21,15 @@ belongs to another trace, invocation view activates `Invocation`; execution view
 `Workflow` context, including its unsampled non-recording form. Nested operations retain their existing contexts.
 
 The core opens the scope after invocation startup and closes it on the same handler thread on success, failure, or
-suspension. Invocation-end hooks can execute on a different thread and do not own this scope. The additive hook uses
+suspension. When a handler scope is opened, suspension/termination finalization waits asynchronously for the handler to unwind
+and close it, before invocation-end hooks flush telemetry or a response is returned. A compatible ambient span uses
+a no-op scope so it receives the same finalization ordering. Invocation-end hooks can execute on a different thread
+and do not own this scope. The additive hook uses
 only a JDK type and defaults to no scope: old plugins on a new core and new plugin layers on an older core retain their
 existing behavior. Root-handler fallback activation requires both the updated core and plugin; no provider API or
-dependency floor changes are required.
+dependency floor changes are required. The new scope boundary isolates ordinary exceptions and nonfatal linkage
+errors during open and close, continues earlier scope cleanup, and preserves the handler outcome. JVM fatal errors
+remain outside that containment.
 
 ## Installation
 

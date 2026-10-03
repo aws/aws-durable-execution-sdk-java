@@ -278,7 +278,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         var ambient = Span.current().getSpanContext();
         // Preserve a compatible ambient Lambda span. An absent or unrelated ambient span must not leave
         // handler instrumentation outside the durable execution's canonical trace.
-        if (ambient.isValid() && trace.traceId().equals(ambient.getTraceId())) return null;
+        if (ambient.isValid() && trace.traceId().equals(ambient.getTraceId())) return Scope.noop();
         return Span.wrap(workflowSpanContext).makeCurrent();
     }
 

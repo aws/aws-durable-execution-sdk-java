@@ -40,8 +40,10 @@ public interface DurableExecutionPlugin {
      * Opens an optional scope around the root handler body, after invocation startup.
      *
      * <p>The SDK opens and closes this scope on the handler thread, including when the handler fails or suspends.
-     * Scopes close in reverse plugin order when the handler exits. Return {@code null} for no scope. This additive
-     * capability requires a core that calls it; older cores retain their original hook behavior.
+     * Scopes close in reverse plugin order when the handler exits. If any scope is returned, invocation finalization
+     * waits for the handler to unwind and close it, including after suspension/termination is signaled. Return
+     * {@code null} for no scope. This additive capability requires a core that calls it; older cores retain their
+     * original hook behavior.
      */
     default AutoCloseable openHandlerScope() {
         return null;
