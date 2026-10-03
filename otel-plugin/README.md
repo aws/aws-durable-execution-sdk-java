@@ -30,7 +30,7 @@ ordinary cleanup failures and legacy body failures retain the original outcome. 
 cannot retroactively change it. The scope still
 closes on its owning thread when the handler eventually exits; late cleanup telemetry is best effort. A compatible
 ambient span uses a no-op scope and participates in the same bounded handoff. Invocation-end hooks can execute on a
-different thread and do not own this scope. The additive concrete hook uses only a JDK type; unannotated plugins have no scope: old plugins on a new core and new plugin layers on an older core retain their
+different thread and do not own this scope. The explicit opener uses only JDK types; unannotated plugins have no scope: old plugins on a new core and new plugin layers on an older core retain their
 existing behavior. Root-handler fallback activation requires both the updated core and plugin; no provider API or
 dependency floor changes are required. The new scope boundary isolates ordinary exceptions and nonfatal linkage
 errors during open and close, continues earlier scope cleanup, and preserves the handler outcome. JVM fatal errors
@@ -396,7 +396,8 @@ var otelPlugin = new InvocationOtelPlugin(
 
 Apache-2.0
 
-The core invokes `openHandlerScope()` only on classes explicitly annotated with inherited `@HandlerScoped`.
-The existing plugin interface gains no default method, avoiding collisions with unrelated application interfaces.
-Concrete hooks use only `AutoCloseable`; older cores ignore the optional annotation and still load the plugin layer.
-Custom opt-in methods must be public and accessible to the core under the application's module configuration.
+The inherited `@HandlerScoped` annotation names an explicit JDK `Function` opener. The core passes the plugin
+instance to that opener; it never discovers a method by name on the plugin. Bundled openers call private SDK code
+without dispatching to coincidentally named subclass methods. No `openHandlerScope` method is added to either the
+existing lifecycle interface or the bundled plugin superclasses. Older cores ignore the optional annotation and
+still load the plugin layer. Custom opener classes need a public no-argument constructor accessible to the core.

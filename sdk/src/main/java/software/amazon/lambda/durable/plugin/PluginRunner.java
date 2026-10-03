@@ -3,13 +3,13 @@
 package software.amazon.lambda.durable.plugin;
 
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Modifier;
 import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -94,18 +94,18 @@ public class PluginRunner {
         }
     }
 
+    @SuppressWarnings("unchecked")
     private static AutoCloseable openHandlerScope(DurableExecutionPlugin plugin) throws ReflectiveOperationException {
-        if (!plugin.getClass().isAnnotationPresent(HandlerScoped.class)) return null;
-        var method = plugin.getClass().getMethod("openHandlerScope");
-        if (Modifier.isStatic(method.getModifiers()) || !AutoCloseable.class.isAssignableFrom(method.getReturnType())) {
-            throw new IllegalArgumentException("@HandlerScoped requires public AutoCloseable openHandlerScope()");
-        }
-        if (!method.canAccess(plugin) && !method.trySetAccessible()) {
-            throw new IllegalAccessException("Cannot access @HandlerScoped method on "
-                    + plugin.getClass().getName());
+        var metadata = plugin.getClass().getAnnotation(HandlerScoped.class);
+        if (metadata == null) return null;
+        var constructor = metadata.value().getConstructor();
+        if (!constructor.canAccess(null) && !constructor.trySetAccessible()) {
+            throw new IllegalAccessException(
+                    "Cannot access @HandlerScoped opener " + metadata.value().getName());
         }
         try {
-            return (AutoCloseable) method.invoke(plugin);
+            var opener = (Function<Object, AutoCloseable>) constructor.newInstance();
+            return opener.apply(plugin);
         } catch (InvocationTargetException failure) {
             ExceptionHelper.sneakyThrow(failure.getCause());
             return null;

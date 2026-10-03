@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -25,6 +26,7 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.HandlerScoped;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 
 class HandlerScopeFinalizationTest {
@@ -49,17 +51,25 @@ class HandlerScopeFinalizationTest {
                 .contextExtractor(() -> new ExtractedContext(
                         "12345678901234567890123456789012", "1234567890123456", ExtractedContext.Sampling.SAMPLED))
                 .build();
-        DurableExecutionPlugin plugin = executionView
-                ? new ExecutionOtelPlugin(builder, settings) {
-                    public AutoCloseable openHandlerScope() {
-                        return hasScope ? super.openHandlerScope() : null;
-                    }
-                }
-                : new InvocationOtelPlugin(builder, settings) {
-                    public AutoCloseable openHandlerScope() {
-                        return hasScope ? super.openHandlerScope() : null;
-                    }
-                };
+        DurableExecutionPlugin delegate = executionView
+                ? new ExecutionOtelPlugin(builder, settings)
+                : new InvocationOtelPlugin(builder, settings);
+        var plugin = new ScopedPlugin() {
+            public AutoCloseable openHandlerScope() {
+                if (!hasScope) return null;
+                if (delegate instanceof InvocationOtelPlugin invocation)
+                    return new InvocationOtelPlugin.HandlerScopeOpener().apply(invocation);
+                return new ExecutionOtelPlugin.HandlerScopeOpener().apply((ExecutionOtelPlugin) delegate);
+            }
+
+            public void onInvocationStart(InvocationInfo info) {
+                delegate.onInvocationStart(info);
+            }
+
+            public void onInvocationEnd(InvocationEndInfo info) {
+                delegate.onInvocationEnd(info);
+            }
+        };
         var workers = Executors.newCachedThreadPool(r -> daemon(r, "handler-owner"));
         var callers = Executors.newSingleThreadExecutor(r -> daemon(r, "invocation-caller"));
         var enteredFinally = new CountDownLatch(1);
@@ -400,8 +410,14 @@ class HandlerScopeFinalizationTest {
         }
     }
 
-    @HandlerScoped
+    @HandlerScoped(ScopedPlugin.Opener.class)
     private abstract static class ScopedPlugin implements DurableExecutionPlugin {
         public abstract AutoCloseable openHandlerScope();
+
+        public static class Opener implements Function<ScopedPlugin, AutoCloseable> {
+            public AutoCloseable apply(ScopedPlugin plugin) {
+                return plugin.openHandlerScope();
+            }
+        }
     }
 }
