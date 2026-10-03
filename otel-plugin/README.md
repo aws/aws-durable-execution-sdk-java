@@ -29,7 +29,7 @@ only a JDK type and defaults to no scope: old plugins on a new core and new plug
 existing behavior. Root-handler fallback activation requires both the updated core and plugin; no provider API or
 dependency floor changes are required. The new scope boundary isolates ordinary exceptions and nonfatal linkage
 errors during open and close, continues earlier scope cleanup, and preserves the handler outcome. JVM fatal errors
-remain outside that containment.
+remain outside that containment, including when wrapped by asynchronous completion/future exceptions.
 
 ## Installation
 
