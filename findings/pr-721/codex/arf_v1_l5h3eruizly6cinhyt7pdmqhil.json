@@ -1,0 +1,1 @@
+{"finding_digest":"5f4fb24688caf1e121a7c4fef1b20742d8727228eee653cc0cedd5ecd7ae9122","finding_id":"arf_v1_l5h3eruizly6cinhyt7pdmqhil","identity_key":"otel-plugin/xraycontextextractor::extract::missing-invocation-header-global-fallback","pull_request_number":721,"repository":{"full_name":"aws/aws-durable-execution-sdk-java","id":1124528661},"reviewer":"codex","schema_version":1}
