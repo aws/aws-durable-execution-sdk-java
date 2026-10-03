@@ -221,7 +221,11 @@ public class ApiRequestDelayedBatcher<T> {
                             .map(Item::request)
                             .filter(Objects::nonNull)
                             .toList();
+                    // Another worker may already have failed the invocation, or may do so during this call.
+                    // A skipped checkpoint must never look like a successful START to an at-most-once step.
+                    rethrowPluginFatalIfPresent();
                     executeBatch.accept(requests);
+                    rethrowPluginFatalIfPresent();
                     for (Item<T> item : flushingItems) {
                         item.result().complete(null);
                     }
@@ -237,6 +241,11 @@ public class ApiRequestDelayedBatcher<T> {
                 }
             }
         }
+    }
+
+    private void rethrowPluginFatalIfPresent() {
+        var fatal = pluginFatal.get();
+        if (fatal != null) throw fatal;
     }
 
     private void abortPending(Error fatal) {

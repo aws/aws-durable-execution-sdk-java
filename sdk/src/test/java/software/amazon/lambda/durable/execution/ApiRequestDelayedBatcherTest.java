@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -328,5 +329,21 @@ class ApiRequestDelayedBatcherTest {
             assertTrue(escaped.await(2, TimeUnit.SECONDS), "fatal must leave CompletableFuture containment");
             assertSame(fatal, uncaught.get());
         }
+    }
+
+    @Test
+    void alreadyReportedPluginFatalPreventsBatchExecution() throws Exception {
+        var fatal = new InternalError("already reported by another hook");
+        var calls = new AtomicInteger();
+        var batcher =
+                new ApiRequestDelayedBatcher<Input>(1, 100, value -> 1, batch -> calls.incrementAndGet(), () -> fatal);
+        var request = batcher.submit(input, Duration.ZERO);
+        assertSame(
+                fatal,
+                assertThrows(ExecutionException.class, () -> request.get(2, TimeUnit.SECONDS))
+                        .getCause());
+        assertEquals(0, calls.get(), "do not start a backend request after a reported plugin fatal");
+        assertSame(
+                fatal, ExceptionHelper.unwrapAsyncFailure(assertThrows(CompletionException.class, batcher::shutdown)));
     }
 }
