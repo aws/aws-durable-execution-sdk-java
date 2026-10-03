@@ -41,7 +41,8 @@ public interface DurableExecutionPlugin {
      *
      * <p>The SDK opens and closes this scope on the handler thread, including when the handler fails or suspends.
      * Scopes close in reverse plugin order when the handler exits. If any scope is returned, invocation finalization
-     * waits for the handler to unwind and close it, including after suspension/termination is signaled. Return
+     * gives the handler a bounded opportunity to unwind after suspension/termination. A blocked handler keeps ownership
+     * of its scope and closes it when it eventually exits; cleanup never replaces the winning execution outcome. Return
      * {@code null} for no scope. This additive capability requires a core that calls it; older cores retain their
      * original hook behavior.
      */

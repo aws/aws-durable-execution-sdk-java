@@ -7,6 +7,9 @@ import com.amazonaws.services.lambda.runtime.RequestHandler;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
@@ -125,7 +128,8 @@ public class DurableExecutor {
                 return awaitHandlerScopes(
                                 executionManager.runUntilCompleteOrSuspend(handlerFuture),
                                 handlerFuture,
-                                hasHandlerScope)
+                                hasHandlerScope,
+                                lambdaContext)
                         .handle((result, ex) -> {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
@@ -205,25 +209,29 @@ public class DurableExecutor {
         }
     }
 
-    private static <T> CompletableFuture<T> awaitHandlerScopes(
-            CompletableFuture<T> executionFuture, CompletableFuture<T> handlerFuture, AtomicBoolean hasHandlerScope) {
-        return executionFuture
-                .handle((result, failure) -> {
-                    if (failure == null) return CompletableFuture.completedFuture(result);
-                    if (!hasHandlerScope.get()) return CompletableFuture.<T>failedFuture(failure);
-                    // Suspension/termination can be signaled from inside the handler before its finally blocks unwind.
-                    // A continuation releases that worker to close its scopes; joining it here would deadlock.
-                    // Legacy plugins returning no scope retain their original finalization timing.
-                    return handlerFuture.handle((ignored, handlerFailure) -> {
-                        var cause = ExceptionHelper.unwrapCompletableFuture(handlerFailure);
-                        ExceptionHelper.sneakyThrow(
-                                cause != null && !(cause instanceof SuspendExecutionException)
-                                        ? handlerFailure
-                                        : failure);
-                        return result;
-                    });
-                })
-                .thenCompose(future -> future);
+    static <T> CompletableFuture<T> awaitHandlerScopes(
+            CompletableFuture<T> executionFuture,
+            CompletableFuture<T> handlerFuture,
+            AtomicBoolean hasHandlerScope,
+            Context lambdaContext) {
+        // This method runs on the invocation caller, never as a callback on the signaling handler worker.
+        // Observe the winning outcome before bounded cleanup, then return that same outcome unchanged.
+        var failure = executionFuture.handle((result, error) -> error).join();
+        if (failure == null || !hasHandlerScope.get()) return executionFuture;
+        var budgetMillis = lambdaContext == null
+                ? 500L
+                : Math.min(500L, Math.max(0L, (long) lambdaContext.getRemainingTimeInMillis() - 50L));
+        try {
+            handlerFuture.handle((result, error) -> null).get(budgetMillis, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            logger.warn("Handler scope cleanup exceeded its handoff budget; cleanup continues on the handler thread");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Interrupted while awaiting handler scope cleanup; preserving the execution outcome", e);
+        } catch (ExecutionException e) {
+            logger.warn("Could not observe handler scope cleanup; preserving the execution outcome", e);
+        }
+        return executionFuture;
     }
 
     private static void fireOnInvocationEnd(

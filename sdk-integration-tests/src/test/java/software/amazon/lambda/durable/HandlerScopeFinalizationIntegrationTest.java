@@ -13,6 +13,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.ExecutionStatus;
@@ -21,6 +22,73 @@ import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class HandlerScopeFinalizationIntegrationTest {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void blockedCleanupReturnsTheOriginalOutcomeThenClosesOnItsOwner(boolean terminate) throws Exception {
+        var releaseFinally = new CountDownLatch(1);
+        var enteredFinally = new CountDownLatch(1);
+        var scopeClosed = new CountDownLatch(1);
+        var closedAtEnd = new AtomicBoolean();
+        var plugin = new DurableExecutionPlugin() {
+            @Override
+            public AutoCloseable openHandlerScope() {
+                var owner = Thread.currentThread();
+                return () -> {
+                    assertSame(owner, Thread.currentThread());
+                    scopeClosed.countDown();
+                };
+            }
+
+            @Override
+            public void onInvocationEnd(InvocationEndInfo info) {
+                closedAtEnd.set(scopeClosed.getCount() == 0);
+            }
+        };
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    try {
+                        if (terminate)
+                            context.step("terminate", String.class, step -> {
+                                throw new UnrecoverableDurableExecutionException(
+                                        ErrorObject.builder()
+                                                .errorMessage("retry")
+                                                .build(),
+                                        true);
+                            });
+                        else context.wait("pause", Duration.ofSeconds(1));
+                        return "done";
+                    } finally {
+                        enteredFinally.countDown();
+                        try {
+                            if (!releaseFinally.await(5, TimeUnit.SECONDS)) throw new AssertionError("not released");
+                        } catch (InterruptedException error) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(error);
+                        }
+                    }
+                },
+                DurableConfig.builder().withPlugins(plugin).build());
+        var caller = Executors.newSingleThreadExecutor();
+        try {
+            var response = caller.submit(() -> runner.run("input"));
+            assertTrue(enteredFinally.await(5, TimeUnit.SECONDS));
+            if (terminate) {
+                var failure = assertThrows(ExecutionException.class, () -> response.get(2, TimeUnit.SECONDS));
+                assertInstanceOf(UnrecoverableDurableExecutionException.class, failure.getCause());
+            } else
+                assertEquals(
+                        ExecutionStatus.PENDING,
+                        response.get(2, TimeUnit.SECONDS).getStatus());
+            assertFalse(closedAtEnd.get());
+            assertEquals(1L, scopeClosed.getCount());
+        } finally {
+            releaseFinally.countDown();
+            assertTrue(scopeClosed.await(5, TimeUnit.SECONDS));
+            caller.shutdownNow();
+        }
+    }
+
     @ParameterizedTest
     @CsvSource({"true,false", "false,false", "true,true", "false,true"})
     void finalizationWaitsForAnOpenedScopeWithoutChangingLegacyNoScopeTiming(boolean hasScope, boolean terminate)
