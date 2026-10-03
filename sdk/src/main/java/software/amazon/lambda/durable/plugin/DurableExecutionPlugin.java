@@ -15,15 +15,6 @@ package software.amazon.lambda.durable.plugin;
  */
 public interface DurableExecutionPlugin {
 
-    /**
-     * Optional exclusive registration group. At most one plugin in a group may be configured for an invocation. Return
-     * null (the default) for plugins that can coexist freely. This configuration metadata must be stable and
-     * side-effect-free; it is read before lifecycle hooks run, and conflicts fail configuration immediately.
-     */
-    default String getExclusiveGroup() {
-        return null;
-    }
-
     // ─── Invocation-level hooks ──────────────────────────────────────────
 
     /**
@@ -61,9 +52,11 @@ public interface DurableExecutionPlugin {
      * <p>The SDK opens and closes this scope on the handler thread, including when the handler fails or suspends.
      * Scopes close in reverse plugin order when the handler exits. If any scope is returned, invocation finalization
      * gives the handler a bounded opportunity to unwind after suspension/termination. A blocked handler keeps ownership
-     * of its scope and closes it when it eventually exits; cleanup never replaces the winning execution outcome. Return
-     * {@code null} for no scope. This additive capability requires a core that calls it; older cores retain their
-     * original hook behavior.
+     * of its scope and closes it when it eventually exits. Ordinary cleanup failures preserve the winning outcome; an
+     * observed VirtualMachineError or ThreadDeath from scope callbacks escapes the invocation caller. Optional waiting
+     * reserves five seconds per configured plugin plus one second for shutdown/response; this is best effort because
+     * existing finalizers and checkpoint draining can exceed that allowance. Return {@code null} for no scope. This
+     * additive capability requires a core that calls it; older cores retain their original hook behavior.
      */
     default AutoCloseable openHandlerScope() {
         return null;

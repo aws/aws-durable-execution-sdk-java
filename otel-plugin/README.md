@@ -29,8 +29,12 @@ belongs to another trace, invocation view activates `Invocation`; execution view
 
 The core opens the scope after invocation startup and closes it on the same handler thread on success, failure, or
 suspension. On suspension or termination, an opened scope gets up to 500ms to unwind before finalization, capped by
-remaining Lambda time with 50ms response headroom. The invocation caller waits; the owning handler worker remains free to exit.
-If cleanup is blocked, the SDK logs the timeout and preserves the original PENDING/RETRYING outcome. The scope still
+remaining Lambda time after reserving five seconds per configured plugin and one second for shutdown/response.
+This is a best-effort reserve, not a total deadline bound: existing plugin callbacks and checkpoint draining may exceed it. The invocation caller waits; the owning handler worker remains free to exit.
+If cleanup is blocked, the SDK logs the timeout and preserves the original PENDING/RETRYING outcome.
+An observed `VirtualMachineError` or `ThreadDeath` from the new scope callbacks instead escapes the invocation caller;
+ordinary cleanup failures and legacy body failures retain the original outcome. Fatals reported only after the response
+cannot retroactively change it. The scope still
 closes on its owning thread when the handler eventually exits; late cleanup telemetry is best effort. A compatible
 ambient span uses a no-op scope and participates in the same bounded handoff. Invocation-end hooks can execute on a
 different thread and do not own this scope. The additive hook uses only a JDK type and defaults to no scope. The factory migration follows the3.x boundary in the migration guide. Root-handler context

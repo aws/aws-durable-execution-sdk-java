@@ -53,6 +53,11 @@ public class DurableExecutor {
     // Lambda response size limit is 6MB minus small epsilon for envelope
     private static final int LAMBDA_RESPONSE_SIZE_LIMIT = 6 * 1024 * 1024 - 50;
 
+    // Best-effort allowance for each configured plugin's finalization (including the bundled OTel 5s join),
+    // plus shutdown/response headroom. Existing arbitrary callbacks and checkpoint draining can exceed it.
+    private static final long PLUGIN_FINALIZATION_RESERVE_MILLIS = 5_000;
+    private static final long SHUTDOWN_RESPONSE_RESERVE_MILLIS = 1_000;
+
     private DurableExecutor() {}
 
     public static <I, O> DurableExecutionOutput execute(
@@ -75,6 +80,7 @@ public class DurableExecutor {
             // Captured for onInvocationEnd, which runs outside the handler thread below.
             var pluginExecutionInput = new AtomicReference<>();
             var hasHandlerScope = new AtomicBoolean();
+            var scopeFatal = new AtomicReference<Error>();
             var handlerFuture = supplyAsync(
                     () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
@@ -126,7 +132,9 @@ public class DurableExecutor {
                         try (var ignored = DurableLogger.attachContext()) {
                             var handlerInput = userInput;
                             return pluginRunner.runHandler(
-                                    () -> handler.apply(handlerInput, context), () -> hasHandlerScope.set(true));
+                                    () -> handler.apply(handlerInput, context),
+                                    () -> hasHandlerScope.set(true),
+                                    fatal -> scopeFatal.compareAndSet(null, fatal));
                         }
                     },
                     config.getExecutorService()); // Get executor from config for running user code
@@ -139,7 +147,9 @@ public class DurableExecutor {
                                 executionManager.runUntilCompleteOrSuspend(handlerFuture),
                                 handlerFuture,
                                 hasHandlerScope,
-                                lambdaContext)
+                                lambdaContext,
+                                config.getPluginFactories().size(),
+                                scopeFatal)
                         .handle((result, ex) -> {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
@@ -268,6 +278,9 @@ public class DurableExecutor {
                 // unwrap the CompletionException and rethrow the wrapped exception
                 ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapAsyncFailure(e));
                 return null;
+            } finally {
+                // Also observe a scope fatal reported during invocation-end hooks, without extending the wait.
+                throwIfScopeFatal(scopeFatal);
             }
         }
     }
@@ -307,14 +320,18 @@ public class DurableExecutor {
             CompletableFuture<T> executionFuture,
             CompletableFuture<T> handlerFuture,
             AtomicBoolean hasHandlerScope,
-            Context lambdaContext) {
+            Context lambdaContext,
+            int pluginCount,
+            AtomicReference<Error> scopeFatal) {
         // This method runs on the invocation caller, never as a callback on the signaling handler worker.
-        // Observe the winning outcome before bounded cleanup, then return that same outcome unchanged.
+        // Preserve the winning outcome except for an observed fatal error from the new scope callbacks.
         var failure = executionFuture.handle((result, error) -> error).join();
+        throwIfScopeFatal(scopeFatal);
         if (failure == null || !hasHandlerScope.get()) return executionFuture;
+        var reserve = SHUTDOWN_RESPONSE_RESERVE_MILLIS + PLUGIN_FINALIZATION_RESERVE_MILLIS * pluginCount;
         var budgetMillis = lambdaContext == null
                 ? 500L
-                : Math.min(500L, Math.max(0L, (long) lambdaContext.getRemainingTimeInMillis() - 50L));
+                : Math.min(500L, Math.max(0L, (long) lambdaContext.getRemainingTimeInMillis() - reserve));
         try {
             handlerFuture.handle((result, error) -> null).get(budgetMillis, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -325,7 +342,13 @@ public class DurableExecutor {
         } catch (ExecutionException e) {
             logger.warn("Could not observe handler scope cleanup; preserving the execution outcome", e);
         }
+        throwIfScopeFatal(scopeFatal);
         return executionFuture;
+    }
+
+    private static void throwIfScopeFatal(AtomicReference<Error> scopeFatal) {
+        var fatal = scopeFatal.get();
+        if (fatal != null) throw fatal;
     }
 
     private static void fireOnInvocationEnd(

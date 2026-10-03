@@ -218,6 +218,12 @@ public class PluginRunner {
 
     /** Runs the handler and notifies the invocation when a scope requires same-thread finalization. */
     public <T> T runHandler(Supplier<T> handler, Runnable onScopeOpened) {
+        return runHandler(handler, onScopeOpened, fatal -> {});
+    }
+
+    /** Reports fatal errors originating only in scope callbacks, before rethrowing on the owner thread. */
+    @SuppressWarnings("removal")
+    public <T> T runHandler(Supplier<T> handler, Runnable onScopeOpened, Consumer<Error> onScopeFatal) {
         var scopes = new ArrayDeque<AutoCloseable>();
         try {
             for (var plugin : plugins) {
@@ -228,23 +234,41 @@ public class PluginRunner {
                         onScopeOpened.run();
                     }
                 } catch (Throwable e) {
-                    contain(e, "Plugin handler scope failed");
+                    reportHandlerScopeFailure("Plugin handler scope threw exception", e, onScopeFatal);
                 }
             }
             return handler.get();
         } finally {
-            closeHandlerScopes(scopes);
+            closeHandlerScopes(scopes, onScopeFatal);
         }
     }
 
-    private static void closeHandlerScopes(ArrayDeque<AutoCloseable> scopes) {
+    @SuppressWarnings("removal")
+    private static void closeHandlerScopes(ArrayDeque<AutoCloseable> scopes, Consumer<Error> onScopeFatal) {
+        Error firstFatal = null;
         while (!scopes.isEmpty()) {
             try {
                 scopes.pop().close();
             } catch (Throwable e) {
-                contain(e, "Plugin handler scope cleanup failed");
+                try {
+                    reportHandlerScopeFailure("Plugin handler scope cleanup threw exception", e, onScopeFatal);
+                } catch (VirtualMachineError | ThreadDeath fatal) {
+                    if (firstFatal == null) firstFatal = fatal;
+                }
             }
         }
+        if (firstFatal != null) throw firstFatal;
+    }
+
+    @SuppressWarnings("removal")
+    private static void reportHandlerScopeFailure(String message, Throwable failure, Consumer<Error> onScopeFatal) {
+        var cause = ExceptionHelper.unwrapAsyncFailure(failure);
+        if (cause instanceof VirtualMachineError || cause instanceof ThreadDeath) {
+            var fatal = (Error) cause;
+            onScopeFatal.accept(fatal);
+            throw fatal;
+        }
+        logger.warn(message, failure);
     }
 
     public void onInvocationStart(InvocationInfo info) {

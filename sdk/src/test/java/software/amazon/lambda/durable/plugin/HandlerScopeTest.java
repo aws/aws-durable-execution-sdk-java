@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -142,10 +143,27 @@ class HandlerScopeTest {
                     };
                 }
             };
-            assertSame(
-                    fatal,
-                    assertThrows(
-                            Error.class, () -> startedRunner(List.of(plugin)).runHandler(() -> "ok")));
+            var reported = new AtomicReference<Error>();
+            var calls = new ArrayList<String>();
+            var active = new ThreadLocal<String>();
+            var owner = Thread.currentThread();
+            var healthy = new DurableExecutionPlugin() {
+                @Override
+                public AutoCloseable openHandlerScope() {
+                    active.set("healthy");
+                    calls.add("open-healthy");
+                    return () -> {
+                        assertSame(owner, Thread.currentThread());
+                        active.remove();
+                        calls.add("close-healthy");
+                    };
+                }
+            };
+            var runner = startedRunner(List.of(healthy, plugin));
+            assertSame(fatal, assertThrows(Error.class, () -> runner.runHandler(() -> "ok", () -> {}, reported::set)));
+            assertSame(fatal, reported.get(), "only a scope callback reports this fatal");
+            assertNull(active.get(), "earlier context must not leak into reuse of the owner thread");
+            assertEquals(List.of("open-healthy", "close-healthy"), calls);
         }
     }
 

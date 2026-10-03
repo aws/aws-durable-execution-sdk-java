@@ -394,7 +394,7 @@ executor, rethrow is deferred to the invocation boundary to allow finalization f
 `onInvocationEnd` still reach the invocation caller, but their completion-stage callback does not guarantee worker
 termination. Ordinary handler failures and nonfatal plugin/factory containment retain their existing behavior.
 
-## Minor fixes retained in3.x
+## Minor fixes retained in 3.x
 
 The migration includes the tested fixes from #765, #766, #767 and #771, plus conformance handlers21–24 from #769.
 Invocation-local headers reach factory construction before span creation; the seven-component InvocationInfo shape
@@ -404,5 +404,11 @@ preserve effective factory registrations without repeating environment discovery
 SDK-owned synthetic roots keep the same deterministic identity, name, attributes and checkpointed timestamps, and
 are exported before the first PENDING/RETRYING response with stable recovery reexports. Sampling intent is consumed
 before processor re-entry. Handler context retains valid same-trace ambient context or activates the view root, closes
-on its owning thread, and uses the bounded cleanup handoff while preserving the winning durable outcome. Provider
+on its owning thread, and uses the bounded cleanup handoff. Ordinary cleanup preserves the winning durable outcome; observed scope-owned
+fatal errors escape the caller. Optional waiting reserves five seconds per plugin plus one second for shutdown/response,
+without promising a hard deadline for existing finalizers. Provider
 resources remain owned by the environment. The model-blocked outbound propagation groundwork remains separate.
+
+Exclusive instrumentation metadata belongs to `DurableExecutionPluginFactory.getExclusiveGroup()` in 3.x, not the
+per-invocation plugin instance. Declare or forward the group on custom factory wrappers so configuration can validate
+it before construction. The instance-level 2.x group method is intentionally absent from the 3.x plugin contract.
