@@ -4,12 +4,94 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
 
 class XRayContextExtractorTest {
+    private static final InvocationInfo INFO = new InvocationInfo("request", "arn", true, Instant.EPOCH);
+
+    @ParameterizedTest
+    @ValueSource(strings = {"0", "1"})
+    void invocationHeaderOverridesGlobalCarrier(String sampled) {
+        System.setProperty("com.amazonaws.xray.traceHeader", "Root=1-ffffffff-ffffffffffffffffffffffff;Sampled=1");
+        try {
+            var header = "Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=" + sampled;
+            var extracted = new XRayContextExtractor().extract(INFO, invocation(header));
+            assertEquals("6955b900123456789012345678901234", extracted.traceId());
+            assertEquals("1234567890123456", extracted.parentSpanId());
+            assertEquals(
+                    sampled.equals("1") ? ExtractedContext.Sampling.SAMPLED : ExtractedContext.Sampling.NOT_SAMPLED,
+                    extracted.sampling());
+            assertNull(new XRayContextExtractor().extract(INFO, invocation("malformed")));
+        } finally {
+            System.clearProperty("com.amazonaws.xray.traceHeader");
+        }
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    void missingInvocationHeaderRetainsOrdinaryLambdaFallback(String header) {
+        System.setProperty("com.amazonaws.xray.traceHeader", "Root=1-6955b900-123456789012345678901234;Sampled=0");
+        try {
+            assertEquals(
+                    ExtractedContext.Sampling.NOT_SAMPLED,
+                    new XRayContextExtractor().extract(INFO, invocation(header)).sampling());
+        } finally {
+            System.clearProperty("com.amazonaws.xray.traceHeader");
+        }
+    }
+
+    @Test
+    void existingCustomExtractorStillReceivesOneCall() {
+        var expected =
+                new ExtractedContext("6955b900123456789012345678901234", null, ExtractedContext.Sampling.SAMPLED);
+        ContextExtractor custom = () -> expected;
+        assertSame(expected, custom.extract(INFO, invocation("ignored")));
+    }
+
+    @Test
+    void existingNoArgumentSubclassOverrideKeepsControlWithInvocationHeader() {
+        var expected =
+                new ExtractedContext("6955b900aaaaaaaaaaaaaaaaaaaaaaaa", null, ExtractedContext.Sampling.NOT_SAMPLED);
+        var extractor = new XRayContextExtractor() {
+            @Override
+            public ExtractedContext extract() {
+                return expected;
+            }
+        };
+        assertSame(
+                expected,
+                extractor.extract(
+                        INFO,
+                        invocation("Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=1")));
+    }
+
+    @Test
+    void delegatingSubclassUsesInvocationHeaderAndClearsItAfterExtraction() {
+        var extractor = new XRayContextExtractor() {
+            @Override
+            public ExtractedContext extract() {
+                var extracted = super.extract();
+                if (extracted != null && extracted.sampling() == ExtractedContext.Sampling.NOT_SAMPLED) {
+                    throw new IllegalArgumentException("custom extraction failure");
+                }
+                return extracted;
+            }
+        };
+        var header = "Root=1-6955b900-123456789012345678901234;Sampled=";
+        assertNotNull(extractor.extract(INFO, invocation(header + "1")));
+        assertNull(extractor.extract());
+        assertThrows(IllegalArgumentException.class, () -> extractor.extract(INFO, invocation(header + "0")));
+        assertNull(extractor.extract());
+    }
+
+    private static String invocation(String header) {
+        return header;
+    }
 
     @Test
     void extract_withoutEnvVar_returnsNull() {

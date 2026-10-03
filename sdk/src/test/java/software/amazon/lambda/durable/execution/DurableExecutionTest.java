@@ -8,8 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -34,6 +37,8 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
 
 class DurableExecutionTest {
 
@@ -48,6 +53,47 @@ class DurableExecutionTest {
         return DurableConfig.builder()
                 .withDurableExecutionClient(TestUtils.createMockClient())
                 .build();
+    }
+
+    @Test
+    void capturesTraceHeaderOnRuntimeThreadBeforeDispatch() {
+        var runtimeThread = Thread.currentThread();
+        var header = "Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=0";
+        var lambdaContext = mock(Context.class);
+        when(lambdaContext.getXrayTraceId()).thenAnswer(ignored -> {
+            assertEquals(runtimeThread, Thread.currentThread());
+            return header;
+        });
+        when(lambdaContext.getRemainingTimeInMillis()).thenReturn(30000);
+        var seen = new AtomicReference<String>();
+        var plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationStart(InvocationInfo info, String xRayTraceId) {
+                assertFalse(runtimeThread == Thread.currentThread());
+                seen.set(xRayTraceId);
+            }
+        };
+        var executionOp = Operation.builder()
+                .id(EXECUTION_OP_ID)
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
+                .executionDetails(
+                        ExecutionDetails.builder().inputPayload("\"input\"").build())
+                .build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(executionOp)
+                        .build());
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withPlugins(ignored -> plugin)
+                .build();
+        var output = DurableExecutor.execute(input, lambdaContext, get(String.class), (value, ctx) -> value, config);
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertEquals(header, seen.get());
     }
 
     @Test

@@ -33,4 +33,12 @@ public interface DurableExecutionPluginFactory {
      * @return the plugin instance for this invocation
      */
     DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo);
+    /** Creates an instance using an immutable header captured on the Lambda runtime thread. */
+    default DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo, String runtimeTraceHeader) {
+        return createPlugin(invocationInfo);
+    }
+    /** Optional exclusive instrumentation group, validated before any invocation instance is created. */
+    default String getExclusiveGroup() {
+        return null;
+    }
 }

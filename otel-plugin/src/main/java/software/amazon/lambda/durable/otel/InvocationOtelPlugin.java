@@ -172,7 +172,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
      */
     public static DurableExecutionPluginFactory factory(OtelPluginConfig config) {
         var environment = OtelPluginEnvironment.forGlobalProvider(config);
-        return info -> new InvocationOtelPlugin(environment, info);
+        return invocationFactory(environment);
     }
 
     /**
@@ -214,7 +214,31 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
     public static DurableExecutionPluginFactory factory(
             SdkTracerProviderBuilder tracerProviderBuilder, OtelPluginConfig config) {
         var environment = OtelPluginEnvironment.forProviderBuilder(tracerProviderBuilder, config);
-        return info -> new InvocationOtelPlugin(environment, info);
+        return invocationFactory(environment);
+    }
+
+    private static DurableExecutionPluginFactory invocationFactory(OtelPluginEnvironment environment) {
+        return new DurableExecutionPluginFactory() {
+            @Override
+            public String getExclusiveGroup() {
+                return "durable-otel-view";
+            }
+
+            @Override
+            public String toString() {
+                return "InvocationOtelPlugin";
+            }
+
+            @Override
+            public DurableExecutionPlugin createPlugin(InvocationInfo info) {
+                return createPlugin(info, null);
+            }
+
+            @Override
+            public DurableExecutionPlugin createPlugin(InvocationInfo info, String runtimeTraceHeader) {
+                return new InvocationOtelPlugin(environment, info, runtimeTraceHeader);
+            }
+        };
     }
 
     /**
@@ -229,7 +253,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
      * <p>When the tracer cannot be bound, telemetry is disabled for this invocation: the span fields stay null and
      * every hook returns immediately. The next invocation gets a new instance, which binds again.
      */
-    private InvocationOtelPlugin(OtelPluginEnvironment environment, InvocationInfo info) {
+    private InvocationOtelPlugin(OtelPluginEnvironment environment, InvocationInfo info, String runtimeTraceHeader) {
         var config = environment.config();
         this.idGenerator = environment.idGenerator();
         this.enableMdc = config.enableMdc();
@@ -251,7 +275,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
         this.sdkTracerProvider = setup.sdkTracerProvider();
         this.tracer = setup.tracer();
 
-        var extracted = config.contextExtractor().extract();
+        var extracted = config.contextExtractor().extract(info, runtimeTraceHeader);
 
         // Resolve the execution ancestor the Workflow span parents onto so it joins the stable-per-execution trace.
         var canonicalTraceId =
@@ -316,6 +340,17 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
             return;
         }
         MDC.put(MdcSpanEnricher.MDC_TRACE_ID, invocationSpan.getSpanContext().getTraceId());
+    }
+
+    @Override
+    public AutoCloseable openHandlerScope() {
+        var trace = executionTrace;
+        if (ended || tracer == null || trace == null) return null;
+        var ambient = Span.current().getSpanContext();
+        // Preserve a compatible ambient Lambda span. An absent or unrelated ambient span must not leave
+        // handler instrumentation outside the durable execution's canonical trace.
+        if (ambient.isValid() && trace.traceId().equals(ambient.getTraceId())) return Scope.noop();
+        return invocationSpan.makeCurrent();
     }
 
     @Override
@@ -387,6 +422,8 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
             }
             workflowSpan.end();
         }
+        OtelPluginSupport.exportExecutionRoot(
+                tracer, idGenerator, executionAncestor, durableExecutionArn, executionStartTime, samplingIntent);
 
         if (sdkTracerProvider != null) {
             // Flush spans before Lambda freezes

@@ -7,7 +7,11 @@ import com.amazonaws.services.lambda.runtime.RequestHandler;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
@@ -64,10 +68,13 @@ public class DurableExecutor {
             var isFirstInvocation = !executionManager.isReplaying();
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             var executionArn = input.durableExecutionArn();
+            // Capture on the runtime thread before dispatch: LMI trace carriers can be thread-local.
+            var xRayTraceId = RuntimeTraceHeader.capture(lambdaContext);
 
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
             var pluginExecutionInput = new AtomicReference<>();
+            var hasHandlerScope = new AtomicBoolean();
             var handlerFuture = supplyAsync(
                     () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
@@ -92,18 +99,22 @@ public class DurableExecutor {
                         // inject ThreadLocal objects, update MDC, etc.
                         // executionStartTime comes from the initial EXECUTION operation in the first backend event.
                         if (!pluginRunner.isEmpty()) {
-                            pluginRunner.onInvocationStart(new InvocationInfo(
-                                    requestId,
-                                    executionArn,
-                                    isFirstInvocation,
-                                    executionManager.getExecutionOperation().startTimestamp(),
-                                    userInput,
-                                    PluginInfoConverter.toOperationItemMap(
-                                            executionManager.getOperationsSnapshot(),
-                                            executionManager.getInitialOperationIds()),
-                                    PluginInfoConverter.toOperationItemMap(
-                                            executionManager.getUpdatedOperationsSnapshot(),
-                                            executionManager.getInitialOperationIds())));
+                            pluginRunner.onInvocationStart(
+                                    new InvocationInfo(
+                                            requestId,
+                                            executionArn,
+                                            isFirstInvocation,
+                                            executionManager
+                                                    .getExecutionOperation()
+                                                    .startTimestamp(),
+                                            userInput,
+                                            PluginInfoConverter.toOperationItemMap(
+                                                    executionManager.getOperationsSnapshot(),
+                                                    executionManager.getInitialOperationIds()),
+                                            PluginInfoConverter.toOperationItemMap(
+                                                    executionManager.getUpdatedOperationsSnapshot(),
+                                                    executionManager.getInitialOperationIds())),
+                                    xRayTraceId);
                         }
                         if (inputFailure != null) {
                             ExceptionHelper.sneakyThrow(inputFailure);
@@ -113,7 +124,9 @@ public class DurableExecutor {
                         DurableContextImpl.setCurrentContext(context);
                         // use a try-with-resources to clear logger properties
                         try (var ignored = DurableLogger.attachContext()) {
-                            return handler.apply(userInput, context);
+                            var handlerInput = userInput;
+                            return pluginRunner.runHandler(
+                                    () -> handler.apply(handlerInput, context), () -> hasHandlerScope.set(true));
                         }
                     },
                     config.getExecutorService()); // Get executor from config for running user code
@@ -122,12 +135,15 @@ public class DurableExecutor {
             // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
             // failure.
             try {
-                return executionManager
-                        .runUntilCompleteOrSuspend(handlerFuture)
+                return awaitHandlerScopes(
+                                executionManager.runUntilCompleteOrSuspend(handlerFuture),
+                                handlerFuture,
+                                hasHandlerScope,
+                                lambdaContext)
                         .handle((result, ex) -> {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
-                                Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);
+                                Throwable cause = ExceptionHelper.unwrapAsyncFailure(ex);
 
                                 if (isFatal(cause)) {
                                     try {
@@ -217,7 +233,7 @@ public class DurableExecutor {
                                 // CompletionException. The plugins are told what failed, not how it was delivered, and
                                 // the failure branches above already unwrap before they report -- so unwrap here too,
                                 // or Insight's record and the OTel span status would name the wrapper.
-                                resultDeliveryFailure = ExceptionHelper.unwrapCompletableFuture(failure);
+                                resultDeliveryFailure = ExceptionHelper.unwrapAsyncFailure(failure);
                                 if (resultDeliveryFailure == null) {
                                     resultDeliveryFailure = failure;
                                 }
@@ -250,7 +266,7 @@ public class DurableExecutor {
                         .join();
             } catch (CompletionException e) {
                 // unwrap the CompletionException and rethrow the wrapped exception
-                ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(e));
+                ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapAsyncFailure(e));
                 return null;
             }
         }
@@ -268,7 +284,7 @@ public class DurableExecutor {
                 // A direct executor is already on the invocation caller; its fatal result is rethrown below after
                 // finalization. On an asynchronous executor it must also escape the runnable so the worker terminates.
                 if (Thread.currentThread() != caller) {
-                    rethrowFatal(ExceptionHelper.unwrapCompletableFuture(failure));
+                    rethrowFatal(ExceptionHelper.unwrapAsyncFailure(failure));
                 }
             }
         };
@@ -285,6 +301,31 @@ public class DurableExecutor {
     private static void rethrowFatal(Throwable failure) {
         if (failure instanceof VirtualMachineError fatal) throw fatal;
         if (failure instanceof ThreadDeath fatal) throw fatal;
+    }
+
+    static <T> CompletableFuture<T> awaitHandlerScopes(
+            CompletableFuture<T> executionFuture,
+            CompletableFuture<T> handlerFuture,
+            AtomicBoolean hasHandlerScope,
+            Context lambdaContext) {
+        // This method runs on the invocation caller, never as a callback on the signaling handler worker.
+        // Observe the winning outcome before bounded cleanup, then return that same outcome unchanged.
+        var failure = executionFuture.handle((result, error) -> error).join();
+        if (failure == null || !hasHandlerScope.get()) return executionFuture;
+        var budgetMillis = lambdaContext == null
+                ? 500L
+                : Math.min(500L, Math.max(0L, (long) lambdaContext.getRemainingTimeInMillis() - 50L));
+        try {
+            handlerFuture.handle((result, error) -> null).get(budgetMillis, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            logger.warn("Handler scope cleanup exceeded its handoff budget; cleanup continues on the handler thread");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Interrupted while awaiting handler scope cleanup; preserving the execution outcome", e);
+        } catch (ExecutionException e) {
+            logger.warn("Could not observe handler scope cleanup; preserving the execution outcome", e);
+        }
+        return executionFuture;
     }
 
     private static void fireOnInvocationEnd(

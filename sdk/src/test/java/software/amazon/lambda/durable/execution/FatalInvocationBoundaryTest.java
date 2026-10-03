@@ -37,6 +37,7 @@ import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 class FatalInvocationBoundaryTest {
     @SuppressWarnings("removal")
@@ -49,7 +50,8 @@ class FatalInvocationBoundaryTest {
                         "wrapped-factory",
                         "wrapped-hook",
                         "future-factory",
-                        "future-hook")
+                        "future-hook",
+                        "future-handler")
                 .flatMap(stage -> Stream.of(new OutOfMemoryError("simulated VM failure"), new ThreadDeath())
                         .map(error -> Arguments.of(stage, error)));
     }
@@ -109,6 +111,40 @@ class FatalInvocationBoundaryTest {
         assertEquals(InvocationStatus.SUCCEEDED, end.get().invocationStatus());
     }
 
+    @Test
+    void nestedFatalResultDeliveryEscapesWithItsOriginalCause() {
+        var fatal = new OutOfMemoryError("simulated result-delivery failure");
+        var end = new AtomicReference<InvocationEndInfo>();
+        DurableExecutionPluginFactory observer = info -> new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationEnd(InvocationEndInfo info) {
+                assertNull(end.getAndSet(info));
+            }
+        };
+        var serDes = new JacksonSerDes() {
+            @Override
+            public String serialize(Object value) {
+                return CompletableFuture.<String>failedFuture(new ExecutionException(fatal))
+                        .join();
+            }
+        };
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withSerDes(serDes)
+                .withExecutorService(new DirectExecutor())
+                .withPlugins(observer)
+                .build();
+        assertSame(
+                fatal,
+                assertThrows(
+                        Error.class,
+                        () -> DurableExecutor.execute(
+                                input(), null, get(String.class), (value, context) -> value, config)));
+        assertNotNull(end.get());
+        assertEquals(InvocationStatus.RETRYING, end.get().invocationStatus());
+        assertSame(fatal, end.get().executionError());
+    }
+
     private static void assertFatalInvocation(String stage, Error fatal, ExecutorService executor) {
         var end = new AtomicReference<InvocationEndInfo>();
         var called = new AtomicBoolean();
@@ -134,6 +170,9 @@ class FatalInvocationBoundaryTest {
                                 (value, context) -> {
                                     called.set(true);
                                     if (stage.equals("wrapped-handler")) throw new CompletionException(fatal);
+                                    if (stage.equals("future-handler"))
+                                        CompletableFuture.failedFuture(new ExecutionException(fatal))
+                                                .join();
                                     if (stage.equals("handler")) throw fatal;
                                     return value;
                                 },

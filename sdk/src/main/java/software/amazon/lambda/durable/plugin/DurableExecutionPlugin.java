@@ -15,6 +15,15 @@ package software.amazon.lambda.durable.plugin;
  */
 public interface DurableExecutionPlugin {
 
+    /**
+     * Optional exclusive registration group. At most one plugin in a group may be configured for an invocation. Return
+     * null (the default) for plugins that can coexist freely. This configuration metadata must be stable and
+     * side-effect-free; it is read before lifecycle hooks run, and conflicts fail configuration immediately.
+     */
+    default String getExclusiveGroup() {
+        return null;
+    }
+
     // ─── Invocation-level hooks ──────────────────────────────────────────
 
     /**
@@ -26,6 +35,16 @@ public interface DurableExecutionPlugin {
     default void onInvocationStart(InvocationInfo info) {}
 
     /**
+     * Called at invocation start with immutable runtime data captured before worker-thread dispatch. The SDK calls this
+     * overload; its default delegates to the original hook so existing plugin implementations remain supported.
+     * Implementations that override this overload can consume invocation-local carriers without changing
+     * InvocationInfo.
+     */
+    default void onInvocationStart(InvocationInfo info, String xRayTraceId) {
+        onInvocationStart(info);
+    }
+
+    /**
      * Called at the end of each Lambda invocation. Use to flush spans/metrics before Lambda freezes.
      *
      * <p>This hook is awaited — the SDK blocks until it returns. This is the only safe flush point before Lambda
@@ -35,6 +54,20 @@ public interface DurableExecutionPlugin {
      * invocation (useful for writing summary records or flushing final data).
      */
     default void onInvocationEnd(InvocationEndInfo info) {}
+
+    /**
+     * Opens an optional scope around the root handler body, after invocation startup.
+     *
+     * <p>The SDK opens and closes this scope on the handler thread, including when the handler fails or suspends.
+     * Scopes close in reverse plugin order when the handler exits. If any scope is returned, invocation finalization
+     * gives the handler a bounded opportunity to unwind after suspension/termination. A blocked handler keeps ownership
+     * of its scope and closes it when it eventually exits; cleanup never replaces the winning execution outcome. Return
+     * {@code null} for no scope. This additive capability requires a core that calls it; older cores retain their
+     * original hook behavior.
+     */
+    default AutoCloseable openHandlerScope() {
+        return null;
+    }
 
     // ─── Operation-level hooks ───────────────────────────────────────────
 

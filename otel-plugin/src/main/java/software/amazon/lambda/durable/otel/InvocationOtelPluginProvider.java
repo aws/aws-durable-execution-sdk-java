@@ -27,4 +27,14 @@ public final class InvocationOtelPluginProvider implements DurableExecutionPlugi
     public DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo) {
         return factory.createPlugin(invocationInfo);
     }
+
+    @Override
+    public DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo, String runtimeTraceHeader) {
+        return factory.createPlugin(invocationInfo, runtimeTraceHeader);
+    }
+
+    @Override
+    public String getExclusiveGroup() {
+        return factory.getExclusiveGroup();
+    }
 }

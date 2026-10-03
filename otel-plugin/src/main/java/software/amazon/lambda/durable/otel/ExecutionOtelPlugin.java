@@ -189,7 +189,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
      */
     public static DurableExecutionPluginFactory factory(OtelPluginConfig config) {
         var environment = OtelPluginEnvironment.forGlobalProvider(config);
-        return info -> new ExecutionOtelPlugin(environment, info);
+        return invocationFactory(environment);
     }
 
     /**
@@ -225,7 +225,31 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
     public static DurableExecutionPluginFactory factory(
             SdkTracerProviderBuilder tracerProviderBuilder, OtelPluginConfig config) {
         var environment = OtelPluginEnvironment.forProviderBuilder(tracerProviderBuilder, config);
-        return info -> new ExecutionOtelPlugin(environment, info);
+        return invocationFactory(environment);
+    }
+
+    private static DurableExecutionPluginFactory invocationFactory(OtelPluginEnvironment environment) {
+        return new DurableExecutionPluginFactory() {
+            @Override
+            public String getExclusiveGroup() {
+                return "durable-otel-view";
+            }
+
+            @Override
+            public String toString() {
+                return "ExecutionOtelPlugin";
+            }
+
+            @Override
+            public DurableExecutionPlugin createPlugin(InvocationInfo info) {
+                return createPlugin(info, null);
+            }
+
+            @Override
+            public DurableExecutionPlugin createPlugin(InvocationInfo info, String runtimeTraceHeader) {
+                return new ExecutionOtelPlugin(environment, info, runtimeTraceHeader);
+            }
+        };
     }
 
     /**
@@ -240,7 +264,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
      * <p>When the tracer cannot be bound, telemetry is disabled for this invocation: the span fields stay null and
      * every hook returns immediately. The next invocation gets a new instance, which binds again.
      */
-    private ExecutionOtelPlugin(OtelPluginEnvironment environment, InvocationInfo info) {
+    private ExecutionOtelPlugin(OtelPluginEnvironment environment, InvocationInfo info, String runtimeTraceHeader) {
         var config = environment.config();
         this.idGenerator = environment.idGenerator();
         this.enableMdc = config.enableMdc();
@@ -264,7 +288,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
         // Resolve the one execution ancestor both spans parent onto, so they share a stable-per-execution trace and a
         // sampling decision.
-        var extracted = config.contextExtractor().extract();
+        var extracted = config.contextExtractor().extract(info, runtimeTraceHeader);
         var canonicalTraceId =
                 ExecutionTraceContext.canonicalTraceId(extracted, arn(), executionStartTime, idGenerator);
         // Resolve the execution's sampling decision once for this invocation as a full SamplingResult, then apply it to
@@ -327,6 +351,17 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
     }
 
     @Override
+    public AutoCloseable openHandlerScope() {
+        var trace = executionTrace;
+        if (ended || tracer == null || trace == null) return null;
+        var ambient = Span.current().getSpanContext();
+        // Preserve a compatible ambient Lambda span. An absent or unrelated ambient span must not leave
+        // handler instrumentation outside the durable execution's canonical trace.
+        if (ambient.isValid() && trace.traceId().equals(ambient.getTraceId())) return Scope.noop();
+        return Span.wrap(workflowSpanContext).makeCurrent();
+    }
+
+    @Override
     public void onInvocationEnd(InvocationEndInfo info) {
         if (disabled()) {
             return;
@@ -383,6 +418,8 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
             }
             workflowSpan.end();
         }
+        OtelPluginSupport.exportExecutionRoot(
+                tracer, idGenerator, executionAncestor, durableExecutionArn, executionStartTime, samplingIntent);
 
         // Flush spans before Lambda freezes
         if (sdkTracerProvider != null) {

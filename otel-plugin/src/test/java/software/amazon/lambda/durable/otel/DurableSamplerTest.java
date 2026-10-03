@@ -63,6 +63,32 @@ class DurableSamplerTest {
         OtelPluginAutoConfigurationState.resetInstalledForTest();
     }
 
+    @Test
+    void consumingContextIntentAlsoClearsCrossLoaderFallback() {
+        var delegate = new CountingSampler(Sampler.alwaysOff());
+        var sampler = DurableSampler.wrap(delegate);
+        var parent = DurableSamplingDecision.store(
+                Context.root(), DurableSamplingDecision.Intent.resolved(SamplingResult.recordOnly()));
+        try (var ignored = DurableSamplingDecision.openScope(
+                DurableSamplingDecision.Intent.resolved(SamplingResult.recordAndSample()))) {
+            assertEquals(
+                    SamplingDecision.RECORD_ONLY,
+                    sampler.shouldSample(parent, TRACE_ID, "durable", SpanKind.INTERNAL, Attributes.empty(), List.of())
+                            .getDecision());
+            assertEquals(
+                    SamplingDecision.DROP,
+                    sampler.shouldSample(
+                                    Context.root(),
+                                    TRACE_ID,
+                                    "callback",
+                                    SpanKind.INTERNAL,
+                                    Attributes.empty(),
+                                    List.of())
+                            .getDecision());
+            assertEquals(1, delegate.count(), "The unrelated callback must use its own sampler");
+        }
+    }
+
     // ─── Unit tests for the wrapper ──────────────────────────────────────
 
     @Test
@@ -125,9 +151,10 @@ class DurableSamplerTest {
         // A stateful/quota delegate must be consulted once per execution (trace ID), not per durable span.
         var delegate = new CountingSampler(Sampler.alwaysOn());
         var sampler = DurableSampler.wrap(delegate);
-        var parent = DurableSamplingDecision.store(Context.root(), DurableSamplingDecision.Intent.deferred(TRACE_ID));
-
         for (var i = 0; i < 4; i++) {
+            // Each SDK-owned span receives its own one-shot carrier, while the resolved decision stays execution-wide.
+            var parent =
+                    DurableSamplingDecision.store(Context.root(), DurableSamplingDecision.Intent.deferred(TRACE_ID));
             sampler.shouldSample(parent, TRACE_ID, "op" + i, SpanKind.INTERNAL, Attributes.empty(), List.of());
         }
 

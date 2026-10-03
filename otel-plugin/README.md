@@ -13,6 +13,31 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **ADOT Java Agent Integration**: `InvocationOtelPlugin.factory()` binds the ADOT Java agent's global provider on first use, with no handler-side OpenTelemetry initialization
 - **Lambda Layer Discovery**: `DURABLE_EXECUTION_PLUGINS` loads either OTel plugin from a JAR under a layer's `java/lib` directory
 
+## One durable tracing view
+
+Choose either the invocation or execution factory. Their `durable-otel-view` exclusive group is validated across
+explicit and environment-selected factories before any invocation instance or span is created. Unrelated factories
+remain allowed. `DurableConfig.toBuilder()` and `LocalDurableTestRunner` preserve the resolved factory registrations
+without rediscovering environment plugins; factory identity retains environment-owned provider resources.
+
+## Root handler context
+
+With a core that supports `DurableExecutionPlugin.openHandlerScope()`, user instrumentation in the root handler joins
+its canonical execution trace. A valid same-trace ambient Lambda span stays current. If ambient context is absent or
+belongs to another trace, invocation view activates `Invocation`; execution view activates the deterministic
+`Workflow` context, including its unsampled non-recording form. Nested operations retain their existing contexts.
+
+The core opens the scope after invocation startup and closes it on the same handler thread on success, failure, or
+suspension. On suspension or termination, an opened scope gets up to 500ms to unwind before finalization, capped by
+remaining Lambda time with 50ms response headroom. The invocation caller waits; the owning handler worker remains free to exit.
+If cleanup is blocked, the SDK logs the timeout and preserves the original PENDING/RETRYING outcome. The scope still
+closes on its owning thread when the handler eventually exits; late cleanup telemetry is best effort. A compatible
+ambient span uses a no-op scope and participates in the same bounded handoff. Invocation-end hooks can execute on a
+different thread and do not own this scope. The additive hook uses only a JDK type and defaults to no scope. The factory migration follows the3.x boundary in the migration guide. Root-handler context
+requires the updated core/plugin pair; this scope capability adds no further provider or dependency requirement. The new scope boundary isolates ordinary exceptions and nonfatal linkage
+errors during open and close, continues earlier scope cleanup, and preserves the handler outcome. JVM fatal errors
+remain outside that containment, including when wrapped by asynchronous completion/future exceptions.
+
 ## Installation
 
 ```xml
@@ -39,6 +64,33 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
     <version>1.65.0</version>
 </dependency>
 ```
+
+## Fallback execution roots
+
+When the backend supplies no complete remote parent, both views export a `DurableExecutionRoot` anchor before the first
+invocation returns, including when it suspends with `PENDING` or fails with `RETRYING`.
+The anchor is marked `durable.execution.synthetic_root=true`. Its trace and span IDs are deterministic and its start
+and end timestamps are the checkpointed execution start. It does not report execution status or duration; `Workflow`
+continues to report those at terminal completion. Complete remote parents remain externally owned and are never exported.
+Java's `InvocationInfo` requires a non-null execution start timestamp from the initial checkpointed execution operation.
+Missing timestamps are rejected before the plugin runs; anchor timestamps never fall back to the current wall clock.
+
+Every invocation may re-export the anchor to recover from an earlier interrupted or lost export. Re-exports retain the
+same span fields under stable sampling. The existing provider resource still applies: if a later invocation runs in another
+execution environment, resource attributes such as `faas.instance` can differ. Backends that deduplicate by span identity
+may retain either copy's resource. Each execution ARN owns its own anchor even when multiple executions share a
+propagated trace ID without a parent; they are not collapsed into one
+execution. Upstream sampling and configured fallback sampling apply to anchors and their descendants together.
+
+After the first invocation's export and flush succeed, its anchor remains available even if the execution is stopped
+or times out while suspended and never invokes the plugin again. An invocation killed before its end hook or flush can
+still lose its spans; a later invocation, including terminal completion, attempts to export the anchor again. Export
+and flush failures do not provide a delivery guarantee.
+
+For a consistent hierarchy across invocations, preserve an explicit upstream sampling decision or use a deterministic
+sampling policy based on the stable trace ID. A non-deterministic sampler can export an anchor without a Workflow, or
+a Workflow without its anchor. Any sampler-supplied attributes and trace state must also stay stable for identical
+anchor re-exports.
 
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
@@ -89,6 +141,20 @@ aws lambda update-function-configuration \
 ```
 
 Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar`. Lambda adds JARs in this directory to the Java class path. Set `OTEL_JAVAAGENT_EXTENSIONS` to the deployed JAR so the ADOT Java agent also loads its `AutoConfigurationCustomizerProvider`, and set `DURABLE_EXECUTION_PLUGINS=otel-invocation` so the Durable Execution SDK loads its `InvocationOtelPluginProvider`.
+
+### Invocation-local headers on Lambda Managed Instances
+
+The SDK captures `Context.getXrayTraceId()` on the runtime thread before dispatching user work. It passes the
+immutable String to `createPlugin(InvocationInfo, String)` before a built-in factory constructs any spans, then to
+the additive start-hook overload. Custom factories can override the runtime-header overload; its default delegates
+to the original factory method. The default extractor prefers the invocation header, retaining Root, Parent and Sampled.
+Absent/empty headers use the ordinary system-property then environment carriers; malformed present headers do not
+adopt stale global context. No global header is modified.
+
+No-argument extractor overrides and one-argument plugin hooks remain supported. `InvocationInfo` retains seven
+components, including Java21 record-pattern source shape. Older Lambda Context APIs lacking the optional accessor
+retain ordinary carrier fallback. Core/plugin artifacts follow the explicit3.x factory migration boundary: rebuild
+providers and layers against3.x, as described in the migration guide;2.x and3.x plugin artifacts are not interchangeable.
 
 ### 2. AWS X-Ray Active Tracing
 
@@ -379,3 +445,11 @@ var otelPluginFactory = InvocationOtelPlugin.factory(
 ## License
 
 Apache-2.0
+
+### Installed core/plugin layer compatibility checks
+
+The retained `src/test/compatibility/run_matrix.py` is the2.x regression harness for the additive minor fixes. It
+verifies released/current2.x artifacts in separate plugin-layer loaders without dependency-floor rejection. It is not
+a3.x compatibility bridge: the factory/provider migration deliberately requires3.x artifacts and rebuilt provider
+layers. The major's provider migration tests validate clear rejection of selected legacy providers; the minor PRs
+retain their independently tested2.x compatibility guarantees.

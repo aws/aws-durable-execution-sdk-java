@@ -130,7 +130,7 @@ class InvocationOtelPluginTest {
                 new InvocationEndInfo("req-enabled", "arn:enabled", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = globalExporter.getFinishedSpanItems();
-        assertEquals(3, spans.size());
+        assertEquals(4, spans.size());
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("enabled-step")));
         assertFalse(spans.stream().anyMatch(span -> span.getName().equals("disabled-step")));
     }
@@ -169,7 +169,7 @@ class InvocationOtelPluginTest {
 
         var spans = globalExporter.getFinishedSpanItems();
         // Plugin creates Workflow + Invocation + operation spans
-        assertEquals(3, spans.size());
+        assertEquals(4, spans.size());
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
     }
 
@@ -219,7 +219,7 @@ class InvocationOtelPluginTest {
 
         var spans = globalExporter.getFinishedSpanItems();
         // Plugin creates Workflow + Invocation + operation spans
-        assertEquals(3, spans.size());
+        assertEquals(4, spans.size());
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
         var expectedIds = new DeterministicIdGenerator();
         expectedIds.setDurableExecutionArn("arn:exec1");
@@ -355,7 +355,7 @@ class InvocationOtelPluginTest {
                 null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(2, spans.size()); // invocation + Workflow
+        assertEquals(3, spans.size()); // invocation + Workflow + DurableExecutionRoot
 
         var span = spans.get(0);
         assertEquals("Invocation", span.getName());
@@ -610,7 +610,7 @@ class InvocationOtelPluginTest {
                 "req-123", "arn:exec1", true, InvocationStatus.FAILED, new RuntimeException("boom")));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(2, spans.size()); // invocation + Workflow
+        assertEquals(3, spans.size()); // invocation + Workflow + DurableExecutionRoot
         assertEquals(StatusCode.ERROR, spans.get(0).getStatus().getStatusCode());
     }
 
@@ -621,7 +621,7 @@ class InvocationOtelPluginTest {
                 "req-123", "arn:exec1", true, InvocationStatus.RETRYING, new RuntimeException("transient")));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(1, spans.size());
+        assertEquals(2, spans.size());
         assertEquals(
                 StatusCode.UNSET,
                 spans.get(0).getStatus().getStatusCode(),
@@ -646,7 +646,7 @@ class InvocationOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(3, spans.size()); // operation + invocation + Workflow
+        assertEquals(4, spans.size()); // operation + invocation + Workflow + DurableExecutionRoot
 
         var operationSpan = spans.stream()
                 .filter(s -> s.getName().contains("step"))
@@ -678,7 +678,7 @@ class InvocationOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(3, spans.size()); // attempt + invocation + Workflow
+        assertEquals(4, spans.size()); // attempt + invocation + Workflow + DurableExecutionRoot
 
         var attemptSpan = spans.stream()
                 .filter(s -> s.getName().contains("attempt"))
@@ -969,7 +969,7 @@ class InvocationOtelPluginTest {
 
         var spans = spanExporter.getFinishedSpanItems();
         // 2 attempt spans + 2 operation spans + 1 invocation span + 1 Workflow span = 6
-        assertEquals(6, spans.size());
+        assertEquals(7, spans.size());
 
         var workflowTraceId = spanByName("Workflow").getTraceId();
         var invocationTraceId = spanByName("Invocation").getTraceId();
@@ -1016,7 +1016,7 @@ class InvocationOtelPluginTest {
 
         var spans = spanExporter.getFinishedSpanItems();
         // Should have: operation span (ended at invocation end) + invocation span
-        assertEquals(2, spans.size());
+        assertEquals(3, spans.size());
 
         var operationSpan = spans.stream()
                 .filter(s -> s.getName().contains("wait"))
@@ -1161,7 +1161,7 @@ class InvocationOtelPluginTest {
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(2, spans.size()); // invocation + Workflow
+        assertEquals(3, spans.size()); // invocation + Workflow + DurableExecutionRoot
         var invocationSpan = spanByName("Invocation");
         var workflowSpan = spanByName("Workflow");
         // Remote trace but no parent → a synthetic execution root on the remote trace ID anchors the execution. Both
@@ -1281,7 +1281,7 @@ class InvocationOtelPluginTest {
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(2, spans.size()); // invocation + Workflow
+        assertEquals(3, spans.size()); // invocation + Workflow + DurableExecutionRoot
 
         // Remote trace, no parent → a synthetic execution root on the remote trace ID anchors the execution. The
         // Invocation span has a valid parent (that synthetic root) and joins the remote trace.
@@ -1369,7 +1369,7 @@ class InvocationOtelPluginTest {
         noXrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(2, spans.size()); // invocation + Workflow
+        assertEquals(3, spans.size()); // invocation + Workflow + DurableExecutionRoot
 
         var invocationTraceId = spanByName("Invocation").getTraceId();
         var workflowTraceId = spanByName("Workflow").getTraceId();
@@ -1436,7 +1436,7 @@ class InvocationOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(3, spans.size()); // continuation + invocation + Workflow
+        assertEquals(4, spans.size()); // continuation + invocation + Workflow + DurableExecutionRoot
 
         var continuationSpan = spans.stream()
                 .filter(s -> s.getName().contains("wait"))
@@ -1673,9 +1673,9 @@ class InvocationOtelPluginTest {
                 new OperationInfo("op-2", "pause", "WAIT", "Wait", null, Instant.now(), null, null, false));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.PENDING, null));
 
-        // Invocation 1 should have: step op + step attempt + wait (PENDING) + invocation = 4
+        // Step op + step attempt + wait (PENDING) + Invocation + DurableExecutionRoot = 5
         var inv1Spans = spanExporter.getFinishedSpanItems();
-        assertEquals(4, inv1Spans.size());
+        assertEquals(5, inv1Spans.size());
         var inv1TraceId = inv1Spans.stream()
                 .filter(span -> span.getName().equals("Invocation"))
                 .findFirst()
@@ -1736,8 +1736,8 @@ class InvocationOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", arn, false, InvocationStatus.SUCCEEDED, null));
 
         var inv2Spans = spanExporter.getFinishedSpanItems();
-        // wait continuation + step-B op + step-B attempt + invocation + Workflow = 5
-        assertEquals(5, inv2Spans.size());
+        // Wait continuation + step-B op + step-B attempt + Invocation + Workflow + DurableExecutionRoot = 6
+        assertEquals(6, inv2Spans.size()); // Includes DurableExecutionRoot.
 
         var inv2TraceId = inv2Spans.stream()
                 .filter(span -> span.getName().equals("Invocation"))
@@ -1812,8 +1812,8 @@ class InvocationOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", arn, true, InvocationStatus.PENDING, null));
 
         var inv1Spans = spanExporter.getFinishedSpanItems();
-        // operation span (PENDING) + attempt 1 span + invocation span = 3
-        assertEquals(3, inv1Spans.size());
+        // Operation (PENDING) + attempt 1 + Invocation + DurableExecutionRoot = 4
+        assertEquals(4, inv1Spans.size());
 
         var inv1OperationSpan = inv1Spans.stream()
                 .filter(s ->
@@ -1868,8 +1868,8 @@ class InvocationOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", arn, false, InvocationStatus.SUCCEEDED, null));
 
         var inv2Spans = spanExporter.getFinishedSpanItems();
-        // operation span + attempt 2 span + invocation span + Workflow span = 4
-        assertEquals(4, inv2Spans.size());
+        // Operation + attempt 2 + Invocation + Workflow + DurableExecutionRoot = 5
+        assertEquals(5, inv2Spans.size()); // Includes DurableExecutionRoot.
 
         var inv2OperationSpan = inv2Spans.stream()
                 .filter(s ->

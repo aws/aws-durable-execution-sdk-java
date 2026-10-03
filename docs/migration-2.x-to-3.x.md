@@ -393,3 +393,16 @@ thread-pool executor terminates that worker. A supplied executor retains its own
 executor, rethrow is deferred to the invocation boundary to allow finalization first. Fatal failures from
 `onInvocationEnd` still reach the invocation caller, but their completion-stage callback does not guarantee worker
 termination. Ordinary handler failures and nonfatal plugin/factory containment retain their existing behavior.
+
+## Minor fixes retained in3.x
+
+The migration includes the tested fixes from #765, #766, #767 and #771, plus conformance handlers21–24 from #769.
+Invocation-local headers reach factory construction before span creation; the seven-component InvocationInfo shape
+is retained. Factory metadata rejects simultaneous durable OTel views before construction, and configuration copies
+preserve effective factory registrations without repeating environment discovery.
+
+SDK-owned synthetic roots keep the same deterministic identity, name, attributes and checkpointed timestamps, and
+are exported before the first PENDING/RETRYING response with stable recovery reexports. Sampling intent is consumed
+before processor re-entry. Handler context retains valid same-trace ambient context or activates the view root, closes
+on its owning thread, and uses the bounded cleanup handoff while preserving the winning durable outcome. Provider
+resources remain owned by the environment. The model-blocked outbound propagation groundwork remains separate.

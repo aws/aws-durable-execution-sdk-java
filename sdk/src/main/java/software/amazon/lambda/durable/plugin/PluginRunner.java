@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.plugin;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Dispatches the lifecycle hooks of a single Lambda invocation to that invocation's plugin instances.
@@ -44,6 +46,20 @@ public class PluginRunner {
 
     public PluginRunner(List<DurableExecutionPluginFactory> pluginFactories) {
         this.pluginFactories = pluginFactories != null ? List.copyOf(pluginFactories) : Collections.emptyList();
+        validateExclusiveGroups(this.pluginFactories);
+    }
+
+    /** Validates configured factory metadata without creating invocation-owned plugins or spans. */
+    public static void validateExclusiveGroups(List<DurableExecutionPluginFactory> factories) {
+        var groups = new HashMap<String, DurableExecutionPluginFactory>();
+        for (var factory : factories) {
+            var group = factory.getExclusiveGroup();
+            if (group == null) continue;
+            var previous = groups.putIfAbsent(group, factory);
+            if (previous != null)
+                throw new IllegalArgumentException("Conflicting plugin factories " + previous + " and " + factory
+                        + " in exclusive group '" + group + "'. Configure only one plugin from this group.");
+        }
     }
 
     /** Returns a runner with no plugin factories, which does nothing. */
@@ -76,14 +92,14 @@ public class PluginRunner {
      * {@link LinkageError} and none is an {@link Exception}. Catching {@code Throwable} and rethrowing only the fatal
      * cases makes the promise unconditional. See {@link #contain} for which cases stay fatal.
      */
-    private void createPlugins(InvocationInfo info) {
+    private void createPlugins(InvocationInfo info, String runtimeTraceHeader) {
         var created = new ArrayList<DurableExecutionPlugin>(pluginFactories.size());
         try {
             for (var factory : pluginFactories) {
-                var plugin = createPlugin(factory, info);
+                var plugin = createPlugin(factory, info, runtimeTraceHeader);
                 if (plugin == null) continue;
                 created.add(plugin);
-                runPlugin(plugin, p -> p.onInvocationStart(info));
+                runPlugin(plugin, p -> p.onInvocationStart(info, runtimeTraceHeader));
             }
         } finally {
             // Even a fatal constructor/start failure must leave already-created instances available for finalization.
@@ -92,9 +108,10 @@ public class PluginRunner {
         }
     }
 
-    private static DurableExecutionPlugin createPlugin(DurableExecutionPluginFactory factory, InvocationInfo info) {
+    private static DurableExecutionPlugin createPlugin(
+            DurableExecutionPluginFactory factory, InvocationInfo info, String runtimeTraceHeader) {
         try {
-            var plugin = factory.createPlugin(info);
+            var plugin = factory.createPlugin(info, runtimeTraceHeader);
             if (plugin == null)
                 logger.warn("Plugin factory {} returned null; skipping it for this invocation", factory);
             return plugin;
@@ -180,11 +197,7 @@ public class PluginRunner {
      */
     @SuppressWarnings("removal") // ThreadDeath is deprecated for removal since JDK 20; see the javadoc above.
     private static void contain(Throwable t, String message) {
-        var cause = t;
-        while ((cause instanceof CompletionException || cause instanceof ExecutionException)
-                && cause.getCause() != null) {
-            cause = cause.getCause();
-        }
+        var cause = ExceptionHelper.unwrapAsyncFailure(t);
         if (cause instanceof VirtualMachineError fatal) {
             throw fatal;
         }
@@ -198,8 +211,49 @@ public class PluginRunner {
      * Called at the start of each invocation. Materializes this invocation's plugin instances from the registered
      * factories, then dispatches the hook to them with the same {@link InvocationInfo} the factories received.
      */
+    /** Runs the root handler with optional plugin scopes, closing them on the same thread in reverse order. */
+    public <T> T runHandler(Supplier<T> handler) {
+        return runHandler(handler, () -> {});
+    }
+
+    /** Runs the handler and notifies the invocation when a scope requires same-thread finalization. */
+    public <T> T runHandler(Supplier<T> handler, Runnable onScopeOpened) {
+        var scopes = new ArrayDeque<AutoCloseable>();
+        try {
+            for (var plugin : plugins) {
+                try {
+                    var scope = plugin.openHandlerScope();
+                    if (scope != null) {
+                        scopes.push(scope);
+                        onScopeOpened.run();
+                    }
+                } catch (Throwable e) {
+                    contain(e, "Plugin handler scope failed");
+                }
+            }
+            return handler.get();
+        } finally {
+            closeHandlerScopes(scopes);
+        }
+    }
+
+    private static void closeHandlerScopes(ArrayDeque<AutoCloseable> scopes) {
+        while (!scopes.isEmpty()) {
+            try {
+                scopes.pop().close();
+            } catch (Throwable e) {
+                contain(e, "Plugin handler scope cleanup failed");
+            }
+        }
+    }
+
     public void onInvocationStart(InvocationInfo info) {
-        createPlugins(info);
+        createPlugins(info, null);
+    }
+
+    /** Dispatches the invocation snapshot while preserving legacy hooks through default-method delegation. */
+    public void onInvocationStart(InvocationInfo info, String xRayTraceId) {
+        createPlugins(info, xRayTraceId);
     }
 
     /**

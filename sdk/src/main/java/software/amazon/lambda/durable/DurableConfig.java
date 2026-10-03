@@ -24,6 +24,7 @@ import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
 import software.amazon.lambda.durable.logging.LoggerConfig;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
+import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.retry.PollingStrategy;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -102,7 +103,10 @@ public final class DurableConfig {
     private final List<DurableExecutionPluginFactory> pluginFactories;
 
     private DurableConfig(Builder builder) {
-        this.pluginFactories = DynamicPluginLoader.loadConfiguredPluginFactories(builder.pluginFactories);
+        this.pluginFactories = builder.loadDynamicPlugins
+                ? DynamicPluginLoader.loadConfiguredPluginFactories(builder.pluginFactories)
+                : List.copyOf(builder.pluginFactories);
+        PluginRunner.validateExclusiveGroups(this.pluginFactories);
         this.durableExecutionClient = Objects.requireNonNullElseGet(
                 builder.durableExecutionClient, DurableConfig::createDefaultDurableExecutionClient);
         this.serDes = Objects.requireNonNullElseGet(builder.serDes, JacksonSerDes::new);
@@ -224,6 +228,22 @@ public final class DurableConfig {
         return pluginFactories;
     }
 
+    /** Copies effective factory registrations without repeating environment discovery. */
+    public Builder toBuilder() {
+        var builder = new Builder()
+                .withDurableExecutionClient(durableExecutionClient)
+                .withSerDes(serDes)
+                .withExecutorService(executorService)
+                .withLoggerConfig(loggerConfig)
+                .withPollingStrategy(pollingStrategy)
+                .withCheckpointDelay(checkpointDelay)
+                .withDeserializeAfterSerialization(deserializeAfterSerialization)
+                .withCheckpointEmptyMap(checkpointEmptyMap);
+        builder.pluginFactories = new ArrayList<>(pluginFactories);
+        builder.loadDynamicPlugins = false;
+        return builder;
+    }
+
     public void validateConfiguration() {
         if (getDurableExecutionClient() == null) {
             throw new IllegalStateException("DurableExecutionClient configuration failed");
@@ -321,6 +341,7 @@ public final class DurableConfig {
         private boolean deserializeAfterSerialization = true;
         private boolean checkpointEmptyMap = false;
         private List<DurableExecutionPluginFactory> pluginFactories = new ArrayList<>();
+        private boolean loadDynamicPlugins = true;
 
         public Builder() {}
 
