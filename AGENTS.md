@@ -335,6 +335,7 @@ Run `mvn spotless:apply` after Java changes. Then run the narrowest relevant tes
 - [Error Handling](docs/advanced/error-handling.md)
 - [Logging](docs/advanced/logging.md)
 - [Migration from 1.x to 2.x](docs/migration-1.x-to-2.x.md)
+- [Migration from 2.x to 3.x](docs/migration-2.x-to-3.x.md)
 
 ### Official AWS SDKs
 

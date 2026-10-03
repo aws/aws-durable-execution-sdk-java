@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.util;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.serde.SerDesContext;
@@ -36,6 +37,22 @@ public class ExceptionHelper {
             throwable = throwable.getCause();
         }
         return throwable;
+    }
+
+    /**
+     * Unwraps completion/future wrappers to inspect potentially fatal causes. Callers must retain ordinary application
+     * {@link ExecutionException} values when reporting or serializing failures. Non-wrapper failures and cause-less
+     * wrappers keep their identity.
+     *
+     * @param failure the failure to inspect, possibly null
+     * @return the underlying asynchronous failure, or the original non-wrapper failure
+     */
+    public static Throwable unwrapAsyncFailure(Throwable failure) {
+        while ((failure instanceof CompletionException || failure instanceof ExecutionException)
+                && failure.getCause() != null) {
+            failure = failure.getCause();
+        }
+        return failure;
     }
 
     /**

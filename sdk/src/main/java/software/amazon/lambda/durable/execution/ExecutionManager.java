@@ -32,6 +32,7 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
+import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -69,6 +70,12 @@ public class ExecutionManager implements SafeCloseable {
     private final Set<String> updatedOperationIdsSinceLastInvocation;
     private final Set<String> initialOperationIds;
 
+    // ===== Plugins =====
+    // Created per invocation, alongside this manager: the runner materializes one plugin instance per configured
+    // factory when the invocation starts, and releases them in close(), so instances never outlive the invocation.
+    private final PluginRunner pluginRunner;
+    private final AtomicReference<Error> pluginFatal;
+
     // ===== Thread Coordination =====
     private final Map<String, BaseDurableOperation> registeredOperations = new ConcurrentHashMap<>();
     private final Map<String, Object> operationCompletionLocks = new ConcurrentHashMap<>();
@@ -94,7 +101,17 @@ public class ExecutionManager implements SafeCloseable {
     private final CheckpointManager checkpointManager;
 
     public ExecutionManager(DurableExecutionInput input, DurableConfig config, Context lambdaContext) {
+        this(input, config, lambdaContext, new AtomicReference<>());
+    }
+
+    ExecutionManager(
+            DurableExecutionInput input,
+            DurableConfig config,
+            Context lambdaContext,
+            AtomicReference<Error> pluginFatal) {
         durableConfig = config;
+        this.pluginFatal = pluginFatal;
+        this.pluginRunner = new PluginRunner(config.getPluginFactories(), this::failFromPlugin);
         this.durableExecutionArn = input.durableExecutionArn();
         this.lambdaContext = lambdaContext;
 
@@ -109,7 +126,8 @@ public class ExecutionManager implements SafeCloseable {
                 input.checkpointToken(),
                 this::onCheckpointComplete,
                 this::tryStartCheckpointProcessing,
-                this::finishCheckpointProcessing);
+                this::finishCheckpointProcessing,
+                pluginFatal::get);
 
         this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()
                 .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
@@ -139,6 +157,15 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     // ===== State Management =====
+
+    /**
+     * Returns this invocation's plugin dispatcher. Scoped to this manager, i.e. to this invocation.
+     *
+     * @return PluginRunner instance (never null)
+     */
+    public PluginRunner getPluginRunner() {
+        return pluginRunner;
+    }
 
     /** Returns the ARN of the durable execution being managed. */
     public String getDurableExecutionArn() {
@@ -248,14 +275,8 @@ public class ExecutionManager implements SafeCloseable {
         // Fire onOperationChange when a checkpoint response changed one or more operations
         if (!updatedOperations.isEmpty()) {
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
-            durableConfig
-                    .getPluginRunner()
-                    .onOperationChange(PluginInfoConverter.toOperationChangeInfo(
-                            requestId,
-                            durableExecutionArn,
-                            updatedOperations,
-                            operationStorage.values(),
-                            initialOperationIds));
+            pluginRunner.onOperationChange(PluginInfoConverter.toOperationChangeInfo(
+                    requestId, durableExecutionArn, updatedOperations, operationStorage.values(), initialOperationIds));
         }
     }
 
@@ -520,6 +541,13 @@ public class ExecutionManager implements SafeCloseable {
         }
     }
 
+    /** Removes work that was never accepted by its executor; the dispatch caller propagates the submission error. */
+    public void cancelThreadRegistration(String threadId) {
+        synchronized (activeThreads) {
+            activeThreads.remove(threadId);
+        }
+    }
+
     boolean tryStartCheckpointProcessing() {
         synchronized (activeThreads) {
             if (executionExceptionFuture.isDone()) {
@@ -595,9 +623,16 @@ public class ExecutionManager implements SafeCloseable {
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-        validateRunningThreads();
-
-        checkpointManager.shutdown();
+        try {
+            validateRunningThreads();
+            checkpointManager.shutdown();
+        } finally {
+            // The invocation is over: drop this invocation's plugin instances so they cannot be reached again.
+            // In a finally, because validateRunningThreads throws on a stuck user handler: leaving the instances
+            // in place then carries them into the next invocation the environment hosts, which is the
+            // cross-execution sharing the per-invocation lifetime exists to prevent.
+            pluginRunner.releasePlugins();
+        }
     }
 
     private void validateRunningThreads() {
@@ -668,6 +703,19 @@ public class ExecutionManager implements SafeCloseable {
      */
     public boolean isExecutionCompletedExceptionally() {
         return executionExceptionFuture.isCompletedExceptionally();
+    }
+
+    private void failFromPlugin(Error fatal) {
+        pluginFatal.compareAndSet(null, fatal);
+        var original = pluginFatal.get();
+        executionExceptionFuture.completeExceptionally(original);
+        stopAllOperations(original);
+    }
+
+    /** Once plugin instrumentation has failed fatally, do not retry or persist unrelated operation outcomes. */
+    public void rethrowPluginFatalIfPresent() {
+        var fatal = pluginFatal.get();
+        if (fatal != null) throw fatal;
     }
 
     private void stopAllOperations(Throwable cause) {

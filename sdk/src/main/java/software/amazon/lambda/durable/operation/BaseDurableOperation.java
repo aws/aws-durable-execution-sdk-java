@@ -279,6 +279,7 @@ public abstract class BaseDurableOperation {
             try {
                 runnable.run();
             } catch (Throwable throwable) {
+                executionManager.rethrowPluginFatalIfPresent();
                 // Operations wrap the user function and handle all outcomes except for SuspendExecutionException.
                 // Anything else reaching here is unexpected and terminates the execution.
                 if (!executionManager.isExecutionCompletedExceptionally()
@@ -321,8 +322,30 @@ public abstract class BaseDurableOperation {
         // registerActiveThread is idempotent (no-op if already registered).
         registerActiveThread(operationId);
 
-        runningUserHandler.set(CompletableFuture.runAsync(
-                wrapped, getContext().getDurableConfig().getExecutorService()));
+        var completion = new CompletableFuture<Void>();
+        var caller = Thread.currentThread();
+        runningUserHandler.set(completion);
+        Runnable observed = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
+            try {
+                wrapped.run();
+                completion.complete(null);
+            } catch (Throwable failure) {
+                completion.completeExceptionally(failure);
+                // A direct executor surfaces the stored error through the operation/caller boundary. Async workers
+                // must not keep running after a plugin-owned fatal. Other user-operation semantics stay unchanged.
+                if (Thread.currentThread() != caller) executionManager.rethrowPluginFatalIfPresent();
+            }
+        };
+        try {
+            getContext().getDurableConfig().getExecutorService().execute(observed);
+        } catch (Throwable failure) {
+            // No accepted task will settle a rejected submission. Complete the published future so shutdown cannot
+            // wait forever, and remove its reservation without turning submission failure into suspension.
+            if (completion.completeExceptionally(failure) && operationId != null) {
+                executionManager.cancelThreadRegistration(operationId);
+            }
+            ExceptionHelper.sneakyThrow(failure);
+        }
     }
 
     /**
@@ -354,6 +377,7 @@ public abstract class BaseDurableOperation {
                     PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.SUCCEEDED, null));
             return result;
         } catch (Throwable e) {
+            executionManager.rethrowPluginFatalIfPresent();
             var error = ExceptionHelper.unwrapCompletableFuture(e);
             if (error == null) {
                 error = e;
@@ -537,10 +561,13 @@ public abstract class BaseDurableOperation {
 
     // ─── Plugin hook helpers ─────────────────────────────────────────────
 
-    /** Returns the plugin runner from config, or no-op if config is unavailable. */
+    /**
+     * Returns this invocation's plugin runner, scoped to the ExecutionManager of this invocation. Falls back to a no-op
+     * runner when the manager does not provide one (mocked managers in unit tests).
+     */
     private PluginRunner getPluginRunner() {
-        var config = getContext().getDurableConfig();
-        return config != null ? config.getPluginRunner() : PluginRunner.noOp();
+        var pluginRunner = executionManager.getPluginRunner();
+        return pluginRunner != null ? pluginRunner : PluginRunner.noOp();
     }
 
     /** Fires onOperationStart plugin hook. */

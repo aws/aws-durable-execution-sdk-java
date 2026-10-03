@@ -27,7 +27,7 @@ public class PluginRetryExhaustion extends DurableHandler<Object, String> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder().withPlugins(new AttemptPlugin()).build();
+        return DurableConfig.builder().withPlugins(info -> new AttemptPlugin()).build();
     }
 
     @Override

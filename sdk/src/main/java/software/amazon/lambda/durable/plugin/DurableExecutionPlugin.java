@@ -10,8 +10,8 @@ package software.amazon.lambda.durable.plugin;
  *
  * <p>All methods have default no-op implementations, allowing plugins to override only the hooks they need.
  *
- * <p>Plugin errors are isolated — exceptions thrown by plugin methods are caught and logged but never disrupt SDK
- * execution.
+ * <p>Non-fatal plugin failures are caught and logged without disrupting SDK execution. {@link VirtualMachineError} and
+ * {@link ThreadDeath} propagate, including when wrapped by asynchronous completion/future exceptions.
  */
 public interface DurableExecutionPlugin {
 
@@ -24,6 +24,19 @@ public interface DurableExecutionPlugin {
      * sampling decisions or execution-level span creation).
      */
     default void onInvocationStart(InvocationInfo info) {}
+
+    /**
+     * Called at invocation start with immutable runtime data captured before worker-thread dispatch. The SDK calls this
+     * overload; its default delegates to the original hook so existing plugin implementations remain supported.
+     * Implementations that override this overload can consume invocation-local carriers without changing
+     * InvocationInfo.
+     *
+     * <p>A null snapshot denotes an unavailable runtime accessor and permits legacy fallback. An empty string denotes
+     * an available accessor with no invocation header; the built-in extractor treats it as authoritative absence.
+     */
+    default void onInvocationStart(InvocationInfo info, String xRayTraceId) {
+        onInvocationStart(info);
+    }
 
     /**
      * Called at the end of each Lambda invocation. Use to flush spans/metrics before Lambda freezes.

@@ -13,6 +13,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
@@ -60,6 +61,24 @@ class CheckpointManager {
             Consumer<List<Operation>> callback,
             BooleanSupplier tryStartCheckpointProcessing,
             Runnable finishCheckpointProcessing) {
+        this(
+                config,
+                durableExecutionArn,
+                checkpointToken,
+                callback,
+                tryStartCheckpointProcessing,
+                finishCheckpointProcessing,
+                () -> null);
+    }
+
+    CheckpointManager(
+            DurableConfig config,
+            String durableExecutionArn,
+            String checkpointToken,
+            Consumer<List<Operation>> callback,
+            BooleanSupplier tryStartCheckpointProcessing,
+            Runnable finishCheckpointProcessing,
+            Supplier<Error> pluginFatal) {
         this.config = config;
         this.durableExecutionArn = durableExecutionArn;
         this.callback = callback;
@@ -67,7 +86,11 @@ class CheckpointManager {
         this.tryStartCheckpointProcessing = tryStartCheckpointProcessing;
         this.finishCheckpointProcessing = finishCheckpointProcessing;
         this.checkpointApiRequestDelayedBatcher = new ApiRequestDelayedBatcher<>(
-                MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointManager::estimateSize, this::checkpointBatch);
+                MAX_ITEM_COUNT,
+                MAX_BATCH_SIZE_BYTES,
+                CheckpointManager::estimateSize,
+                this::checkpointBatch,
+                pluginFatal);
     }
 
     /**

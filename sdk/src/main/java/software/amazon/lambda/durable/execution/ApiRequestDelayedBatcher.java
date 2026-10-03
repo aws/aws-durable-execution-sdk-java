@@ -9,8 +9,10 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Batches API requests to optimize throughput by grouping individual calls into batch operations. Batches are flushed
@@ -33,6 +35,9 @@ public class ApiRequestDelayedBatcher<T> {
     private final Function<T, Integer> calculateItemSize;
     /** Executes the batch operation */
     private final Consumer<List<T>> executeBatch;
+
+    private final Supplier<Error> pluginFatal;
+    private final AtomicReference<Error> terminalFailure = new AtomicReference<>();
 
     /** Accumulated requests to be executed in future */
     private final List<Item<T>> delayedBatch;
@@ -64,6 +69,16 @@ public class ApiRequestDelayedBatcher<T> {
             int maxBatchBytes,
             Function<T, Integer> calculateItemSize,
             Consumer<List<T>> executeBatch) {
+        this(maxItemCount, maxBatchBytes, calculateItemSize, executeBatch, () -> null);
+    }
+
+    ApiRequestDelayedBatcher(
+            int maxItemCount,
+            int maxBatchBytes,
+            Function<T, Integer> calculateItemSize,
+            Consumer<List<T>> executeBatch,
+            Supplier<Error> pluginFatal) {
+        this.pluginFatal = pluginFatal;
         this.maxItemCount = maxItemCount;
         this.maxBatchBytes = maxBatchBytes;
         this.calculateItemSize = calculateItemSize;
@@ -85,6 +100,8 @@ public class ApiRequestDelayedBatcher<T> {
      */
     CompletableFuture<Void> submit(T request, Duration flushDelay) {
         synchronized (delayedBatch) {
+            var fatal = terminalFailure.get();
+            if (fatal != null) return CompletableFuture.failedFuture(fatal);
             // add the request to the current batch
             CompletableFuture<Void> future = new CompletableFuture<>();
             delayedBatch.add(new Item<>(request, future));
@@ -144,8 +161,31 @@ public class ApiRequestDelayedBatcher<T> {
         // Schedule a new flushing future. If the items in this batch have been executed by the previous flushQueue
         // future,
         // the new future will just do nothing.
-        flushingQueueFuture = flushingQueueFuture.thenRunAsync(this::flushQueue, InternalExecutor.INSTANCE);
+        flushingQueueFuture = flushingQueueFuture.thenCompose(ignored -> flushObservedAsync());
     }
+
+    private CompletableFuture<Void> flushObservedAsync() {
+        var completion = new CompletableFuture<Void>();
+        // Keep sequencing through the future, but let reported plugin fatals escape the actual worker.
+        // CompletableFuture async stages would otherwise catch the fatal again after flushQueue rethrows it.
+        Runnable flush = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
+            try {
+                flushQueue();
+                completion.complete(null);
+            } catch (Throwable failure) {
+                completion.completeExceptionally(failure);
+                var fatal = terminalFailure.get();
+                if (fatal != null) throw fatal;
+            }
+        };
+        try {
+            InternalExecutor.INSTANCE.execute(flush);
+        } catch (Throwable failure) {
+            completion.completeExceptionally(failure);
+        }
+        return completion;
+    }
+
     /** Call checkpoint API with items in the flushing queue */
     private void flushQueue() {
         // There could be more items to flush because
@@ -181,7 +221,11 @@ public class ApiRequestDelayedBatcher<T> {
                             .map(Item::request)
                             .filter(Objects::nonNull)
                             .toList();
+                    // Another worker may already have failed the invocation, or may do so during this call.
+                    // A skipped checkpoint must never look like a successful START to an at-most-once step.
+                    rethrowPluginFatalIfPresent();
                     executeBatch.accept(requests);
+                    rethrowPluginFatalIfPresent();
                     for (Item<T> item : flushingItems) {
                         item.result().complete(null);
                     }
@@ -189,8 +233,31 @@ public class ApiRequestDelayedBatcher<T> {
                     for (Item<T> item : flushingItems) {
                         item.result().completeExceptionally(ex);
                     }
+                    var fatal = pluginFatal.get();
+                    if (fatal != null) {
+                        abortPending(fatal);
+                        throw fatal;
+                    }
                 }
             }
         }
+    }
+
+    private void rethrowPluginFatalIfPresent() {
+        var fatal = pluginFatal.get();
+        if (fatal != null) throw fatal;
+    }
+
+    private void abortPending(Error fatal) {
+        terminalFailure.compareAndSet(null, fatal);
+        var pending = new ArrayList<Item<T>>();
+        synchronized (delayedBatch) {
+            delayedBatchFlushTimer.cancel(false);
+            pending.addAll(delayedBatch);
+            delayedBatch.clear();
+            Item<T> item;
+            while ((item = flushingQueue.poll()) != null) pending.add(item);
+        }
+        pending.forEach(item -> item.result().completeExceptionally(fatal));
     }
 }
