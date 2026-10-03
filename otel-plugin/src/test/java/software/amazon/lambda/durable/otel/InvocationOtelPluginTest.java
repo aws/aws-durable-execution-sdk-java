@@ -4,6 +4,8 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -25,9 +27,11 @@ import io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizer;
 import io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvider;
 import io.opentelemetry.sdk.autoconfigure.spi.ConfigProperties;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
+import io.opentelemetry.sdk.testing.time.TestClock;
 import io.opentelemetry.sdk.trace.IdGenerator;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
+import io.opentelemetry.sdk.trace.SpanProcessor;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
 import java.util.List;
@@ -1039,16 +1043,38 @@ class InvocationOtelPluginTest {
 
     @Test
     void invocationEnd_closesNestedSpansChildFirst() {
+        var start = Instant.parse("2026-01-01T00:00:00Z");
+        var clock = TestClock.create(start);
+        // Compare timestamps on a controlled clock: independently anchored real span clocks can differ slightly.
+        // Advancing at each onEnd preserves a strict time-order assertion as well as the exporter-order assertions.
+        var clockAdvancer = mock(SpanProcessor.class, CALLS_REAL_METHODS);
+        when(clockAdvancer.isEndRequired()).thenReturn(true);
+        doAnswer(invocation -> {
+                    clock.advance(1, TimeUnit.NANOSECONDS);
+                    return null;
+                })
+                .when(clockAdvancer)
+                .onEnd(any());
+        var timedFactory = InvocationOtelPlugin.factory(
+                SdkTracerProvider.builder()
+                        .setClock(clock)
+                        .addSpanProcessor(SimpleSpanProcessor.create(spanExporter))
+                        .addSpanProcessor(clockAdvancer),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .build());
         var parentId = "op-parent";
         var childId = "op-child";
-        var plugin = started(factory, new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        var plugin = started(timedFactory, new InvocationInfo("req-1", "arn:exec1", true, start));
         plugin.onOperationStart(new OperationInfo(
-                parentId, "parent-context", "CONTEXT", "RunInChildContext", null, Instant.now(), null, null, false));
+                parentId, "parent-context", "CONTEXT", "RunInChildContext", null, start, null, null, false));
         plugin.onOperationStart(
-                new OperationInfo(childId, "child-step", "STEP", "Step", parentId, Instant.now(), null, null, false));
+                new OperationInfo(childId, "child-step", "STEP", "Step", parentId, start, null, null, false));
         plugin.onUserFunctionStart(
-                new UserFunctionStartInfo(childId, "child-step", "STEP", "Step", parentId, Instant.now(), false, 1));
+                new UserFunctionStartInfo(childId, "child-step", "STEP", "Step", parentId, start, false, 1));
 
+        clock.advance(1, TimeUnit.SECONDS);
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
 
         var parentSpan = spanByName("parent-context");
@@ -1062,10 +1088,10 @@ class InvocationOtelPluginTest {
                 spans.indexOf(childSpan) < spans.indexOf(parentSpan),
                 "Child operation span must be exported before its parent operation span");
         assertTrue(
-                attemptSpan.getEndEpochNanos() <= childSpan.getEndEpochNanos(),
+                attemptSpan.getEndEpochNanos() < childSpan.getEndEpochNanos(),
                 "Attempt span must end before its operation span");
         assertTrue(
-                childSpan.getEndEpochNanos() <= parentSpan.getEndEpochNanos(),
+                childSpan.getEndEpochNanos() < parentSpan.getEndEpochNanos(),
                 "Child operation span must end before its parent operation span");
     }
 
