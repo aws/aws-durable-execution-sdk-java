@@ -21,6 +21,7 @@ import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -89,7 +90,7 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
  */
-@HandlerScoped
+@HandlerScoped(ExecutionOtelPlugin.HandlerScopeOpener.class)
 public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     private static final Logger logger = LoggerFactory.getLogger(ExecutionOtelPlugin.class);
@@ -273,7 +274,15 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         tracingEnabled = true;
     }
 
-    public AutoCloseable openHandlerScope() {
+    /** JDK-only scope bridge; does not dispatch to coincidental subclass methods. */
+    public static final class HandlerScopeOpener implements Function<ExecutionOtelPlugin, AutoCloseable> {
+        @Override
+        public AutoCloseable apply(ExecutionOtelPlugin plugin) {
+            return plugin.activateHandlerContext();
+        }
+    }
+
+    private AutoCloseable activateHandlerContext() {
         var trace = executionTrace;
         if (!tracingEnabled || trace == null) return null;
         var ambient = Span.current().getSpanContext();

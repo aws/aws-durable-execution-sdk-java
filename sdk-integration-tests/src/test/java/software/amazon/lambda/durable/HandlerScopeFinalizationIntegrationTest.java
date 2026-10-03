@@ -11,6 +11,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -178,8 +179,14 @@ class HandlerScopeFinalizationIntegrationTest {
         }
     }
 
-    @HandlerScoped
+    @HandlerScoped(ScopedPlugin.Opener.class)
     private abstract static class ScopedPlugin implements DurableExecutionPlugin {
         public abstract AutoCloseable openHandlerScope();
+
+        public static class Opener implements Function<ScopedPlugin, AutoCloseable> {
+            public AutoCloseable apply(ScopedPlugin plugin) {
+                return plugin.openHandlerScope();
+            }
+        }
     }
 }

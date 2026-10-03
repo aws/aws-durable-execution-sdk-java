@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -166,6 +167,58 @@ class HandlerScopeTest {
         }
     }
 
+    @Test
+    void openerConstructionLinkageFailurePreservesBodyAndEarlierCleanup() {
+        var calls = new ArrayList<String>();
+        var runner =
+                new PluginRunner(List.of(scope("healthy", calls, Thread.currentThread()), new BrokenOpenerPlugin()));
+        assertEquals("body", runner.runHandler(() -> "body"));
+        assertEquals(List.of("open-healthy", "close-healthy"), calls);
+    }
+
+    @Test
+    void openerConstructionFatalRetainsIdentityAndEarlierCleanup() {
+        var calls = new ArrayList<String>();
+        var reported = new AtomicReference<Error>();
+        var runner =
+                new PluginRunner(List.of(scope("healthy", calls, Thread.currentThread()), new FatalOpenerPlugin()));
+        assertSame(
+                FatalOpener.FAILURE,
+                assertThrows(
+                        InternalError.class,
+                        () -> runner.runHandler(() -> fail("handler must not run"), () -> {}, reported::set)));
+        assertSame(FatalOpener.FAILURE, reported.get());
+        assertEquals(List.of("open-healthy", "close-healthy"), calls);
+    }
+
+    @HandlerScoped(BrokenOpener.class)
+    private static class BrokenOpenerPlugin implements DurableExecutionPlugin {}
+
+    public static class BrokenOpener implements Function<BrokenOpenerPlugin, AutoCloseable> {
+        public BrokenOpener() {
+            throw new NoSuchMethodError("opener dependency");
+        }
+
+        public AutoCloseable apply(BrokenOpenerPlugin plugin) {
+            return null;
+        }
+    }
+
+    @HandlerScoped(FatalOpener.class)
+    private static class FatalOpenerPlugin implements DurableExecutionPlugin {}
+
+    public static class FatalOpener implements Function<FatalOpenerPlugin, AutoCloseable> {
+        static final InternalError FAILURE = new InternalError("opener fatal");
+
+        public FatalOpener() {
+            throw FAILURE;
+        }
+
+        public AutoCloseable apply(FatalOpenerPlugin plugin) {
+            return null;
+        }
+    }
+
     private static DurableExecutionPlugin scope(String name, List<String> calls, Thread owner) {
         return new ScopedPlugin() {
             @Override
@@ -180,8 +233,14 @@ class HandlerScopeTest {
         };
     }
 
-    @HandlerScoped
+    @HandlerScoped(ScopedPlugin.Opener.class)
     private abstract static class ScopedPlugin implements DurableExecutionPlugin {
         public abstract AutoCloseable openHandlerScope();
+
+        public static class Opener implements Function<ScopedPlugin, AutoCloseable> {
+            public AutoCloseable apply(ScopedPlugin plugin) {
+                return plugin.openHandlerScope();
+            }
+        }
     }
 }

@@ -7,14 +7,14 @@ import java.lang.annotation.Inherited;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.util.function.Function;
 
 /**
- * Explicitly opts a plugin into a scope around the root handler, after invocation startup. Annotated classes expose a
- * public, no-argument {@code AutoCloseable openHandlerScope()} method; returning null means no scope. The method must
- * be accessible to the core (including module access). The annotation is inherited so concrete subclass overrides keep
- * their ordinary virtual dispatch. Unannotated, coincidentally named application methods are never called by the SDK.
- * Older cores ignore this optional metadata and retain their original hook behavior; plugin method signatures use only
- * JDK types.
+ * Explicitly opts a plugin into a root-handler scope using a JDK {@link Function} opener with a public no-argument
+ * constructor. The core passes the plugin instance to that opener on the handler thread; null means no scope. No method
+ * name is discovered on the plugin or added to the existing lifecycle interface. Inherited metadata uses the declaring
+ * plugin's explicit opener, so unrelated methods on old subclasses retain their behavior. Older cores ignore this
+ * optional metadata; plugin layer signatures require no new shared SDK type.
  *
  * <p>Scopes open and close on the handler thread, in reverse order on exit. Suspension/termination gives cleanup a
  * bounded opportunity to unwind. The handler retains ownership even after a timeout. Ordinary cleanup preserves the
@@ -25,4 +25,6 @@ import java.lang.annotation.Target;
 @Inherited
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)
-public @interface HandlerScoped {}
+public @interface HandlerScoped {
+    Class<? extends Function<?, AutoCloseable>> value();
+}
