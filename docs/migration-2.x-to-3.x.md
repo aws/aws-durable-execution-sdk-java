@@ -378,6 +378,12 @@ A useful pre-deployment check is to run one execution locally with the provider 
 - A provider selected through `DURABLE_EXECUTION_PLUGINS` that was not rebuilt fails startup with an `IllegalStateException` naming the provider and its JAR; a stale provider registered directly through `withPlugins(...)` instead produces no instrumentation and only logs a warning, so rebuild and redeploy every provider JAR
 - There is no compatibility bridge, and recompilation against `3.x` is required
 
+## Artifact version boundary
+
+This factory migration builds as `3.0.0-SNAPSHOT`; it must not be published under a 2.x Maven coordinate.
+The release workflow also requires a major version bump for the `BREAKING`-labeled PR. Existing 2.x consumers
+continue to use the separately maintained instance-registration API and compatible plugin layers.
+
 ## Fatal invocation failures
 
 `VirtualMachineError` and `ThreadDeath` are not converted to ordinary durable failure results. The SDK finalizes
