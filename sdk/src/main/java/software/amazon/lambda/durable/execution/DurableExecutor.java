@@ -7,6 +7,10 @@ import com.amazonaws.services.lambda.runtime.RequestHandler;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import org.slf4j.Logger;
@@ -47,6 +51,11 @@ public class DurableExecutor {
     // Lambda response size limit is 6MB minus small epsilon for envelope
     private static final int LAMBDA_RESPONSE_SIZE_LIMIT = 6 * 1024 * 1024 - 50;
 
+    // Best-effort allowance for each configured plugin's finalization (including the bundled OTel 5s join),
+    // plus shutdown/response headroom. Existing arbitrary callbacks and checkpoint draining can exceed it.
+    private static final long PLUGIN_FINALIZATION_RESERVE_MILLIS = 5_000;
+    private static final long SHUTDOWN_RESPONSE_RESERVE_MILLIS = 1_000;
+
     private DurableExecutor() {}
 
     public static <I, O> DurableExecutionOutput execute(
@@ -56,6 +65,7 @@ public class DurableExecutor {
             BiFunction<I, DurableContext, O> handler,
             DurableConfig config) {
         var pluginRunner = config.getPluginRunner();
+        var scopeFatal = new AtomicReference<Error>();
         try (var executionManager = new ExecutionManager(input, config, lambdaContext)) {
             var isFirstInvocation = !executionManager.isReplaying();
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
@@ -64,6 +74,7 @@ public class DurableExecutor {
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
             var pluginExecutionInput = new AtomicReference<>();
+            var hasHandlerScope = new AtomicBoolean();
             var handlerFuture = CompletableFuture.supplyAsync(
                     () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
@@ -109,7 +120,11 @@ public class DurableExecutor {
                         DurableContextImpl.setCurrentContext(context);
                         // use a try-with-resources to clear logger properties
                         try (var ignored = DurableLogger.attachContext()) {
-                            return handler.apply(userInput, context);
+                            var handlerInput = userInput;
+                            return pluginRunner.runHandler(
+                                    () -> handler.apply(handlerInput, context),
+                                    () -> hasHandlerScope.set(true),
+                                    fatal -> scopeFatal.compareAndSet(null, fatal));
                         }
                     },
                     config.getExecutorService()); // Get executor from config for running user code
@@ -118,8 +133,13 @@ public class DurableExecutor {
             // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
             // failure.
             try {
-                return executionManager
-                        .runUntilCompleteOrSuspend(handlerFuture)
+                return awaitHandlerScopes(
+                                executionManager.runUntilCompleteOrSuspend(handlerFuture),
+                                handlerFuture,
+                                hasHandlerScope,
+                                lambdaContext,
+                                pluginRunner.getPlugins().size(),
+                                scopeFatal)
                         .handle((result, ex) -> {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
@@ -196,7 +216,46 @@ public class DurableExecutor {
                 ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(e));
                 return null;
             }
+        } finally {
+            // Resource shutdown may wait for other work after the bounded handoff. Observe any scope fatal
+            // reported during that existing wait before the caller commits its response, without waiting again.
+            throwIfScopeFatal(scopeFatal);
         }
+    }
+
+    static <T> CompletableFuture<T> awaitHandlerScopes(
+            CompletableFuture<T> executionFuture,
+            CompletableFuture<T> handlerFuture,
+            AtomicBoolean hasHandlerScope,
+            Context lambdaContext,
+            int pluginCount,
+            AtomicReference<Error> scopeFatal) {
+        // This method runs on the invocation caller, never as a callback on the signaling handler worker.
+        // Preserve the winning outcome except for an observed fatal error from the new scope callbacks.
+        var failure = executionFuture.handle((result, error) -> error).join();
+        throwIfScopeFatal(scopeFatal);
+        if (failure == null || !hasHandlerScope.get()) return executionFuture;
+        var reserve = SHUTDOWN_RESPONSE_RESERVE_MILLIS + PLUGIN_FINALIZATION_RESERVE_MILLIS * pluginCount;
+        var budgetMillis = lambdaContext == null
+                ? 500L
+                : Math.min(500L, Math.max(0L, (long) lambdaContext.getRemainingTimeInMillis() - reserve));
+        try {
+            handlerFuture.handle((result, error) -> null).get(budgetMillis, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            logger.warn("Handler scope cleanup exceeded its handoff budget; cleanup continues on the handler thread");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Interrupted while awaiting handler scope cleanup; preserving the execution outcome", e);
+        } catch (ExecutionException e) {
+            logger.warn("Could not observe handler scope cleanup; preserving the execution outcome", e);
+        }
+        throwIfScopeFatal(scopeFatal);
+        return executionFuture;
+    }
+
+    private static void throwIfScopeFatal(AtomicReference<Error> scopeFatal) {
+        var fatal = scopeFatal.get();
+        if (fatal != null) throw fatal;
     }
 
     private static void fireOnInvocationEnd(

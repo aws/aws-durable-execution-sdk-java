@@ -22,10 +22,12 @@ import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.HandlerScoped;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.OperationEndInfo;
@@ -75,6 +77,7 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
  */
+@HandlerScoped(InvocationOtelPlugin.HandlerScopeOpener.class)
 public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     private static final Logger logger = LoggerFactory.getLogger(InvocationOtelPlugin.class);
@@ -266,6 +269,24 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
                     invocationSpan.getSpanContext().getTraceId());
         }
         tracingEnabled = true;
+    }
+
+    /** JDK-only scope bridge; does not dispatch to coincidental subclass methods. */
+    public static final class HandlerScopeOpener implements Function<InvocationOtelPlugin, AutoCloseable> {
+        @Override
+        public AutoCloseable apply(InvocationOtelPlugin plugin) {
+            return plugin.activateHandlerContext();
+        }
+    }
+
+    private AutoCloseable activateHandlerContext() {
+        var trace = executionTrace;
+        if (!tracingEnabled || trace == null) return null;
+        var ambient = Span.current().getSpanContext();
+        // Preserve a compatible ambient Lambda span. An absent or unrelated ambient span must not leave
+        // handler instrumentation outside the durable execution's canonical trace.
+        if (ambient.isValid() && trace.traceId().equals(ambient.getTraceId())) return Scope.noop();
+        return invocationSpan.makeCurrent();
     }
 
     @Override
