@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.plugin;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Modifier;
 import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.List;
@@ -11,6 +13,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Composes multiple {@link DurableExecutionPlugin} instances into a single dispatcher.
@@ -76,7 +79,7 @@ public class PluginRunner {
         try {
             for (var plugin : plugins) {
                 try {
-                    var scope = plugin.openHandlerScope();
+                    var scope = openHandlerScope(plugin);
                     if (scope != null) {
                         scopes.push(scope);
                         onScopeOpened.run();
@@ -88,6 +91,24 @@ public class PluginRunner {
             return handler.get();
         } finally {
             closeHandlerScopes(scopes, onScopeFatal);
+        }
+    }
+
+    private static AutoCloseable openHandlerScope(DurableExecutionPlugin plugin) throws ReflectiveOperationException {
+        if (!plugin.getClass().isAnnotationPresent(HandlerScoped.class)) return null;
+        var method = plugin.getClass().getMethod("openHandlerScope");
+        if (Modifier.isStatic(method.getModifiers()) || !AutoCloseable.class.isAssignableFrom(method.getReturnType())) {
+            throw new IllegalArgumentException("@HandlerScoped requires public AutoCloseable openHandlerScope()");
+        }
+        if (!method.canAccess(plugin) && !method.trySetAccessible()) {
+            throw new IllegalAccessException("Cannot access @HandlerScoped method on "
+                    + plugin.getClass().getName());
+        }
+        try {
+            return (AutoCloseable) method.invoke(plugin);
+        } catch (InvocationTargetException failure) {
+            ExceptionHelper.sneakyThrow(failure.getCause());
+            return null;
         }
     }
 

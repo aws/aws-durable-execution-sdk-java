@@ -23,6 +23,7 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.HandlerScoped;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 
@@ -128,6 +129,79 @@ class HandlerScopeFinalizationTest {
         scopeFatal(false, false, new InternalError("late scope fatal"), false, true);
     }
 
+    @Test
+    void observesScopeFatalReportedDuringManagerShutdown() throws Exception {
+        var releaseScope = new CountDownLatch(1);
+        var ownerFinished = new CountDownLatch(1);
+        var shutdownEntered = new AtomicBoolean();
+        var ended = new AtomicBoolean();
+        var fatal = new InternalError("scope failure during manager shutdown");
+        var plugin = new ScopedPlugin() {
+            public AutoCloseable openHandlerScope() {
+                return () -> {
+                    await(releaseScope);
+                    throw fatal;
+                };
+            }
+
+            public void onInvocationEnd(InvocationEndInfo info) {
+                ended.set(true);
+            }
+        };
+        var workers =
+                new ThreadPoolExecutor(
+                        0,
+                        Integer.MAX_VALUE,
+                        60,
+                        TimeUnit.SECONDS,
+                        new SynchronousQueue<>(),
+                        task -> daemon(task, "shutdown-owner")) {
+                    @Override
+                    public void execute(Runnable task) {
+                        super.execute(() -> {
+                            try {
+                                task.run();
+                            } finally {
+                                ownerFinished.countDown();
+                            }
+                        });
+                    }
+
+                    @Override
+                    public int getActiveCount() {
+                        // ExecutionManager.close reaches this after invocation-end callbacks. Hold resource closure
+                        // until the owner has reported the fatal, without altering the handler/control futures.
+                        assertTrue(ended.get());
+                        shutdownEntered.set(true);
+                        releaseScope.countDown();
+                        await(ownerFinished);
+                        return super.getActiveCount();
+                    }
+                };
+        var deadline = new Deadline();
+        try {
+            assertSame(
+                    fatal,
+                    assertThrows(
+                            InternalError.class,
+                            () -> DurableExecutor.execute(
+                                    input(),
+                                    deadline.context(),
+                                    TypeToken.get(String.class),
+                                    (value, ctx) -> {
+                                        deadline.arm(0);
+                                        ctx.wait("pause", Duration.ofSeconds(1));
+                                        return "done";
+                                    },
+                                    config(workers, plugin))));
+            assertTrue(shutdownEntered.get());
+        } finally {
+            releaseScope.countDown();
+            workers.shutdown();
+            assertTrue(workers.awaitTermination(2, TimeUnit.SECONDS));
+        }
+    }
+
     static void scopeFatal(boolean retry, boolean wrapped, Error fatal, boolean fromBodyFinally) throws Exception {
         scopeFatal(retry, wrapped, fatal, fromBodyFinally, false);
     }
@@ -139,7 +213,7 @@ class HandlerScopeFinalizationTest {
         var releaseFatal = new CountDownLatch(1);
         var fatalRaised = new CountDownLatch(1);
         var fatalBeforeEnd = new AtomicBoolean();
-        var plugin = new DurableExecutionPlugin() {
+        var plugin = new ScopedPlugin() {
             public AutoCloseable openHandlerScope() {
                 var owner = Thread.currentThread();
                 return () -> {
@@ -324,5 +398,10 @@ class HandlerScopeFinalizationTest {
                         return null;
                     });
         }
+    }
+
+    @HandlerScoped
+    private abstract static class ScopedPlugin implements DurableExecutionPlugin {
+        public abstract AutoCloseable openHandlerScope();
     }
 }

@@ -65,6 +65,7 @@ public class DurableExecutor {
             BiFunction<I, DurableContext, O> handler,
             DurableConfig config) {
         var pluginRunner = config.getPluginRunner();
+        var scopeFatal = new AtomicReference<Error>();
         try (var executionManager = new ExecutionManager(input, config, lambdaContext)) {
             var isFirstInvocation = !executionManager.isReplaying();
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
@@ -74,7 +75,6 @@ public class DurableExecutor {
             // Captured for onInvocationEnd, which runs outside the handler thread below.
             var pluginExecutionInput = new AtomicReference<>();
             var hasHandlerScope = new AtomicBoolean();
-            var scopeFatal = new AtomicReference<Error>();
             var handlerFuture = CompletableFuture.supplyAsync(
                     () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
@@ -215,10 +215,11 @@ public class DurableExecutor {
                 // unwrap the CompletionException and rethrow the wrapped exception
                 ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(e));
                 return null;
-            } finally {
-                // Also observe a scope fatal reported during invocation-end hooks, without extending the wait.
-                throwIfScopeFatal(scopeFatal);
             }
+        } finally {
+            // Resource shutdown may wait for other work after the bounded handoff. Observe any scope fatal
+            // reported during that existing wait before the caller commits its response, without waiting again.
+            throwIfScopeFatal(scopeFatal);
         }
     }
 

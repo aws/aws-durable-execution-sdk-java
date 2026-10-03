@@ -18,6 +18,7 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.HandlerScoped;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
@@ -29,7 +30,7 @@ class HandlerScopeFinalizationIntegrationTest {
         var enteredFinally = new CountDownLatch(1);
         var scopeClosed = new CountDownLatch(1);
         var closedAtEnd = new AtomicBoolean();
-        var plugin = new DurableExecutionPlugin() {
+        var plugin = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 var owner = Thread.currentThread();
@@ -99,7 +100,7 @@ class HandlerScopeFinalizationIntegrationTest {
         var scopeClosed = new AtomicBoolean();
         var endCalled = new AtomicBoolean();
         var scopeClosedAtEnd = new AtomicBoolean();
-        var plugin = new DurableExecutionPlugin() {
+        var plugin = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 if (!hasScope) return null;
@@ -175,5 +176,10 @@ class HandlerScopeFinalizationIntegrationTest {
             assertTrue(handlerExited.await(5, TimeUnit.SECONDS));
             caller.shutdownNow();
         }
+    }
+
+    @HandlerScoped
+    private abstract static class ScopedPlugin implements DurableExecutionPlugin {
+        public abstract AutoCloseable openHandlerScope();
     }
 }
