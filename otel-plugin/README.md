@@ -15,7 +15,7 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 
 ## Root handler context
 
-With a core that supports `DurableExecutionPlugin.openHandlerScope()`, user instrumentation in the root handler joins
+With a core that supports the explicit `@HandlerScoped` capability, user instrumentation in the root handler joins
 its canonical execution trace. A valid same-trace ambient Lambda span stays current. If ambient context is absent or
 belongs to another trace, invocation view activates `Invocation`; execution view activates the deterministic
 `Workflow` context, including its unsampled non-recording form. Nested operations retain their existing contexts.
@@ -30,7 +30,7 @@ ordinary cleanup failures and legacy body failures retain the original outcome. 
 cannot retroactively change it. The scope still
 closes on its owning thread when the handler eventually exits; late cleanup telemetry is best effort. A compatible
 ambient span uses a no-op scope and participates in the same bounded handoff. Invocation-end hooks can execute on a
-different thread and do not own this scope. The additive hook uses only a JDK type and defaults to no scope: old plugins on a new core and new plugin layers on an older core retain their
+different thread and do not own this scope. The additive concrete hook uses only a JDK type; unannotated plugins have no scope: old plugins on a new core and new plugin layers on an older core retain their
 existing behavior. Root-handler fallback activation requires both the updated core and plugin; no provider API or
 dependency floor changes are required. The new scope boundary isolates ordinary exceptions and nonfatal linkage
 errors during open and close, continues earlier scope cleanup, and preserves the handler outcome. JVM fatal errors
@@ -395,3 +395,8 @@ var otelPlugin = new InvocationOtelPlugin(
 ## License
 
 Apache-2.0
+
+The core invokes `openHandlerScope()` only on classes explicitly annotated with inherited `@HandlerScoped`.
+The existing plugin interface gains no default method, avoiding collisions with unrelated application interfaces.
+Concrete hooks use only `AutoCloseable`; older cores ignore the optional annotation and still load the plugin layer.
+Custom opt-in methods must be public and accessible to the core under the application's module configuration.

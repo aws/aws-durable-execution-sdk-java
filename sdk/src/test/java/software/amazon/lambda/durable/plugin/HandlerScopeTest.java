@@ -48,13 +48,13 @@ class HandlerScopeTest {
     @Test
     void ordinarySetupAndCleanupFailuresDoNotReplaceTheHandlerResult() {
         var calls = new ArrayList<String>();
-        var brokenSetup = new DurableExecutionPlugin() {
+        var brokenSetup = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 throw new IllegalStateException("setup");
             }
         };
-        var brokenClose = new DurableExecutionPlugin() {
+        var brokenClose = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 return () -> {
@@ -72,7 +72,7 @@ class HandlerScopeTest {
     void linkageFailuresPreserveTheBodyOutcomeAndAllEarlierScopes(boolean bodyFails) {
         var active = new ThreadLocal<String>();
         var calls = new ArrayList<String>();
-        var healthy = new DurableExecutionPlugin() {
+        var healthy = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 calls.add("open-healthy");
@@ -83,14 +83,14 @@ class HandlerScopeTest {
                 };
             }
         };
-        var brokenOpen = new DurableExecutionPlugin() {
+        var brokenOpen = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 calls.add("open-broken");
                 throw new NoSuchMethodError("optional API missing");
             }
         };
-        var brokenClose = new DurableExecutionPlugin() {
+        var brokenClose = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 calls.add("open-last");
@@ -125,7 +125,7 @@ class HandlerScopeTest {
     @CsvSource({"true,false", "false,false", "true,true", "false,true"})
     void fatalScopeFailuresStillPropagate(boolean duringOpen, boolean wrapped) {
         for (Error fatal : List.of(new InternalError("fatal VM failure"), new ThreadDeath())) {
-            var plugin = new DurableExecutionPlugin() {
+            var plugin = new ScopedPlugin() {
                 @Override
                 public AutoCloseable openHandlerScope() {
                     if (duringOpen) {
@@ -146,7 +146,7 @@ class HandlerScopeTest {
             var calls = new ArrayList<String>();
             var active = new ThreadLocal<String>();
             var owner = Thread.currentThread();
-            var healthy = new DurableExecutionPlugin() {
+            var healthy = new ScopedPlugin() {
                 @Override
                 public AutoCloseable openHandlerScope() {
                     active.set("healthy");
@@ -167,7 +167,7 @@ class HandlerScopeTest {
     }
 
     private static DurableExecutionPlugin scope(String name, List<String> calls, Thread owner) {
-        return new DurableExecutionPlugin() {
+        return new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 assertSame(owner, Thread.currentThread());
@@ -178,5 +178,10 @@ class HandlerScopeTest {
                 };
             }
         };
+    }
+
+    @HandlerScoped
+    private abstract static class ScopedPlugin implements DurableExecutionPlugin {
+        public abstract AutoCloseable openHandlerScope();
     }
 }
