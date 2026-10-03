@@ -7,6 +7,7 @@ import com.amazonaws.services.lambda.runtime.RequestHandler;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import org.slf4j.Logger;
@@ -64,6 +65,7 @@ public class DurableExecutor {
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
             var pluginExecutionInput = new AtomicReference<>();
+            var hasHandlerScope = new AtomicBoolean();
             var handlerFuture = CompletableFuture.supplyAsync(
                     () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
@@ -109,7 +111,9 @@ public class DurableExecutor {
                         DurableContextImpl.setCurrentContext(context);
                         // use a try-with-resources to clear logger properties
                         try (var ignored = DurableLogger.attachContext()) {
-                            return handler.apply(userInput, context);
+                            var handlerInput = userInput;
+                            return pluginRunner.runHandler(
+                                    () -> handler.apply(handlerInput, context), () -> hasHandlerScope.set(true));
                         }
                     },
                     config.getExecutorService()); // Get executor from config for running user code
@@ -118,8 +122,10 @@ public class DurableExecutor {
             // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
             // failure.
             try {
-                return executionManager
-                        .runUntilCompleteOrSuspend(handlerFuture)
+                return awaitHandlerScopes(
+                                executionManager.runUntilCompleteOrSuspend(handlerFuture),
+                                handlerFuture,
+                                hasHandlerScope)
                         .handle((result, ex) -> {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
@@ -197,6 +203,27 @@ public class DurableExecutor {
                 return null;
             }
         }
+    }
+
+    private static <T> CompletableFuture<T> awaitHandlerScopes(
+            CompletableFuture<T> executionFuture, CompletableFuture<T> handlerFuture, AtomicBoolean hasHandlerScope) {
+        return executionFuture
+                .handle((result, failure) -> {
+                    if (failure == null) return CompletableFuture.completedFuture(result);
+                    if (!hasHandlerScope.get()) return CompletableFuture.<T>failedFuture(failure);
+                    // Suspension/termination can be signaled from inside the handler before its finally blocks unwind.
+                    // A continuation releases that worker to close its scopes; joining it here would deadlock.
+                    // Legacy plugins returning no scope retain their original finalization timing.
+                    return handlerFuture.handle((ignored, handlerFailure) -> {
+                        var cause = ExceptionHelper.unwrapCompletableFuture(handlerFailure);
+                        ExceptionHelper.sneakyThrow(
+                                cause != null && !(cause instanceof SuspendExecutionException)
+                                        ? handlerFailure
+                                        : failure);
+                        return result;
+                    });
+                })
+                .thenCompose(future -> future);
     }
 
     private static void fireOnInvocationEnd(

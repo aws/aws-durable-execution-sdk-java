@@ -13,6 +13,24 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **ADOT Java Agent Integration**: `new InvocationOtelPlugin()` late-binds the ADOT Java agent's global provider with no handler-side OpenTelemetry initialization
 - **Lambda Layer Discovery**: `DURABLE_EXECUTION_PLUGINS` loads either OTel plugin from a JAR under a layer's `java/lib` directory
 
+## Root handler context
+
+With a core that supports `DurableExecutionPlugin.openHandlerScope()`, user instrumentation in the root handler joins
+its canonical execution trace. A valid same-trace ambient Lambda span stays current. If ambient context is absent or
+belongs to another trace, invocation view activates `Invocation`; execution view activates the deterministic
+`Workflow` context, including its unsampled non-recording form. Nested operations retain their existing contexts.
+
+The core opens the scope after invocation startup and closes it on the same handler thread on success, failure, or
+suspension. When a handler scope is opened, suspension/termination finalization waits asynchronously for the handler to unwind
+and close it, before invocation-end hooks flush telemetry or a response is returned. A compatible ambient span uses
+a no-op scope so it receives the same finalization ordering. Invocation-end hooks can execute on a different thread
+and do not own this scope. The additive hook uses
+only a JDK type and defaults to no scope: old plugins on a new core and new plugin layers on an older core retain their
+existing behavior. Root-handler fallback activation requires both the updated core and plugin; no provider API or
+dependency floor changes are required. The new scope boundary isolates ordinary exceptions and nonfatal linkage
+errors during open and close, continues earlier scope cleanup, and preserves the handler outcome. JVM fatal errors
+remain outside that containment.
+
 ## Installation
 
 ```xml
