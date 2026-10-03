@@ -8,8 +8,10 @@ import static software.amazon.lambda.durable.TypeToken.get;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.AbstractExecutorService;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -20,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -38,7 +41,15 @@ import software.amazon.lambda.durable.plugin.InvocationStatus;
 class FatalInvocationBoundaryTest {
     @SuppressWarnings("removal")
     static Stream<Arguments> fatalCases() {
-        return Stream.of("factory", "hook", "handler", "wrapped-handler")
+        return Stream.of(
+                        "factory",
+                        "hook",
+                        "handler",
+                        "wrapped-handler",
+                        "wrapped-factory",
+                        "wrapped-hook",
+                        "future-factory",
+                        "future-hook")
                 .flatMap(stage -> Stream.of(new OutOfMemoryError("simulated VM failure"), new ThreadDeath())
                         .map(error -> Arguments.of(stage, error)));
     }
@@ -72,8 +83,9 @@ class FatalInvocationBoundaryTest {
         assertFatalInvocation("factory", new ThreadDeath(), new DirectExecutor());
     }
 
-    @Test
-    void incompatibleOptionalApiDoesNotChangeHandlerResult() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void incompatibleOptionalApiDoesNotChangeHandlerResult(boolean wrapped) {
         var end = new AtomicReference<InvocationEndInfo>();
         DurableExecutionPluginFactory observer = info -> new DurableExecutionPlugin() {
             @Override
@@ -82,7 +94,10 @@ class FatalInvocationBoundaryTest {
             }
         };
         DurableExecutionPluginFactory incompatible = info -> {
-            throw new NoSuchMethodError("boolean io.opentelemetry.api.GlobalOpenTelemetry.isSet()");
+            var failure = new NoSuchMethodError("boolean io.opentelemetry.api.GlobalOpenTelemetry.isSet()");
+            if (wrapped)
+                CompletableFuture.failedFuture(new ExecutionException(failure)).join();
+            throw failure;
         };
         var config = DurableConfig.builder()
                 .withDurableExecutionClient(TestUtils.createMockClient())
@@ -131,11 +146,26 @@ class FatalInvocationBoundaryTest {
 
     private static DurableExecutionPluginFactory failingPlugin(String stage, Error fatal) {
         return info -> {
-            if (stage.equals("factory")) throw fatal;
+            switch (stage) {
+                case "factory" -> throw fatal;
+                case "wrapped-factory" -> CompletableFuture.failedFuture(fatal).join();
+                case "future-factory" ->
+                    CompletableFuture.failedFuture(new ExecutionException(fatal))
+                            .join();
+                default -> {}
+            }
             return new DurableExecutionPlugin() {
                 @Override
                 public void onInvocationStart(InvocationInfo info) {
-                    if (stage.equals("hook")) throw fatal;
+                    switch (stage) {
+                        case "hook" -> throw fatal;
+                        case "wrapped-hook" ->
+                            CompletableFuture.failedFuture(fatal).join();
+                        case "future-hook" ->
+                            CompletableFuture.failedFuture(new ExecutionException(fatal))
+                                    .join();
+                        default -> {}
+                    }
                 }
             };
         };

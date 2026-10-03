@@ -13,8 +13,9 @@ package software.amazon.lambda.durable.plugin;
  * <p>The {@link InvocationInfo} handed to the factory is the same instance the plugin's
  * {@link DurableExecutionPlugin#onInvocationStart(InvocationInfo)} hook then receives.
  *
- * <p>Factory failures are contained exactly like hook failures: a factory that throws or returns {@code null} is logged
- * and skipped for that invocation, and never disrupts the execution.
+ * <p>Non-fatal factory failures are contained like non-fatal hook failures: the factory is logged and skipped for that
+ * invocation. A {@code null} result is also logged and skipped. {@link VirtualMachineError} and {@link ThreadDeath}
+ * propagate, including when wrapped by asynchronous completion/future exceptions.
  *
  * <pre>{@code
  * DurableConfig.builder()

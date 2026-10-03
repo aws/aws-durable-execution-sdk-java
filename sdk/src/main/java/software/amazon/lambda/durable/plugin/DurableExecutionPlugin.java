@@ -10,8 +10,8 @@ package software.amazon.lambda.durable.plugin;
  *
  * <p>All methods have default no-op implementations, allowing plugins to override only the hooks they need.
  *
- * <p>Plugin errors are isolated — exceptions thrown by plugin methods are caught and logged but never disrupt SDK
- * execution.
+ * <p>Non-fatal plugin failures are caught and logged without disrupting SDK execution. {@link VirtualMachineError} and
+ * {@link ThreadDeath} propagate, including when wrapped by asynchronous completion/future exceptions.
  */
 public interface DurableExecutionPlugin {
 

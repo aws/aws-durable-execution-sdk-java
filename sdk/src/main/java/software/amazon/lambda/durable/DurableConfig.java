@@ -464,8 +464,9 @@ public final class DurableConfig {
          * instance it returns receives only that invocation's hooks. Plugin instances can therefore keep per-invocation
          * state in plain fields even when the execution environment runs several executions concurrently.
          *
-         * <p>Plugins receive hooks at invocation, operation, and user function boundaries. Errors thrown by a factory
-         * or a hook are isolated and never disrupt SDK execution.
+         * <p>Plugins receive hooks at invocation, operation, and user function boundaries. Non-fatal factory/hook
+         * failures and null factory results are logged and skipped. {@link VirtualMachineError} and {@link ThreadDeath}
+         * propagate, including when wrapped by asynchronous completion/future exceptions.
          *
          * <p>Calling this method replaces any previously registered factories. Plugins are called in registration
          * order.

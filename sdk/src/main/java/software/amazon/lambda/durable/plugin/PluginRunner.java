@@ -5,6 +5,8 @@ package software.amazon.lambda.durable.plugin;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,12 +20,12 @@ import org.slf4j.LoggerFactory;
  * them when the invocation returns, so a plugin instance is never shared between invocations and never needs to key its
  * state by execution ARN.
  *
- * <p>Event hooks are fire-and-forget: each plugin is called in order, errors are swallowed. A factory that throws or
- * returns {@code null} is contained the same way — the plugin is skipped for the invocation. Containment covers every
- * non-fatal throwable, not only {@link Exception}, because a plugin built against a different SDK version, one missing
- * an optional dependency, and one running with assertions enabled all fail with an {@code Error}. It stops short of two
- * cases, which keep propagating: the errors that report the JVM itself failing, and the {@code ThreadDeath} that
- * reports the thread running the plugin has already been terminated.
+ * <p>Event hooks are fire-and-forget: each plugin is called in order, non-fatal failures are contained. A factory with
+ * a non-fatal failure or returns {@code null} is contained the same way — the plugin is skipped for the invocation.
+ * Containment covers every non-fatal throwable, not only {@link Exception}, because a plugin built against a different
+ * SDK version, one missing an optional dependency, and one running with assertions enabled all fail with an
+ * {@code Error}. It stops short of two cases, which keep propagating: the errors that report the JVM itself failing,
+ * and the {@code ThreadDeath} that reports the thread running the plugin has already been terminated.
  *
  * <p>{@code onInvocationEnd} is awaited (the SDK blocks until it returns) to allow plugins to flush data before Lambda
  * freezes.
@@ -60,13 +62,13 @@ public class PluginRunner {
      * Creates this invocation's plugin instances, one per registered factory.
      *
      * <p>Called from {@link #onInvocationStart(InvocationInfo)}. Each start hook runs before constructing the next
-     * plugin, preserving startup context installed by earlier registrations. Factories that throw or return null are
-     * logged and skipped.
+     * plugin, preserving startup context installed by earlier registrations. Factories that fail non-fatally or return
+     * null are logged and skipped. Fatal causes propagate, including through completion/future wrappers.
      *
-     * <p>Every non-fatal throwable is contained, not just {@link Exception}. The contract says a factory failure is
-     * skipped and never disrupts the execution, and a throwable that escapes here fails an execution the plugin was
-     * only observing. Narrowing the catch to a list of types would leave that promise conditional on the list being
-     * complete, and it was not: a provider JAR compiled against an earlier version of
+     * <p>Every non-fatal throwable is contained, not just {@link Exception}. The contract says a non-fatal factory
+     * failure is skipped and never disrupts the execution, and a throwable that escapes here fails an execution the
+     * plugin was only observing. Narrowing the catch to a list of types would leave that promise conditional on the
+     * list being complete, and it was not: a provider JAR compiled against an earlier version of
      * {@link DurableExecutionPluginFactory} throws {@link AbstractMethodError}, a provider whose optional dependency is
      * missing from the deployment package throws {@link NoClassDefFoundError}, a provider running with assertions
      * enabled throws {@link AssertionError}, and a provider that loads its own exporter back ends through
@@ -178,10 +180,15 @@ public class PluginRunner {
      */
     @SuppressWarnings("removal") // ThreadDeath is deprecated for removal since JDK 20; see the javadoc above.
     private static void contain(Throwable t, String message) {
-        if (t instanceof VirtualMachineError fatal) {
+        var cause = t;
+        while ((cause instanceof CompletionException || cause instanceof ExecutionException)
+                && cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        if (cause instanceof VirtualMachineError fatal) {
             throw fatal;
         }
-        if (t instanceof ThreadDeath fatal) {
+        if (cause instanceof ThreadDeath fatal) {
             throw fatal;
         }
         logger.warn(message, t);
