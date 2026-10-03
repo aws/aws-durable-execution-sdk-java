@@ -161,8 +161,31 @@ public class ApiRequestDelayedBatcher<T> {
         // Schedule a new flushing future. If the items in this batch have been executed by the previous flushQueue
         // future,
         // the new future will just do nothing.
-        flushingQueueFuture = flushingQueueFuture.thenRunAsync(this::flushQueue, InternalExecutor.INSTANCE);
+        flushingQueueFuture = flushingQueueFuture.thenCompose(ignored -> flushObservedAsync());
     }
+
+    private CompletableFuture<Void> flushObservedAsync() {
+        var completion = new CompletableFuture<Void>();
+        // Keep sequencing through the future, but let reported plugin fatals escape the actual worker.
+        // CompletableFuture async stages would otherwise catch the fatal again after flushQueue rethrows it.
+        Runnable flush = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
+            try {
+                flushQueue();
+                completion.complete(null);
+            } catch (Throwable failure) {
+                completion.completeExceptionally(failure);
+                var fatal = terminalFailure.get();
+                if (fatal != null) throw fatal;
+            }
+        };
+        try {
+            InternalExecutor.INSTANCE.execute(flush);
+        } catch (Throwable failure) {
+            completion.completeExceptionally(failure);
+        }
+        return completion;
+    }
+
     /** Call checkpoint API with items in the flushing queue */
     private void flushQueue() {
         // There could be more items to flush because

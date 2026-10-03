@@ -299,4 +299,34 @@ class ApiRequestDelayedBatcherTest {
         batcher.shutdown();
         assertEquals(2, calls.get());
     }
+
+    @Test
+    @SuppressWarnings("removal")
+    void reportedFatalEscapesItsCheckpointWorker() throws Exception {
+        for (Error fatal : List.of(new InternalError("checkpoint hook"), new ThreadDeath())) {
+            var signal = new AtomicReference<Error>();
+            var uncaught = new AtomicReference<Throwable>();
+            var escaped = new CountDownLatch(1);
+            var batcher = new ApiRequestDelayedBatcher<Input>(
+                    1,
+                    100,
+                    value -> 1,
+                    batch -> {
+                        Thread.currentThread().setUncaughtExceptionHandler((owner, failure) -> {
+                            uncaught.set(failure);
+                            escaped.countDown();
+                        });
+                        signal.set(fatal);
+                        throw fatal;
+                    },
+                    signal::get);
+            var request = batcher.submit(input, Duration.ZERO);
+            assertSame(
+                    fatal,
+                    assertThrows(ExecutionException.class, () -> request.get(2, TimeUnit.SECONDS))
+                            .getCause());
+            assertTrue(escaped.await(2, TimeUnit.SECONDS), "fatal must leave CompletableFuture containment");
+            assertSame(fatal, uncaught.get());
+        }
+    }
 }

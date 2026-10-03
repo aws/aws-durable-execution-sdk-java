@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.slf4j.MDC;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
@@ -30,6 +31,54 @@ import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class HandlerContextIntegrationTest {
     private static final String TRACE_ID = "12345678901234567890123456789012";
+
+    @ParameterizedTest
+    @CsvSource({"true,success", "false,success", "true,failure", "false,failure", "true,suspension", "false,suspension"
+    })
+    void reusedHandlerWorkerHasNoLeakedMdc(boolean executionView, String outcome) throws Exception {
+        var pluginConfig = OtelPluginConfig.builder()
+                .enableMdc(true)
+                .contextExtractor(
+                        () -> new ExtractedContext(TRACE_ID, "1234567890123456", ExtractedContext.Sampling.SAMPLED))
+                .build();
+        DurableExecutionPluginFactory plugin = executionView
+                ? ExecutionOtelPlugin.factory(SdkTracerProvider.builder(), pluginConfig)
+                : InvocationOtelPlugin.factory(SdkTracerProvider.builder(), pluginConfig);
+        var executor = Executors.newSingleThreadExecutor();
+        var config = DurableConfig.builder()
+                .withExecutorService(executor)
+                .withPlugins(plugin)
+                .build();
+        try {
+            var runner = LocalDurableTestRunner.create(
+                    String.class,
+                    (input, ctx) -> {
+                        assertEquals(TRACE_ID, MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
+                        if (outcome.equals("failure")) throw new IllegalStateException("body");
+                        if (outcome.equals("suspension")) ctx.wait("pause", Duration.ofSeconds(1));
+                        return "done";
+                    },
+                    config);
+            var result = runner.run("input");
+            assertEquals(
+                    switch (outcome) {
+                        case "failure" -> ExecutionStatus.FAILED;
+                        case "suspension" -> ExecutionStatus.PENDING;
+                        default -> ExecutionStatus.SUCCEEDED;
+                    },
+                    result.getStatus());
+            executor.submit(() -> {
+                        assertNull(
+                                MDC.get(MdcSpanEnricher.MDC_TRACE_ID),
+                                "a reused worker must not inherit the prior trace");
+                        assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
+                        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
+                    })
+                    .get(2, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
 
     @ParameterizedTest
     @CsvSource({"true,success", "false,success", "true,failure", "false,failure", "true,suspension", "false,suspension"

@@ -43,6 +43,10 @@ class OperationHookFatalIntegrationTest {
     void pluginFatalEscapesWithoutOperationRetryOrFailureCheckpoint(String stage, boolean wrapped, Error fatal)
             throws Exception {
         var fired = new AtomicBoolean();
+        var hookWorker = new AtomicReference<Thread>();
+        var escapedWorker = new AtomicReference<Thread>();
+        var uncaught = new AtomicReference<Throwable>();
+        var escaped = new CountDownLatch(1);
         var retries = new AtomicInteger();
         var endCalls = new AtomicInteger();
         var end = new AtomicReference<InvocationEndInfo>();
@@ -65,6 +69,12 @@ class OperationHookFatalIntegrationTest {
         DurableExecutionPluginFactory faulty = info -> new DurableExecutionPlugin() {
             private void failAt(String point) {
                 if (!stage.equals(point) || !fired.compareAndSet(false, true)) return;
+                hookWorker.set(Thread.currentThread());
+                Thread.currentThread().setUncaughtExceptionHandler((owner, failure) -> {
+                    escapedWorker.set(owner);
+                    uncaught.set(failure);
+                    escaped.countDown();
+                });
                 if (wrapped) throw new CompletionException(new ExecutionException(fatal));
                 throw fatal;
             }
@@ -135,6 +145,9 @@ class OperationHookFatalIntegrationTest {
             var thrown = assertThrows(ExecutionException.class, () -> response.get(5, TimeUnit.SECONDS));
             assertSame(fatal, thrown.getCause(), "plugin fatal identity must reach the invocation caller");
             assertTrue(fired.get());
+            assertTrue(escaped.await(2, TimeUnit.SECONDS), "fatal must escape the actual hook worker");
+            assertSame(hookWorker.get(), escapedWorker.get());
+            assertSame(fatal, uncaught.get());
             assertEquals(0, retries.get(), "plugin fatal must bypass the user operation retry strategy");
             assertTrue(
                     updates.stream()
