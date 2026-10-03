@@ -17,6 +17,7 @@ import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -292,7 +293,15 @@ public class DurableExecutor {
         var caller = Thread.currentThread();
         Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
             try {
-                result.complete(task.get());
+                T value;
+                try {
+                    value = task.get();
+                } finally {
+                    // Startup hooks can populate MDC before input failures or a later factory aborts. The normal
+                    // handler logger scope has not opened in those paths, so clean up on this owner before publishing.
+                    MDC.clear();
+                }
+                result.complete(value);
             } catch (Throwable failure) {
                 result.completeExceptionally(failure);
                 // A direct executor is already on the invocation caller; its fatal result is rethrown below after
