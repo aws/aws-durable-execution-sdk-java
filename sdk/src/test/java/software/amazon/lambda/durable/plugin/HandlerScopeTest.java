@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -49,13 +50,13 @@ class HandlerScopeTest {
     @Test
     void ordinarySetupAndCleanupFailuresDoNotReplaceTheHandlerResult() {
         var calls = new ArrayList<String>();
-        var brokenSetup = new DurableExecutionPlugin() {
+        var brokenSetup = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 throw new IllegalStateException("setup");
             }
         };
-        var brokenClose = new DurableExecutionPlugin() {
+        var brokenClose = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 return () -> {
@@ -73,7 +74,7 @@ class HandlerScopeTest {
     void linkageFailuresPreserveTheBodyOutcomeAndAllEarlierScopes(boolean bodyFails) {
         var active = new ThreadLocal<String>();
         var calls = new ArrayList<String>();
-        var healthy = new DurableExecutionPlugin() {
+        var healthy = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 calls.add("open-healthy");
@@ -84,14 +85,14 @@ class HandlerScopeTest {
                 };
             }
         };
-        var brokenOpen = new DurableExecutionPlugin() {
+        var brokenOpen = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 calls.add("open-broken");
                 throw new NoSuchMethodError("optional API missing");
             }
         };
-        var brokenClose = new DurableExecutionPlugin() {
+        var brokenClose = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 calls.add("open-last");
@@ -126,7 +127,7 @@ class HandlerScopeTest {
     @CsvSource({"true,false", "false,false", "true,true", "false,true"})
     void fatalScopeFailuresStillPropagate(boolean duringOpen, boolean wrapped) {
         for (Error fatal : List.of(new InternalError("fatal VM failure"), new ThreadDeath())) {
-            var plugin = new DurableExecutionPlugin() {
+            var plugin = new ScopedPlugin() {
                 @Override
                 public AutoCloseable openHandlerScope() {
                     if (duringOpen) {
@@ -147,7 +148,7 @@ class HandlerScopeTest {
             var calls = new ArrayList<String>();
             var active = new ThreadLocal<String>();
             var owner = Thread.currentThread();
-            var healthy = new DurableExecutionPlugin() {
+            var healthy = new ScopedPlugin() {
                 @Override
                 public AutoCloseable openHandlerScope() {
                     active.set("healthy");
@@ -167,8 +168,58 @@ class HandlerScopeTest {
         }
     }
 
+    @Test
+    void openerConstructionLinkageFailurePreservesBodyAndEarlierCleanup() {
+        var calls = new ArrayList<String>();
+        var runner = startedRunner(List.of(scope("healthy", calls, Thread.currentThread()), new BrokenOpenerPlugin()));
+        assertEquals("body", runner.runHandler(() -> "body"));
+        assertEquals(List.of("open-healthy", "close-healthy"), calls);
+    }
+
+    @Test
+    void openerConstructionFatalRetainsIdentityAndEarlierCleanup() {
+        var calls = new ArrayList<String>();
+        var reported = new AtomicReference<Error>();
+        var runner = startedRunner(List.of(scope("healthy", calls, Thread.currentThread()), new FatalOpenerPlugin()));
+        assertSame(
+                FatalOpener.FAILURE,
+                assertThrows(
+                        InternalError.class,
+                        () -> runner.runHandler(() -> fail("handler must not run"), () -> {}, reported::set)));
+        assertSame(FatalOpener.FAILURE, reported.get());
+        assertEquals(List.of("open-healthy", "close-healthy"), calls);
+    }
+
+    @HandlerScoped(BrokenOpener.class)
+    private static class BrokenOpenerPlugin implements DurableExecutionPlugin {}
+
+    public static class BrokenOpener implements Function<BrokenOpenerPlugin, AutoCloseable> {
+        public BrokenOpener() {
+            throw new NoSuchMethodError("opener dependency");
+        }
+
+        public AutoCloseable apply(BrokenOpenerPlugin plugin) {
+            return null;
+        }
+    }
+
+    @HandlerScoped(FatalOpener.class)
+    private static class FatalOpenerPlugin implements DurableExecutionPlugin {}
+
+    public static class FatalOpener implements Function<FatalOpenerPlugin, AutoCloseable> {
+        static final InternalError FAILURE = new InternalError("opener fatal");
+
+        public FatalOpener() {
+            throw FAILURE;
+        }
+
+        public AutoCloseable apply(FatalOpenerPlugin plugin) {
+            return null;
+        }
+    }
+
     private static DurableExecutionPlugin scope(String name, List<String> calls, Thread owner) {
-        return new DurableExecutionPlugin() {
+        return new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 assertSame(owner, Thread.currentThread());
@@ -187,5 +238,16 @@ class HandlerScopeTest {
                 .toList());
         runner.onInvocationStart(new InvocationInfo("request", "arn", true, Instant.EPOCH));
         return runner;
+    }
+
+    @HandlerScoped(ScopedPlugin.Opener.class)
+    private abstract static class ScopedPlugin implements DurableExecutionPlugin {
+        public abstract AutoCloseable openHandlerScope();
+
+        public static class Opener implements Function<ScopedPlugin, AutoCloseable> {
+            public AutoCloseable apply(ScopedPlugin plugin) {
+                return plugin.openHandlerScope();
+            }
+        }
     }
 }

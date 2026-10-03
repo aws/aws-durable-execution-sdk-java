@@ -411,4 +411,4 @@ resources remain owned by the environment. The model-blocked outbound propagatio
 
 Exclusive instrumentation metadata belongs to `DurableExecutionPluginFactory.getExclusiveGroup()` in 3.x, not the
 per-invocation plugin instance. Declare or forward the group on custom factory wrappers so configuration can validate
-it before construction. The instance-level 2.x group method is intentionally absent from the 3.x plugin contract.
+it before construction. The 2.x minor release declares instance groups with inherited `@ExclusivePluginGroup` metadata; migrate that declaration to the factory in3.x so conflicts can be rejected before instances exist. Instance annotations are not a3.x factory registration contract.

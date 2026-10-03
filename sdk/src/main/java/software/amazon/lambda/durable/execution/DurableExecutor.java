@@ -66,6 +66,7 @@ public class DurableExecutor {
             TypeToken<I> inputType,
             BiFunction<I, DurableContext, O> handler,
             DurableConfig config) {
+        var scopeFatal = new AtomicReference<Error>();
         try (var executionManager = new ExecutionManager(input, config, lambdaContext)) {
             // Scoped to this invocation: the runner creates this invocation's plugin instances from the configured
             // factories when onInvocationStart fires below, and releases them when the manager closes.
@@ -80,7 +81,6 @@ public class DurableExecutor {
             // Captured for onInvocationEnd, which runs outside the handler thread below.
             var pluginExecutionInput = new AtomicReference<>();
             var hasHandlerScope = new AtomicBoolean();
-            var scopeFatal = new AtomicReference<Error>();
             var handlerFuture = supplyAsync(
                     () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
@@ -278,10 +278,11 @@ public class DurableExecutor {
                 // unwrap the CompletionException and rethrow the wrapped exception
                 ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapAsyncFailure(e));
                 return null;
-            } finally {
-                // Also observe a scope fatal reported during invocation-end hooks, without extending the wait.
-                throwIfScopeFatal(scopeFatal);
             }
+        } finally {
+            // Resource shutdown may wait for other work after the bounded handoff. Observe any scope fatal
+            // reported during that existing wait before the caller commits its response, without waiting again.
+            throwIfScopeFatal(scopeFatal);
         }
     }
 
@@ -326,7 +327,8 @@ public class DurableExecutor {
         // This method runs on the invocation caller, never as a callback on the signaling handler worker.
         // Preserve the winning outcome except for an observed fatal error from the new scope callbacks.
         var failure = executionFuture.handle((result, error) -> error).join();
-        throwIfScopeFatal(scopeFatal);
+        var fatal = scopeFatal.get();
+        if (fatal != null) return CompletableFuture.failedFuture(fatal);
         if (failure == null || !hasHandlerScope.get()) return executionFuture;
         var reserve = SHUTDOWN_RESPONSE_RESERVE_MILLIS + PLUGIN_FINALIZATION_RESERVE_MILLIS * pluginCount;
         var budgetMillis = lambdaContext == null
@@ -342,8 +344,9 @@ public class DurableExecutor {
         } catch (ExecutionException e) {
             logger.warn("Could not observe handler scope cleanup; preserving the execution outcome", e);
         }
-        throwIfScopeFatal(scopeFatal);
-        return executionFuture;
+        // The major lifecycle finalizes created plugins once before propagating an observed fatal.
+        fatal = scopeFatal.get();
+        return fatal == null ? executionFuture : CompletableFuture.failedFuture(fatal);
     }
 
     private static void throwIfScopeFatal(AtomicReference<Error> scopeFatal) {

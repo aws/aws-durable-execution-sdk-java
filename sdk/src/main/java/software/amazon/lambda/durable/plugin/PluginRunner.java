@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.plugin;
 
+import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -228,7 +230,7 @@ public class PluginRunner {
         try {
             for (var plugin : plugins) {
                 try {
-                    var scope = plugin.openHandlerScope();
+                    var scope = openHandlerScope(plugin);
                     if (scope != null) {
                         scopes.push(scope);
                         onScopeOpened.run();
@@ -240,6 +242,24 @@ public class PluginRunner {
             return handler.get();
         } finally {
             closeHandlerScopes(scopes, onScopeFatal);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static AutoCloseable openHandlerScope(DurableExecutionPlugin plugin) throws ReflectiveOperationException {
+        var metadata = plugin.getClass().getAnnotation(HandlerScoped.class);
+        if (metadata == null) return null;
+        var constructor = metadata.value().getConstructor();
+        if (!constructor.canAccess(null) && !constructor.trySetAccessible()) {
+            throw new IllegalAccessException(
+                    "Cannot access @HandlerScoped opener " + metadata.value().getName());
+        }
+        try {
+            var opener = (Function<Object, AutoCloseable>) constructor.newInstance();
+            return opener.apply(plugin);
+        } catch (InvocationTargetException failure) {
+            ExceptionHelper.sneakyThrow(failure.getCause());
+            return null;
         }
     }
 

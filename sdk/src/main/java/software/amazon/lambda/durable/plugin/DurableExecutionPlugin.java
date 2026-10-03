@@ -46,22 +46,6 @@ public interface DurableExecutionPlugin {
      */
     default void onInvocationEnd(InvocationEndInfo info) {}
 
-    /**
-     * Opens an optional scope around the root handler body, after invocation startup.
-     *
-     * <p>The SDK opens and closes this scope on the handler thread, including when the handler fails or suspends.
-     * Scopes close in reverse plugin order when the handler exits. If any scope is returned, invocation finalization
-     * gives the handler a bounded opportunity to unwind after suspension/termination. A blocked handler keeps ownership
-     * of its scope and closes it when it eventually exits. Ordinary cleanup failures preserve the winning outcome; an
-     * observed VirtualMachineError or ThreadDeath from scope callbacks escapes the invocation caller. Optional waiting
-     * reserves five seconds per configured plugin plus one second for shutdown/response; this is best effort because
-     * existing finalizers and checkpoint draining can exceed that allowance. Return {@code null} for no scope. This
-     * additive capability requires a core that calls it; older cores retain their original hook behavior.
-     */
-    default AutoCloseable openHandlerScope() {
-        return null;
-    }
-
     // ─── Operation-level hooks ───────────────────────────────────────────
 
     /** Called when an operation starts (including replay). Use for logging/metrics that want replay visibility. */

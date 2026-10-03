@@ -21,11 +21,13 @@ import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
+import software.amazon.lambda.durable.plugin.HandlerScoped;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.OperationEndInfo;
@@ -100,6 +102,7 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * {@link ConcurrentHashMap}s. The invocation's identity needs no such protection — it is final state written before the
  * SDK publishes the instance to those threads.
  */
+@HandlerScoped(ExecutionOtelPlugin.HandlerScopeOpener.class)
 public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     private static final Logger logger = LoggerFactory.getLogger(ExecutionOtelPlugin.class);
@@ -350,8 +353,15 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
         MDC.put(MdcSpanEnricher.MDC_TRACE_ID, invocationSpan.getSpanContext().getTraceId());
     }
 
-    @Override
-    public AutoCloseable openHandlerScope() {
+    /** JDK-only scope bridge; does not dispatch to coincidental subclass methods. */
+    public static final class HandlerScopeOpener implements Function<ExecutionOtelPlugin, AutoCloseable> {
+        @Override
+        public AutoCloseable apply(ExecutionOtelPlugin plugin) {
+            return plugin.activateHandlerContext();
+        }
+    }
+
+    private AutoCloseable activateHandlerContext() {
         var trace = executionTrace;
         if (ended || tracer == null || trace == null) return null;
         var ambient = Span.current().getSpanContext();

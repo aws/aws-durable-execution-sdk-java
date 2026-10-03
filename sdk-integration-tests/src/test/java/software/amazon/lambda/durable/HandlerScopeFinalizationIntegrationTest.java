@@ -11,6 +11,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -18,6 +19,7 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.HandlerScoped;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
@@ -29,7 +31,7 @@ class HandlerScopeFinalizationIntegrationTest {
         var enteredFinally = new CountDownLatch(1);
         var scopeClosed = new CountDownLatch(1);
         var closedAtEnd = new AtomicBoolean();
-        var plugin = new DurableExecutionPlugin() {
+        var plugin = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 var owner = Thread.currentThread();
@@ -99,7 +101,7 @@ class HandlerScopeFinalizationIntegrationTest {
         var scopeClosed = new AtomicBoolean();
         var endCalled = new AtomicBoolean();
         var scopeClosedAtEnd = new AtomicBoolean();
-        var plugin = new DurableExecutionPlugin() {
+        var plugin = new ScopedPlugin() {
             @Override
             public AutoCloseable openHandlerScope() {
                 if (!hasScope) return null;
@@ -174,6 +176,17 @@ class HandlerScopeFinalizationIntegrationTest {
             releaseFinally.countDown();
             assertTrue(handlerExited.await(5, TimeUnit.SECONDS));
             caller.shutdownNow();
+        }
+    }
+
+    @HandlerScoped(ScopedPlugin.Opener.class)
+    private abstract static class ScopedPlugin implements DurableExecutionPlugin {
+        public abstract AutoCloseable openHandlerScope();
+
+        public static class Opener implements Function<ScopedPlugin, AutoCloseable> {
+            public AutoCloseable apply(ScopedPlugin plugin) {
+                return plugin.openHandlerScope();
+            }
         }
     }
 }
