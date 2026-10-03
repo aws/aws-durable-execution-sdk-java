@@ -66,6 +66,12 @@ public class PluginRunner {
 
     /** Runs the handler and notifies the invocation when a scope requires same-thread finalization. */
     public <T> T runHandler(Supplier<T> handler, Runnable onScopeOpened) {
+        return runHandler(handler, onScopeOpened, fatal -> {});
+    }
+
+    /** Reports fatal errors originating only in scope callbacks, before rethrowing on the owner thread. */
+    @SuppressWarnings("removal")
+    public <T> T runHandler(Supplier<T> handler, Runnable onScopeOpened, Consumer<Error> onScopeFatal) {
         var scopes = new ArrayDeque<AutoCloseable>();
         try {
             for (var plugin : plugins) {
@@ -75,35 +81,45 @@ public class PluginRunner {
                         scopes.push(scope);
                         onScopeOpened.run();
                     }
-                } catch (Exception | LinkageError e) {
-                    reportHandlerScopeFailure("Plugin handler scope threw exception", e);
+                } catch (Exception | LinkageError | VirtualMachineError | ThreadDeath e) {
+                    reportHandlerScopeFailure("Plugin handler scope threw exception", e, onScopeFatal);
                 }
             }
             return handler.get();
         } finally {
-            closeHandlerScopes(scopes);
-        }
-    }
-
-    private static void closeHandlerScopes(ArrayDeque<AutoCloseable> scopes) {
-        while (!scopes.isEmpty()) {
-            try {
-                scopes.pop().close();
-            } catch (Exception | LinkageError e) {
-                reportHandlerScopeFailure("Plugin handler scope cleanup threw exception", e);
-            }
+            closeHandlerScopes(scopes, onScopeFatal);
         }
     }
 
     @SuppressWarnings("removal")
-    private static void reportHandlerScopeFailure(String message, Throwable failure) {
+    private static void closeHandlerScopes(ArrayDeque<AutoCloseable> scopes, Consumer<Error> onScopeFatal) {
+        Error firstFatal = null;
+        while (!scopes.isEmpty()) {
+            try {
+                scopes.pop().close();
+            } catch (Exception | LinkageError | VirtualMachineError | ThreadDeath e) {
+                try {
+                    reportHandlerScopeFailure("Plugin handler scope cleanup threw exception", e, onScopeFatal);
+                } catch (VirtualMachineError | ThreadDeath fatal) {
+                    if (firstFatal == null) firstFatal = fatal;
+                }
+            }
+        }
+        if (firstFatal != null) throw firstFatal;
+    }
+
+    @SuppressWarnings("removal")
+    private static void reportHandlerScopeFailure(String message, Throwable failure, Consumer<Error> onScopeFatal) {
         var cause = failure;
         while ((cause instanceof CompletionException || cause instanceof ExecutionException)
                 && cause.getCause() != null) {
             cause = cause.getCause();
         }
-        if (cause instanceof VirtualMachineError fatal) throw fatal;
-        if (cause instanceof ThreadDeath fatal) throw fatal;
+        if (cause instanceof VirtualMachineError || cause instanceof ThreadDeath) {
+            var fatal = (Error) cause;
+            onScopeFatal.accept(fatal);
+            throw fatal;
+        }
         logger.warn(message, failure);
     }
 
