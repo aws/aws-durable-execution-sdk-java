@@ -272,6 +272,17 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     }
 
     @Override
+    public AutoCloseable openHandlerScope() {
+        var trace = executionTrace;
+        if (!tracingEnabled || trace == null) return null;
+        var ambient = Span.current().getSpanContext();
+        // Preserve a compatible ambient Lambda span. An absent or unrelated ambient span must not leave
+        // handler instrumentation outside the durable execution's canonical trace.
+        if (ambient.isValid() && trace.traceId().equals(ambient.getTraceId())) return null;
+        return Span.wrap(workflowSpanContext).makeCurrent();
+    }
+
+    @Override
     public void onInvocationEnd(InvocationEndInfo info) {
         if (!tracingEnabled) {
             return;

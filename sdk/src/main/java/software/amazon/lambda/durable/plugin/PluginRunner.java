@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.plugin;
 
+import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,6 +53,30 @@ public class PluginRunner {
                 hook.accept(plugin);
             } catch (Exception e) {
                 logger.warn("Plugin hook threw exception", e);
+            }
+        }
+    }
+
+    /** Runs the root handler with optional plugin scopes, closing them on the same thread in reverse order. */
+    public <T> T runHandler(Supplier<T> handler) {
+        var scopes = new ArrayDeque<AutoCloseable>();
+        try {
+            for (var plugin : plugins) {
+                try {
+                    var scope = plugin.openHandlerScope();
+                    if (scope != null) scopes.push(scope);
+                } catch (Exception e) {
+                    logger.warn("Plugin handler scope threw exception", e);
+                }
+            }
+            return handler.get();
+        } finally {
+            while (!scopes.isEmpty()) {
+                try {
+                    scopes.pop().close();
+                } catch (Exception e) {
+                    logger.warn("Plugin handler scope cleanup threw exception", e);
+                }
             }
         }
     }

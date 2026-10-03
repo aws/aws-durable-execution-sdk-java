@@ -109,7 +109,8 @@ public class DurableExecutor {
                         DurableContextImpl.setCurrentContext(context);
                         // use a try-with-resources to clear logger properties
                         try (var ignored = DurableLogger.attachContext()) {
-                            return handler.apply(userInput, context);
+                            var handlerInput = userInput;
+                            return pluginRunner.runHandler(() -> handler.apply(handlerInput, context));
                         }
                     },
                     config.getExecutorService()); // Get executor from config for running user code

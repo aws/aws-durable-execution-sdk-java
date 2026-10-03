@@ -36,6 +36,17 @@ public interface DurableExecutionPlugin {
      */
     default void onInvocationEnd(InvocationEndInfo info) {}
 
+    /**
+     * Opens an optional scope around the root handler body, after invocation startup.
+     *
+     * <p>The SDK opens and closes this scope on the handler thread, including when the handler fails or suspends.
+     * Scopes close in reverse plugin order when the handler exits. Return {@code null} for no scope. This additive
+     * capability requires a core that calls it; older cores retain their original hook behavior.
+     */
+    default AutoCloseable openHandlerScope() {
+        return null;
+    }
+
     // ─── Operation-level hooks ───────────────────────────────────────────
 
     /** Called when an operation starts (including replay). Use for logging/metrics that want replay visibility. */
