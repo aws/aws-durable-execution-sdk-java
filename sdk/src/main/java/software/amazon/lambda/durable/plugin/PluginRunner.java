@@ -5,6 +5,8 @@ package software.amazon.lambda.durable.plugin;
 import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -74,7 +76,7 @@ public class PluginRunner {
                         onScopeOpened.run();
                     }
                 } catch (Exception | LinkageError e) {
-                    logger.warn("Plugin handler scope threw exception", e);
+                    reportHandlerScopeFailure("Plugin handler scope threw exception", e);
                 }
             }
             return handler.get();
@@ -88,9 +90,21 @@ public class PluginRunner {
             try {
                 scopes.pop().close();
             } catch (Exception | LinkageError e) {
-                logger.warn("Plugin handler scope cleanup threw exception", e);
+                reportHandlerScopeFailure("Plugin handler scope cleanup threw exception", e);
             }
         }
+    }
+
+    @SuppressWarnings("removal")
+    private static void reportHandlerScopeFailure(String message, Throwable failure) {
+        var cause = failure;
+        while ((cause instanceof CompletionException || cause instanceof ExecutionException)
+                && cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        if (cause instanceof VirtualMachineError fatal) throw fatal;
+        if (cause instanceof ThreadDeath fatal) throw fatal;
+        logger.warn(message, failure);
     }
 
     public void onInvocationStart(InvocationInfo info) {

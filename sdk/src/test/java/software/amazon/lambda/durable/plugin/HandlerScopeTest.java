@@ -6,9 +6,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.util.ExceptionHelper;
@@ -118,14 +121,22 @@ class HandlerScopeTest {
 
     @SuppressWarnings("removal")
     @ParameterizedTest
-    @ValueSource(booleans = {true, false})
-    void fatalScopeFailuresStillPropagate(boolean duringOpen) {
+    @CsvSource({"true,false", "false,false", "true,true", "false,true"})
+    void fatalScopeFailuresStillPropagate(boolean duringOpen, boolean wrapped) {
         for (Error fatal : List.of(new InternalError("fatal VM failure"), new ThreadDeath())) {
             var plugin = new DurableExecutionPlugin() {
                 @Override
                 public AutoCloseable openHandlerScope() {
-                    if (duringOpen) throw fatal;
+                    if (duringOpen) {
+                        if (wrapped)
+                            CompletableFuture.failedFuture(new ExecutionException(fatal))
+                                    .join();
+                        throw fatal;
+                    }
                     return () -> {
+                        if (wrapped)
+                            CompletableFuture.failedFuture(new ExecutionException(fatal))
+                                    .join();
                         throw fatal;
                     };
                 }
