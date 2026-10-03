@@ -382,6 +382,8 @@ A useful pre-deployment check is to run one execution locally with the provider 
 
 `VirtualMachineError` and `ThreadDeath` are not converted to ordinary durable failure results. The SDK finalizes
 published plugins with `RETRYING`, releases invocation state, and rethrows the fatal cause from the invocation boundary.
-Fatal failures also escape the SDK's asynchronous executor runnable, so the default thread-pool executor terminates
-that worker. A supplied executor retains its own task-exception policy. With a direct executor, rethrow is deferred to the invocation boundary to allow finalization first. Ordinary
-handler failures and nonfatal plugin/factory containment retain their existing behavior.
+Fatal failures from startup or the root handler also escape the SDK's asynchronous supplier runnable, so the default
+thread-pool executor terminates that worker. A supplied executor retains its own task-exception policy. With a direct
+executor, rethrow is deferred to the invocation boundary to allow finalization first. Fatal failures from
+`onInvocationEnd` still reach the invocation caller, but their completion-stage callback does not guarantee worker
+termination. Ordinary handler failures and nonfatal plugin/factory containment retain their existing behavior.
