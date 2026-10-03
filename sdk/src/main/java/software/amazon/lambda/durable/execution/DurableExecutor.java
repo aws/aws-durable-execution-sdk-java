@@ -154,7 +154,7 @@ public class DurableExecutor {
                         .handle((result, ex) -> {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
-                                Throwable cause = ExceptionHelper.unwrapAsyncFailure(ex);
+                                Throwable cause = normalizeInvocationFailure(ex);
 
                                 if (isFatal(cause)) {
                                     try {
@@ -244,7 +244,7 @@ public class DurableExecutor {
                                 // CompletionException. The plugins are told what failed, not how it was delivered, and
                                 // the failure branches above already unwrap before they report -- so unwrap here too,
                                 // or Insight's record and the OTel span status would name the wrapper.
-                                resultDeliveryFailure = ExceptionHelper.unwrapAsyncFailure(failure);
+                                resultDeliveryFailure = normalizeInvocationFailure(failure);
                                 if (resultDeliveryFailure == null) {
                                     resultDeliveryFailure = failure;
                                 }
@@ -277,7 +277,7 @@ public class DurableExecutor {
                         .join();
             } catch (CompletionException e) {
                 // unwrap the CompletionException and rethrow the wrapped exception
-                ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapAsyncFailure(e));
+                ExceptionHelper.sneakyThrow(normalizeInvocationFailure(e));
                 return null;
             }
         } finally {
@@ -313,6 +313,17 @@ public class DurableExecutor {
         };
         executor.execute(work);
         return result;
+    }
+
+    private static Throwable normalizeInvocationFailure(Throwable failure) {
+        var unwrapped = ExceptionHelper.unwrapAsyncFailure(failure);
+        if (isFatal(unwrapped)) return unwrapped;
+        // ExecutionException can be an application failure itself. Only CompletionException is the SDK's
+        // ordinary transport here; retain the application's error type, message, and serialized cause chain.
+        while (failure instanceof CompletionException && failure.getCause() != null) {
+            failure = failure.getCause();
+        }
+        return failure;
     }
 
     @SuppressWarnings("removal")
