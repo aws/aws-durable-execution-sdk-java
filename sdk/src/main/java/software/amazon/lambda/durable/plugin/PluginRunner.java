@@ -59,6 +59,11 @@ public class PluginRunner {
         run(p -> p.onInvocationStart(info));
     }
 
+    /** Dispatches the invocation snapshot while preserving legacy hooks through default-method delegation. */
+    public void onInvocationStart(InvocationInfo info, String xRayTraceId) {
+        run(p -> p.onInvocationStart(info, xRayTraceId));
+    }
+
     /**
      * Called at the end of each invocation. Awaited — the SDK blocks until all plugins return, allowing plugins to
      * flush spans/metrics before Lambda freezes.

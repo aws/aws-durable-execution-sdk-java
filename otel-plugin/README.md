@@ -90,6 +90,24 @@ aws lambda update-function-configuration \
 
 Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar`. Lambda adds JARs in this directory to the Java class path. Set `OTEL_JAVAAGENT_EXTENSIONS` to the deployed JAR so the ADOT Java agent also loads its `AutoConfigurationCustomizerProvider`, and set `DURABLE_EXECUTION_PLUGINS=otel-invocation` so the Durable Execution SDK loads its `InvocationOtelPluginProvider`.
 
+### Invocation-local headers on Lambda Managed Instances
+
+The SDK captures `Context.getXrayTraceId()` before dispatching the handler to a worker thread and exposes it as
+an immutable String through the additive
+`onInvocationStart(InvocationInfo, String)` hook. The default extractor prefers this header, preserving Root, Parent, and Sampled.
+When the accessor is unavailable or only the inherited Lambda Context default, or the legacy hook is used without a
+runtime snapshot, ordinary Lambda falls back
+to `com.amazonaws.xray.traceHeader`, then `_X_AMZN_TRACE_ID`. An actual runtime override returning null/empty is captured as an empty string and uses deterministic fallback.
+Only an unavailable accessor permits global fallback; a present but invalid header also never adopts a stale
+global header. No global carrier is modified. Custom `ContextExtractor` implementations may override
+`extract(InvocationInfo, String)`; existing no-argument extractors and one-argument plugin hooks
+continue to work, including subclass overrides. The seven-component `InvocationInfo` record is unchanged, preserving
+Java 21 record-pattern source compatibility. Older cores still load new plugin layers and use the original hook and
+ordinary carriers; consuming an LMI invocation header requires both a runtime override providing that carrier and
+a core that dispatches the new overload. Older visible
+Lambda Context APIs without the optional accessor, and pre-1.4 implementations inheriting the newer null-returning
+default, also retain ordinary carrier fallback.
+
 ### 2. AWS X-Ray Active Tracing
 
 Enable active tracing on your Lambda function so the `_X_AMZN_TRACE_ID` environment variable is populated at invocation time. The plugin uses this header both to parent Invocation spans to the ambient Lambda/X-Ray trace and to anchor the execution trace on the propagated context when it carries a complete parent and an explicit sampling decision.
@@ -372,3 +390,11 @@ var otelPlugin = new InvocationOtelPlugin(
 ## License
 
 Apache-2.0
+
+### Installed core/plugin layer compatibility checks
+
+`src/test/compatibility/run_matrix.py` compiles a caller against a supplied released core JAR, then checks old/old,
+old/new, new/old and new/new core/plugin pairs for both views. Plugins load in a separate layer classloader through
+ServiceLoader, and ordinary tracing plus optional new header dispatch are checked. Supply released JARs, built current
+artifacts and an existing dependency classpath file; the check performs no downloads or AWS calls. Older cores retain
+ordinary tracing rather than being rejected for lacking the optional header capability.

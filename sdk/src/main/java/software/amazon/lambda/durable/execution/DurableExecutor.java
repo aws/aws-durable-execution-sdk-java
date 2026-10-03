@@ -60,6 +60,8 @@ public class DurableExecutor {
             var isFirstInvocation = !executionManager.isReplaying();
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             var executionArn = input.durableExecutionArn();
+            // Capture on the runtime thread before dispatch: LMI trace carriers can be thread-local.
+            var xRayTraceId = RuntimeTraceHeader.capture(lambdaContext);
 
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
@@ -88,18 +90,22 @@ public class DurableExecutor {
                         // inject ThreadLocal objects, update MDC, etc.
                         // executionStartTime comes from the initial EXECUTION operation in the first backend event.
                         if (!pluginRunner.isEmpty()) {
-                            pluginRunner.onInvocationStart(new InvocationInfo(
-                                    requestId,
-                                    executionArn,
-                                    isFirstInvocation,
-                                    executionManager.getExecutionOperation().startTimestamp(),
-                                    userInput,
-                                    PluginInfoConverter.toOperationItemMap(
-                                            executionManager.getOperationsSnapshot(),
-                                            executionManager.getInitialOperationIds()),
-                                    PluginInfoConverter.toOperationItemMap(
-                                            executionManager.getUpdatedOperationsSnapshot(),
-                                            executionManager.getInitialOperationIds())));
+                            pluginRunner.onInvocationStart(
+                                    new InvocationInfo(
+                                            requestId,
+                                            executionArn,
+                                            isFirstInvocation,
+                                            executionManager
+                                                    .getExecutionOperation()
+                                                    .startTimestamp(),
+                                            userInput,
+                                            PluginInfoConverter.toOperationItemMap(
+                                                    executionManager.getOperationsSnapshot(),
+                                                    executionManager.getInitialOperationIds()),
+                                            PluginInfoConverter.toOperationItemMap(
+                                                    executionManager.getUpdatedOperationsSnapshot(),
+                                                    executionManager.getInitialOperationIds())),
+                                    xRayTraceId);
                         }
                         if (inputFailure != null) {
                             ExceptionHelper.sneakyThrow(inputFailure);

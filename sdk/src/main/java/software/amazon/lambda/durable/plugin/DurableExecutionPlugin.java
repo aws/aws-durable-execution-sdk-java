@@ -26,6 +26,19 @@ public interface DurableExecutionPlugin {
     default void onInvocationStart(InvocationInfo info) {}
 
     /**
+     * Called at invocation start with immutable runtime data captured before worker-thread dispatch. The SDK calls this
+     * overload; its default delegates to the original hook so existing plugin implementations remain supported.
+     * Implementations that override this overload can consume invocation-local carriers without changing
+     * InvocationInfo.
+     *
+     * <p>A null snapshot denotes an unavailable runtime accessor and permits legacy fallback. An empty string denotes
+     * an available accessor with no invocation header; the built-in extractor treats it as authoritative absence.
+     */
+    default void onInvocationStart(InvocationInfo info, String xRayTraceId) {
+        onInvocationStart(info);
+    }
+
+    /**
      * Called at the end of each Lambda invocation. Use to flush spans/metrics before Lambda freezes.
      *
      * <p>This hook is awaited — the SDK blocks until it returns. This is the only safe flush point before Lambda

@@ -7,9 +7,11 @@ import io.opentelemetry.api.trace.TraceId;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
 
 /**
- * Extracts OTel trace context from the AWS X-Ray {@code _X_AMZN_TRACE_ID} environment variable.
+ * Extracts OTel trace context from the invocation-local X-Ray header, using ordinary Lambda carriers only when no
+ * runtime snapshot is available.
  *
  * <p>This extractor parses the Lambda/X-Ray header and returns the trace ID in OTel format (32 hex chars) along with
  * the parent span ID (16 hex chars). Plugins use it as a fallback parent for Invocation spans; the deterministic
@@ -28,8 +30,31 @@ public class XRayContextExtractor implements ContextExtractor {
     private static final Pattern HEX_32 = Pattern.compile("[0-9a-f]{32}");
     private static final Pattern HEX_16 = Pattern.compile("[0-9a-f]{16}");
 
+    // Scoped only around extraction so legacy no-argument overrides retain virtual dispatch.
+    private final ThreadLocal<String> invocationTraceHeader = new ThreadLocal<>();
+
+    @Override
+    public ExtractedContext extract(InvocationInfo info, String xRayTraceId) {
+        var previous = invocationTraceHeader.get();
+        invocationTraceHeader.set(xRayTraceId);
+        try {
+            return extract();
+        } finally {
+            if (previous == null) {
+                invocationTraceHeader.remove();
+            } else {
+                invocationTraceHeader.set(previous);
+            }
+        }
+    }
+
     @Override
     public ExtractedContext extract() {
+        var invocationHeader = invocationTraceHeader.get();
+        // A captured snapshot is authoritative even when empty or malformed; only null permits legacy fallback.
+        if (invocationHeader != null) {
+            return parseHeader(invocationHeader);
+        }
         // Try system property first — the Lambda runtime interface client updates this per invocation, so it reflects
         // the current invocation and avoids the JVM's process-lifetime environment-variable caching.
         var traceHeader = System.getProperty(XRAY_SYSTEM_PROPERTY);
@@ -42,6 +67,10 @@ public class XRayContextExtractor implements ContextExtractor {
             return null;
         }
 
+        return parseHeader(traceHeader);
+    }
+
+    private static ExtractedContext parseHeader(String traceHeader) {
         String root = null;
         String parent = null;
         String sampled = null;

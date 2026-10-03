@@ -203,6 +203,24 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         this.idGenerator = OtelPluginSupport.createDefaultIdGenerator();
     }
 
+    // Scoped only around the start hook so inherited overloads still dispatch to legacy subclass overrides.
+    private final ThreadLocal<String> invocationTraceHeader = new ThreadLocal<>();
+
+    @Override
+    public void onInvocationStart(InvocationInfo info, String xRayTraceId) {
+        var previous = invocationTraceHeader.get();
+        invocationTraceHeader.set(xRayTraceId);
+        try {
+            onInvocationStart(info);
+        } finally {
+            if (previous == null) {
+                invocationTraceHeader.remove();
+            } else {
+                invocationTraceHeader.set(previous);
+            }
+        }
+    }
+
     // ─── Invocation hooks ────────────────────────────────────────────────
 
     @Override
@@ -216,7 +234,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
         // Resolve the one execution ancestor both spans parent onto, so they share a stable-per-execution trace and a
         // sampling decision.
-        var extracted = contextExtractor.extract();
+        var extracted = contextExtractor.extract(info, invocationTraceHeader.get());
         var canonicalTraceId =
                 ExecutionTraceContext.canonicalTraceId(extracted, arn(), info.executionStartTime(), idGenerator);
         // Resolve the execution's sampling decision once for this invocation as a full SamplingResult, then apply it to
