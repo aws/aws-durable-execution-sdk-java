@@ -34,12 +34,12 @@ class XRayContextExtractorTest {
 
     @ParameterizedTest
     @NullAndEmptySource
-    void missingInvocationHeaderRetainsOrdinaryLambdaFallback(String header) {
+    void unavailableAccessorFallsBackButCapturedMissingHeaderDoesNot(String header) {
         System.setProperty("com.amazonaws.xray.traceHeader", "Root=1-6955b900-123456789012345678901234;Sampled=0");
         try {
-            assertEquals(
-                    ExtractedContext.Sampling.NOT_SAMPLED,
-                    new XRayContextExtractor().extract(INFO, invocation(header)).sampling());
+            var extracted = new XRayContextExtractor().extract(INFO, invocation(header));
+            if (header == null) assertEquals(ExtractedContext.Sampling.NOT_SAMPLED, extracted.sampling());
+            else assertNull(extracted, "an available but empty runtime snapshot must not borrow the global carrier");
         } finally {
             System.clearProperty("com.amazonaws.xray.traceHeader");
         }

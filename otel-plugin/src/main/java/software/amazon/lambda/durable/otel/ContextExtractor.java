@@ -40,6 +40,9 @@ public interface ContextExtractor {
     /**
      * Extracts context using the invocation and its immutable X-Ray header snapshot. Existing extractors retain their
      * no-argument behavior; implementations that need invocation-local carriers can override this method.
+     *
+     * <p>A null snapshot denotes an unavailable runtime accessor and permits legacy fallback. An empty string denotes
+     * an available accessor with no invocation header; the built-in extractor treats it as authoritative absence.
      */
     default ExtractedContext extract(InvocationInfo info, String xRayTraceId) {
         return extract();

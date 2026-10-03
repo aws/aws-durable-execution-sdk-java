@@ -66,6 +66,57 @@ class InvocationHeaderTest {
         assertEquals(2, exporter.getFinishedSpanItems().size());
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void capturedMissingHeaderDoesNotBorrowTheOverlappingGlobalCarrier(boolean executionView) throws Exception {
+        var property = "com.amazonaws.xray.traceHeader";
+        var previous = System.getProperty(property);
+        var conflictingTrace = "6955b900aaaaaaaaaaaaaaaaaaaaaaaa";
+        System.setProperty(property, "Root=1-6955b900-aaaaaaaaaaaaaaaaaaaaaaaa;Sampled=0");
+        var barrier = new CyclicBarrier(2);
+        var sharedExtractor = new XRayContextExtractor();
+        try {
+            var missing = CompletableFuture.runAsync(() -> {
+                var exporter = InMemorySpanExporter.create();
+                var builder = SdkTracerProvider.builder()
+                        .setSampler(Sampler.alwaysOn())
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter));
+                var config = OtelPluginConfig.builder()
+                        .enableMdc(false)
+                        .contextExtractor(sharedExtractor)
+                        .build();
+                DurableExecutionPlugin plugin = executionView
+                        ? new ExecutionOtelPlugin(builder, config)
+                        : new InvocationOtelPlugin(builder, config);
+                var info = new InvocationInfo("missing", "arn:missing", true, Instant.EPOCH);
+                plugin.onInvocationStart(info, ""); // API available, but this invocation has no header.
+                await(barrier);
+                plugin.onInvocationEnd(
+                        new InvocationEndInfo("missing", "arn:missing", true, InvocationStatus.SUCCEEDED, null));
+                var spans = exporter.getFinishedSpanItems();
+                assertEquals(2, spans.size(), "global Sampled=0 must not suppress this headerless invocation");
+                assertTrue(spans.stream().allMatch(span -> !conflictingTrace.equals(span.getTraceId())));
+            });
+            var present = CompletableFuture.runAsync(() -> {
+                var extracted = sharedExtractor.extract(
+                        new InvocationInfo("present", "arn:present", true, Instant.EPOCH),
+                        "Root=1-6955b900-123456789012345678901234;Sampled=1");
+                assertEquals("6955b900123456789012345678901234", extracted.traceId());
+                assertEquals(ExtractedContext.Sampling.SAMPLED, extracted.sampling());
+                await(barrier);
+            });
+            CompletableFuture.allOf(missing, present).get(20, TimeUnit.SECONDS);
+            assertNull(sharedExtractor.extract(new InvocationInfo("missing", "arn:missing", true, Instant.EPOCH), ""));
+            assertEquals(
+                    conflictingTrace,
+                    sharedExtractor.extract().traceId(),
+                    "legacy direct extraction keeps its fallback");
+        } finally {
+            if (previous == null) System.clearProperty(property);
+            else System.setProperty(property, previous);
+        }
+    }
+
     private static void runInvocations(boolean executionView, boolean sampled, CyclicBarrier barrier) {
         var exporter = InMemorySpanExporter.create();
         var builder = SdkTracerProvider.builder()

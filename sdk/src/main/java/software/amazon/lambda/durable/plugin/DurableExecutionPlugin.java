@@ -30,6 +30,9 @@ public interface DurableExecutionPlugin {
      * overload; its default delegates to the original hook so existing plugin implementations remain supported.
      * Implementations that override this overload can consume invocation-local carriers without changing
      * InvocationInfo.
+     *
+     * <p>A null snapshot denotes an unavailable runtime accessor and permits legacy fallback. An empty string denotes
+     * an available accessor with no invocation header; the built-in extractor treats it as authoritative absence.
      */
     default void onInvocationStart(InvocationInfo info, String xRayTraceId) {
         onInvocationStart(info);
