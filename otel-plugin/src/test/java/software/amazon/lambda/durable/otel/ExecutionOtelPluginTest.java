@@ -280,7 +280,8 @@ class ExecutionOtelPluginTest {
     void invocationStart_joinsAmbientTrace_whenAmbientIsOnExecutionTrace() {
         // Drive an invocation to learn the canonical execution trace ID, then start a fresh invocation with an ambient
         // span on that same trace: the Invocation span joins the ambient span directly.
-        plugin.onInvocationStart(new InvocationInfo("req-0", ARN, true, Instant.now()));
+        var executionStart = Instant.parse("2026-01-01T00:00:00Z");
+        plugin.onInvocationStart(new InvocationInfo("req-0", ARN, true, executionStart));
         plugin.onInvocationEnd(new InvocationEndInfo("req-0", ARN, true, InvocationStatus.SUCCEEDED, null));
         var canonicalTraceId =
                 spanByName(spanExporter.getFinishedSpanItems(), "Workflow").getTraceId();
@@ -290,7 +291,7 @@ class ExecutionOtelPluginTest {
         var ambient =
                 SpanContext.create(canonicalTraceId, ambientSpanId, TraceFlags.getSampled(), TraceState.getDefault());
         try (var ignored = Span.wrap(ambient).makeCurrent()) {
-            plugin.onInvocationStart(new InvocationInfo("req-1", ARN, false, Instant.now()));
+            plugin.onInvocationStart(new InvocationInfo("req-1", ARN, false, executionStart));
         }
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, false, InvocationStatus.SUCCEEDED, null));
 
