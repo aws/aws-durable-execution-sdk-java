@@ -92,6 +92,10 @@ public interface DurableExecutionPlugin {
      *
      * <p>This hook fires on the same thread as user code, so plugins can close OTel scopes here.
      *
+     * <p>If a later plugin's start hook fails fatally, plugins whose start hooks completed successfully receive this
+     * hook in reverse order on the same thread, with {@link UserFunctionOutcome#FAILED} and the original fatal error.
+     * The user function does not run in that case. Cleanup failures do not replace the original start-hook error.
+     *
      * <p>It fires for every outcome of the user function: normal return, a thrown failure, and suspension. Check
      * {@link UserFunctionEndInfo#outcome()} to distinguish them. A suspended function reports
      * {@link UserFunctionOutcome#INCOMPLETE}; its {@link UserFunctionEndInfo#error()} is the SDK's internal

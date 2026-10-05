@@ -347,8 +347,35 @@ public class PluginRunner {
         runOperationHook(p -> p.onOperationChange(info));
     }
 
+    @SuppressWarnings("removal")
     public void onUserFunctionStart(UserFunctionStartInfo info) {
-        runOperationHook(p -> p.onUserFunctionStart(info));
+        var started = new ArrayDeque<DurableExecutionPlugin>();
+        try {
+            run(plugin -> {
+                plugin.onUserFunctionStart(info);
+                started.push(plugin);
+            });
+        } catch (VirtualMachineError | ThreadDeath fatal) {
+            // Unwind attempt scopes on their owner before publishing the fatal: publication can start invocation
+            // finalization on another thread, where it is too late to restore these thread-local scopes safely.
+            closeStartedUserFunctions(started, info, fatal);
+            operationFatalObserver.accept(fatal);
+            throw fatal;
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private static void closeStartedUserFunctions(
+            ArrayDeque<DurableExecutionPlugin> started, UserFunctionStartInfo info, Error fatal) {
+        var endInfo = PluginInfoConverter.toUserFunctionEndInfo(info, UserFunctionOutcome.FAILED, fatal);
+        while (!started.isEmpty()) {
+            try {
+                runPlugin(started.pop(), plugin -> plugin.onUserFunctionEnd(endInfo));
+            } catch (VirtualMachineError | ThreadDeath cleanupFailure) {
+                // Each earlier start gets its cleanup opportunity; preserve the original start-hook failure.
+                if (cleanupFailure != fatal) fatal.addSuppressed(cleanupFailure);
+            }
+        }
     }
 
     public void onUserFunctionEnd(UserFunctionEndInfo info) {

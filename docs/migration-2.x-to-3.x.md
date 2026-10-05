@@ -415,8 +415,12 @@ it before construction. The 2.x minor release declares instance groups with inhe
 
 Fatal operation/user-function hook errors are reported to the invocation before they are rethrown on the hook thread.
 The first plugin-owned fatal cause aborts operation waits and bypasses user-operation retry and error serialization;
-checkpoint batching fails queued work rather than continuing after that reported fatal. Unrelated user-body failures
-retain their existing operation semantics. Invocation-end information remains a snapshot at dispatch: a fatal reported
-only during subsequent resource shutdown is rethrown before the response, without replaying an already delivered end hook.
+checkpoint batching fails queued work rather than continuing after that reported fatal. New operations and queued user
+handlers check the signal before dispatch and execution. With a direct executor, a fatal operation hook leaves the
+operation call exceptionally, before later handler code can run; the invocation boundary still finalizes plugins.
+If a user-function start hook fails fatally, successfully started hooks receive failure cleanup in reverse order on their
+owner thread before invocation finalization is signaled. Cleanup failures do not replace the original fatal error.
+Unrelated user-body failures retain their existing operation semantics. Invocation-end information remains a snapshot at
+dispatch: a fatal reported only during subsequent resource shutdown is rethrown before the response, without replaying an already delivered end hook.
 If an invocation-end hook itself throws a fatal error, the remaining end hooks are still attempted once in registration
 order with that same snapshot before the first fatal is rethrown. Ordinary event hooks retain immediate fatal propagation.

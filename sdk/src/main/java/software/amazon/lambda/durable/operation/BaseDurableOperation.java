@@ -129,6 +129,7 @@ public abstract class BaseDurableOperation {
      * otherwise starts fresh execution.
      */
     public void execute() {
+        executionManager.rethrowPluginFatalIfPresent();
         if (isVirtual) {
             // Virtual operations are not checkpointed, but we still fire plugin hooks
             // so the OTel plugin can emit spans for map/parallel iterations.
@@ -271,12 +272,15 @@ public abstract class BaseDurableOperation {
      * @param threadType the thread type (STEP or CONTEXT)
      */
     protected void runUserHandler(Runnable runnable, ThreadType threadType) {
+        executionManager.rethrowPluginFatalIfPresent();
         String operationId = getOperationId();
         logger.debug("Starting user handler for operation {} ({})", operationId, threadType);
         Runnable wrapped = () -> {
             executionManager.setCurrentThreadContext(new ThreadContext(operationId, threadType));
 
             try {
+                // A task accepted before another hook failed may only now be starting on its worker.
+                executionManager.rethrowPluginFatalIfPresent();
                 runnable.run();
             } catch (Throwable throwable) {
                 executionManager.rethrowPluginFatalIfPresent();
@@ -323,7 +327,6 @@ public abstract class BaseDurableOperation {
         registerActiveThread(operationId);
 
         var completion = new CompletableFuture<Void>();
-        var caller = Thread.currentThread();
         runningUserHandler.set(completion);
         Runnable observed = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
             try {
@@ -331,9 +334,9 @@ public abstract class BaseDurableOperation {
                 completion.complete(null);
             } catch (Throwable failure) {
                 completion.completeExceptionally(failure);
-                // A direct executor surfaces the stored error through the operation/caller boundary. Async workers
-                // must not keep running after a plugin-owned fatal. Other user-operation semantics stay unchanged.
-                if (Thread.currentThread() != caller) executionManager.rethrowPluginFatalIfPresent();
+                // Settle accepted work before propagating on either an async worker or the direct caller. The
+                // invocation boundary still finalizes plugins, but the operation call must not return normally.
+                executionManager.rethrowPluginFatalIfPresent();
             }
         };
         try {
