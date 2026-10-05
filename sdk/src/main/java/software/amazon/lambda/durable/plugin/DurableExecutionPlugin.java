@@ -16,9 +16,10 @@ package software.amazon.lambda.durable.plugin;
 public interface DurableExecutionPlugin {
 
     /**
-     * Optionally supplies operation-level trace propagation metadata synchronously. Return null to abstain. This
-     * groundwork hook is not yet called by production invoke START requests; client-model support and backend rollout
-     * are pending. Implementations must not mutate execution state or create side effects to produce metadata.
+     * Optionally supplies operation-level trace propagation metadata synchronously. Return null to abstain. This hook
+     * runs when creating a new invoke START checkpoint after the operation-start hook. Replaying a checkpointed START
+     * or terminal result does not call it; an uncommitted START may call it again on a later invocation. Produce
+     * metadata deterministically from the input without mutating execution state or creating side effects.
      */
     default PropagationMetadata providePropagationMetadata(PropagationInput input) {
         var header = providePropagationMetadata(

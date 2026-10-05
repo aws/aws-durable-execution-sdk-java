@@ -3,8 +3,8 @@
 package software.amazon.lambda.durable.plugin;
 
 /**
- * Immutable SDK-owned propagation contribution. This is not a generated Lambda request model and is not currently
- * serialized on the production invoke START path. A null header means the plugin has no contribution.
+ * Immutable SDK-owned propagation contribution, separate from generated Lambda request models. The core maps its
+ * optional header to the invoke START checkpoint. A null header means the plugin has no contribution.
  */
 public final class PropagationMetadata {
     private final String xAmznTraceId;

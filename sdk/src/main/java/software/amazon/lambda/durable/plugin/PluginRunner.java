@@ -47,7 +47,8 @@ public class PluginRunner {
     /**
      * Collects supported metadata in configured order on the caller's thread. First non-null member wins; matching
      * later values are harmless. Ordinary plugin/invalid-result failures are logged and skipped, matching the event
-     * hooks' Exception containment policy; Errors continue to propagate. No production START path calls this yet.
+     * hooks' Exception containment policy; Errors continue to propagate. The core calls this while creating a new
+     * invoke START checkpoint, not while replaying an existing operation.
      */
     public PropagationMetadata providePropagationMetadata(PropagationInput input) {
         requireNonNull(input, "input");
