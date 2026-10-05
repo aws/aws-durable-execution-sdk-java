@@ -34,9 +34,9 @@ public class XRayContextExtractor implements ContextExtractor {
     private final ThreadLocal<String> invocationTraceHeader = new ThreadLocal<>();
 
     @Override
-    public ExtractedContext extract(InvocationInfo info, String xRayTraceId) {
+    public ExtractedContext extract(InvocationInfo info) {
         var previous = invocationTraceHeader.get();
-        invocationTraceHeader.set(xRayTraceId);
+        invocationTraceHeader.set(runtimeHeader(info));
         try {
             return extract();
         } finally {
@@ -45,6 +45,15 @@ public class XRayContextExtractor implements ContextExtractor {
             } else {
                 invocationTraceHeader.set(previous);
             }
+        }
+    }
+
+    private static String runtimeHeader(InvocationInfo info) {
+        try {
+            return info.xRayTraceId();
+        } catch (NoSuchMethodError olderCore) {
+            // New plugin layers still work on a released core whose InvocationInfo has no optional field accessor.
+            return null;
         }
     }
 

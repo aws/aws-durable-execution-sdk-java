@@ -92,21 +92,38 @@ Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-exe
 
 ### Invocation-local headers on Lambda Managed Instances
 
-The SDK captures `Context.getXrayTraceId()` before dispatching the handler to a worker thread and exposes it as
-an immutable String through the additive
-`onInvocationStart(InvocationInfo, String)` hook. The default extractor prefers this header, preserving Root, Parent, and Sampled.
-When the accessor is unavailable or only the inherited Lambda Context default, or the legacy hook is used without a
-runtime snapshot, ordinary Lambda falls back
-to `com.amazonaws.xray.traceHeader`, then `_X_AMZN_TRACE_ID`. An actual runtime override returning null/empty is captured as an empty string and uses deterministic fallback.
-Only an unavailable accessor permits global fallback; a present but invalid header also never adopts a stale
-global header. No global carrier is modified. Custom `ContextExtractor` implementations may override
-`extract(InvocationInfo, String)`; existing no-argument extractors and one-argument plugin hooks
-continue to work, including subclass overrides. The seven-component `InvocationInfo` record is unchanged, preserving
-Java 21 record-pattern source compatibility. Older cores still load new plugin layers and use the original hook and
-ordinary carriers; consuming an LMI invocation header requires both a runtime override providing that carrier and
-a core that dispatches the new overload. Older visible
-Lambda Context APIs without the optional accessor, and pre-1.4 implementations inheriting the newer null-returning
-default, also retain ordinary carrier fallback.
+The SDK captures `Context.getXrayTraceId()` before dispatching the handler to a worker thread and stores the immutable
+snapshot in `InvocationInfo.xRayTraceId` when the worker constructs the invocation information. Startup remains `onInvocationStart(InvocationInfo)`; extractors receive the
+same object through `ContextExtractor.extract(InvocationInfo)`. There is no independent header parameter.
+
+The default extractor prefers this field, preserving Root, Parent and Sampled. A null field denotes an unavailable
+runtime carrier (including an inherited neutral Lambda Context default) or a legacy constructor call, and permits
+ordinary Lambda fallback to `com.amazonaws.xray.traceHeader`, then `_X_AMZN_TRACE_ID`. An actual runtime override
+returning null/empty is captured as an empty string and uses deterministic fallback. A captured malformed header is
+also authoritative and never borrows another invocation's process-wide header. No global carrier is modified.
+
+The no-argument `ContextExtractor.extract()` remains the functional method, so existing lambdas and custom extractors
+retain their behavior. `XRayContextExtractor` uses a temporary thread-local scope solely to preserve old no-argument
+subclass overrides, including `super.extract()` delegation; the snapshot itself is stored in the record field. The
+scope is restored in `finally`. A new plugin layer on an older core falls back when the optional field accessor is
+unavailable; provider API and dependency floors are unchanged. Consuming the LMI field requires both updated core and
+plugin. Shared plugin-instance concurrency remains the separate factory-lifetime change.
+
+**Record source compatibility boundary:** `InvocationInfo` now has eight components. Its previous 4-, 5-, 6- and
+7-argument constructors and seven accessors remain; the old constructors set the new field to null. Existing constructor
+source and compiled calls continue to work. Previously compiled seven-component record patterns also continue to run,
+but recompiling that pattern against the new record requires an eighth binding, such as `var xRayTraceId`:
+
+```java
+if (info instanceof InvocationInfo(var request, var arn, var first, var start,
+        var input, var operations, var updated, var xRayTraceId)) {
+    // Read the invocation-local header through the binding or info.xRayTraceId().
+}
+```
+
+Reflection exposes eight record components, and record equality/hash computation now includes the header. This is not
+complete record-shape/source compatibility. InvocationInfo.toString continues to omit payloads, operation snapshots
+and the runtime header. Invocation/checkpoint identities and persisted checkpoint formats do not change.
 
 ### 2. AWS X-Ray Active Tracing
 

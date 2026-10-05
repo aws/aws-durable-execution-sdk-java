@@ -20,13 +20,13 @@ class XRayContextExtractorTest {
         System.setProperty("com.amazonaws.xray.traceHeader", "Root=1-ffffffff-ffffffffffffffffffffffff;Sampled=1");
         try {
             var header = "Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=" + sampled;
-            var extracted = new XRayContextExtractor().extract(INFO, invocation(header));
+            var extracted = new XRayContextExtractor().extract(invocation(header));
             assertEquals("6955b900123456789012345678901234", extracted.traceId());
             assertEquals("1234567890123456", extracted.parentSpanId());
             assertEquals(
                     sampled.equals("1") ? ExtractedContext.Sampling.SAMPLED : ExtractedContext.Sampling.NOT_SAMPLED,
                     extracted.sampling());
-            assertNull(new XRayContextExtractor().extract(INFO, invocation("malformed")));
+            assertNull(new XRayContextExtractor().extract(invocation("malformed")));
         } finally {
             System.clearProperty("com.amazonaws.xray.traceHeader");
         }
@@ -37,7 +37,7 @@ class XRayContextExtractorTest {
     void unavailableAccessorFallsBackButCapturedMissingHeaderDoesNot(String header) {
         System.setProperty("com.amazonaws.xray.traceHeader", "Root=1-6955b900-123456789012345678901234;Sampled=0");
         try {
-            var extracted = new XRayContextExtractor().extract(INFO, invocation(header));
+            var extracted = new XRayContextExtractor().extract(invocation(header));
             if (header == null) assertEquals(ExtractedContext.Sampling.NOT_SAMPLED, extracted.sampling());
             else assertNull(extracted, "an available but empty runtime snapshot must not borrow the global carrier");
         } finally {
@@ -50,7 +50,7 @@ class XRayContextExtractorTest {
         var expected =
                 new ExtractedContext("6955b900123456789012345678901234", null, ExtractedContext.Sampling.SAMPLED);
         ContextExtractor custom = () -> expected;
-        assertSame(expected, custom.extract(INFO, invocation("ignored")));
+        assertSame(expected, custom.extract(invocation("ignored")));
     }
 
     @Test
@@ -66,7 +66,6 @@ class XRayContextExtractorTest {
         assertSame(
                 expected,
                 extractor.extract(
-                        INFO,
                         invocation("Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=1")));
     }
 
@@ -83,14 +82,22 @@ class XRayContextExtractorTest {
             }
         };
         var header = "Root=1-6955b900-123456789012345678901234;Sampled=";
-        assertNotNull(extractor.extract(INFO, invocation(header + "1")));
+        assertNotNull(extractor.extract(invocation(header + "1")));
         assertNull(extractor.extract());
-        assertThrows(IllegalArgumentException.class, () -> extractor.extract(INFO, invocation(header + "0")));
+        assertThrows(IllegalArgumentException.class, () -> extractor.extract(invocation(header + "0")));
         assertNull(extractor.extract());
     }
 
-    private static String invocation(String header) {
-        return header;
+    private static InvocationInfo invocation(String header) {
+        return new InvocationInfo(
+                INFO.requestId(),
+                INFO.durableExecutionArn(),
+                INFO.isFirstInvocation(),
+                INFO.executionStartTime(),
+                INFO.executionInput(),
+                INFO.operations(),
+                INFO.updatedOperations(),
+                header);
     }
 
     @Test

@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Map;
 import javax.tools.ToolProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -49,9 +50,9 @@ class XRayExtractorBinaryCompatibilityTest {
                 new URL[] {consumer.toUri().toURL()}, getClass().getClassLoader())) {
             var type = loader.loadClass("LegacyExtractor");
             var extractor = (XRayContextExtractor) type.getConstructor().newInstance();
-            var info = new InvocationInfo("request", "arn", true, Instant.EPOCH);
             var runtime = ("Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=1");
-            var extracted = extractor.extract(info, runtime);
+            var info = new InvocationInfo("request", "arn", true, Instant.EPOCH, null, Map.of(), Map.of(), runtime);
+            var extracted = extractor.extract(info);
             assertEquals("6955b900aaaaaaaaaaaaaaaaaaaaaaaa", extracted.traceId());
             assertEquals(ExtractedContext.Sampling.NOT_SAMPLED, extracted.sampling());
             assertEquals(1, type.getField("calls").get(extractor));

@@ -68,9 +68,9 @@ class DurableExecutionTest {
         var seen = new AtomicReference<String>();
         var plugin = new DurableExecutionPlugin() {
             @Override
-            public void onInvocationStart(InvocationInfo info, String xRayTraceId) {
+            public void onInvocationStart(InvocationInfo info) {
                 assertFalse(runtimeThread == Thread.currentThread());
-                seen.set(xRayTraceId);
+                seen.set(info.xRayTraceId());
             }
         };
         var executionOp = Operation.builder()

@@ -4,12 +4,13 @@ import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
-import java.lang.reflect.Method;
+import java.lang.reflect.Constructor;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.ServiceLoader;
 import software.amazon.lambda.durable.plugin.*;
 
@@ -53,22 +54,25 @@ public class PluginLayerCompatibilityProbe {
     }
     private static void checkOptionalHeaderDispatch(PluginRunner runner, DurableExecutionPlugin plugin,
             InMemorySpanExporter exporter, Class<?> type) throws Exception {
-        Method hook;
+        Constructor<InvocationInfo> constructor;
         try {
-            hook = PluginRunner.class.getMethod("onInvocationStart", InvocationInfo.class, String.class);
+            constructor = InvocationInfo.class.getConstructor(String.class, String.class, boolean.class, Instant.class,
+                    Object.class, Map.class, Map.class, String.class);
         } catch (NoSuchMethodException olderCore) {
-            return; // The older core retains the original hook and ordinary carriers.
+            return; // Older cores retain the original record and ordinary carriers.
         }
         boolean supportsHeader;
         try {
-            type.getDeclaredMethod("onInvocationStart", InvocationInfo.class, String.class);
+            type.getClassLoader().loadClass("software.amazon.lambda.durable.otel.ContextExtractor")
+                    .getMethod("extract", InvocationInfo.class);
             supportsHeader = true;
         } catch (NoSuchMethodException olderPlugin) {
             supportsHeader = false;
         }
         exporter.reset();
-        hook.invoke(runner, new InvocationInfo("request-2", "arn:exec", false, Instant.EPOCH),
+        var info = constructor.newInstance("request-2", "arn:exec", false, Instant.EPOCH, null, Map.of(), Map.of(),
                 "Root=1-6955b900-aaaaaaaaaaaaaaaaaaaaaaaa;Parent=abcdefabcdefabcd;Sampled=0");
+        runner.onInvocationStart(info);
         runner.onInvocationEnd(new InvocationEndInfo("request-2", "arn:exec", false, InvocationStatus.SUCCEEDED, null));
         if (exporter.getFinishedSpanItems().size() != (supportsHeader ? 0 : 2))
             throw new AssertionError("Optional dispatch did not preserve new/legacy behavior");

@@ -32,7 +32,7 @@ class InvocationHeaderTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {true, false})
-    void runtimeOverloadPreservesLegacyPluginSubclassDispatch(boolean executionView) {
+    void invocationFieldPreservesLegacyPluginSubclassDispatch(boolean executionView) {
         var exporter = InMemorySpanExporter.create();
         var builder = SdkTracerProvider.builder()
                 .setSampler(Sampler.alwaysOn())
@@ -56,7 +56,7 @@ class InvocationHeaderTest {
                 };
         var info = new InvocationInfo("request", "arn", true, Instant.EPOCH);
         var runtime = ("Root=1-6955b900-123456789012345678901234;Sampled=0");
-        plugin.onInvocationStart(info, runtime);
+        plugin.onInvocationStart(withHeader(info, runtime));
         plugin.onInvocationEnd(new InvocationEndInfo("request", "arn", true, InvocationStatus.SUCCEEDED, null));
         assertEquals(1, calls.get());
         assertTrue(exporter.getFinishedSpanItems().isEmpty());
@@ -89,7 +89,7 @@ class InvocationHeaderTest {
                         ? new ExecutionOtelPlugin(builder, config)
                         : new InvocationOtelPlugin(builder, config);
                 var info = new InvocationInfo("missing", "arn:missing", true, Instant.EPOCH);
-                plugin.onInvocationStart(info, ""); // API available, but this invocation has no header.
+                plugin.onInvocationStart(withHeader(info, "")); // API available, but this invocation has no header.
                 await(barrier);
                 plugin.onInvocationEnd(
                         new InvocationEndInfo("missing", "arn:missing", true, InvocationStatus.SUCCEEDED, null));
@@ -98,15 +98,16 @@ class InvocationHeaderTest {
                 assertTrue(spans.stream().allMatch(span -> !conflictingTrace.equals(span.getTraceId())));
             });
             var present = CompletableFuture.runAsync(() -> {
-                var extracted = sharedExtractor.extract(
+                var extracted = sharedExtractor.extract(withHeader(
                         new InvocationInfo("present", "arn:present", true, Instant.EPOCH),
-                        "Root=1-6955b900-123456789012345678901234;Sampled=1");
+                        "Root=1-6955b900-123456789012345678901234;Sampled=1"));
                 assertEquals("6955b900123456789012345678901234", extracted.traceId());
                 assertEquals(ExtractedContext.Sampling.SAMPLED, extracted.sampling());
                 await(barrier);
             });
             CompletableFuture.allOf(missing, present).get(20, TimeUnit.SECONDS);
-            assertNull(sharedExtractor.extract(new InvocationInfo("missing", "arn:missing", true, Instant.EPOCH), ""));
+            assertNull(sharedExtractor.extract(
+                    withHeader(new InvocationInfo("missing", "arn:missing", true, Instant.EPOCH), "")));
             assertEquals(
                     conflictingTrace,
                     sharedExtractor.extract().traceId(),
@@ -130,10 +131,10 @@ class InvocationHeaderTest {
                 + ";Parent=1234567890123456;Sampled=" + (sampled ? "1" : "0");
         var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/test/" + sampled;
         for (int invocation = 0; invocation < 2; invocation++) {
-            plugin.onInvocationStart(
+            plugin.onInvocationStart(withHeader(
                     new InvocationInfo(
                             "request-" + invocation, arn, invocation == 0, Instant.parse("2026-10-02T00:00:00Z")),
-                    header);
+                    header));
             await(barrier);
             plugin.onInvocationEnd(new InvocationEndInfo(
                     "request-" + invocation,
@@ -150,6 +151,18 @@ class InvocationHeaderTest {
         assertEquals(3, spans.size());
         assertTrue(spans.stream().allMatch(span -> traceId.equals(span.getTraceId())));
         assertTrue(spans.stream().allMatch(span -> "1234567890123456".equals(span.getParentSpanId())));
+    }
+
+    private static InvocationInfo withHeader(InvocationInfo info, String header) {
+        return new InvocationInfo(
+                info.requestId(),
+                info.durableExecutionArn(),
+                info.isFirstInvocation(),
+                info.executionStartTime(),
+                info.executionInput(),
+                info.operations(),
+                info.updatedOperations(),
+                header);
     }
 
     private static void await(CyclicBarrier barrier) {
