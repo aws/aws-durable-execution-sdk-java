@@ -185,6 +185,7 @@ public class ApiRequestDelayedBatcher<T> {
         // the new future will just do nothing.
         flushingQueueFuture = flushingQueueFuture.thenRunAsync(this::flushQueue, InternalExecutor.INSTANCE);
     }
+
     /** Call checkpoint API with items in the flushing queue */
     private void flushQueue() {
         // There could be more items to flush because

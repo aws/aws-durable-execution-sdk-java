@@ -152,13 +152,17 @@ class LocalDurableTestRunnerTest {
                 return "done";
             });
         });
+        var waiting = runner.run("input");
 
-        assertEquals(ExecutionStatus.PENDING, runner.run("input").getStatus());
+        assertEquals(ExecutionStatus.PENDING, waiting.getStatus());
 
         runner.pauseExecution();
-        assertEquals(ExecutionStatus.PENDING, runner.runUntilComplete("input").getStatus());
-        // The wait is advanceable, so without the paused check runUntilComplete would advance it and re-invoke,
-        // running the step body for a result that no checkpoint could record.
+        var paused = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.PENDING, paused.getStatus());
+        // The wait could normally be auto-advanced by runUntilComplete. While paused, runUntilComplete must stop
+        // instead of re-invoking and running after-wait, because any new checkpoint from that work will not be able
+        // to be recorded.
         assertEquals(0, stepRuns.get());
 
         runner.resumeExecution();

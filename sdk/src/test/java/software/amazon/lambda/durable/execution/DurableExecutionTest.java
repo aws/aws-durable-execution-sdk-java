@@ -15,6 +15,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -971,6 +972,72 @@ class DurableExecutionTest {
         assertEquals(ExecutionStatus.PENDING, output.status());
         assertNull(output.result());
         // Only the background batch reached the client; the small result's own terminal update never did.
+        verify(client, times(1)).checkpoint(any(), any(), any());
+
+        assertNotNull(invocationEndInfo.get());
+        assertEquals(InvocationStatus.PENDING, invocationEndInfo.get().invocationStatus());
+        assertNull(invocationEndInfo.get().executionError());
+    }
+
+    /**
+     * A background checkpoint can still be queued when the handler returns. Terminal output must not be chosen until
+     * that queued checkpoint is flushed, because the flush can discover that the service revoked the checkpoint token.
+     */
+    @Test
+    void checkpointTokenRevoked_afterHandlerReturnsDuringDrain_reportsPendingInsteadOfSucceeded() throws Exception {
+        var handlerReturned = new CountDownLatch(1);
+        var client = mock(DurableExecutionClient.class);
+        when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
+            List<OperationUpdate> updates = invocation.getArgument(2);
+            var isBackgroundBatch = updates.stream().anyMatch(update -> "bg-op".equals(update.id()));
+            if (isBackgroundBatch) {
+                assertTrue(handlerReturned.await(5, TimeUnit.SECONDS), "Checkpoint flushed before handler returned");
+                return CheckpointDurableExecutionResponse.builder().build();
+            }
+            return CheckpointDurableExecutionResponse.builder()
+                    .checkpointToken("token-x")
+                    .build();
+        });
+
+        var invocationEndInfo = new AtomicReference<InvocationEndInfo>();
+        DurableExecutionPlugin plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationEnd(InvocationEndInfo info) {
+                invocationEndInfo.set(info);
+            }
+        };
+
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(client)
+                .withCheckpointDelay(Duration.ofSeconds(60))
+                .withPlugins(plugin)
+                .build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp()))
+                        .build());
+
+        var output = DurableExecutor.execute(
+                input,
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    var executionManager = ((DurableContextImpl) ctx).getExecutionManager();
+                    executionManager.sendOperationUpdate(OperationUpdate.builder()
+                            .id("bg-op")
+                            .type(OperationType.STEP)
+                            .action(OperationAction.START)
+                            .build());
+
+                    handlerReturned.countDown();
+                    return "small-result";
+                },
+                config);
+
+        assertEquals(ExecutionStatus.PENDING, output.status());
+        assertNull(output.result());
         verify(client, times(1)).checkpoint(any(), any(), any());
 
         assertNotNull(invocationEndInfo.get());

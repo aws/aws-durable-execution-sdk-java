@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -49,8 +50,10 @@ class CheckpointManager {
     private final Runnable finishCheckpointProcessing;
     private final Runnable signalSuspensionForRevokedCheckpointToken;
     private String checkpointToken;
-    // Latched true the moment a checkpoint response omits the checkpoint token. Never cleared: once that happens,
-    // this invocation must not record anything further on this token, on any API.
+    /**
+     * True the moment a checkpoint response omits the checkpoint token. Never cleared: once that happens, this
+     * invocation must not record anything further on this token, on any API.
+     */
     private volatile boolean checkpointTokenRevoked;
 
     CheckpointManager(
@@ -165,8 +168,29 @@ class CheckpointManager {
 
     /** Cancels all polling futures and waits for all pending checkpoint requests to complete */
     void shutdown() {
+        // complete all polling futures with an exception
         failPollingFutures(() -> new IllegalStateException("CheckpointManager shutdown"));
+        // wait for all non-polling checkpoint requests to complete
         checkpointApiRequestDelayedBatcher.shutdown();
+    }
+
+    /** Waits for checkpoint work already submitted by this invocation to settle. */
+    void awaitPendingCheckpoints() {
+        if (checkpointTokenRevoked) {
+            return;
+        }
+
+        try {
+            // Submit a zero-delay no-op as a barrier: the batcher completes this future only after earlier queued
+            // checkpoint work has been processed. If that work revokes the token, the barrier may be abandoned and
+            // complete exceptionally; that is the state this drain is trying to observe before a terminal response.
+            checkpointApiRequestDelayedBatcher.submit(null, Duration.ZERO).join();
+        } catch (CompletionException e) {
+            if (checkpointTokenRevoked) {
+                return;
+            }
+            throw e;
+        }
     }
 
     private void failPollingFutures(Supplier<? extends Throwable> cause) {
@@ -223,14 +247,9 @@ class CheckpointManager {
             }
 
             // An earlier batch already came back without a checkpoint token, so this invocation must not issue
-            // further checkpoints: resending the spent token would fail one call later with
-            // InvalidParameterValueException, so nothing in this batch can go out. Throw rather than return: a plain
-            // return would let the batcher mark this batch's futures successful (see
-            // ApiRequestDelayedBatcher#flushQueue), falsely telling callers like handleLargePayload that unsent work
-            // was recorded. This check must run before tryStartCheckpointProcessing, which is paired with
-            // finishCheckpointProcessing in the finally block below and must not be started without also finishing.
+            // further checkpoints.
             if (checkpointTokenRevoked) {
-                throw new SuspendExecutionException("The checkpoint response did not include a checkpoint token");
+                throw new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE);
             }
 
             // Starting the backend request is coordinated with the last-thread suspension decision. Once suspension
@@ -258,24 +277,11 @@ class CheckpointManager {
                     // The response omitted the checkpoint token. If this batch carried the execution's own
                     // terminal update, the execution is already finished, so the call reports success instead: fall
                     // through and process the response as usual. Otherwise, this invocation must return PENDING and
-                    // must not issue further checkpoints: never send the spent token again, on this API or on
-                    // GetDurableExecutionState pagination.
+                    // must not issue further checkpoints.
                     var isTerminalExecutionUpdate =
                             request.stream().anyMatch(update -> update.type() == OperationType.EXECUTION);
                     if (!isTerminalExecutionUpdate) {
                         handleRevokedCheckpointToken();
-                        // The updates in THIS batch were durably recorded by the service -- that is a server-side
-                        // fact and nothing here changes it. But resolving this batch's futures successfully would let
-                        // the handler thread run on: StepOperation.executeStepLogic(), for example, calls
-                        // checkpointStarted() and then runs the user function, whose result can never be recorded
-                        // once the token is gone. On replay that step would run again (AT_LEAST_ONCE) or never run
-                        // (AT_MOST_ONCE) while its side effect already happened. So this batch's own futures must
-                        // complete exceptionally too, exactly like every other termination path: throwing here
-                        // (instead of leaving them unresolved, which would block the invocation until the Lambda
-                        // timeout) reaches BaseDurableOperation.java:290-297, which treats SuspendExecutionException
-                        // as expected control flow, not a customer-visible error. Do not apply this response's new
-                        // execution state, resolve pollers, or paginate -- the handler must not observe anything past
-                        // the point where the service stopped accepting checkpoints from this invocation.
                         throw new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE);
                     }
                     logger.info(
@@ -319,7 +325,7 @@ class CheckpointManager {
         }
     }
 
-    // Latches checkpointTokenRevoked and signals suspension. Called only when the batch that surfaced the
+    // Sets checkpointTokenRevoked and signals suspension. Called only when the batch that surfaced the
     // token-less response did not carry the execution's own terminal update.
     private void handleRevokedCheckpointToken() {
         checkpointTokenRevoked = true;

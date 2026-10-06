@@ -133,9 +133,7 @@ public class DurableExecutor {
                                 // SuspendExecutionException is ordinary control flow, not an execution error, so
                                 // plugins only see `cause` when it is a genuine error the latch happened to
                                 // accompany.
-                                if (cause instanceof SuspendExecutionException
-                                        || executionManager.isCheckpointTokenRevoked()) {
-                                    var pluginError = cause instanceof SuspendExecutionException ? null : cause;
+                                if (cause instanceof SuspendExecutionException) {
                                     fireOnInvocationEnd(
                                             pluginRunner,
                                             executionManager,
@@ -143,7 +141,20 @@ public class DurableExecutor {
                                             executionArn,
                                             isFirstInvocation,
                                             InvocationStatus.PENDING,
-                                            pluginError,
+                                            null,
+                                            pluginExecutionInput.get(),
+                                            null);
+                                    return DurableExecutionOutput.pending();
+                                }
+                                if (isCheckpointTokenRevokedAfterTerminalPreparation(executionManager)) {
+                                    fireOnInvocationEnd(
+                                            pluginRunner,
+                                            executionManager,
+                                            requestId,
+                                            executionArn,
+                                            isFirstInvocation,
+                                            InvocationStatus.PENDING,
+                                            null,
                                             pluginExecutionInput.get(),
                                             null);
                                     return DurableExecutionOutput.pending();
@@ -185,12 +196,7 @@ public class DurableExecutor {
                             // user handler complete successfully
                             logger.debug("Execution completed");
 
-                            // A checkpoint response can omit the checkpoint token on a thread other than the
-                            // one that produced `result`, e.g. an unfinished map/parallel branch's checkpoint
-                            // the handler never awaited. This consult must win over the ordinary success path
-                            // below: the service will not record this result, so this invocation must return
-                            // PENDING rather than serialize and report a result the service never sees.
-                            if (executionManager.isCheckpointTokenRevoked()) {
+                            if (isCheckpointTokenRevokedAfterTerminalPreparation(executionManager)) {
                                 fireOnInvocationEnd(
                                         pluginRunner,
                                         executionManager,
@@ -203,6 +209,7 @@ public class DurableExecutor {
                                         null);
                                 return DurableExecutionOutput.pending();
                             }
+
                             var outputPayload = config.getSerDes().serialize(result);
                             try {
                                 var output = DurableExecutionOutput.success(
@@ -245,6 +252,14 @@ public class DurableExecutor {
                 return null;
             }
         }
+    }
+
+    private static boolean isCheckpointTokenRevokedAfterTerminalPreparation(ExecutionManager executionManager) {
+        // A checkpoint response can omit the checkpoint token on a thread other than the one that produced the handler
+        // result/error, e.g. an unawaited stepAsync checkpoint. Drain already-started work before any terminal exit so
+        // a late token revocation wins over SUCCEEDED, FAILED, or RETRYING.
+        executionManager.prepareForTerminalDecision();
+        return executionManager.isCheckpointTokenRevoked();
     }
 
     private static void fireOnInvocationEnd(

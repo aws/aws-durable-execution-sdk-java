@@ -110,7 +110,7 @@ public class ExecutionManager implements SafeCloseable {
                 this::onCheckpointComplete,
                 this::tryStartCheckpointProcessing,
                 this::finishCheckpointProcessing,
-                this::signalSuspensionForRevokedCheckpointToken);
+                this::signalSuspension);
 
         this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()
                 .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
@@ -596,12 +596,21 @@ public class ExecutionManager implements SafeCloseable {
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-        validateRunningThreads();
-
+        prepareForTerminalDecision();
+        validateExecutorPool();
         checkpointManager.shutdown();
     }
 
-    private void validateRunningThreads() {
+    /**
+     * Waits for already-started operation handlers and checkpoint requests to finish so terminal executor decisions
+     * observe any state changes they caused.
+     */
+    void prepareForTerminalDecision() {
+        waitForRunningUserHandlers();
+        checkpointManager.awaitPendingCheckpoints();
+    }
+
+    private void waitForRunningUserHandlers() {
         // This will detect stuck user thread and thread leaks in the thread pool
         for (BaseDurableOperation op : registeredOperations.values()) {
             var userHandlerFuture = op.getRunningUserHandler();
@@ -620,7 +629,9 @@ public class ExecutionManager implements SafeCloseable {
                 }
             }
         }
+    }
 
+    private void validateExecutorPool() {
         // double check if the thread pool is empty
         if (durableConfig.getExecutorService() instanceof ThreadPoolExecutor threadPoolExecutor) {
             var threadCount = threadPoolExecutor.getActiveCount();
@@ -661,17 +672,6 @@ public class ExecutionManager implements SafeCloseable {
         stopAllOperations(ex);
         executionExceptionFuture.completeExceptionally(ex);
         return ex;
-    }
-
-    /**
-     * Signals suspension without throwing. CheckpointManager calls this from inside its checkpoint-response handling
-     * when a checkpoint response omits the checkpoint token. That call site must not itself be interrupted by control
-     * flow: it still has its own cleanup to run (skipping the token-less response's execution state) and throws its own
-     * descriptive SuspendExecutionException afterward. This wrapper only flips the shared suspend state so blocked
-     * operations wake the same way suspension already wakes them.
-     */
-    void signalSuspensionForRevokedCheckpointToken() {
-        signalSuspension();
     }
 
     /**
