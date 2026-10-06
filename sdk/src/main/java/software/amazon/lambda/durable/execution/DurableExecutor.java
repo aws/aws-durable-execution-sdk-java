@@ -154,7 +154,7 @@ public class DurableExecutor {
                                             executionArn,
                                             isFirstInvocation,
                                             InvocationStatus.PENDING,
-                                            null,
+                                            cause,
                                             pluginExecutionInput.get(),
                                             null);
                                     return DurableExecutionOutput.pending();
