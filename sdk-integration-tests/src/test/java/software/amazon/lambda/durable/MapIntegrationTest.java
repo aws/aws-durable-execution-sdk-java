@@ -7,8 +7,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -914,6 +917,87 @@ class MapIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());
         assertEquals(firstRunCount, executionCount.get(), "Map functions should not re-execute on replay");
         assertEquals(events, result2.getHistoryEvents().size());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"FLAT", "NESTED"})
+    void testDefaultConcurrencyPercentageFailureReplaysStoredResults(NestingType nestingType) {
+        var items = List.of("ok1", "FAIL1", "ok2", "FAIL2", "ok3", "FAIL3", "ok4");
+        var executions = new AtomicIntegerArray(items.size());
+        var runner = percentageReplayRunner(nestingType, items, executions);
+        var resultType = new TypeToken<MapResult<String>>() {};
+
+        var first = runner.runUntilComplete("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, first.getStatus());
+        var stored = first.getResult(resultType);
+        assertPercentageFailureResults(items, stored);
+        for (var index = 0; index < items.size(); index++) assertEquals(1, executions.get(index));
+
+        var replay = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+        assertEquals(stored, replay.getResult(resultType), "Replay returns the exact checkpointed result and errors");
+        assertEquals(first.getHistoryEvents().size(), replay.getHistoryEvents().size());
+        for (var index = 0; index < items.size(); index++) {
+            assertEquals(1, executions.get(index), "Completed child bodies must not repeat on replay");
+        }
+    }
+
+    private static LocalDurableTestRunner<String, MapResult<String>> percentageReplayRunner(
+            NestingType nestingType, List<String> items, AtomicIntegerArray executions) {
+        var allStarted = new CountDownLatch(items.size());
+        return LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> context.map(
+                        "default-percentage-replay",
+                        items,
+                        String.class,
+                        (item, index, child) -> {
+                            executions.incrementAndGet(index);
+                            allStarted.countDown();
+                            try {
+                                assertTrue(
+                                        allStarted.await(5, TimeUnit.SECONDS),
+                                        "Default concurrency must admit all children");
+                            } catch (InterruptedException error) {
+                                Thread.currentThread().interrupt();
+                                throw new AssertionError(error);
+                            }
+                            if (item.startsWith("FAIL")) throw new IllegalArgumentException("failed: " + item);
+                            return item.toUpperCase();
+                        },
+                        MapConfig.builder()
+                                .completionConfig(CompletionConfig.toleratedFailurePercentage(0.3))
+                                .nestingType(nestingType)
+                                .build()));
+    }
+
+    private static void assertPercentageFailureResults(List<String> inputs, MapResult<String> result) {
+        assertEquals(ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED, result.completionReason());
+        assertEquals(inputs.size(), result.size());
+        assertEquals(3, result.failed().size(), "The third failure crosses the 30 percent threshold");
+        assertTrue(result.failed().size() > inputs.size() * 0.3);
+        for (var index = 0; index < inputs.size(); index++) {
+            var item = result.getItem(index);
+            switch (item.status()) {
+                case SUCCEEDED -> {
+                    assertFalse(inputs.get(index).startsWith("FAIL"));
+                    assertEquals(inputs.get(index).toUpperCase(), item.result());
+                    assertNull(item.error());
+                }
+                case FAILED -> {
+                    assertTrue(inputs.get(index).startsWith("FAIL"));
+                    assertNull(item.result());
+                    assertNotNull(item.error());
+                    assertTrue(item.error().errorMessage().contains("failed: " + inputs.get(index)));
+                }
+                case SKIPPED -> {
+                    // A success racing with the threshold may be absent from the terminal map snapshot.
+                    assertFalse(inputs.get(index).startsWith("FAIL"));
+                    assertNull(item.result());
+                    assertNull(item.error());
+                }
+            }
+        }
     }
 
     @ParameterizedTest
