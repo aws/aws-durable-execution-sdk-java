@@ -21,10 +21,11 @@ on:
 
 concurrency:
   # Runs share fixed per-suite stack names, so serialize the whole workflow
-  # (queue, don't cancel) to avoid concurrent CloudFormation updates on the
+  # with multiple pending runs to avoid concurrent CloudFormation updates on the
   # same stack -- mirrors e2e-tests.yml.
   group: conformance-tests
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read

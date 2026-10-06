@@ -7,10 +7,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Batches API requests to optimize throughput by grouping individual calls into batch operations. Batches are flushed
@@ -33,6 +36,9 @@ public class ApiRequestDelayedBatcher<T> {
     private final Function<T, Integer> calculateItemSize;
     /** Executes the batch operation */
     private final Consumer<List<T>> executeBatch;
+
+    private final Supplier<Error> pluginFatal;
+    private final AtomicReference<Error> terminalFailure = new AtomicReference<>();
 
     /** Accumulated requests to be executed in future */
     private final List<Item<T>> delayedBatch;
@@ -64,6 +70,16 @@ public class ApiRequestDelayedBatcher<T> {
             int maxBatchBytes,
             Function<T, Integer> calculateItemSize,
             Consumer<List<T>> executeBatch) {
+        this(maxItemCount, maxBatchBytes, calculateItemSize, executeBatch, () -> null);
+    }
+
+    ApiRequestDelayedBatcher(
+            int maxItemCount,
+            int maxBatchBytes,
+            Function<T, Integer> calculateItemSize,
+            Consumer<List<T>> executeBatch,
+            Supplier<Error> pluginFatal) {
+        this.pluginFatal = pluginFatal;
         this.maxItemCount = maxItemCount;
         this.maxBatchBytes = maxBatchBytes;
         this.calculateItemSize = calculateItemSize;
@@ -85,6 +101,8 @@ public class ApiRequestDelayedBatcher<T> {
      */
     CompletableFuture<Void> submit(T request, Duration flushDelay) {
         synchronized (delayedBatch) {
+            var fatal = getFatalFailure();
+            if (fatal != null) return CompletableFuture.failedFuture(fatal);
             // add the request to the current batch
             CompletableFuture<Void> future = new CompletableFuture<>();
             delayedBatch.add(new Item<>(request, future));
@@ -113,6 +131,8 @@ public class ApiRequestDelayedBatcher<T> {
 
         // wait for previous batches to be flushed
         flushingQueueFuture.join();
+        var fatal = getFatalFailure();
+        if (fatal != null) throw new CompletionException(fatal);
     }
 
     /** clear the current batch and creates a new batch */
@@ -144,8 +164,31 @@ public class ApiRequestDelayedBatcher<T> {
         // Schedule a new flushing future. If the items in this batch have been executed by the previous flushQueue
         // future,
         // the new future will just do nothing.
-        flushingQueueFuture = flushingQueueFuture.thenRunAsync(this::flushQueue, InternalExecutor.INSTANCE);
+        flushingQueueFuture = flushingQueueFuture.thenCompose(ignored -> flushObservedAsync());
     }
+
+    private CompletableFuture<Void> flushObservedAsync() {
+        var completion = new CompletableFuture<Void>();
+        // Keep sequencing through the future, but let reported plugin fatals escape the actual worker.
+        // CompletableFuture async stages would otherwise catch the fatal again after flushQueue rethrows it.
+        Runnable flush = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
+            try {
+                flushQueue();
+                completion.complete(null);
+            } catch (Throwable failure) {
+                completion.completeExceptionally(failure);
+                var fatal = terminalFailure.get();
+                if (fatal != null) throw fatal;
+            }
+        };
+        try {
+            InternalExecutor.INSTANCE.execute(flush);
+        } catch (Throwable failure) {
+            completion.completeExceptionally(failure);
+        }
+        return completion;
+    }
+
     /** Call checkpoint API with items in the flushing queue */
     private void flushQueue() {
         // There could be more items to flush because
@@ -171,7 +214,10 @@ public class ApiRequestDelayedBatcher<T> {
                     break;
                 }
 
-                flushingItems.add(flushingQueue.poll());
+                // An external fatal publisher can drain the queue between the peek and this poll.
+                var next = flushingQueue.poll();
+                if (next == null) break;
+                flushingItems.add(next);
                 flushingSize += itemSizeInByte;
             }
             if (!flushingItems.isEmpty()) {
@@ -181,16 +227,50 @@ public class ApiRequestDelayedBatcher<T> {
                             .map(Item::request)
                             .filter(Objects::nonNull)
                             .toList();
+                    // Another worker may already have failed the invocation, or may do so during this call.
+                    // A skipped checkpoint must never look like a successful START to an at-most-once step.
+                    rethrowPluginFatalIfPresent();
                     executeBatch.accept(requests);
+                    rethrowPluginFatalIfPresent();
                     for (Item<T> item : flushingItems) {
                         item.result().complete(null);
                     }
                 } catch (Throwable ex) {
+                    var fatal = getFatalFailure();
                     for (Item<T> item : flushingItems) {
-                        item.result().completeExceptionally(ex);
+                        item.result().completeExceptionally(fatal == null ? ex : fatal);
+                    }
+                    if (fatal != null) {
+                        abortPending(fatal);
+                        throw fatal;
                     }
                 }
             }
         }
+    }
+
+    Error getFatalFailure() {
+        var fatal = terminalFailure.get();
+        return fatal == null ? pluginFatal.get() : fatal;
+    }
+
+    private void rethrowPluginFatalIfPresent() {
+        var fatal = getFatalFailure();
+        if (fatal != null) throw fatal;
+    }
+
+    /** Settles delayed and queued requests without waiting for their timer or an in-flight backend call. */
+    void abortPending(Error fatal) {
+        terminalFailure.compareAndSet(null, fatal);
+        var original = terminalFailure.get();
+        var pending = new ArrayList<Item<T>>();
+        synchronized (delayedBatch) {
+            delayedBatchFlushTimer.cancel(false);
+            pending.addAll(delayedBatch);
+            delayedBatch.clear();
+            Item<T> item;
+            while ((item = flushingQueue.poll()) != null) pending.add(item);
+        }
+        pending.forEach(item -> item.result().completeExceptionally(original));
     }
 }

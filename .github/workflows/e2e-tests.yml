@@ -24,8 +24,10 @@ on:
       - 'pom.xml'
 
 concurrency:
+  # Shared stacks require serial deployment; preserve waiting runs from other PRs.
   group: e2e-tests
   cancel-in-progress: false
+  queue: max
 
 # permission can be added at job level or workflow level
 permissions:
@@ -148,6 +150,26 @@ jobs:
           if [[ "$invariant_violated" == true ]]; then
             exit 1
           fi
+      - name: Collect Lambda errors after failed E2E tests
+        if: failure() && env.E2E_LOG_START_TIME_MS != ''
+        env:
+          E2E_STACK_NAME: Java${{ matrix.java }}-JavaSDKCloudBasedIntegrationTestStack
+        run: |
+          set -euo pipefail
+          log_groups=$(aws cloudformation list-stack-resources \
+            --stack-name "$E2E_STACK_NAME" \
+            --query "StackResourceSummaries[?ResourceType=='AWS::Logs::LogGroup'].PhysicalResourceId" \
+            --output text)
+          for log_group in $log_groups; do
+            echo "::group::Lambda errors: $log_group"
+            aws logs filter-log-events \
+              --log-group-name "$log_group" \
+              --start-time "$E2E_LOG_START_TIME_MS" \
+              --filter-pattern '%ERROR|Error|Exception|timed.out|Invalid.suspension|not.active|already.registered%' \
+              --limit 100 --no-paginate \
+              --query 'events[].message' --output text
+            echo "::endgroup::"
+          done
       - name: Publish test case summary
         if: always()
         env:

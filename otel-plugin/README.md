@@ -10,8 +10,40 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **Span-per-Operation**: Each durable operation (step, wait, map, etc.) gets its own span with accurate timing
 - **Attempt Spans**: Each user function execution (step attempt, child context run) gets a span, including retries
 - **Log Correlation**: Injects `traceId`, `spanId`, and `otelTraceSampled` into SLF4J MDC for end-to-end observability
-- **ADOT Java Agent Integration**: `new InvocationOtelPlugin()` late-binds the ADOT Java agent's global provider with no handler-side OpenTelemetry initialization
+- **ADOT Java Agent Integration**: `InvocationOtelPlugin.factory()` binds the ADOT Java agent's global provider on first use, with no handler-side OpenTelemetry initialization
 - **Lambda Layer Discovery**: `DURABLE_EXECUTION_PLUGINS` loads either OTel plugin from a JAR under a layer's `java/lib` directory
+
+## One durable tracing view
+
+Choose either the invocation or execution factory. Their `durable-otel-view` exclusive group is validated across
+explicit and environment-selected factories before any invocation instance or span is created. Unrelated factories
+remain allowed. `DurableConfig.toBuilder()` and `LocalDurableTestRunner` preserve the resolved factory registrations
+without rediscovering environment plugins; factory identity retains environment-owned provider resources.
+
+## Root handler context
+
+With a core that supports the explicit `@HandlerScoped` capability, user instrumentation in the root handler joins
+its canonical execution trace. A valid same-trace ambient Lambda span stays current. If ambient context is absent or
+belongs to another trace, invocation view activates `Invocation`; execution view activates the deterministic
+`Workflow` context, including its unsampled non-recording form. Nested operations retain their existing contexts.
+
+The core opens the scope after invocation startup and closes it on the same handler thread on success, failure, or
+suspension. On suspension or termination, an opened scope gets up to 500ms to unwind before finalization, capped by
+remaining Lambda time after reserving five seconds per configured plugin and one second for shutdown/response.
+This is a best-effort reserve, not a total deadline bound: existing plugin callbacks and checkpoint draining may exceed it. The invocation caller waits; the owning handler worker remains free to exit.
+If cleanup is blocked, the SDK logs the timeout and preserves the original PENDING/RETRYING outcome.
+An observed `VirtualMachineError` or `ThreadDeath` from the new scope callbacks instead escapes the invocation caller.
+When observed before invocation finalization, the3.x lifecycle first calls invocation-end hooks once with RETRYING.
+A fatal arriving during resource shutdown is checked after closure without repeating already completed end hooks;
+ordinary cleanup failures and legacy body failures retain the original outcome. Fatals reported only after the response
+cannot retroactively change it. The scope still
+closes on its owning thread when the handler eventually exits; late cleanup telemetry is best effort. A compatible
+ambient span uses a no-op scope and participates in the same bounded handoff. Invocation-end hooks can execute on a
+different thread and do not own this scope. The explicit JDK-only opener requires explicit `@HandlerScoped` opt-in;
+unannotated application methods are not invoked. The factory migration follows the3.x boundary in the migration guide.
+Root-handler context requires the updated core/plugin pair. The new scope boundary isolates ordinary exceptions and nonfatal linkage
+errors during open and close, continues earlier scope cleanup, and preserves the handler outcome. JVM fatal errors
+remain outside that containment, including when wrapped by asynchronous completion/future exceptions.
 
 ## Installation
 
@@ -23,7 +55,7 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 </dependency>
 ```
 
-For the no-arg constructor (`new InvocationOtelPlugin()`), no additional OpenTelemetry dependencies are needed — the ADOT Java agent layer provides them.
+For the agent path (`InvocationOtelPlugin.factory()`), no additional OpenTelemetry dependencies are needed — the ADOT Java agent layer provides them.
 
 If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK and an exporter:
 
@@ -40,6 +72,33 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 </dependency>
 ```
 
+## Fallback execution roots
+
+When the backend supplies no complete remote parent, both views export a `DurableExecutionRoot` anchor before the first
+invocation returns, including when it suspends with `PENDING` or fails with `RETRYING`.
+The anchor is marked `durable.execution.synthetic_root=true`. Its trace and span IDs are deterministic and its start
+and end timestamps are the checkpointed execution start. It does not report execution status or duration; `Workflow`
+continues to report those at terminal completion. Complete remote parents remain externally owned and are never exported.
+Java's `InvocationInfo` requires a non-null execution start timestamp from the initial checkpointed execution operation.
+Missing timestamps are rejected before the plugin runs; anchor timestamps never fall back to the current wall clock.
+
+Every invocation may re-export the anchor to recover from an earlier interrupted or lost export. Re-exports retain the
+same span fields under stable sampling. The existing provider resource still applies: if a later invocation runs in another
+execution environment, resource attributes such as `faas.instance` can differ. Backends that deduplicate by span identity
+may retain either copy's resource. Each execution ARN owns its own anchor even when multiple executions share a
+propagated trace ID without a parent; they are not collapsed into one
+execution. Upstream sampling and configured fallback sampling apply to anchors and their descendants together.
+
+After the first invocation's export and flush succeed, its anchor remains available even if the execution is stopped
+or times out while suspended and never invokes the plugin again. An invocation killed before its end hook or flush can
+still lose its spans; a later invocation, including terminal completion, attempts to export the anchor again. Export
+and flush failures do not provide a delivery guarantee.
+
+For a consistent hierarchy across invocations, preserve an explicit upstream sampling decision or use a deterministic
+sampling policy based on the stable trace ID. A non-deterministic sampler can export an anchor without a Workflow, or
+a Workflow without its anchor. Any sampler-supplied attributes and trace state must also stay stable for identical
+anchor re-exports.
+
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
 1. Add the ADOT Lambda Layer to your function
@@ -50,7 +109,7 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 
 ### 1. ADOT Lambda Layer
 
-This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. The `new InvocationOtelPlugin()` constructor resolves the global provider initialized by the ADOT Java agent at invocation start, with deterministic span ID generation installed through the plugin's `AutoConfigurationCustomizerProvider` SPI. If the provider is not ready, the plugin emits no telemetry for that invocation and retries provider resolution on the next invocation.
+This plugin uses the [AWS Distro for OpenTelemetry (ADOT) Lambda layer](https://aws-otel.github.io/docs/getting-started/lambda) for trace export. `InvocationOtelPlugin.factory()` resolves the global provider initialized by the ADOT Java agent when the first invocation's plugin instance is created, with deterministic span ID generation installed through the plugin's `AutoConfigurationCustomizerProvider` SPI. If the provider is not ready, that invocation's instance emits no telemetry and the next invocation's instance resolves the provider again.
 
 The layer ARN follows the format:
 
@@ -89,6 +148,26 @@ aws lambda update-function-configuration \
 ```
 
 Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar`. Lambda adds JARs in this directory to the Java class path. Set `OTEL_JAVAAGENT_EXTENSIONS` to the deployed JAR so the ADOT Java agent also loads its `AutoConfigurationCustomizerProvider`, and set `DURABLE_EXECUTION_PLUGINS=otel-invocation` so the Durable Execution SDK loads its `InvocationOtelPluginProvider`.
+
+### Invocation-local headers on Lambda Managed Instances
+
+The SDK captures `Context.getXrayTraceId()` on the runtime thread before dispatching user work when an actual
+runtime implementation overrides the accessor. It stores the immutable snapshot in `InvocationInfo.xRayTraceId()`.
+The same information object reaches the ordinary `createPlugin(info)` factory and `onInvocationStart(info)` hook,
+so both built-in and custom factories can read the header before creating spans. Context extraction uses `extract(info)`;
+existing no-argument extractor implementations retain their default delegation.
+
+An override returning null/empty is represented by an empty String and is authoritative absence: deterministic fallback
+is used without reading stale global context. An unavailable accessor, or only Lambda Core1.4's inherited null-returning
+default, is represented by null and retains ordinary system-property then environment fallback. A malformed captured
+header also never adopts the global carrier. No global header is modified.
+
+The header is the eighth `InvocationInfo` record component, carrying forward the 2.x metadata fix. Existing 4-, 5-, 6-
+and 7-argument constructors remain and default the optional header to null. Existing compiled constructor/accessor calls
+and seven-component record patterns remain compatible; recompiling a seven-component record pattern requires an eighth
+binding. Reflection sees eight components, and record equality/hash calculation includes the header. `toString()` omits it.
+Core/plugin artifacts still follow the explicit 3.x factory migration boundary: rebuild providers and layers against 3.x
+as described in the migration guide; 2.x and 3.x plugin artifacts are not interchangeable.
 
 ### 2. AWS X-Ray Active Tracing
 
@@ -130,7 +209,8 @@ public class MyHandler extends DurableHandler<MyInput, MyOutput> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder().withPlugins(new InvocationOtelPlugin()).build();
+        // A factory, not a plugin instance: the SDK creates one plugin instance per invocation from it.
+        return DurableConfig.builder().withPlugins(InvocationOtelPlugin.factory()).build();
     }
 
     @Override
@@ -193,7 +273,7 @@ The plugin decides sampling once per invocation and applies that single decision
 
 1. **Backend decision** — `Sampled=1` / `Sampled=0` in the propagated header is authoritative and always preserved, regardless of the configured sampler.
 2. **Same-trace ambient span** — when the header carries no usable `Sampled` value but a valid ambient span (for example an auto-instrumentation Lambda handler span) is already on the execution's trace, the plugin follows that span's decision: sampled → sampled; unsampled but still recording → `RECORD_ONLY`; unsampled and not recording → dropped.
-3. **Configured sampler (application-owned provider)** — when you pass a `SdkTracerProvider` to the plugin, its sampler is read directly and evaluated once with the trace ID, span name, and attributes. A trace-ID-ratio sampler therefore produces a stable decision across reinvocations (the trace ID is stable).
+3. **Configured sampler (application-owned provider)** — when you pass a `SdkTracerProviderBuilder` to `factory(...)`, the sampler of the provider it builds is read directly and evaluated once with the trace ID, span name, and attributes. A trace-ID-ratio sampler therefore produces a stable decision across reinvocations (the trace ID is stable).
 4. **Installed sampler (Java-agent path)** — when the agent owns the provider, it is behind a classloader boundary and its *effective* sampler (which another agent extension may have wrapped or replaced) cannot be reliably read at decision time. Rather than guess, the plugin **defers**: it installs a delegating sampler through the agent's autoconfiguration and lets that wrapper consult the agent's real sampler. The delegate's decision is honored in full — if your configured policy is `always_off`, a rate limiter, or a remote sampler (`xray`, `jaeger_remote`) that returns drop, the durable spans are dropped; they are **not** force-sampled. To avoid consuming a stateful or quota-based sampler once per span, the wrapper consults the delegate once per execution (keyed by trace ID) and reuses that decision for the execution's remaining durable spans within the invocation.
 
 For precise, provider-independent control, set an explicit `Sampled` value upstream (for example by enabling X-Ray active tracing) — that backend decision takes precedence over everything else.
@@ -255,21 +335,27 @@ With Lambda's `LoggingConfig: JSON` (required for durable functions), CloudWatch
 
 ## Configuration
 
-Both plugins take a required `SdkTracerProviderBuilder` (your exporter/processor pipeline) plus an optional
-`OtelPluginConfig` built with a named-field builder. This replaces the older telescoping constructors, giving readable,
-type-safe call sites, and matches the `OtelPluginConfig` object in the JavaScript and Python SDKs.
+Each plugin is registered as a `DurableExecutionPluginFactory` obtained from its static `factory(...)` methods, because
+a plugin instance serves exactly one invocation: the SDK calls the factory once per invocation and drops the instance
+when the invocation returns. The factory holds what belongs to the execution environment — your tracer provider (built
+once) or the ADOT global provider binding, plus the deterministic ID generator — while each instance holds only its own
+invocation's spans.
+
+The `factory(...)` overloads take an optional `SdkTracerProviderBuilder` (your exporter/processor pipeline) plus an
+optional `OtelPluginConfig` built with a named-field builder, which matches the `OtelPluginConfig` object in the
+JavaScript and Python SDKs.
 
 ### InvocationOtelPlugin
 
 ```java
 // Default: ADOT Java agent global provider, X-Ray context extraction, MDC enabled
-new InvocationOtelPlugin();
+InvocationOtelPlugin.factory();
 
 // Custom tracer provider pipeline, all other options defaulted
-new InvocationOtelPlugin(tracerProviderBuilder);
+InvocationOtelPlugin.factory(tracerProviderBuilder);
 
 // Full configuration via the builder
-new InvocationOtelPlugin(
+InvocationOtelPlugin.factory(
     tracerProviderBuilder,
     OtelPluginConfig.builder()
         .contextExtractor(new XRayContextExtractor())
@@ -282,18 +368,18 @@ new InvocationOtelPlugin(
 ### ExecutionOtelPlugin
 
 The `ExecutionOtelPlugin` renders the Workflow span as the durable trace root with operations beneath it. Invocation
-spans remain in the ambient Lambda trace, and operations link to the Invocation that ran them. It takes the same
-`(SdkTracerProviderBuilder, OtelPluginConfig)` constructor:
+spans remain in the ambient Lambda trace, and operations link to the Invocation that ran them. It exposes the same
+`factory(SdkTracerProviderBuilder, OtelPluginConfig)` methods:
 
 ```java
 // Default: ADOT Java agent global provider, X-Ray context extraction, MDC enabled
-new ExecutionOtelPlugin();
+ExecutionOtelPlugin.factory();
 
 // Custom tracer provider pipeline, all other options defaulted
-new ExecutionOtelPlugin(tracerProviderBuilder);
+ExecutionOtelPlugin.factory(tracerProviderBuilder);
 
 // Full configuration via the builder
-new ExecutionOtelPlugin(
+ExecutionOtelPlugin.factory(
     tracerProviderBuilder,
     OtelPluginConfig.builder()
         .enableMdc(false)
@@ -310,9 +396,9 @@ new ExecutionOtelPlugin(
 | `workflowSpanName(...)` | Name for the Workflow span | `"Workflow"` |
 | `instrumentationName(...)` | Instrumentation scope name registered with the tracer | `"aws-durable-execution-sdk-java"` |
 
-> The `tracerProviderBuilder` argument is not used by the no-arg `new InvocationOtelPlugin()` /
-> `new ExecutionOtelPlugin()` constructors; those resolve the ADOT Java agent's global provider at invocation start.
-> If it is not ready, all telemetry is disabled for that invocation and resolution is retried on the next invocation.
+> The no-builder `InvocationOtelPlugin.factory()` / `ExecutionOtelPlugin.factory()` forms resolve the ADOT Java agent's
+> global provider instead, when the first invocation's instance needs it. If it is not ready, all telemetry is disabled
+> for that invocation and the next invocation's instance resolves it again.
 > A `null` passed to any `OtelPluginConfig` builder setter falls back to that option's default.
 
 ## Known Limitations
@@ -357,7 +443,7 @@ For local testing, use a logging exporter to print spans to stdout:
 ```java
 import io.opentelemetry.exporter.logging.LoggingSpanExporter;
 
-var otelPlugin = new InvocationOtelPlugin(
+var otelPluginFactory = InvocationOtelPlugin.factory(
         SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(LoggingSpanExporter.create())));
 ```
@@ -367,8 +453,21 @@ var otelPlugin = new InvocationOtelPlugin(
 - Java 17+
 - AWS Durable Execution SDK for Java 2.0.0+
 - OpenTelemetry SDK 1.65.0+ (only for custom TracerProvider path)
-- ADOT Lambda Layer `AWSOpenTelemetryDistroJava` (for the no-arg constructor path)
+- ADOT Lambda Layer `AWSOpenTelemetryDistroJava` (for the agent path, `factory()` without a builder)
 
 ## License
 
 Apache-2.0
+
+### Installed core/plugin layer compatibility checks
+
+The retained `src/test/compatibility/run_matrix.py` is the2.x regression harness for the additive minor fixes. It
+verifies released/current2.x artifacts in separate plugin-layer loaders without dependency-floor rejection. It is not
+a3.x compatibility bridge: the factory/provider migration deliberately requires3.x artifacts and rebuilt provider
+layers. The major's provider migration tests validate clear rejection of selected legacy providers; the minor PRs
+retain their independently tested2.x compatibility guarantees.
+
+The inherited `@HandlerScoped` annotation names an explicit JDK `Function` opener. The core passes the plugin
+instance to it without discovering a plugin method by name. Bundled openers call private SDK implementation code.
+Custom opener classes need a public no-argument constructor accessible to the core. The factory/provider migration
+still requires3.x artifacts and intentionally final view classes; this is not a cross-major subclass compatibility bridge.

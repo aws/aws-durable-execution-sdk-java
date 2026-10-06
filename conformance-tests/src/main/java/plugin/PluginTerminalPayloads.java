@@ -28,7 +28,7 @@ public class PluginTerminalPayloads extends DurableHandler<Object, String> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder().withPlugins(new PayloadPlugin()).build();
+        return DurableConfig.builder().withPlugins(info -> new PayloadPlugin()).build();
     }
 
     @Override
