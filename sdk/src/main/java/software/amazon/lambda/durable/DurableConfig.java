@@ -520,6 +520,7 @@ public final class DurableConfig {
          * Builds the DurableConfig instance.
          *
          * @return Immutable DurableConfig instance
+         * @throws IllegalStateException if plugin discovery or exclusive-group configuration is invalid
          */
         public DurableConfig build() {
             return new DurableConfig(this);

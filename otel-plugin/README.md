@@ -45,7 +45,9 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 Configure exactly one of `InvocationOtelPlugin` or `ExecutionOtelPlugin` when enabling durable tracing.
 The invocation view groups work by Lambda invocation; the execution view groups operations under the durable Workflow.
 Both create Workflow and Invocation telemetry and manage log correlation, so combining them is unsupported.
-`DurableConfig.build()` rejects conflicting views before lifecycle hooks run and names both plugins in the diagnostic.
+`DurableConfig.Builder.build()` rejects conflicting views before lifecycle hooks run and names both plugins in the
+diagnostic. It throws `IllegalStateException` with the `Dynamic plugin configuration failed: ` prefix used for other
+plugin-configuration errors.
 This applies to explicit registration, `DURABLE_EXECUTION_PLUGINS=otel-invocation,otel-execution`, and mixed registration.
 Zero OTel plugins, either single view, and unrelated plugins remain valid.
 Repeated explicit registrations of the same view are also rejected, including registering the same instance twice.

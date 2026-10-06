@@ -53,7 +53,7 @@ class OtelViewRegistrationTest {
         assertEquals("legacy application group", invocation.getExclusiveGroup());
         assertNull(execution.getExclusiveGroup());
         var error = assertThrows(
-                IllegalArgumentException.class,
+                IllegalStateException.class,
                 () -> DurableConfig.builder().withPlugins(invocation, execution).build());
         assertTrue(error.getMessage().contains(invocation.getClass().getName()));
         assertTrue(error.getMessage().contains(execution.getClass().getName()));
@@ -69,7 +69,7 @@ class OtelViewRegistrationTest {
         var first = reversed ? opposite : custom;
         var second = reversed ? custom : opposite;
         var error = assertThrows(
-                IllegalArgumentException.class,
+                IllegalStateException.class,
                 () -> DurableConfig.builder().withPlugins(first, second).build());
         assertTrue(error.getMessage().contains("durable-otel-view"));
     }
@@ -106,10 +106,11 @@ class OtelViewRegistrationTest {
             MDC.put("trace_id", "existing");
             try {
                 var error = assertThrows(
-                        IllegalArgumentException.class,
+                        IllegalStateException.class,
                         () -> DurableConfig.builder()
                                 .withPlugins(plugins.toArray(DurableExecutionPlugin[]::new))
                                 .build());
+                assertTrue(error.getMessage().startsWith("Dynamic plugin configuration failed: "));
                 assertTrue(error.getMessage().contains("InvocationOtelPlugin"));
                 assertTrue(error.getMessage().contains("ExecutionOtelPlugin"));
                 assertTrue(error.getMessage().contains("only one"));
@@ -130,10 +131,10 @@ class OtelViewRegistrationTest {
         var second = plugin(executionView, exporter);
         var ambient = Context.current();
         assertThrows(
-                IllegalArgumentException.class,
+                IllegalStateException.class,
                 () -> DurableConfig.builder().withPlugins(first, second).build());
         assertThrows(
-                IllegalArgumentException.class,
+                IllegalStateException.class,
                 () -> DurableConfig.builder().withPlugins(first, first).build());
         assertTrue(exporter.getFinishedSpanItems().isEmpty());
         assertSame(ambient, Context.current());

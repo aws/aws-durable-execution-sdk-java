@@ -15,16 +15,17 @@ class PluginRunnerTest {
     @Test
     void exclusiveGroupsRejectDifferentImplementationsButAllowUnrelatedPlugins() {
         var exclusive = new ExclusivePlugin();
-        assertThrows(
-                IllegalArgumentException.class, () -> new PluginRunner(List.of(exclusive, new ConflictingPlugin())));
+        var error = assertThrows(
+                IllegalStateException.class, () -> new PluginRunner(List.of(exclusive, new ConflictingPlugin())));
+        assertTrue(error.getMessage().startsWith("Dynamic plugin configuration failed: "));
         assertDoesNotThrow(() -> new PluginRunner(List.of(exclusive, new DurableExecutionPlugin() {})));
     }
 
     @Test
     void repeatedExclusiveImplementationRegistrationsAreRejected() {
         var first = new ExclusivePlugin();
-        assertThrows(IllegalArgumentException.class, () -> new PluginRunner(List.of(first, new ExclusivePlugin())));
-        assertThrows(IllegalArgumentException.class, () -> new PluginRunner(List.of(first, first)));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(first, new ExclusivePlugin())));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(first, first)));
         assertEquals(0, first.starts);
     }
 
@@ -40,18 +41,15 @@ class PluginRunnerTest {
     void subclassMetadataAddsToEveryInheritedGroup() {
         var subclass = new ReannotatedPlugin();
         assertDoesNotThrow(() -> new PluginRunner(List.of(subclass)));
-        assertThrows(
-                IllegalArgumentException.class, () -> new PluginRunner(List.of(subclass, new ConflictingPlugin())));
-        assertThrows(
-                IllegalArgumentException.class, () -> new PluginRunner(List.of(subclass, new CustomGroupPlugin())));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(subclass, new ConflictingPlugin())));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(subclass, new CustomGroupPlugin())));
     }
 
     @Test
     void repeatedGroupInHierarchyDoesNotConflictWithItself() {
         var subclass = new RepeatedGroupPlugin();
         assertDoesNotThrow(() -> new PluginRunner(List.of(subclass)));
-        assertThrows(
-                IllegalArgumentException.class, () -> new PluginRunner(List.of(subclass, new CustomGroupPlugin())));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(subclass, new CustomGroupPlugin())));
     }
 
     @ExclusivePluginGroup("example")

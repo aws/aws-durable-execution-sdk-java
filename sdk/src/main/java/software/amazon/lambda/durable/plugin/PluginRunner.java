@@ -37,9 +37,10 @@ public class PluginRunner {
             for (var group : exclusiveGroups(plugin.getClass())) {
                 var previous = groups.putIfAbsent(group, plugin);
                 if (previous != null) {
-                    throw new IllegalArgumentException("Conflicting plugins " + pluginName(previous)
-                            + " and " + pluginName(plugin) + " in exclusive group '" + group
-                            + "'. Configure only one plugin from this group.");
+                    throw new IllegalStateException(
+                            "Dynamic plugin configuration failed: Conflicting plugins " + pluginName(previous)
+                                    + " and " + pluginName(plugin) + " in exclusive group '" + group
+                                    + "'. Configure only one plugin from this group.");
                 }
             }
         }

@@ -121,7 +121,7 @@ class DynamicPluginLoaderTest {
         });
         var plugins = DynamicPluginLoader.loadConfiguredPlugins("exclusive", List.of(provider), List.of(first, second));
         assertEquals(List.of(first, second), plugins);
-        assertThrows(IllegalArgumentException.class, () -> new PluginRunner(plugins));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(plugins));
     }
 
     @Test
@@ -131,7 +131,7 @@ class DynamicPluginLoaderTest {
         var plugins = DynamicPluginLoader.loadConfiguredPlugins("exclusive", List.of(provider), List.of(explicit));
         assertEquals(2, plugins.size());
         assertSame(explicit, plugins.get(1));
-        assertThrows(IllegalArgumentException.class, () -> new PluginRunner(plugins));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(plugins));
     }
 
     @Test
