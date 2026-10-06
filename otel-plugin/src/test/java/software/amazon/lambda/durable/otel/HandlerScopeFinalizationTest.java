@@ -15,7 +15,6 @@ import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
@@ -143,15 +142,17 @@ class HandlerScopeFinalizationTest {
 
     @SuppressWarnings("removal")
     @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void lateScopeFatalAfterFinalizationPreservesCallerOutcomeAndEscapesOwner(boolean threadDeath) throws Exception {
+    @CsvSource({"false,false", "true,false", "false,true", "true,true"})
+    void scopeFatalAfterEndDispatchPreservesCallerOutcomeAndEscapesOwner(boolean threadDeath, boolean duringEnd)
+            throws Exception {
         var releaseScope = new CountDownLatch(1);
         var ownerFinished = new CountDownLatch(1);
         var shutdownEntered = new AtomicBoolean();
         var ended = new AtomicBoolean();
         var endCalls = new AtomicInteger();
         var endInfo = new AtomicReference<InvocationEndInfo>();
-        Error fatal = threadDeath ? new ThreadDeath() : new InternalError("scope failure during manager shutdown");
+        var fatalObservedDuringEnd = new AtomicBoolean();
+        Error fatal = threadDeath ? new ThreadDeath() : new InternalError("late handler scope failure");
         var ownerFatal = new AtomicReference<Throwable>();
         var fatalEscaped = new CountDownLatch(1);
         var plugin = new ScopedPlugin() {
@@ -166,6 +167,11 @@ class HandlerScopeFinalizationTest {
                 ended.set(true);
                 endCalls.incrementAndGet();
                 endInfo.set(info);
+                if (duringEnd) {
+                    releaseScope.countDown();
+                    await(fatalEscaped);
+                    fatalObservedDuringEnd.set(ownerFatal.get() == fatal);
+                }
             }
         };
         var workers =
@@ -214,13 +220,14 @@ class HandlerScopeFinalizationTest {
             assertEquals(ExecutionStatus.PENDING, output.status(), "the already finalized caller outcome stays frozen");
             assertTrue(fatalEscaped.await(2, TimeUnit.SECONDS), "fatal must still escape the actual owner thread");
             assertSame(fatal, ownerFatal.get());
+            assertEquals(duringEnd, fatalObservedDuringEnd.get(), "blocked end hook must observe the owner fatal");
             assertTrue(shutdownEntered.get());
             assertEquals(1, endCalls.get(), "a late fatal must not replay already delivered end hooks");
             assertEquals(
                     InvocationStatus.PENDING,
                     endInfo.get().invocationStatus(),
                     "snapshot reflects outcome known at dispatch");
-            assertNull(endInfo.get().executionError(), "the fatal is reported only later, during shutdown");
+            assertNull(endInfo.get().executionError(), "the fatal is reported after the selected end snapshot");
         } finally {
             releaseScope.countDown();
             workers.shutdown();
