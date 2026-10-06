@@ -10,9 +10,9 @@ import software.amazon.lambda.durable.plugin.InvocationInfo;
  * <p>Implementations read trace context from various sources (X-Ray trace header, W3C traceparent, etc.) and return an
  * {@link ExtractedContext} containing the trace ID and optional parent span ID.
  *
- * <p><strong>When it is called:</strong> the plugin invokes {@link #extract(InvocationInfo, String)} once at the start
- * of every invocation, unconditionally — including when an ambient OpenTelemetry span is active. The extracted context
- * is the durable execution's identity and is resolved with the following precedence:
+ * <p><strong>When it is called:</strong> the plugin invokes {@link #extract(InvocationInfo)} once at the start of every
+ * invocation, unconditionally — including when an ambient OpenTelemetry span is active. The extracted context is the
+ * durable execution's identity and is resolved with the following precedence:
  *
  * <ol>
  *   <li>a valid extracted backend context anchors the execution trace (this is what makes the durable spans share one
@@ -44,7 +44,7 @@ public interface ContextExtractor {
      * <p>A null snapshot denotes an unavailable runtime accessor and permits legacy fallback. An empty string denotes
      * an available accessor with no invocation header; the built-in extractor treats it as authoritative absence.
      */
-    default ExtractedContext extract(InvocationInfo info, String xRayTraceId) {
+    default ExtractedContext extract(InvocationInfo info) {
         return extract();
     }
 }

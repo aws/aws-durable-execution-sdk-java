@@ -29,14 +29,11 @@ public interface DurableExecutionPluginFactory {
     /**
      * Creates the plugin instance that serves the described invocation.
      *
-     * @param invocationInfo the invocation the plugin instance will observe
+     * @param invocationInfo the invocation the plugin instance will observe, including its immutable
+     *     {@link InvocationInfo#xRayTraceId() runtime header snapshot} before any plugin spans are created
      * @return the plugin instance for this invocation
      */
     DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo);
-    /** Creates an instance using an immutable header captured on the Lambda runtime thread. */
-    default DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo, String runtimeTraceHeader) {
-        return createPlugin(invocationInfo);
-    }
     /** Optional exclusive instrumentation group, validated before any invocation instance is created. */
     default String getExclusiveGroup() {
         return null;

@@ -21,22 +21,10 @@ public interface DurableExecutionPlugin {
      * Called at the start of each Lambda invocation. Use to set up per-invocation state (trace ID, invocation span).
      *
      * <p>Check {@link InvocationInfo#isFirstInvocation()} to detect the first invocation of an execution (useful for
-     * sampling decisions or execution-level span creation).
+     * sampling decisions or execution-level span creation). The runtime-thread snapshot is available through
+     * {@link InvocationInfo#xRayTraceId()}.
      */
     default void onInvocationStart(InvocationInfo info) {}
-
-    /**
-     * Called at invocation start with immutable runtime data captured before worker-thread dispatch. The SDK calls this
-     * overload; its default delegates to the original hook so existing plugin implementations remain supported.
-     * Implementations that override this overload can consume invocation-local carriers without changing
-     * InvocationInfo.
-     *
-     * <p>A null snapshot denotes an unavailable runtime accessor and permits legacy fallback. An empty string denotes
-     * an available accessor with no invocation header; the built-in extractor treats it as authoritative absence.
-     */
-    default void onInvocationStart(InvocationInfo info, String xRayTraceId) {
-        onInvocationStart(info);
-    }
 
     /**
      * Called at the end of each Lambda invocation. Use to flush spans/metrics before Lambda freezes.

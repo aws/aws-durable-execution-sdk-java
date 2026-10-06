@@ -245,12 +245,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
             @Override
             public DurableExecutionPlugin createPlugin(InvocationInfo info) {
-                return createPlugin(info, null);
-            }
-
-            @Override
-            public DurableExecutionPlugin createPlugin(InvocationInfo info, String runtimeTraceHeader) {
-                return new ExecutionOtelPlugin(environment, info, runtimeTraceHeader);
+                return new ExecutionOtelPlugin(environment, info);
             }
         };
     }
@@ -267,7 +262,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
      * <p>When the tracer cannot be bound, telemetry is disabled for this invocation: the span fields stay null and
      * every hook returns immediately. The next invocation gets a new instance, which binds again.
      */
-    private ExecutionOtelPlugin(OtelPluginEnvironment environment, InvocationInfo info, String runtimeTraceHeader) {
+    private ExecutionOtelPlugin(OtelPluginEnvironment environment, InvocationInfo info) {
         var config = environment.config();
         this.idGenerator = environment.idGenerator();
         this.enableMdc = config.enableMdc();
@@ -291,7 +286,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
         // Resolve the one execution ancestor both spans parent onto, so they share a stable-per-execution trace and a
         // sampling decision.
-        var extracted = config.contextExtractor().extract(info, runtimeTraceHeader);
+        var extracted = config.contextExtractor().extract(info);
         var canonicalTraceId =
                 ExecutionTraceContext.canonicalTraceId(extracted, arn(), executionStartTime, idGenerator);
         // Resolve the execution's sampling decision once for this invocation as a full SamplingResult, then apply it to

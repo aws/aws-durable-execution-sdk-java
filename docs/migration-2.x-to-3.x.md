@@ -397,8 +397,12 @@ termination. Ordinary handler failures and nonfatal plugin/factory containment r
 ## Minor fixes retained in 3.x
 
 The migration includes the tested fixes from #765, #766, #767 and #771, plus conformance handlers21–24 from #769.
-Invocation-local headers reach factory construction before span creation; the seven-component InvocationInfo shape
-is retained. Factory metadata rejects simultaneous durable OTel views before construction, and configuration copies
+Invocation-local headers are stored in `InvocationInfo.xRayTraceId()`, retaining the eighth record component introduced
+by the 2.x metadata fix. The same snapshot reaches the one-argument factory and start hook before span creation, and
+custom `ContextExtractor.extract(info)` overrides retain their dispatch. The old 4-, 5-, 6- and 7-argument constructors
+remain, defaulting the header to null. Existing compiled constructors/accessors and seven-component record patterns
+remain compatible; recompiling a seven-component record pattern requires an eighth binding. Reflection and record
+equality/hash calculation include the new component. Factory metadata rejects simultaneous durable OTel views before construction, and configuration copies
 preserve effective factory registrations without repeating environment discovery.
 
 SDK-owned synthetic roots keep the same deterministic identity, name, attributes and checkpointed timestamps, and

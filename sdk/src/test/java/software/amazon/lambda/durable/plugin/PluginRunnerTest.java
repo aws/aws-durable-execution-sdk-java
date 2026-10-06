@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 class PluginRunnerTest {
 
     @Test
-    void runtimeSnapshotOverloadDelegatesToExistingHookOnce() {
+    void invocationSnapshotReachesExistingHookOnce() {
         var calls = new ArrayList<InvocationInfo>();
         var legacy = new DurableExecutionPlugin() {
             @Override
@@ -25,7 +25,7 @@ class PluginRunnerTest {
             }
         };
         var info = invocationInfo();
-        new PluginRunner(List.of(ignored -> legacy)).onInvocationStart(info, "header");
+        new PluginRunner(List.of(ignored -> legacy)).onInvocationStart(info);
         assertEquals(List.of(info), calls);
     }
 

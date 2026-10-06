@@ -9,6 +9,7 @@ import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import java.time.Instant;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -51,12 +52,13 @@ class InvocationHeaderTest {
         var factory = executionView
                 ? ExecutionOtelPlugin.factory(builder, config)
                 : InvocationOtelPlugin.factory(builder, config);
-        var info = new InvocationInfo("request", "arn", true, Instant.EPOCH);
-        var plugin = factory.createPlugin(info, "Root=1-6955b900-123456789012345678901234;Sampled=0");
+        var info =
+                invocation("request", "arn", true, Instant.EPOCH, "Root=1-6955b900-123456789012345678901234;Sampled=0");
+        var plugin = factory.createPlugin(info);
         plugin.onInvocationEnd(new InvocationEndInfo("request", "arn", true, InvocationStatus.SUCCEEDED, null));
         assertEquals(1, calls.get());
         assertTrue(exporter.getFinishedSpanItems().isEmpty());
-        var next = factory.createPlugin(info);
+        var next = factory.createPlugin(new InvocationInfo("request", "arn", true, Instant.EPOCH));
         next.onInvocationEnd(new InvocationEndInfo("request", "arn", true, InvocationStatus.SUCCEEDED, null));
         assertEquals(2, calls.get());
         assertTrue(exporter.getFinishedSpanItems().stream()
@@ -85,9 +87,9 @@ class InvocationHeaderTest {
                 var factory = executionView
                         ? ExecutionOtelPlugin.factory(builder, config)
                         : InvocationOtelPlugin.factory(builder, config);
-                var info = new InvocationInfo("missing", "arn:missing", true, Instant.EPOCH);
-                var plugin = factory.createPlugin(info, "");
-                plugin.onInvocationStart(info, ""); // API available, but this invocation has no header.
+                var info = invocation("missing", "arn:missing", true, Instant.EPOCH, "");
+                var plugin = factory.createPlugin(info);
+                plugin.onInvocationStart(info); // API available, but this invocation has no header.
                 await(barrier);
                 plugin.onInvocationEnd(
                         new InvocationEndInfo("missing", "arn:missing", true, InvocationStatus.SUCCEEDED, null));
@@ -99,15 +101,18 @@ class InvocationHeaderTest {
                 assertTrue(spans.stream().allMatch(span -> !conflictingTrace.equals(span.getTraceId())));
             });
             var present = CompletableFuture.runAsync(() -> {
-                var extracted = sharedExtractor.extract(
-                        new InvocationInfo("present", "arn:present", true, Instant.EPOCH),
-                        "Root=1-6955b900-123456789012345678901234;Sampled=1");
+                var extracted = sharedExtractor.extract(invocation(
+                        "present",
+                        "arn:present",
+                        true,
+                        Instant.EPOCH,
+                        "Root=1-6955b900-123456789012345678901234;Sampled=1"));
                 assertEquals("6955b900123456789012345678901234", extracted.traceId());
                 assertEquals(ExtractedContext.Sampling.SAMPLED, extracted.sampling());
                 await(barrier);
             });
             CompletableFuture.allOf(missing, present).get(20, TimeUnit.SECONDS);
-            assertNull(sharedExtractor.extract(new InvocationInfo("missing", "arn:missing", true, Instant.EPOCH), ""));
+            assertNull(sharedExtractor.extract(invocation("missing", "arn:missing", true, Instant.EPOCH, "")));
             assertEquals(
                     conflictingTrace,
                     sharedExtractor.extract().traceId(),
@@ -132,10 +137,8 @@ class InvocationHeaderTest {
                 + ";Parent=1234567890123456;Sampled=" + (sampled ? "1" : "0");
         var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/test/" + sampled;
         for (int invocation = 0; invocation < 2; invocation++) {
-            var plugin = factory.createPlugin(
-                    new InvocationInfo(
-                            "request-" + invocation, arn, invocation == 0, Instant.parse("2026-10-02T00:00:00Z")),
-                    header);
+            var plugin = factory.createPlugin(invocation(
+                    "request-" + invocation, arn, invocation == 0, Instant.parse("2026-10-02T00:00:00Z"), header));
             await(barrier);
             plugin.onInvocationEnd(new InvocationEndInfo(
                     "request-" + invocation,
@@ -152,6 +155,10 @@ class InvocationHeaderTest {
         assertEquals(3, spans.size());
         assertTrue(spans.stream().allMatch(span -> traceId.equals(span.getTraceId())));
         assertTrue(spans.stream().allMatch(span -> "1234567890123456".equals(span.getParentSpanId())));
+    }
+
+    private static InvocationInfo invocation(String request, String arn, boolean first, Instant start, String header) {
+        return new InvocationInfo(request, arn, first, start, null, Map.of(), Map.of(), header);
     }
 
     private static void await(CyclicBarrier barrier) {

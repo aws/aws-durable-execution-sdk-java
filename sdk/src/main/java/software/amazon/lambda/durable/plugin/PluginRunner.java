@@ -101,14 +101,14 @@ public class PluginRunner {
      * {@link LinkageError} and none is an {@link Exception}. Catching {@code Throwable} and rethrowing only the fatal
      * cases makes the promise unconditional. See {@link #contain} for which cases stay fatal.
      */
-    private void createPlugins(InvocationInfo info, String runtimeTraceHeader) {
+    private void createPlugins(InvocationInfo info) {
         var created = new ArrayList<DurableExecutionPlugin>(pluginFactories.size());
         try {
             for (var factory : pluginFactories) {
-                var plugin = createPlugin(factory, info, runtimeTraceHeader);
+                var plugin = createPlugin(factory, info);
                 if (plugin == null) continue;
                 created.add(plugin);
-                runPlugin(plugin, p -> p.onInvocationStart(info, runtimeTraceHeader));
+                runPlugin(plugin, p -> p.onInvocationStart(info));
             }
         } finally {
             // Even a fatal constructor/start failure must leave already-created instances available for finalization.
@@ -117,10 +117,9 @@ public class PluginRunner {
         }
     }
 
-    private static DurableExecutionPlugin createPlugin(
-            DurableExecutionPluginFactory factory, InvocationInfo info, String runtimeTraceHeader) {
+    private static DurableExecutionPlugin createPlugin(DurableExecutionPluginFactory factory, InvocationInfo info) {
         try {
-            var plugin = factory.createPlugin(info, runtimeTraceHeader);
+            var plugin = factory.createPlugin(info);
             if (plugin == null)
                 logger.warn("Plugin factory {} returned null; skipping it for this invocation", factory);
             return plugin;
@@ -299,12 +298,7 @@ public class PluginRunner {
     }
 
     public void onInvocationStart(InvocationInfo info) {
-        createPlugins(info, null);
-    }
-
-    /** Dispatches the invocation snapshot while preserving legacy hooks through default-method delegation. */
-    public void onInvocationStart(InvocationInfo info, String xRayTraceId) {
-        createPlugins(info, xRayTraceId);
+        createPlugins(info);
     }
 
     /**

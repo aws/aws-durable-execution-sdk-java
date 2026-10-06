@@ -234,12 +234,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
 
             @Override
             public DurableExecutionPlugin createPlugin(InvocationInfo info) {
-                return createPlugin(info, null);
-            }
-
-            @Override
-            public DurableExecutionPlugin createPlugin(InvocationInfo info, String runtimeTraceHeader) {
-                return new InvocationOtelPlugin(environment, info, runtimeTraceHeader);
+                return new InvocationOtelPlugin(environment, info);
             }
         };
     }
@@ -256,7 +251,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
      * <p>When the tracer cannot be bound, telemetry is disabled for this invocation: the span fields stay null and
      * every hook returns immediately. The next invocation gets a new instance, which binds again.
      */
-    private InvocationOtelPlugin(OtelPluginEnvironment environment, InvocationInfo info, String runtimeTraceHeader) {
+    private InvocationOtelPlugin(OtelPluginEnvironment environment, InvocationInfo info) {
         var config = environment.config();
         this.idGenerator = environment.idGenerator();
         this.enableMdc = config.enableMdc();
@@ -278,7 +273,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
         this.sdkTracerProvider = setup.sdkTracerProvider();
         this.tracer = setup.tracer();
 
-        var extracted = config.contextExtractor().extract(info, runtimeTraceHeader);
+        var extracted = config.contextExtractor().extract(info);
 
         // Resolve the execution ancestor the Workflow span parents onto so it joins the stable-per-execution trace.
         var canonicalTraceId =
