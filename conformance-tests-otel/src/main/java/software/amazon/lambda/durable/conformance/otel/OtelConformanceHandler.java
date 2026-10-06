@@ -9,7 +9,7 @@ import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.otel.ExecutionOtelPlugin;
 import software.amazon.lambda.durable.otel.InvocationOtelPlugin;
-import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 
 /**
  * Shared base for the OTel conformance suite's handlers. Ported from the otel-invocation/otel-execution examples in
@@ -26,13 +26,13 @@ abstract class OtelConformanceHandler<O> extends DurableHandler<Map<String, Obje
 
     @Override
     protected final DurableConfig createConfiguration() {
-        return DurableConfig.builder().withPlugins(createPluginFactory()).build();
+        return DurableConfig.builder().withPlugins(createPlugin()).build();
     }
 
-    private DurableExecutionPluginFactory createPluginFactory() {
+    private DurableExecutionPlugin createPlugin() {
         return "execution".equals(System.getenv("OTEL_PLUGIN_MODE"))
-                ? ExecutionOtelPlugin.factory()
-                : InvocationOtelPlugin.factory();
+                ? new ExecutionOtelPlugin()
+                : new InvocationOtelPlugin();
     }
 
     protected final void requireScenario(Map<String, Object> event, String expected) {

@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -63,15 +64,10 @@ class ErrorPrivacyGateTest {
     }
 
     private WorkflowInsightRecord runFailedExecution(boolean includeErrors, CapturingExporter exporter) {
-        var plugin = Executions.plugin(
-                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                        .content(ContentConfig.builder()
-                                .includeErrors(includeErrors)
-                                .build())
-                        .addExporter(exporter)
-                        .build()),
-                ARN,
-                START);
+        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                .content(ContentConfig.builder().includeErrors(includeErrors).build())
+                .addExporter(exporter)
+                .build());
         plugin.onInvocationStart(new InvocationInfo("req", ARN, true, START, "in", failingOp(), Map.of()));
         plugin.onInvocationEnd(new InvocationEndInfo(
                 "req",

@@ -23,9 +23,7 @@ public class PluginWaitOperationHooks extends DurableHandler<Object, String> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder()
-                .withPlugins(info -> new WaitHooksPlugin())
-                .build();
+        return DurableConfig.builder().withPlugins(new WaitHooksPlugin()).build();
     }
 
     @Override

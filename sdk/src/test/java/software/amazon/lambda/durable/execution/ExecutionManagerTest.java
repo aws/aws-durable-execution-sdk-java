@@ -4,7 +4,6 @@ package software.amazon.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -13,7 +12,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -375,65 +373,25 @@ class ExecutionManagerTest {
     }
 
     @Test
-    void lateScopeFatalDoesNotHideAnUnrelatedShutdownFailure() throws Exception {
-        var manager = createManager(List.of(executionOp()));
-        var checkpoint = mock(CheckpointManager.class);
-        var checkpointField = ExecutionManager.class.getDeclaredField("checkpointManager");
-        checkpointField.setAccessible(true);
-        checkpointField.set(manager, checkpoint);
-        var unrelated = new CompletionException(new IllegalStateException("unrelated shutdown failure"));
-        doThrow(unrelated).when(checkpoint).shutdown();
-        assertNull(manager.beginInvocationFinalization());
-        manager.recordHandlerScopeFatal(new InternalError("late owner failure"));
-        assertSame(unrelated, assertThrows(CompletionException.class, manager::close));
-    }
-
-    @Test
-    void scopeFatalBeforeFinalizationRetainsItsShutdownCause() throws Exception {
-        var manager = createManager(List.of(executionOp()));
-        var checkpoint = mock(CheckpointManager.class);
-        var checkpointField = ExecutionManager.class.getDeclaredField("checkpointManager");
-        checkpointField.setAccessible(true);
-        checkpointField.set(manager, checkpoint);
-        var fatal = new InternalError("early owner failure");
-        doThrow(new CompletionException(fatal)).when(checkpoint).shutdown();
-        manager.recordHandlerScopeFatal(fatal);
-        assertSame(fatal, manager.beginInvocationFinalization());
-        assertSame(
-                fatal, assertThrows(CompletionException.class, manager::close).getCause());
-    }
-
-    @Test
     void checkpointDeliveryIsAtomicWithOperationRegistration() throws Exception {
         var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
         var durableContext = mock(DurableContextImpl.class);
         when(durableContext.getExecutionManager()).thenReturn(manager);
         var publicationReached = new CountDownLatch(1);
         var allowPublication = new CountDownLatch(1);
-        var terminalOperation = stepOp("step", OperationStatus.SUCCEEDED).toBuilder()
-                .name("step")
-                .subType(OperationSubType.STEP.getValue())
-                .build();
-        var storageField = ExecutionManager.class.getDeclaredField("operationStorage");
-        storageField.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        var storage = (Map<String, Operation>) storageField.get(manager);
-        // Block the actual publication, not an incidental number of Operation.id() reads.
-        storageField.set(manager, new ConcurrentHashMap<String, Operation>(storage) {
-            @Override
-            public Operation put(String id, Operation value) {
-                if (value == terminalOperation) {
-                    publicationReached.countDown();
-                    try {
-                        assertTrue(allowPublication.await(5, TimeUnit.SECONDS));
-                    } catch (InterruptedException failure) {
-                        Thread.currentThread().interrupt();
-                        throw new AssertionError(failure);
-                    }
-                }
-                return super.put(id, value);
+        var idCalls = new AtomicInteger();
+        var terminalOperation = mock(Operation.class);
+        when(terminalOperation.id()).thenAnswer(invocation -> {
+            if (idCalls.incrementAndGet() == 3) {
+                publicationReached.countDown();
+                assertTrue(allowPublication.await(5, TimeUnit.SECONDS));
             }
+            return "step";
         });
+        when(terminalOperation.name()).thenReturn("step");
+        when(terminalOperation.type()).thenReturn(OperationType.STEP);
+        when(terminalOperation.subType()).thenReturn(OperationSubType.STEP.getValue());
+        when(terminalOperation.status()).thenReturn(OperationStatus.SUCCEEDED);
 
         class TestOperation extends BaseDurableOperation {
             TestOperation() {

@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
@@ -70,11 +71,8 @@ class UnrecoverableErrorUnwrapTest {
     @Test
     void failedExecutionUnwrapsUnrecoverableErrorObject() {
         var exporter = new CapturingExporter();
-        var plugin = Executions.plugin(
-                WorkflowInsight.workflowInsight(
-                        WorkflowInsightConfig.builder().addExporter(exporter).build()),
-                ARN,
-                START);
+        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(
+                WorkflowInsightConfig.builder().addExporter(exporter).build());
 
         Throwable execError = unrecoverable("PoisonPayload", "cannot deserialize checkpoint");
         plugin.onInvocationEnd(new InvocationEndInfo(
@@ -90,13 +88,10 @@ class UnrecoverableErrorUnwrapTest {
     @Test
     void retryingExecutionUnwrapsUnrecoverableErrorObjectInOnChangeMode() {
         var exporter = new CapturingExporter();
-        var plugin = Executions.plugin(
-                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                        .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
-                        .addExporter(exporter)
-                        .build()),
-                ARN,
-                START);
+        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
+                .addExporter(exporter)
+                .build());
 
         Throwable execError = unrecoverable("TransientBackendError", "retry scheduled");
         // RETRYING maps to a non-terminal RUNNING status but still emits in ON_CHANGE mode.
@@ -122,11 +117,8 @@ class UnrecoverableErrorUnwrapTest {
     @Test
     void fallsBackToThrowableFieldsWhenUnrecoverableErrorTypeMissing() {
         var exporter = new CapturingExporter();
-        var plugin = Executions.plugin(
-                WorkflowInsight.workflowInsight(
-                        WorkflowInsightConfig.builder().addExporter(exporter).build()),
-                ARN,
-                START);
+        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(
+                WorkflowInsightConfig.builder().addExporter(exporter).build());
 
         ErrorObject partial =
                 ErrorObject.builder().errorMessage("only a message").build();

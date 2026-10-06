@@ -7,7 +7,6 @@ import java.util.function.Supplier;
 import software.amazon.awssdk.awscore.client.builder.AwsClientBuilder;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.utils.builder.SdkBuilder;
-import software.amazon.lambda.durable.insight.internal.FatalErrors;
 
 /**
  * Holds an exporter's transport client: an injected instance, or one created on first use from an optional AWS SDK
@@ -67,7 +66,6 @@ final class LazyClient<T> {
         } catch (ClassNotFoundException e) {
             throw new MissingArtifactException(e);
         } catch (ReflectiveOperationException e) {
-            FatalErrors.rethrow(e);
             Throwable cause = e instanceof InvocationTargetException ? e.getCause() : e;
             throw new IllegalStateException("Failed to create " + clientClassName, cause);
         }

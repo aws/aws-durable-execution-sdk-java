@@ -39,9 +39,8 @@ import java.util.function.BooleanSupplier;
  * so a remote parent left unsampled would make a parent-based sampler drop every child span; deferring to the sampler
  * avoids that.
  *
- * <p>The ancestor is a non-recording context: it is either the external backend server span or an SDK-owned synthetic
- * root. Both plugins export the synthetic root before each invocation returns, including suspension, with its stable
- * execution-start timestamp and zero duration. They never export a remote parent.
+ * <p>The ancestor is a non-recording context: it is either the external backend server span or a synthetic root the SDK
+ * does not export.
  *
  * @param executionAncestor the common parent context for the Workflow and Invocation spans
  */

@@ -173,7 +173,6 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
     }
 
     private void handleCheckFailure(Throwable exception) {
-        executionManager.rethrowPluginFatalIfPresent();
         exception = ExceptionHelper.unwrapCompletableFuture(exception);
         if (exception instanceof SuspendExecutionException suspendExecutionException) {
             throw suspendExecutionException;

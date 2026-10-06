@@ -18,7 +18,7 @@ public class PluginOperationLifecycle extends DurableHandler<String, String> {
     @Override
     protected DurableConfig createConfiguration() {
         return DurableConfig.builder()
-                .withPlugins(info -> new ConformanceLoggingPlugin("CONFPLUGIN"))
+                .withPlugins(new ConformanceLoggingPlugin("CONFPLUGIN"))
                 .build();
     }
 

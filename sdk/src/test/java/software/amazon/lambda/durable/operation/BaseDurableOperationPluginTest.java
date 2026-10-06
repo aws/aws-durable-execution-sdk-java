@@ -7,7 +7,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -28,7 +27,6 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
-import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.OperationInfo;
 
 /**
@@ -57,7 +55,7 @@ class BaseDurableOperationPluginTest {
                 .build();
 
         var executionManager = createExecutionManager(List.of(waitOp), plugin);
-        var durableContext = mockDurableContext(executionManager);
+        var durableContext = mockDurableContext(executionManager, plugin);
 
         var operation = new WaitOperation(
                 OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT),
@@ -89,7 +87,7 @@ class BaseDurableOperationPluginTest {
                 .build();
 
         var executionManager = createExecutionManager(List.of(waitOp), plugin);
-        var durableContext = mockDurableContext(executionManager);
+        var durableContext = mockDurableContext(executionManager, plugin);
 
         var operation = new WaitOperation(
                 OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT),
@@ -109,7 +107,7 @@ class BaseDurableOperationPluginTest {
         var plugin = new RecordingPlugin();
         // No existing operations — first execution
         var executionManager = createExecutionManager(List.of(), plugin);
-        var durableContext = mockDurableContext(executionManager);
+        var durableContext = mockDurableContext(executionManager, plugin);
 
         var operation = new WaitOperation(
                 OperationIdentifier.of(OPERATION_ID, OPERATION_NAME, OperationSubType.WAIT),
@@ -127,10 +125,6 @@ class BaseDurableOperationPluginTest {
 
     // ─── Helpers ─────────────────────────────────────────────────────────
 
-    /**
-     * Builds the per-invocation ExecutionManager and starts its invocation, which is what materializes the plugin
-     * instance the operation hooks are then dispatched to.
-     */
     private ExecutionManager createExecutionManager(List<Operation> additionalOps, RecordingPlugin plugin) {
         var client = TestUtils.createMockClient();
         var operations = new ArrayList<Operation>();
@@ -144,20 +138,19 @@ class BaseDurableOperationPluginTest {
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         var config = DurableConfig.builder()
                 .withDurableExecutionClient(client)
-                .withPlugins(info -> plugin)
+                .withPlugins(plugin)
                 .build();
         var executionManager = new ExecutionManager(
                 new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState), config, null);
         executionManager.setCurrentThreadContext(new ThreadContext("Root", ThreadType.CONTEXT));
-        executionManager
-                .getPluginRunner()
-                .onInvocationStart(new InvocationInfo("req-1", EXECUTION_ARN, true, Instant.now()));
         return executionManager;
     }
 
-    private DurableContextImpl mockDurableContext(ExecutionManager executionManager) {
+    private DurableContextImpl mockDurableContext(ExecutionManager executionManager, RecordingPlugin plugin) {
         var durableContext = mock(DurableContextImpl.class);
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
+        when(durableContext.getDurableConfig())
+                .thenReturn(DurableConfig.builder().withPlugins(plugin).build());
         return durableContext;
     }
 
