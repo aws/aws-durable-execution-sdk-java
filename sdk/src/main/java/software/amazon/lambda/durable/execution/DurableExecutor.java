@@ -139,14 +139,14 @@ public class DurableExecutor {
             // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
             // failure.
             try {
-                return awaitHandlerScopes(
-                                executionManager.runUntilCompleteOrSuspend(handlerFuture),
-                                handlerFuture,
-                                hasHandlerScope,
-                                lambdaContext,
-                                pluginRunner.getPlugins().size(),
-                                scopeFatal)
-                        .handle((result, ex) -> {
+                return finalizeAfterHandlerScopes(
+                        executionManager.runUntilCompleteOrSuspend(handlerFuture),
+                        handlerFuture,
+                        hasHandlerScope,
+                        lambdaContext,
+                        pluginRunner.getPlugins().size(),
+                        scopeFatal,
+                        (result, ex) -> {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
                                 Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);
@@ -219,8 +219,7 @@ public class DurableExecutor {
                                     pluginExecutionInput.get(),
                                     result);
                             return output;
-                        })
-                        .join();
+                        });
             } catch (CompletionException e) {
                 // unwrap the CompletionException and rethrow the wrapped exception
                 ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(e));
@@ -249,6 +248,43 @@ public class DurableExecutor {
         };
         executor.execute(work);
         return result;
+    }
+
+    private static <T, R> R finalizeAfterHandlerScopes(
+            CompletableFuture<T> executionFuture,
+            CompletableFuture<T> handlerFuture,
+            AtomicBoolean hasHandlerScope,
+            Context lambdaContext,
+            int pluginCount,
+            AtomicReference<Error> scopeFatal,
+            BiFunction<T, Throwable, R> finalizer) {
+        var started = new AtomicBoolean();
+        var finalized = new CompletableFuture<R>();
+        // Attach before waiting so legacy hooks retain normal CompletableFuture completion-thread dispatch.
+        var ready = executionFuture.handle((value, failure) -> {
+            Runnable finish = () -> completeFinalization(started, finalized, () -> finalizer.apply(value, failure));
+            if (!hasHandlerScope.get() || handlerFuture.isDone()) finish.run();
+            else handlerFuture.whenComplete((ignored, ignoredFailure) -> finish.run());
+            return finish;
+        });
+        var finish = ready.join();
+        if (!started.get()) {
+            // Only the caller waits: a signaling handler must be free to unwind and close its scopes.
+            awaitHandlerScopes(executionFuture, handlerFuture, hasHandlerScope, lambdaContext, pluginCount, scopeFatal);
+            finish.run();
+        }
+        return finalized.join();
+    }
+
+    private static <R> void completeFinalization(
+            AtomicBoolean started, CompletableFuture<R> result, Supplier<R> finalizer) {
+        if (!started.compareAndSet(false, true)) return;
+        try {
+            result.complete(finalizer.get());
+        } catch (Throwable failure) {
+            // Match CompletableFuture.handle: transfer failures unchanged for the invocation caller to rethrow.
+            result.completeExceptionally(failure);
+        }
     }
 
     static <T> CompletableFuture<T> awaitHandlerScopes(
