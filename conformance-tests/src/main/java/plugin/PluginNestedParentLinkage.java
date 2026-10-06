@@ -20,9 +20,7 @@ public class PluginNestedParentLinkage extends DurableHandler<String, String> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder()
-                .withPlugins(info -> new ParentLinkagePlugin())
-                .build();
+        return DurableConfig.builder().withPlugins(new ParentLinkagePlugin()).build();
     }
 
     @Override

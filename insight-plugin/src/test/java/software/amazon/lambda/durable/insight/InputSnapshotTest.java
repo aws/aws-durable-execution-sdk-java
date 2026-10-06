@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -63,11 +64,8 @@ class InputSnapshotTest {
     @Test
     void handlerMutationAfterStartDoesNotCorruptCachedInputSnapshot() {
         var exporter = new CapturingExporter();
-        var plugin = Executions.plugin(
-                WorkflowInsight.workflowInsight(
-                        WorkflowInsightConfig.builder().addExporter(exporter).build()),
-                ARN,
-                START);
+        DurableExecutionPlugin plugin = WorkflowInsight.workflowInsight(
+                WorkflowInsightConfig.builder().addExporter(exporter).build());
 
         // A mutable input whose nested list the handler mutates after the invocation has started.
         List<Object> items = new ArrayList<>();
@@ -101,16 +99,13 @@ class InputSnapshotTest {
             return v;
         };
         var exporter = new CapturingExporter();
-        var plugin = Executions.plugin(
-                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                        .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
-                        .content(ContentConfig.builder()
-                                .inputTransform(mutatingTransform)
-                                .build())
-                        .addExporter(exporter)
-                        .build()),
-                ARN,
-                START);
+        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
+                .content(ContentConfig.builder()
+                        .inputTransform(mutatingTransform)
+                        .build())
+                .addExporter(exporter)
+                .build());
 
         List<Object> items = new ArrayList<>();
         items.add("a");

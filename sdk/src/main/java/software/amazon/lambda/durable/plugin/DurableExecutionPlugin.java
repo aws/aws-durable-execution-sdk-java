@@ -10,8 +10,8 @@ package software.amazon.lambda.durable.plugin;
  *
  * <p>All methods have default no-op implementations, allowing plugins to override only the hooks they need.
  *
- * <p>Non-fatal plugin failures are caught and logged without disrupting SDK execution. {@link VirtualMachineError} and
- * {@link ThreadDeath} propagate, including when wrapped by asynchronous completion/future exceptions.
+ * <p>Plugin errors are isolated — exceptions thrown by plugin methods are caught and logged but never disrupt SDK
+ * execution.
  */
 public interface DurableExecutionPlugin {
 
@@ -21,8 +21,7 @@ public interface DurableExecutionPlugin {
      * Called at the start of each Lambda invocation. Use to set up per-invocation state (trace ID, invocation span).
      *
      * <p>Check {@link InvocationInfo#isFirstInvocation()} to detect the first invocation of an execution (useful for
-     * sampling decisions or execution-level span creation). The runtime-thread snapshot is available through
-     * {@link InvocationInfo#xRayTraceId()}.
+     * sampling decisions or execution-level span creation).
      */
     default void onInvocationStart(InvocationInfo info) {}
 
@@ -79,10 +78,6 @@ public interface DurableExecutionPlugin {
      * functions.
      *
      * <p>This hook fires on the same thread as user code, so plugins can close OTel scopes here.
-     *
-     * <p>If a later plugin's start hook fails fatally, plugins whose start hooks completed successfully receive this
-     * hook in reverse order on the same thread, with {@link UserFunctionOutcome#FAILED} and the original fatal error.
-     * The user function does not run in that case. Cleanup failures do not replace the original start-hook error.
      *
      * <p>It fires for every outcome of the user function: normal return, a thrown failure, and suspension. Check
      * {@link UserFunctionEndInfo#outcome()} to distinguish them. A suspended function reports

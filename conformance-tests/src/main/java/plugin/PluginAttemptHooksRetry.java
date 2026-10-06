@@ -22,7 +22,7 @@ public class PluginAttemptHooksRetry extends DurableHandler<Object, String> {
     @Override
     protected DurableConfig createConfiguration() {
         return DurableConfig.builder()
-                .withPlugins(info -> new ConformanceLoggingPlugin("CONFPLUGIN"))
+                .withPlugins(new ConformanceLoggingPlugin("CONFPLUGIN"))
                 .build();
     }
 

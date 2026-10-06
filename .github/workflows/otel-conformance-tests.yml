@@ -53,11 +53,6 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: otel-conformance-tests
-  cancel-in-progress: false
-  queue: max
-
 jobs:
   opentelemetry:
     # 1. Run for non-PR events, such as scheduled runs and manual invocations
@@ -67,13 +62,13 @@ jobs:
       actions: write
       contents: read
       id-token: write
-    uses: aws/aws-durable-execution-conformance-tests/.github/workflows/opentelemetry-orchestrator.yml@98b802cdb172614f98e217f7464784d47b9bb484
+    uses: aws/aws-durable-execution-conformance-tests/.github/workflows/opentelemetry-orchestrator.yml@43872f8d5dd917fe3ee6d01a6c953c1ff67c5fe4
     with:
       language: java
       resource_prefix: j
       sdk_repository: aws/aws-durable-execution-sdk-java
       sdk_ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      conformance_test_ref: ${{ inputs.conformance_test_ref || '98b802cdb172614f98e217f7464784d47b9bb484' }}
+      conformance_test_ref: ${{ inputs.conformance_test_ref || '02d6dca971a38c13d94d6233d12f687e55b2a572' }}
       checkout_sdk: true
       # Build the handlers from this repo's checked-out module instead of the conformance repo's
       # bundled examples/java. Path is relative to the conformance workspace where the SDK is

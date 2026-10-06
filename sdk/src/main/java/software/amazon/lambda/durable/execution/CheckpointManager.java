@@ -13,7 +13,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
@@ -61,24 +60,6 @@ class CheckpointManager {
             Consumer<List<Operation>> callback,
             BooleanSupplier tryStartCheckpointProcessing,
             Runnable finishCheckpointProcessing) {
-        this(
-                config,
-                durableExecutionArn,
-                checkpointToken,
-                callback,
-                tryStartCheckpointProcessing,
-                finishCheckpointProcessing,
-                () -> null);
-    }
-
-    CheckpointManager(
-            DurableConfig config,
-            String durableExecutionArn,
-            String checkpointToken,
-            Consumer<List<Operation>> callback,
-            BooleanSupplier tryStartCheckpointProcessing,
-            Runnable finishCheckpointProcessing,
-            Supplier<Error> pluginFatal) {
         this.config = config;
         this.durableExecutionArn = durableExecutionArn;
         this.callback = callback;
@@ -86,11 +67,7 @@ class CheckpointManager {
         this.tryStartCheckpointProcessing = tryStartCheckpointProcessing;
         this.finishCheckpointProcessing = finishCheckpointProcessing;
         this.checkpointApiRequestDelayedBatcher = new ApiRequestDelayedBatcher<>(
-                MAX_ITEM_COUNT,
-                MAX_BATCH_SIZE_BYTES,
-                CheckpointManager::estimateSize,
-                this::checkpointBatch,
-                pluginFatal);
+                MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointManager::estimateSize, this::checkpointBatch);
     }
 
     /**
@@ -155,31 +132,20 @@ class CheckpointManager {
 
         // the delay is the polling interval minus the time already elapsed in the current attempt
         var delay = pollingStrategy.computeDelay(attempt).minus(Duration.between(startTime, Instant.now()));
-        return checkpointApiRequestDelayedBatcher
-                .submit(null, delay)
-                .whenComplete((ignored, failure) -> {
-                    var fatal = checkpointApiRequestDelayedBatcher.getFatalFailure();
-                    if (failure != null && fatal != null) future.completeExceptionally(fatal);
-                })
-                .thenCompose(v -> {
-                    if (future.isDone()) {
-                        return CompletableFuture.completedFuture(null);
-                    }
-                    var now = Instant.now();
-                    if (Duration.between(startTime, now).compareTo(pollingStrategy.computeDelay(attempt)) > 0) {
-                        // It has exceeded the previous attempt duration, starting a new attempt
-                        return pollForUpdateInternal(future, attempt + 1, now, pollingStrategy);
-                    } else {
-                        // continue the previous attempt. The future was completed just because
-                        // it was batched with other checkpoint API calls.
-                        return pollForUpdateInternal(future, attempt, startTime, pollingStrategy);
-                    }
-                });
-    }
-
-    /** Fails queued checkpoint and polling requests without taking the backend/poller lock. */
-    void abortPending(Error fatal) {
-        checkpointApiRequestDelayedBatcher.abortPending(fatal);
+        return checkpointApiRequestDelayedBatcher.submit(null, delay).thenCompose(v -> {
+            if (future.isDone()) {
+                return CompletableFuture.completedFuture(null);
+            }
+            var now = Instant.now();
+            if (Duration.between(startTime, now).compareTo(pollingStrategy.computeDelay(attempt)) > 0) {
+                // It has exceeded the previous attempt duration, starting a new attempt
+                return pollForUpdateInternal(future, attempt + 1, now, pollingStrategy);
+            } else {
+                // continue the previous attempt. The future was completed just because
+                // it was batched with other checkpoint API calls.
+                return pollForUpdateInternal(future, attempt, startTime, pollingStrategy);
+            }
+        });
     }
 
     /** Cancels all polling futures and waits for all pending checkpoint requests to complete */
@@ -243,7 +209,7 @@ class CheckpointManager {
             // Starting the backend request is coordinated with the last-thread suspension decision. Once suspension
             // wins that race, no later poll/checkpoint may advance backend state behind the PENDING response.
             if (!tryStartCheckpointProcessing.getAsBoolean()) {
-                if (!request.isEmpty() && checkpointApiRequestDelayedBatcher.getFatalFailure() == null) {
+                if (!request.isEmpty()) {
                     logger.error(
                             "Checkpoint invariant violation: skipping {} operation updates because execution has already"
                                     + " completed",

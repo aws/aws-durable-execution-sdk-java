@@ -23,9 +23,7 @@ public class PluginSuspensionInvocationEnd extends DurableHandler<Object, String
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder()
-                .withPlugins(info -> new InvocationEndPlugin())
-                .build();
+        return DurableConfig.builder().withPlugins(new InvocationEndPlugin()).build();
     }
 
     @Override

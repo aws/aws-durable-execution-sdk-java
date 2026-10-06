@@ -45,15 +45,14 @@ class InvocationOtelPluginIntegrationTest {
         OtelPluginAutoConfigurationState.resetInstalledForTest();
         spanExporter = InMemorySpanExporter.create();
 
-        // One factory for the environment; the SDK creates one plugin instance per invocation from it.
-        var factory = InvocationOtelPlugin.factory(
+        var plugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 OtelPluginConfig.builder()
                         .contextExtractor(() -> null)
                         .enableMdc(false)
                         .build());
 
-        otelConfig = DurableConfig.builder().withPlugins(factory).build();
+        otelConfig = DurableConfig.builder().withPlugins(plugin).build();
     }
 
     @AfterEach
@@ -338,7 +337,7 @@ class InvocationOtelPluginIntegrationTest {
     void sampling_off_producesNoSpans() {
         var sampledExporter = InMemorySpanExporter.create();
 
-        var noSampleFactory = InvocationOtelPlugin.factory(
+        var noSamplePlugin = new InvocationOtelPlugin(
                 SdkTracerProvider.builder()
                         .setSampler(Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(sampledExporter)),
@@ -347,8 +346,7 @@ class InvocationOtelPluginIntegrationTest {
                         .enableMdc(false)
                         .build());
 
-        var noSampleConfig =
-                DurableConfig.builder().withPlugins(noSampleFactory).build();
+        var noSampleConfig = DurableConfig.builder().withPlugins(noSamplePlugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class, (input, ctx) -> ctx.step("step", String.class, stepCtx -> "result"), noSampleConfig);
@@ -547,8 +545,8 @@ class InvocationOtelPluginIntegrationTest {
     }
 
     @Test
-    void agentPathFactory_bindsGlobalSdkTracerProviderWhenTheInvocationsInstanceIsCreated() {
-        var defaultFactory = InvocationOtelPlugin.factory();
+    void defaultConstructor_lateBindsGlobalSdkTracerProviderAtInvocationStart() {
+        var defaultPlugin = new InvocationOtelPlugin();
         assertFalse(GlobalOpenTelemetry.isSet());
 
         OtelPluginAutoConfigurationState.markInstalled();
@@ -558,7 +556,7 @@ class InvocationOtelPluginIntegrationTest {
                 .build();
         OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
 
-        var defaultConfig = DurableConfig.builder().withPlugins(defaultFactory).build();
+        var defaultConfig = DurableConfig.builder().withPlugins(defaultPlugin).build();
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, ctx) -> ctx.step("global-step", String.class, stepCtx -> "Hello " + input),
@@ -575,7 +573,7 @@ class InvocationOtelPluginIntegrationTest {
     }
 
     @Test
-    void agentPathFactory_usesJavaAgentGlobalTracerProviderDirectly_withSeparateAutoConfiguredIdGenerator() {
+    void defaultConstructor_usesJavaAgentGlobalTracerProviderDirectly_withSeparateAutoConfiguredIdGenerator() {
         OtelPluginAutoConfigurationState.markInstalled();
         GlobalOpenTelemetry.resetForTest();
         var globalExporter = InMemorySpanExporter.create();
@@ -597,9 +595,8 @@ class InvocationOtelPluginIntegrationTest {
             }
         });
 
-        var defaultConfig = DurableConfig.builder()
-                .withPlugins(InvocationOtelPlugin.factory())
-                .build();
+        var defaultConfig =
+                DurableConfig.builder().withPlugins(new InvocationOtelPlugin()).build();
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, ctx) -> ctx.step("javaagent-step", String.class, stepCtx -> "Hello " + input),

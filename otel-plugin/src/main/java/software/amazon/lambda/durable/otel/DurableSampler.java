@@ -113,7 +113,7 @@ final class DurableSampler implements Sampler {
             SpanKind spanKind,
             Attributes attributes,
             List<LinkData> parentLinks) {
-        var intent = DurableSamplingDecision.consume(parentContext);
+        var intent = DurableSamplingDecision.get(parentContext);
         if (intent == null) {
             // Not a durable span: the customer's sampler governs it unchanged.
             return delegate.shouldSample(parentContext, traceId, name, spanKind, attributes, parentLinks);

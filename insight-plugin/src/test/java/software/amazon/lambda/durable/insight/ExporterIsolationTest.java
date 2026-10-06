@@ -69,17 +69,14 @@ class ExporterIsolationTest {
     void firstExporterMutationsDoNotLeakIntoLaterExporter() {
         var mutating = new MutatingExporter();
         var good = new CapturingExporter();
-        var plugin = Executions.plugin(
-                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                        .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
-                        .content(ContentConfig.builder()
-                                .addOverride(OperationOverride.withResult("compute", r -> r))
-                                .build())
-                        .addExporter(mutating)
-                        .addExporter(good)
-                        .build()),
-                ARN,
-                START);
+        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
+                .content(ContentConfig.builder()
+                        .addOverride(OperationOverride.withResult("compute", r -> r))
+                        .build())
+                .addExporter(mutating)
+                .addExporter(good)
+                .build());
 
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("k", "v");

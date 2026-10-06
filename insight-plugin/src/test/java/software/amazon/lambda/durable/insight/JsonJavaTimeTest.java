@@ -55,13 +55,10 @@ class JsonJavaTimeTest {
     @Test
     void pluginOutputWithInstantInInputSerializesInsteadOfDropping() {
         var exporter = new CapturingExporter();
-        var plugin = Executions.plugin(
-                WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
-                        .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
-                        .addExporter(exporter)
-                        .build()),
-                ARN,
-                START);
+        var plugin = (WorkflowInsight.InsightPlugin) WorkflowInsight.workflowInsight(WorkflowInsightConfig.builder()
+                .emitMode(WorkflowInsightConfig.EmitMode.ON_CHANGE)
+                .addExporter(exporter)
+                .build());
 
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("startedAt", TS);

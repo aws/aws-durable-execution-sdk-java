@@ -42,15 +42,14 @@ class ExecutionOtelPluginIntegrationTest {
         OtelPluginAutoConfigurationState.resetInstalledForTest();
         spanExporter = InMemorySpanExporter.create();
 
-        // One factory for the environment; the SDK creates one plugin instance per invocation from it.
-        var factory = ExecutionOtelPlugin.factory(
+        var plugin = new ExecutionOtelPlugin(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
                 OtelPluginConfig.builder()
                         .contextExtractor(() -> null)
                         .enableMdc(false)
                         .build());
 
-        otelConfig = DurableConfig.builder().withPlugins(factory).build();
+        otelConfig = DurableConfig.builder().withPlugins(plugin).build();
     }
 
     @AfterEach
@@ -171,9 +170,8 @@ class ExecutionOtelPluginIntegrationTest {
             }
         });
 
-        var defaultConfig = DurableConfig.builder()
-                .withPlugins(ExecutionOtelPlugin.factory())
-                .build();
+        var defaultConfig =
+                DurableConfig.builder().withPlugins(new ExecutionOtelPlugin()).build();
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, ctx) -> ctx.step("wrapped-step", String.class, stepCtx -> "Hello " + input),

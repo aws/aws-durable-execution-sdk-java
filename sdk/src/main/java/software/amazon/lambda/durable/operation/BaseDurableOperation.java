@@ -129,7 +129,6 @@ public abstract class BaseDurableOperation {
      * otherwise starts fresh execution.
      */
     public void execute() {
-        executionManager.rethrowPluginFatalIfPresent();
         if (isVirtual) {
             // Virtual operations are not checkpointed, but we still fire plugin hooks
             // so the OTel plugin can emit spans for map/parallel iterations.
@@ -272,18 +271,14 @@ public abstract class BaseDurableOperation {
      * @param threadType the thread type (STEP or CONTEXT)
      */
     protected void runUserHandler(Runnable runnable, ThreadType threadType) {
-        executionManager.rethrowPluginFatalIfPresent();
         String operationId = getOperationId();
         logger.debug("Starting user handler for operation {} ({})", operationId, threadType);
         Runnable wrapped = () -> {
             executionManager.setCurrentThreadContext(new ThreadContext(operationId, threadType));
 
             try {
-                // A task accepted before another hook failed may only now be starting on its worker.
-                executionManager.rethrowPluginFatalIfPresent();
                 runnable.run();
             } catch (Throwable throwable) {
-                executionManager.rethrowPluginFatalIfPresent();
                 // Operations wrap the user function and handle all outcomes except for SuspendExecutionException.
                 // Anything else reaching here is unexpected and terminates the execution.
                 if (!executionManager.isExecutionCompletedExceptionally()
@@ -326,29 +321,8 @@ public abstract class BaseDurableOperation {
         // registerActiveThread is idempotent (no-op if already registered).
         registerActiveThread(operationId);
 
-        var completion = new CompletableFuture<Void>();
-        runningUserHandler.set(completion);
-        Runnable observed = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
-            try {
-                wrapped.run();
-                completion.complete(null);
-            } catch (Throwable failure) {
-                completion.completeExceptionally(failure);
-                // Settle accepted work before propagating on either an async worker or the direct caller. The
-                // invocation boundary still finalizes plugins, but the operation call must not return normally.
-                executionManager.rethrowPluginFatalIfPresent();
-            }
-        };
-        try {
-            getContext().getDurableConfig().getExecutorService().execute(observed);
-        } catch (Throwable failure) {
-            // No accepted task will settle a rejected submission. Complete the published future so shutdown cannot
-            // wait forever, and remove its reservation without turning submission failure into suspension.
-            if (completion.completeExceptionally(failure) && operationId != null) {
-                executionManager.cancelThreadRegistration(operationId);
-            }
-            ExceptionHelper.sneakyThrow(failure);
-        }
+        runningUserHandler.set(CompletableFuture.runAsync(
+                wrapped, getContext().getDurableConfig().getExecutorService()));
     }
 
     /**
@@ -380,7 +354,6 @@ public abstract class BaseDurableOperation {
                     PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.SUCCEEDED, null));
             return result;
         } catch (Throwable e) {
-            executionManager.rethrowPluginFatalIfPresent();
             var error = ExceptionHelper.unwrapCompletableFuture(e);
             if (error == null) {
                 error = e;
@@ -564,13 +537,10 @@ public abstract class BaseDurableOperation {
 
     // ─── Plugin hook helpers ─────────────────────────────────────────────
 
-    /**
-     * Returns this invocation's plugin runner, scoped to the ExecutionManager of this invocation. Falls back to a no-op
-     * runner when the manager does not provide one (mocked managers in unit tests).
-     */
+    /** Returns the plugin runner from config, or no-op if config is unavailable. */
     private PluginRunner getPluginRunner() {
-        var pluginRunner = executionManager.getPluginRunner();
-        return pluginRunner != null ? pluginRunner : PluginRunner.noOp();
+        var config = getContext().getDurableConfig();
+        return config != null ? config.getPluginRunner() : PluginRunner.noOp();
     }
 
     /** Fires onOperationStart plugin hook. */
