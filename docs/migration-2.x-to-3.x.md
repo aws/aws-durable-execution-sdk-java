@@ -423,4 +423,6 @@ owner thread before invocation finalization is signaled. Cleanup failures do not
 Unrelated user-body failures retain their existing operation semantics. Invocation-end information remains a snapshot at
 dispatch: a fatal reported only during subsequent resource shutdown is rethrown before the response, without replaying an already delivered end hook.
 If an invocation-end hook itself throws a fatal error, the remaining end hooks are still attempted once in registration
-order with that same snapshot before the first fatal is rethrown. Ordinary event hooks retain immediate fatal propagation.
+order with that same snapshot. After those hooks finish, the fatal is published to the invocation signal before it is
+rethrown, so queued user bodies and checkpoint work stop during shutdown. A fatal already present in the end snapshot
+retains precedence over a later cleanup fatal. Ordinary event hooks retain immediate fatal propagation.

@@ -51,7 +51,7 @@ public class PluginRunner {
         this(pluginFactories, fatal -> {});
     }
 
-    /** Reports fatal operation-hook failures to their invocation before rethrowing on the calling thread. */
+    /** Reports fatal operation and invocation-end hooks to their invocation before rethrowing. */
     public PluginRunner(List<DurableExecutionPluginFactory> pluginFactories, Consumer<Error> operationFatalObserver) {
         this.operationFatalObserver = operationFatalObserver;
         this.pluginFactories = pluginFactories != null ? List.copyOf(pluginFactories) : Collections.emptyList();
@@ -310,7 +310,8 @@ public class PluginRunner {
     /**
      * Called at the end of each invocation. Awaited — the SDK blocks until all plugins return, allowing plugins to
      * flush spans/metrics before Lambda freezes. A fatal end-hook failure is rethrown after the remaining plugins have
-     * had their one finalization opportunity, without changing the invocation-end snapshot.
+     * had their one finalization opportunity, without changing the invocation-end snapshot. The fatal signal stops
+     * outstanding operation work before resource shutdown; an earlier invocation fatal retains precedence.
      */
     @SuppressWarnings("removal")
     public void onInvocationEnd(InvocationEndInfo info) {
@@ -322,7 +323,15 @@ public class PluginRunner {
                 if (firstFatal == null) firstFatal = fatal;
             }
         }
-        if (firstFatal != null) throw firstFatal;
+        if (firstFatal != null) {
+            // A factory or root-handler fatal may predate cleanup without having reached the operation signal.
+            var primary = ExceptionHelper.unwrapAsyncFailure(info.executionError());
+            operationFatalObserver.accept(
+                    primary instanceof VirtualMachineError || primary instanceof ThreadDeath
+                            ? (Error) primary
+                            : firstFatal);
+            throw firstFatal;
+        }
     }
 
     @SuppressWarnings("removal")

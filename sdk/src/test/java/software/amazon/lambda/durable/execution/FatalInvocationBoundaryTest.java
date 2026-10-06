@@ -86,6 +86,43 @@ class FatalInvocationBoundaryTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {"factory", "handler"})
+    void endHookFatalDoesNotReplaceAnEarlierInvocationFatal(String stage) {
+        var primary = new InternalError("original invocation fatal");
+        var cleanup = new InternalError("end hook fatal");
+        var end = new AtomicReference<InvocationEndInfo>();
+        DurableExecutionPluginFactory failingEnd = ignored -> new DurableExecutionPlugin() {
+            public void onInvocationEnd(InvocationEndInfo info) {
+                throw cleanup;
+            }
+        };
+        DurableExecutionPluginFactory recorder = ignored -> new DurableExecutionPlugin() {
+            public void onInvocationEnd(InvocationEndInfo info) {
+                assertNull(end.getAndSet(info), "finalization must remain paired exactly once");
+            }
+        };
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withExecutorService(new DirectExecutor())
+                .withPlugins(failingEnd, recorder, failingPlugin(stage, primary))
+                .build();
+        assertSame(
+                primary,
+                assertThrows(
+                        InternalError.class,
+                        () -> DurableExecutor.execute(
+                                input(),
+                                null,
+                                get(String.class),
+                                (value, context) -> {
+                                    throw primary;
+                                },
+                                config)));
+        assertEquals(InvocationStatus.RETRYING, end.get().invocationStatus());
+        assertSame(primary, end.get().executionError());
+    }
+
+    @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void incompatibleOptionalApiDoesNotChangeHandlerResult(boolean wrapped) {
         var end = new AtomicReference<InvocationEndInfo>();

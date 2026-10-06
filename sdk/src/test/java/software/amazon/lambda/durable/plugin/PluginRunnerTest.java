@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.ServiceConfigurationError;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class PluginRunnerTest {
@@ -33,14 +34,21 @@ class PluginRunnerTest {
     void invocationEndAttemptsEveryPluginAndPreservesFirstFatal() {
         var first = new InternalError("first fatal");
         var calls = new ArrayList<String>();
-        var runner = new PluginRunner(List.of(
-                endingPlugin("first", calls, first),
-                endingPlugin("linkage", calls, new NoSuchMethodError("optional API")),
-                endingPlugin("second", calls, new ThreadDeath()),
-                endingPlugin("healthy", calls, null)));
+        var reported = new AtomicReference<Error>();
+        var runner = new PluginRunner(
+                List.of(
+                        endingPlugin("first", calls, first),
+                        endingPlugin("linkage", calls, new NoSuchMethodError("optional API")),
+                        endingPlugin("second", calls, new ThreadDeath()),
+                        endingPlugin("healthy", calls, null)),
+                fatal -> {
+                    calls.add("reported");
+                    reported.set(fatal);
+                });
         runner.onInvocationStart(invocationInfo());
         assertSame(first, assertThrows(InternalError.class, () -> runner.onInvocationEnd(invocationEndInfo())));
-        assertEquals(List.of("first", "linkage", "second", "healthy"), calls);
+        assertEquals(List.of("first", "linkage", "second", "healthy", "reported"), calls);
+        assertSame(first, reported.get());
     }
 
     private static DurableExecutionPluginFactory endingPlugin(String name, List<String> calls, Error failure) {
