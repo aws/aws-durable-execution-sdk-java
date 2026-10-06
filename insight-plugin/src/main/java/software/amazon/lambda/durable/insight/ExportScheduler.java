@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import software.amazon.lambda.durable.insight.internal.FatalErrors;
 
 /**
  * Serializes record exports so that, at most, one export runs at a time, while keeping the records of concurrently
@@ -91,6 +92,12 @@ final class ExportScheduler {
 
     /** Completes when the current pump finishes; {@code null} while idle. Guarded by {@code this}. */
     private CompletableFuture<Void> inFlight;
+
+    // A fatal worker failure is terminal for this shared scheduler. Keep it observable even
+    // after its pump/owner signals have been released, and wake fan-out joins immediately.
+    private volatile Error fatalFailure;
+    private final CompletableFuture<Void> fatalSignal = new CompletableFuture<>();
+    private InsightPlugin activeExecution; // guarded by this monitor
 
     /**
      * The thread serving the pump right now, or {@code null} while no pump is running. Deliberately <em>not</em>
@@ -270,6 +277,7 @@ final class ExportScheduler {
         try {
             executor.execute(() -> pump(handle));
         } catch (Throwable t) {
+            rejectFatal(t);
             // No worker could be started. Keep the queued record and return to idle so a later schedule() retries, and
             // a drain runs whatever is still queued on the calling thread before the invocation returns. Complete the
             // handle too: a drain that already observed it must wake up and take that inline path.
@@ -278,7 +286,7 @@ final class ExportScheduler {
                     inFlight = null;
                 }
             }
-            handle.complete(null);
+            completeSignal(handle);
             reportFailure(t);
         }
     }
@@ -287,6 +295,7 @@ final class ExportScheduler {
 
     /** Puts this invocation's latest record in its slot and makes sure it has a drain signal. Caller holds the lock. */
     private void queueRecord(InsightPlugin execution, WorkflowInsightRecord record) {
+        throwIfFailed();
         execution.record = record;
         queue.add(execution);
         if (execution.settled == null) {
@@ -307,6 +316,7 @@ final class ExportScheduler {
         execution.record = null;
         queue.remove(execution);
         execution.exporting = true;
+        activeExecution = execution;
         return record;
     }
 
@@ -335,6 +345,7 @@ final class ExportScheduler {
      * refused and reported instead of made: see {@link #refuseWaitThatWouldBlockThePump}.
      */
     void drain(InsightPlugin execution) {
+        throwIfFailed();
         // Re-entered from a thread the pump's progress depends on: waiting here would park on a signal only that pump
         // can settle. Refuse and return; the record stays queued and that same pump exports it once it resumes its
         // loop.
@@ -342,6 +353,7 @@ final class ExportScheduler {
             return;
         }
         synchronized (this) {
+            throwIfFailed();
             if (execution.settled == null) {
                 return;
             }
@@ -362,6 +374,7 @@ final class ExportScheduler {
             CompletableFuture<Void> handle;
             boolean runInline = false;
             synchronized (this) {
+                throwIfFailed();
                 signal = execution.settled;
                 if (signal == null) {
                     return;
@@ -429,6 +442,7 @@ final class ExportScheduler {
      * this returns), while a producer that never stops cannot keep this spinning forever.
      */
     void drainAll() {
+        throwIfFailed();
         // Every pass below is a drain, and each one would be refused; without this the loop spends all of its passes
         // reporting the same refusal.
         if (refuseWaitThatWouldBlockThePump("drainAll()")) {
@@ -438,6 +452,7 @@ final class ExportScheduler {
             List<InsightPlugin> outstanding;
             CompletableFuture<Void> handle;
             synchronized (this) {
+                throwIfFailed();
                 outstanding = new ArrayList<>(queue);
                 handle = inFlight;
                 if (outstanding.isEmpty() && handle == null) {
@@ -493,7 +508,7 @@ final class ExportScheduler {
             execution.settled = null;
         }
         if (signal != null) {
-            signal.complete(null);
+            completeSignal(signal);
         }
     }
 
@@ -523,6 +538,7 @@ final class ExportScheduler {
                 InsightPlugin next = null;
                 WorkflowInsightRecord record = null;
                 synchronized (this) {
+                    throwIfFailed();
                     if (queue.isEmpty() && flushRequests.isEmpty()) {
                         if (inFlight == handle) {
                             inFlight = null;
@@ -584,36 +600,46 @@ final class ExportScheduler {
                     }
                 }
             }
+        } catch (Throwable failure) {
+            rejectFatal(failure);
+            throw failure;
         } finally {
-            // Before anything else, and before the handle below: whoever waits on these requests must be released even
-            // if this pump is unwinding for a reason none of the guards above anticipated.
-            if (takenFlushes != null) {
-                completeAll(takenFlushes);
-            }
-            CompletableFuture<Void> orphaned = null;
-            synchronized (this) {
-                if (inFlight == handle) {
-                    inFlight = null;
+            try {
+                // Before anything else, and before the handle below: whoever waits on these requests must be released
+                // even
+                // if this pump is unwinding for a reason none of the guards above anticipated.
+                if (takenFlushes != null) {
+                    completeAll(takenFlushes);
                 }
-                if (taken != null) {
-                    // Unwinding with a record still marked as being exported: this pump will never settle it. Release
-                    // the marker and, unless a newer record for the same invocation is queued for a later pump to
-                    // export, complete the drain waiting on it — the instance is right here, so no sweep over other
-                    // invocations is needed to find it.
-                    taken.exporting = false;
-                    if (taken.record == null) {
-                        orphaned = taken.settled;
-                        taken.settled = null;
+                CompletableFuture<Void> orphaned = null;
+                synchronized (this) {
+                    if (inFlight == handle) {
+                        inFlight = null;
+                    }
+                    if (taken != null) {
+                        // Unwinding with a record still marked as being exported: this pump will never settle it.
+                        // Release
+                        // the marker and, unless a newer record for the same invocation is queued for a later pump to
+                        // export, complete the drain waiting on it — the instance is right here, so no sweep over other
+                        // invocations is needed to find it.
+                        taken.exporting = false;
+                        if (taken.record == null) {
+                            orphaned = taken.settled;
+                            taken.settled = null;
+                        }
                     }
                 }
+                if (orphaned != null) {
+                    completeSignal(orphaned);
+                }
+                completeSignal(handle);
+                // Last, because everything above is still this pump's work and a flush() re-entered from any of it
+                // would
+                // still have nobody to serve it. Conditional: a pump that recorded itself since must not be cleared
+                // here.
+            } finally {
+                pumpThread.compareAndSet(self, null);
             }
-            if (orphaned != null) {
-                orphaned.complete(null);
-            }
-            handle.complete(null);
-            // Last, because everything above is still this pump's work and a flush() re-entered from any of it would
-            // still have nobody to serve it. Conditional: a pump that recorded itself since must not be cleared here.
-            pumpThread.compareAndSet(self, null);
         }
     }
 
@@ -674,7 +700,7 @@ final class ExportScheduler {
     private void completeAll(List<CompletableFuture<Void>> requests) {
         for (CompletableFuture<Void> request : requests) {
             try {
-                request.complete(null);
+                completeSignal(request);
             } catch (Throwable t) {
                 reportFailure(t);
             }
@@ -688,6 +714,7 @@ final class ExportScheduler {
     private void signalSettled(InsightPlugin execution) {
         CompletableFuture<Void> signal;
         synchronized (this) {
+            if (activeExecution == execution) activeExecution = null;
             if (execution.record != null) {
                 // A newer record is queued for the same invocation. Leave it marked as being exported: it is still
                 // outstanding, and the export of that newer record settles the signal.
@@ -698,7 +725,7 @@ final class ExportScheduler {
             execution.settled = null;
         }
         if (signal != null) {
-            signal.complete(null);
+            completeSignal(signal);
         }
     }
 
@@ -725,6 +752,7 @@ final class ExportScheduler {
      * and reported instead of made: see {@link #refuseWaitThatWouldBlockThePump}.
      */
     void flush() {
+        throwIfFailed();
         // Re-entered from a thread the pump's progress depends on: the pump is the only thread that could serve the
         // request, and it cannot while this caller has not returned. Refuse rather than enqueue a request nobody
         // serves.
@@ -733,12 +761,14 @@ final class ExportScheduler {
         }
         CompletableFuture<Void> request = new CompletableFuture<>();
         synchronized (this) {
+            throwIfFailed();
             flushRequests.add(request);
         }
         while (true) {
             CompletableFuture<Void> handle;
             boolean startPump = false;
             synchronized (this) {
+                throwIfFailed();
                 if (request.isDone()) {
                     return;
                 }
@@ -783,7 +813,7 @@ final class ExportScheduler {
                 break;
             }
         }
-        request.complete(null);
+        completeSignal(request);
     }
 
     /**
@@ -817,6 +847,7 @@ final class ExportScheduler {
         }
         List<CompletableFuture<Void>> settledExporters = new ArrayList<>(exporters.size());
         for (InsightExporter exporter : exporters) {
+            throwIfFailed();
             // Marked as a fan-out task: the pump joins every one of these below, so a wait for the pump issued from
             // inside one must be refused exactly as one issued from the pump itself.
             Runnable task = () -> runSafely(() -> runAsExporterFanOut(() -> action.accept(exporter)));
@@ -828,7 +859,8 @@ final class ExportScheduler {
             }
         }
         for (CompletableFuture<Void> task : settledExporters) {
-            runSafely(task::join);
+            // A fatal on another worker must reach the invocation even if this peer is blocked.
+            runSafely(() -> CompletableFuture.anyOf(task, fatalSignal).join());
         }
     }
 
@@ -854,6 +886,7 @@ final class ExportScheduler {
 
     private void runSafely(Runnable action) {
         try {
+            throwIfFailed();
             action.run();
         } catch (Throwable t) {
             reportFailure(t);
@@ -861,11 +894,57 @@ final class ExportScheduler {
     }
 
     private void reportFailure(Throwable t) {
+        rejectFatal(t);
         try {
             failureHandler.accept(t);
         } catch (Throwable ignored) {
-            // A scheduler diagnostic must never disrupt durable execution.
+            rejectFatal(ignored);
+            // Ordinary diagnostic failures remain isolated.
         }
+    }
+
+    void throwIfFailed() {
+        Error failure = fatalFailure;
+        if (failure != null) throw failure;
+    }
+
+    private void rejectFatal(Throwable failure) {
+        Error fatal = FatalErrors.find(failure);
+        if (fatal != null) {
+            fail(fatal);
+            throw fatal;
+        }
+    }
+
+    private void completeSignal(CompletableFuture<Void> signal) {
+        Error failure = fatalFailure;
+        if (failure == null) signal.complete(null);
+        else signal.completeExceptionally(failure);
+    }
+
+    /** Releases all owners and waiters without waiting for uncooperative exporter code. */
+    synchronized void fail(Error failure) {
+        if (fatalFailure != null) return;
+        fatalFailure = failure;
+        CompletableFuture<Void> handle = inFlight;
+        inFlight = null;
+        fatalSignal.completeExceptionally(failure);
+        if (handle != null) handle.completeExceptionally(failure);
+        if (activeExecution != null) {
+            failOwner(activeExecution, failure);
+            activeExecution = null;
+        }
+        while (!queue.isEmpty()) failOwner(queue.iterator().next(), failure);
+        CompletableFuture<Void> request;
+        while ((request = flushRequests.poll()) != null) request.completeExceptionally(failure);
+    }
+
+    private void failOwner(InsightPlugin execution, Error failure) {
+        dropRecord(execution);
+        execution.exporting = false;
+        CompletableFuture<Void> signal = execution.settled;
+        execution.settled = null;
+        if (signal != null) signal.completeExceptionally(failure);
     }
 
     /**

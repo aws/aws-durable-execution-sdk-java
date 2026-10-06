@@ -36,8 +36,8 @@ public interface InsightExporter {
      * overlapping ends may share one flush, a slow flush is billed to every one of those invocations — not only to the
      * one that asked for it.
      *
-     * <p>Failures are isolated: a {@link Throwable} thrown here is reported through the plugin's failure handler, never
-     * retried, never propagated into the execution, and never prevents another exporter from flushing.
+     * <p>Non-fatal failures are reported and isolated without retries. Fatal VM/thread-termination errors propagate
+     * through the scheduler to the invocation caller; pending scheduler work is released.
      */
     default void flush() {}
 

@@ -21,11 +21,11 @@ import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
 import software.amazon.lambda.durable.plugin.PluginRunner;
 
 /**
- * Fix 2 — plugin {@link Throwable} containment. A plugin fault at any plugin-owned boundary (record construction, input
+ * Non-fatal plugin containment. An ordinary plugin fault at any plugin-owned boundary (record construction, input
  * snapshotting, transforms, and each exporter's render/export/flush) must be caught — including {@link Error}s such as
  * an optional exporter's {@code NoClassDefFoundError} — so one failing exporter never blocks the others and no plugin
  * fault disrupts durable execution. Tests use deterministic {@link AssertionError}/{@link Error} throwers rather than
- * inducing a real {@code StackOverflowError}.
+ * inducing a real {@code StackOverflowError}; VM/thread-termination propagation has separate tests.
  */
 class PluginThrowableContainmentTest {
 

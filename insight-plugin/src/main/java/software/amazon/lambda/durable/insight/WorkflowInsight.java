@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.insight;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,6 +10,7 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.insight.internal.FatalErrors;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -76,10 +78,8 @@ public final class WorkflowInsight {
                     Truncation.truncateRecord(isolated, exporter.maxRecordSizeBytes(), exporter::render);
             exporter.export(shaped);
         } catch (Throwable t) {
-            // Catch Throwable, not just RuntimeException: deep copy, truncation, an exporter's render/export, or
-            // the linkage of an optional exporter class (a NoClassDefFoundError when the S3 / CloudWatch SDK is
-            // absent) can each fail with an Error. Isolating every Throwable here guarantees one failing exporter
-            // cannot affect the others, nor disrupt the execution.
+            // Ordinary Errors (such as missing optional dependencies) are isolated too.
+            // logSafely rethrows VM/thread termination before logging or continuing.
             logSafely("exporter failed", t);
         }
     }
@@ -89,10 +89,10 @@ public final class WorkflowInsight {
      * before handing it to the transform, so the transform always receives a <em>detached, JSON-compatible</em> value
      * (a {@code Map} for a former POJO, a {@code List} for an array, or a scalar such as a {@code String} for a Java
      * time value) — never the SDK's original Java object. The raw string is passed through only when the checkpointed
-     * result is not valid JSON. User transforms are untrusted: a throwing transform (any {@link Throwable}) omits the
-     * field rather than leaking the raw value or failing the execution, and the failure is logged for diagnosis.
-     * Because the value is freshly parsed from the immutable checkpoint string on every build, a transform that mutates
-     * its argument cannot corrupt any cached state or a later emission.
+     * result is not valid JSON. Non-fatal transform failures omit the field rather than leaking the raw value and are
+     * logged for diagnosis. VM/thread-termination errors propagate. Because the value is freshly parsed from the
+     * immutable checkpoint string on every build, a transform that mutates its argument cannot corrupt any cached state
+     * or a later emission.
      */
     static Object applyResultOverride(Function<Object, Object> transform, String rawResult) {
         if (rawResult == null) {
@@ -101,7 +101,8 @@ public final class WorkflowInsight {
         Object parsed;
         try {
             parsed = Json.MAPPER.readValue(rawResult, Object.class);
-        } catch (RuntimeException | com.fasterxml.jackson.core.JsonProcessingException e) {
+        } catch (RuntimeException | JsonProcessingException e) {
+            FatalErrors.rethrow(e);
             parsed = rawResult;
         }
         try {
@@ -129,8 +130,8 @@ public final class WorkflowInsight {
                 // reused across multiple emissions (ON_CHANGE), so a transform that mutates its argument in place must
                 // not corrupt that snapshot or any later emission's view of it. deepCopyContent also normalizes POJOs
                 // to Maps and Java-time types to their JSON representation, so the transform operates on the same
-                // JSON-compatible shape the record will emit. Omit and log on any Throwable so a failing redactor never
-                // leaks the raw value and never disrupts the execution.
+                // JSON-compatible shape the record will emit. Ordinary failures omit the raw value;
+                // fatal VM/thread termination is rethrown by logSafely.
                 return transform.apply(Json.deepCopyContent(value));
             } catch (Throwable e) {
                 logSafely(label + " transform failed; value omitted", e);
@@ -140,12 +141,14 @@ public final class WorkflowInsight {
         return value;
     }
 
-    /** Logs a plugin failure without ever letting the logging itself disrupt durable execution. */
+    /** Rethrows fatal failures; contains and logs ordinary plugin/logging failures. */
     static void logSafely(String message, Throwable t) {
+        FatalErrors.rethrow(t);
         try {
             logger.warn("[workflow-insight] {}", message, t);
         } catch (Throwable ignored) {
-            // Never allow a logging failure to propagate into the SDK control flow.
+            FatalErrors.rethrow(ignored);
+            // Ordinary logging failures stay isolated from SDK control flow.
         }
     }
 

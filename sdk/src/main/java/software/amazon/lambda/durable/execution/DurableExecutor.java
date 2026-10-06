@@ -146,14 +146,14 @@ public class DurableExecutor {
             // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
             // failure.
             try {
-                return awaitHandlerScopes(
-                                executionManager.runUntilCompleteOrSuspend(handlerFuture),
-                                handlerFuture,
-                                hasHandlerScope,
-                                lambdaContext,
-                                config.getPluginFactories().size(),
-                                pluginFatal)
-                        .handle((result, ex) -> {
+                return finalizeAfterHandlerScopes(
+                        executionManager.runUntilCompleteOrSuspend(handlerFuture),
+                        handlerFuture,
+                        hasHandlerScope,
+                        lambdaContext,
+                        config.getPluginFactories().size(),
+                        pluginFatal,
+                        (result, ex) -> {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
                                 Throwable cause = normalizeInvocationFailure(ex);
@@ -275,8 +275,7 @@ public class DurableExecutor {
                                     pluginExecutionInput.get(),
                                     result);
                             return output;
-                        })
-                        .join();
+                        });
             } catch (CompletionException e) {
                 // unwrap the CompletionException and rethrow the wrapped exception
                 ExceptionHelper.sneakyThrow(normalizeInvocationFailure(e));
@@ -338,6 +337,49 @@ public class DurableExecutor {
     private static void rethrowFatal(Throwable failure) {
         if (failure instanceof VirtualMachineError fatal) throw fatal;
         if (failure instanceof ThreadDeath fatal) throw fatal;
+    }
+
+    private static <T, R> R finalizeAfterHandlerScopes(
+            CompletableFuture<T> executionFuture,
+            CompletableFuture<T> handlerFuture,
+            AtomicBoolean hasHandlerScope,
+            Context lambdaContext,
+            int pluginCount,
+            AtomicReference<Error> pluginFatal,
+            BiFunction<T, Throwable, R> finalizer) {
+        var started = new AtomicBoolean();
+        var finalized = new CompletableFuture<R>();
+        // Attach before waiting so legacy hooks retain normal CompletableFuture completion-thread dispatch.
+        var ready = executionFuture.handle((value, failure) -> {
+            Runnable finish = () -> completeFinalization(started, finalized, () -> {
+                // Match the existing major lifecycle: a positively reported instrumentation fatal is finalized
+                // as RETRYING, then rethrown. No factory or end-snapshot policy changes here.
+                var fatal = pluginFatal.get();
+                return finalizer.apply(value, fatal == null ? failure : fatal);
+            });
+            if (!hasHandlerScope.get() || handlerFuture.isDone()) finish.run();
+            else handlerFuture.whenComplete((ignored, ignoredFailure) -> finish.run());
+            return finish;
+        });
+        var finish = ready.join();
+        if (!started.get()) {
+            // Only the caller waits: a signaling handler must be free to unwind and close its scopes.
+            awaitHandlerScopes(
+                    executionFuture, handlerFuture, hasHandlerScope, lambdaContext, pluginCount, pluginFatal);
+            finish.run();
+        }
+        return finalized.join();
+    }
+
+    private static <R> void completeFinalization(
+            AtomicBoolean started, CompletableFuture<R> result, Supplier<R> finalizer) {
+        if (!started.compareAndSet(false, true)) return;
+        try {
+            result.complete(finalizer.get());
+        } catch (Throwable failure) {
+            // Match CompletableFuture.handle: transfer failures unchanged for the invocation caller to rethrow.
+            result.completeExceptionally(failure);
+        }
     }
 
     static <T> CompletableFuture<T> awaitHandlerScopes(

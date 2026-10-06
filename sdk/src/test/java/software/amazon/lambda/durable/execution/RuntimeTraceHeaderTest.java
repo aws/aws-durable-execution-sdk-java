@@ -8,15 +8,23 @@ import static org.mockito.Mockito.*;
 import com.amazonaws.services.lambda.runtime.Context;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
+import java.lang.reflect.UndeclaredThrowableException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.stream.Stream;
 import javax.tools.ToolProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 class RuntimeTraceHeaderTest {
     @Test
@@ -169,6 +177,50 @@ class RuntimeTraceHeaderTest {
         var fatal = new OutOfMemoryError("simulated");
         when(context.getXrayTraceId()).thenThrow(fatal);
         assertSame(fatal, assertThrows(OutOfMemoryError.class, () -> RuntimeTraceHeader.capture(context)));
+    }
+
+    @ParameterizedTest
+    @MethodSource("nonfatalAccessorFailures")
+    void nonfatalErrorsFromAvailableOverrideAreAuthoritativeAbsence(Throwable failure) {
+        var context = mock(RuntimeContext.class);
+        when(context.getXrayTraceId()).thenAnswer(invocation -> {
+            throw failure;
+        });
+        assertEquals("", RuntimeTraceHeader.capture(context));
+        verify(context, times(1)).getXrayTraceId();
+    }
+
+    private static Stream<Throwable> nonfatalAccessorFailures() {
+        return Stream.of(
+                new AssertionError("optional accessor assertion"),
+                new NoClassDefFoundError("optional carrier dependency"),
+                new NoSuchMethodError("method inside the runtime override"),
+                new AbstractMethodError("implementation inside the runtime override"),
+                new ExceptionInInitializerError(new IllegalStateException("optional dependency init")),
+                new CompletionException(new AssertionError("wrapped optional assertion")));
+    }
+
+    @ParameterizedTest
+    @MethodSource("fatalAccessorFailures")
+    void directAndWrappedFatalAccessorFailuresRetainIdentity(Throwable failure, Error fatal) {
+        var context = mock(RuntimeContext.class);
+        when(context.getXrayTraceId()).thenAnswer(invocation -> {
+            throw failure;
+        });
+        assertSame(fatal, assertThrows(Error.class, () -> RuntimeTraceHeader.capture(context)));
+        verify(context, times(1)).getXrayTraceId();
+    }
+
+    @SuppressWarnings("removal")
+    private static Stream<Arguments> fatalAccessorFailures() {
+        return Stream.<Error>of(new InternalError("simulated VM fatal"), new ThreadDeath())
+                .flatMap(fatal -> Stream.of(
+                        Arguments.of(fatal, fatal),
+                        Arguments.of(new CompletionException(fatal), fatal),
+                        Arguments.of(new ExecutionException(fatal), fatal),
+                        Arguments.of(new InvocationTargetException(fatal), fatal),
+                        Arguments.of(new UndeclaredThrowableException(fatal), fatal),
+                        Arguments.of(new CompletionException(new InvocationTargetException(fatal)), fatal)));
     }
 
     private abstract static class RuntimeContext implements Context {

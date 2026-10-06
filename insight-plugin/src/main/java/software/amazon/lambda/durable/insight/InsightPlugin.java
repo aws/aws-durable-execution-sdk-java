@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
+import software.amazon.lambda.durable.insight.internal.FatalErrors;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -182,6 +183,7 @@ final class InsightPlugin implements DurableExecutionPlugin {
     @Override
     public void onInvocationStart(InvocationInfo info) {
         try {
+            scheduler.throwIfFailed();
             if (!sampledIn) {
                 return;
             }
@@ -193,7 +195,7 @@ final class InsightPlugin implements DurableExecutionPlugin {
             try {
                 cachedInput = Json.deepCopyContent(info.executionInput());
             } catch (Throwable t) {
-                WorkflowInsight.logSafely("failed to snapshot execution input; omitting input", t);
+                reportFailure("failed to snapshot execution input; omitting input", t);
                 cachedInput = null;
             }
             if (settings.emitMode == WorkflowInsightConfig.EmitMode.ON_CHANGE) {
@@ -205,13 +207,14 @@ final class InsightPlugin implements DurableExecutionPlugin {
                         this, buildRecord("RUNNING", info.operations(), null, cachedInput, null, null), revision);
             }
         } catch (Throwable t) {
-            WorkflowInsight.logSafely("onInvocationStart failed", t);
+            reportFailure("onInvocationStart failed", t);
         }
     }
 
     @Override
     public void onOperationChange(OperationChangeInfo info) {
         try {
+            scheduler.throwIfFailed();
             if (settings.emitMode != WorkflowInsightConfig.EmitMode.ON_CHANGE || !sampledIn) {
                 return;
             }
@@ -224,7 +227,7 @@ final class InsightPlugin implements DurableExecutionPlugin {
             scheduler.scheduleIfNotSuperseded(
                     this, buildRecord("RUNNING", info.operations(), null, cachedInput, null, null), revision);
         } catch (Throwable t) {
-            WorkflowInsight.logSafely("onOperationChange failed", t);
+            reportFailure("onOperationChange failed", t);
         }
     }
 
@@ -234,6 +237,7 @@ final class InsightPlugin implements DurableExecutionPlugin {
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
         try {
+            scheduler.throwIfFailed();
             String status = WorkflowInsight.mapStatus(info.invocationStatus());
             boolean isTerminal = "SUCCEEDED".equals(status) || "FAILED".equals(status);
             boolean isFailure = "FAILED".equals(status);
@@ -269,9 +273,9 @@ final class InsightPlugin implements DurableExecutionPlugin {
             // during the drain is rejected, so no RUNNING snapshot can follow (or replace) the final record.
             scheduler.closeAndSchedule(this, finalRecord);
         } catch (Throwable t) {
-            // A plugin failure at end-of-invocation (record construction, transforms, truncation, export/flush,
-            // or optional exporter class linkage) must never disrupt durable execution.
-            WorkflowInsight.logSafely("onInvocationEnd failed", t);
+            // Ordinary hook/export failures remain isolated. Fatal VM/thread termination
+            // marks the scheduler failed and escapes without further exporter work.
+            reportFailure("onInvocationEnd failed", t);
         } finally {
             // If record construction failed above, this instance is still open: close it so a late change hook cannot
             // schedule into the drain. Idempotent when already closed.
@@ -305,16 +309,27 @@ final class InsightPlugin implements DurableExecutionPlugin {
         try {
             scheduler.drain(this);
         } catch (Throwable t) {
-            WorkflowInsight.logSafely("failed to drain export scheduler", t);
+            reportFailure("failed to drain export scheduler", t);
         }
         try {
             scheduler.flush();
         } catch (Throwable t) {
-            WorkflowInsight.logSafely("exporter flush failed", t);
+            reportFailure("exporter flush failed", t);
         }
     }
 
     // --- Record building. ---
+
+    /** Marks a fatal hook/logging failure before the invocation's cleanup can schedule more work. */
+    private void reportFailure(String message, Throwable failure) {
+        try {
+            WorkflowInsight.logSafely(message, failure);
+        } catch (Throwable reportingFailure) {
+            Error fatal = FatalErrors.find(reportingFailure);
+            if (fatal != null) scheduler.fail(fatal);
+            throw reportingFailure;
+        }
+    }
 
     /** Starts a record build and returns the revision that identifies it. */
     private long beginBuild() {
