@@ -81,6 +81,10 @@ jobs:
       - name: Build and test
         run: mvn -B install --file pom.xml
 
+      - name: Verify installed OpenTelemetry API compatibility
+        if: ${{ matrix.java == 17 }}
+        run: python3 .github/scripts/verify_otel_api_compatibility.py
+
       - name: Setup uv for coverage badge
         if: ${{ matrix.java == 17 }}
         # cicirello/jacoco-badge-generator is a Docker-based action; the
