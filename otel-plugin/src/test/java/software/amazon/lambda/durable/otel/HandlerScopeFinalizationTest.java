@@ -27,6 +27,7 @@ import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.HandlerScoped;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 
 class HandlerScopeFinalizationTest {
@@ -139,13 +140,21 @@ class HandlerScopeFinalizationTest {
         scopeFatal(false, false, new InternalError("late scope fatal"), false, true);
     }
 
-    @Test
-    void observesScopeFatalReportedDuringManagerShutdown() throws Exception {
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @CsvSource({"false,false", "true,false", "false,true", "true,true"})
+    void scopeFatalAfterEndDispatchPreservesCallerOutcomeAndEscapesOwner(boolean threadDeath, boolean duringEnd)
+            throws Exception {
         var releaseScope = new CountDownLatch(1);
         var ownerFinished = new CountDownLatch(1);
         var shutdownEntered = new AtomicBoolean();
         var ended = new AtomicBoolean();
-        var fatal = new InternalError("scope failure during manager shutdown");
+        var endCalls = new AtomicInteger();
+        var endInfo = new AtomicReference<InvocationEndInfo>();
+        var fatalObservedDuringEnd = new AtomicBoolean();
+        Error fatal = threadDeath ? new ThreadDeath() : new InternalError("late handler scope failure");
+        var ownerFatal = new AtomicReference<Throwable>();
+        var fatalEscaped = new CountDownLatch(1);
         var plugin = new ScopedPlugin() {
             public AutoCloseable openHandlerScope() {
                 return () -> {
@@ -156,16 +165,24 @@ class HandlerScopeFinalizationTest {
 
             public void onInvocationEnd(InvocationEndInfo info) {
                 ended.set(true);
+                endCalls.incrementAndGet();
+                endInfo.set(info);
+                if (duringEnd) {
+                    releaseScope.countDown();
+                    await(fatalEscaped);
+                    fatalObservedDuringEnd.set(ownerFatal.get() == fatal);
+                }
             }
         };
         var workers =
-                new ThreadPoolExecutor(
-                        0,
-                        Integer.MAX_VALUE,
-                        60,
-                        TimeUnit.SECONDS,
-                        new SynchronousQueue<>(),
-                        task -> daemon(task, "shutdown-owner")) {
+                new ThreadPoolExecutor(0, Integer.MAX_VALUE, 60, TimeUnit.SECONDS, new SynchronousQueue<>(), task -> {
+                    var owner = daemon(task, "shutdown-owner");
+                    owner.setUncaughtExceptionHandler((thread, failure) -> {
+                        ownerFatal.set(failure);
+                        fatalEscaped.countDown();
+                    });
+                    return owner;
+                }) {
                     @Override
                     public void execute(Runnable task) {
                         super.execute(() -> {
@@ -190,21 +207,27 @@ class HandlerScopeFinalizationTest {
                 };
         var deadline = new Deadline();
         try {
-            assertSame(
-                    fatal,
-                    assertThrows(
-                            InternalError.class,
-                            () -> DurableExecutor.execute(
-                                    input(),
-                                    deadline.context(),
-                                    TypeToken.get(String.class),
-                                    (value, ctx) -> {
-                                        deadline.arm(0);
-                                        ctx.wait("pause", Duration.ofSeconds(1));
-                                        return "done";
-                                    },
-                                    config(workers, plugin))));
+            var output = assertDoesNotThrow(() -> DurableExecutor.execute(
+                    input(),
+                    deadline.context(),
+                    TypeToken.get(String.class),
+                    (value, ctx) -> {
+                        deadline.arm(0);
+                        ctx.wait("pause", Duration.ofSeconds(1));
+                        return "done";
+                    },
+                    config(workers, plugin)));
+            assertEquals(ExecutionStatus.PENDING, output.status(), "the already finalized caller outcome stays frozen");
+            assertTrue(fatalEscaped.await(2, TimeUnit.SECONDS), "fatal must still escape the actual owner thread");
+            assertSame(fatal, ownerFatal.get());
+            assertEquals(duringEnd, fatalObservedDuringEnd.get(), "blocked end hook must observe the owner fatal");
             assertTrue(shutdownEntered.get());
+            assertEquals(1, endCalls.get(), "a late fatal must not replay already delivered end hooks");
+            assertEquals(
+                    InvocationStatus.PENDING,
+                    endInfo.get().invocationStatus(),
+                    "snapshot reflects outcome known at dispatch");
+            assertNull(endInfo.get().executionError(), "the fatal is reported after the selected end snapshot");
         } finally {
             releaseScope.countDown();
             workers.shutdown();

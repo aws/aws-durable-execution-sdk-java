@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -78,7 +79,7 @@ public class DurableExecutor {
             // Captured for onInvocationEnd, which runs outside the handler thread below.
             var pluginExecutionInput = new AtomicReference<>();
             var hasHandlerScope = new AtomicBoolean();
-            var handlerFuture = CompletableFuture.supplyAsync(
+            var handlerFuture = supplyHandler(
                     preservingMdc(pluginRunner, () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
 
@@ -130,7 +131,9 @@ public class DurableExecutor {
                                     fatal -> scopeFatal.compareAndSet(null, fatal));
                         }
                     }),
-                    config.getExecutorService()); // Get executor from config for running user code
+                    config.getExecutorService(),
+                    pluginRunner,
+                    scopeFatal); // Get executor from config for running user code
 
             // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
             // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
@@ -151,6 +154,7 @@ public class DurableExecutor {
                                 // return PENDING if it's SuspendExecutionException
                                 if (cause instanceof SuspendExecutionException) {
                                     fireOnInvocationEnd(
+                                            scopeFatal,
                                             pluginRunner,
                                             executionManager,
                                             requestId,
@@ -170,6 +174,7 @@ public class DurableExecutor {
                                                         unrecoverableDurableExecutionException
                                         && unrecoverableDurableExecutionException.isRetryable()) {
                                     fireOnInvocationEnd(
+                                            scopeFatal,
                                             pluginRunner,
                                             executionManager,
                                             requestId,
@@ -185,6 +190,7 @@ public class DurableExecutor {
                                 // fail the execution otherwise
                                 logger.debug("Execution failed: {}", cause.getMessage());
                                 fireOnInvocationEnd(
+                                        scopeFatal,
                                         pluginRunner,
                                         executionManager,
                                         requestId,
@@ -202,6 +208,7 @@ public class DurableExecutor {
                             var output =
                                     DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
                             fireOnInvocationEnd(
+                                    scopeFatal,
                                     pluginRunner,
                                     executionManager,
                                     requestId,
@@ -219,11 +226,29 @@ public class DurableExecutor {
                 ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(e));
                 return null;
             }
-        } finally {
-            // Resource shutdown may wait for other work after the bounded handoff. Observe any scope fatal
-            // reported during that existing wait before the caller commits its response, without waiting again.
-            throwIfScopeFatal(scopeFatal);
         }
+    }
+
+    private static <T> CompletableFuture<T> supplyHandler(
+            Supplier<T> task, Executor executor, PluginRunner plugins, AtomicReference<Error> scopeFatal) {
+        if (plugins.isEmpty()) return CompletableFuture.supplyAsync(task, executor);
+        var result = new CompletableFuture<T>();
+        var caller = Thread.currentThread();
+        Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
+            try {
+                result.complete(task.get());
+            } catch (Throwable failure) {
+                result.completeExceptionally(failure);
+                // Preserve legacy user-body Error handling. Only a positively reported new scope fatal also
+                // escapes its actual owner after its observation future settles. Direct callers finalize below.
+                var fatal = scopeFatal.get();
+                if (Thread.currentThread() != caller
+                        && fatal != null
+                        && ExceptionHelper.unwrapCompletableFuture(failure) == fatal) throw fatal;
+            }
+        };
+        executor.execute(work);
+        return result;
     }
 
     static <T> CompletableFuture<T> awaitHandlerScopes(
@@ -280,6 +305,7 @@ public class DurableExecutor {
     }
 
     private static void fireOnInvocationEnd(
+            AtomicReference<Error> scopeFatal,
             PluginRunner pluginRunner,
             ExecutionManager executionManager,
             String requestId,
@@ -292,6 +318,9 @@ public class DurableExecutor {
         if (pluginRunner.isEmpty()) {
             return;
         }
+        // Freeze the selected end snapshot here. A scope fatal already observed still escapes before dispatch;
+        // a later scope fatal escapes its owner instead of rewriting this caller outcome after finalization.
+        throwIfScopeFatal(scopeFatal);
         // Finalization can run on the invocation caller rather than the handler worker.
         try (var ignored = restoreMdcOnClose()) {
             pluginRunner.onInvocationEnd(new InvocationEndInfo(
