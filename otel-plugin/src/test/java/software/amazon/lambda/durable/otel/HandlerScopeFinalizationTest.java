@@ -15,6 +15,7 @@ import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
@@ -147,15 +148,19 @@ class HandlerScopeFinalizationTest {
         scopeFatal(false, false, new InternalError("late scope fatal"), false, true);
     }
 
-    @Test
-    void observesScopeFatalReportedDuringManagerShutdown() throws Exception {
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void lateScopeFatalAfterFinalizationPreservesCallerOutcomeAndEscapesOwner(boolean threadDeath) throws Exception {
         var releaseScope = new CountDownLatch(1);
         var ownerFinished = new CountDownLatch(1);
         var shutdownEntered = new AtomicBoolean();
         var ended = new AtomicBoolean();
         var endCalls = new AtomicInteger();
         var endInfo = new AtomicReference<InvocationEndInfo>();
-        var fatal = new InternalError("scope failure during manager shutdown");
+        Error fatal = threadDeath ? new ThreadDeath() : new InternalError("scope failure during manager shutdown");
+        var ownerFatal = new AtomicReference<Throwable>();
+        var fatalEscaped = new CountDownLatch(1);
         var plugin = new ScopedPlugin() {
             public AutoCloseable openHandlerScope() {
                 return () -> {
@@ -171,13 +176,14 @@ class HandlerScopeFinalizationTest {
             }
         };
         var workers =
-                new ThreadPoolExecutor(
-                        0,
-                        Integer.MAX_VALUE,
-                        60,
-                        TimeUnit.SECONDS,
-                        new SynchronousQueue<>(),
-                        task -> daemon(task, "shutdown-owner")) {
+                new ThreadPoolExecutor(0, Integer.MAX_VALUE, 60, TimeUnit.SECONDS, new SynchronousQueue<>(), task -> {
+                    var owner = daemon(task, "shutdown-owner");
+                    owner.setUncaughtExceptionHandler((thread, failure) -> {
+                        ownerFatal.set(failure);
+                        fatalEscaped.countDown();
+                    });
+                    return owner;
+                }) {
                     @Override
                     public void execute(Runnable task) {
                         super.execute(() -> {
@@ -202,20 +208,19 @@ class HandlerScopeFinalizationTest {
                 };
         var deadline = new Deadline();
         try {
-            assertSame(
-                    fatal,
-                    assertThrows(
-                            InternalError.class,
-                            () -> DurableExecutor.execute(
-                                    input(),
-                                    deadline.context(),
-                                    TypeToken.get(String.class),
-                                    (value, ctx) -> {
-                                        deadline.arm(0);
-                                        ctx.wait("pause", Duration.ofSeconds(1));
-                                        return "done";
-                                    },
-                                    config(workers, info -> plugin))));
+            var output = assertDoesNotThrow(() -> DurableExecutor.execute(
+                    input(),
+                    deadline.context(),
+                    TypeToken.get(String.class),
+                    (value, ctx) -> {
+                        deadline.arm(0);
+                        ctx.wait("pause", Duration.ofSeconds(1));
+                        return "done";
+                    },
+                    config(workers, info -> plugin)));
+            assertEquals(ExecutionStatus.PENDING, output.status(), "the already finalized caller outcome stays frozen");
+            assertTrue(fatalEscaped.await(2, TimeUnit.SECONDS), "fatal must still escape the actual owner thread");
+            assertSame(fatal, ownerFatal.get());
             assertTrue(shutdownEntered.get());
             assertEquals(1, endCalls.get(), "a late fatal must not replay already delivered end hooks");
             assertEquals(

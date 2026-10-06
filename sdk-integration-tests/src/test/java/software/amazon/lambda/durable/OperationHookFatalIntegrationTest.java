@@ -14,16 +14,109 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.*;
 import software.amazon.lambda.durable.retry.RetryDecision;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 
 class OperationHookFatalIntegrationTest {
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void terminalCheckpointFatalStopsReleasedWaiterBeforeItsNextUserBody(boolean threadDeath) throws Exception {
+        Error fatal = threadDeath ? new ThreadDeath() : new InternalError("checkpoint observer fatal");
+        var changeEntered = new CountDownLatch(1);
+        var releaseChange = new CountDownLatch(1);
+        var firstRegistered = new CountDownLatch(1);
+        var nextStart = new CountDownLatch(1);
+        var releaseNext = new CountDownLatch(1);
+        var fatalObserved = new CountDownLatch(1);
+        var first = new AtomicReference<BaseDurableOperation>();
+        var effectsAfterFatal = new AtomicInteger();
+        DurableExecutionPluginFactory faulty = info -> new DurableExecutionPlugin() {
+            public void onOperationChange(OperationChangeInfo value) {
+                if (value.updatedOperations().values().stream()
+                        .noneMatch(op -> "first".equals(op.name()) && op.status() == OperationStatus.SUCCEEDED)) return;
+                Thread.currentThread().setUncaughtExceptionHandler((owner, failure) -> {
+                    if (failure == fatal) fatalObserved.countDown();
+                });
+                changeEntered.countDown();
+                await(releaseChange);
+                throw fatal;
+            }
+
+            public void onUserFunctionStart(UserFunctionStartInfo value) {
+                if (!"next".equals(value.name())) return;
+                nextStart.countDown();
+                await(releaseNext);
+            }
+        };
+        var workers = Executors.newCachedThreadPool();
+        var caller = Executors.newSingleThreadExecutor();
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(new LocalMemoryExecutionClient())
+                .withCheckpointDelay(Duration.ZERO)
+                .withExecutorService(workers)
+                .withPlugins(faulty)
+                .build();
+        var atLeastOnce = StepConfig.builder()
+                .semanticsPerRetry(StepSemantics.AT_LEAST_ONCE_PER_RETRY)
+                .build();
+        try {
+            var response = caller.submit(() -> DurableExecutor.execute(
+                    input(),
+                    null,
+                    TypeToken.get(String.class),
+                    (value, context) -> {
+                        var initial = context.stepAsync("first", String.class, step -> "first", atLeastOnce);
+                        first.set((BaseDurableOperation) initial);
+                        firstRegistered.countDown();
+                        initial.get();
+                        return context.step(
+                                "next",
+                                String.class,
+                                step -> {
+                                    if (fatalObserved.getCount() == 0) effectsAfterFatal.incrementAndGet();
+                                    return "next";
+                                },
+                                atLeastOnce);
+                    },
+                    config));
+            assertTrue(changeEntered.await(5, TimeUnit.SECONDS));
+            assertTrue(firstRegistered.await(5, TimeUnit.SECONDS));
+            // Coordinate the broken ordering without assuming timing: if the waiter was already released,
+            // hold the next user-function hook until the fatal has definitely been reported by its owner.
+            if (first.get().getCompletionFuture().isDone()) assertTrue(nextStart.await(5, TimeUnit.SECONDS));
+            releaseChange.countDown();
+            assertTrue(fatalObserved.await(5, TimeUnit.SECONDS));
+            releaseNext.countDown();
+            var error = assertThrows(ExecutionException.class, () -> response.get(5, TimeUnit.SECONDS));
+            assertSame(fatal, error.getCause());
+            assertEquals(
+                    0, effectsAfterFatal.get(), "work released by this checkpoint must not run past its fatal barrier");
+        } finally {
+            releaseChange.countDown();
+            releaseNext.countDown();
+            workers.shutdownNow();
+            caller.shutdownNow();
+        }
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(5, TimeUnit.SECONDS));
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(failure);
+        }
+    }
+
     @SuppressWarnings("removal")
     static Stream<Arguments> cases() {
         return Stream.of(

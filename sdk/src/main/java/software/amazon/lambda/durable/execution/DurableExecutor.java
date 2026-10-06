@@ -282,10 +282,12 @@ public class DurableExecutor {
                 ExceptionHelper.sneakyThrow(normalizeInvocationFailure(e));
                 return null;
             }
-        } finally {
-            // Resource shutdown may wait for other work after the bounded handoff. Observe any plugin fatal
-            // reported during that existing wait before the caller commits its response, without waiting again.
-            throwIfPluginFatal(pluginFatal);
+        } catch (CompletionException failure) {
+            // Keep resource-close wrappers intact until after try-with-resources has combined exceptions; throwing
+            // the same fatal from both the body and close would trigger illegal self-suppression.
+            var fatal = pluginFatal.get();
+            if (fatal != null && normalizeInvocationFailure(failure) == fatal) throw fatal;
+            throw failure;
         }
     }
 
@@ -371,11 +373,6 @@ public class DurableExecutor {
         return fatal == null ? executionFuture : CompletableFuture.failedFuture(fatal);
     }
 
-    private static void throwIfPluginFatal(AtomicReference<Error> pluginFatal) {
-        var fatal = pluginFatal.get();
-        if (fatal != null) throw fatal;
-    }
-
     private static SafeCloseable restoreMdcOnClose() {
         var previous = MDC.getCopyOfContextMap();
         return () -> {
@@ -397,7 +394,17 @@ public class DurableExecutor {
         if (pluginRunner.isEmpty()) {
             return;
         }
-        // Invocation finalization may run on the caller rather than the handler owner.
+        // Freeze the caller outcome immediately before finalization. Observe instrumentation fatals already
+        // reported at this boundary, retaining an earlier invocation fatal. Later scope failures still escape their
+        // owner thread, but cannot rewrite the outcome whose one end snapshot has already been dispatched.
+        var reported = executionManager.beginInvocationFinalization();
+        var original = normalizeInvocationFailure(error);
+        var fatal = isFatal(original) ? (Error) original : reported;
+        if (fatal != null) {
+            status = InvocationStatus.RETRYING;
+            error = fatal;
+            executionResult = null;
+        }
         try (var ignored = restoreMdcOnClose()) {
             pluginRunner.onInvocationEnd(new InvocationEndInfo(
                     requestId,
@@ -410,6 +417,8 @@ public class DurableExecutor {
                     error,
                     executionInput,
                     executionResult));
+        } finally {
+            if (fatal != null) throw fatal;
         }
     }
 
