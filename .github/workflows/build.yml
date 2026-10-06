@@ -53,7 +53,11 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # CodeBuild-hosted runner in the Java testing account (Lambda compute,
+    # corretto21 image). Fork PRs stay on GitHub-hosted runners so untrusted
+    # fork code never executes inside the testing account; same-repo PRs, push
+    # and workflow_dispatch use the ephemeral CodeBuild runner.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || format('codebuild-github-actions-runner-{0}-{1}', github.run_id, github.run_attempt) }}
     strategy:
       fail-fast: false
       matrix:
@@ -77,12 +81,27 @@ jobs:
       - name: Build and test
         run: mvn -B install --file pom.xml
 
+      - name: Setup uv for coverage badge
+        if: ${{ matrix.java == 17 }}
+        # cicirello/jacoco-badge-generator is a Docker-based action; the
+        # CodeBuild Lambda-compute runner has no docker, so run the same tool
+        # from PyPI via uv instead. uv provides Python on the Amazon Linux image
+        # (actions/setup-python ships only Ubuntu builds).
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.22"
+
       - name: Generate JaCoCo Badge
         if: ${{ matrix.java == 17 }}
-        uses: cicirello/jacoco-badge-generator@72266185b7ee48a6fd74eaf0238395cc8b14fef8 # v2
-        with:
-          jacoco-csv-file: coverage-report/target/site/jacoco-aggregate/jacoco.csv
-          badges-directory: coverage-report/target/site/jacoco-aggregate
+        # Equivalent to cicirello/jacoco-badge-generator@v2 with the two inputs
+        # this workflow set (jacoco-csv-file, badges-directory); writes
+        # jacoco.svg into the badges directory, matching the action's default.
+        # The package version is pinned so this step stays reproducible, as the
+        # SHA-pinned action was.
+        run: |
+          uv run --with jacoco-badge-generator==2.12.1 python -m jacoco_badge_generator \
+            -j coverage-report/target/site/jacoco-aggregate/jacoco.csv \
+            -d coverage-report/target/site/jacoco-aggregate
 
       - name: Generate javadoc site
         if: ${{ matrix.java == 17 }}
@@ -95,8 +114,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          TITLE=$(gh api repos/${{ github.repository }}/milestones \
-            --jq '[.[] | select(.state == "open" and .due_on != null)] | sort_by(.due_on) | .[0].title // empty')
+          # Use curl + jq rather than the GitHub CLI: gh is not preinstalled on
+          # the CodeBuild runner image. GITHUB_API_URL/GH_TOKEN are provided by
+          # Actions; the jq filter matches the previous `gh api --jq` behavior.
+          TITLE=$(curl -sfL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${{ github.repository }}/milestones?state=open&per_page=100" \
+            | jq -r '[.[] | select(.state == "open" and .due_on != null)] | sort_by(.due_on) | .[0].title // empty')
 
           if [ -z "$TITLE" ]; then
             URL="https://img.shields.io/badge/Next%20Milestone-No%20milestone-lightgrey"
@@ -131,7 +157,8 @@ jobs:
   deploy-pages:
     if: ${{ github.event_name == 'milestone' || github.ref == 'refs/heads/main' }}
     needs: build
-    runs-on: ubuntu-latest
+    # Never fork-reachable (main/milestone only); runs only actions/deploy-pages.
+    runs-on: ${{ format('codebuild-github-actions-runner-{0}-{1}', github.run_id, github.run_attempt) }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
