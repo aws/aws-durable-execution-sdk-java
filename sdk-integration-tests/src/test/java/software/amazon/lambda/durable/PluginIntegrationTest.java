@@ -39,10 +39,10 @@ class PluginIntegrationTest {
         var configuredPlugin = new RecordingPlugin();
         var dynamicPlugin = new RecordingPlugin();
         var provider = new RecordingPluginProvider(dynamicPlugin);
-        var plugins =
-                DynamicPluginLoader.loadConfiguredPlugins("recording", List.of(provider), List.of(configuredPlugin));
+        var factories = DynamicPluginLoader.loadConfiguredPluginFactories(
+                "recording", List.of(provider), List.<DurableExecutionPluginFactory>of(info -> configuredPlugin));
         var config = DurableConfig.builder()
-                .withPlugins(plugins.toArray(DurableExecutionPlugin[]::new))
+                .withPlugins(factories.toArray(DurableExecutionPluginFactory[]::new))
                 .build();
 
         var runner = LocalDurableTestRunner.create(
@@ -60,7 +60,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_receivesInvocationStartAndEnd_onSuccessfulExecution() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -84,7 +84,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_receivesInvocationEnd_withPendingStatus_onSuspension() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -106,7 +106,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_invocationSnapshots_trackReplayAcrossSuspension() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -168,7 +168,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_receivesInvocationEnd_withFailedStatus_onError() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -195,7 +195,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_invocationHooks_carryExecutionInputAndResult_onSuccess() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -217,7 +217,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_invocationEnd_omitsExecutionResult_onFailure() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -244,7 +244,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_invocationEnd_omitsExecutionResult_onSuspension() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -268,8 +268,10 @@ class PluginIntegrationTest {
     void plugin_executionInput_isDeserializedOnce_andSharedWithHandler() {
         var serDes = new CountingSerDes();
         var plugin = new RecordingPlugin();
-        var config =
-                DurableConfig.builder().withPlugins(plugin).withSerDes(serDes).build();
+        var config = DurableConfig.builder()
+                .withPlugins(info -> plugin)
+                .withSerDes(serDes)
+                .build();
         var handlerInput = new AtomicReference<Object>();
 
         var runner = LocalDurableTestRunner.create(
@@ -318,7 +320,7 @@ class PluginIntegrationTest {
     void plugin_hooksStayPaired_whenSerDesSneakyThrowsCheckedException() {
         var plugin = new RecordingPlugin();
         var config = DurableConfig.builder()
-                .withPlugins(plugin)
+                .withPlugins(info -> plugin)
                 .withSerDes(new SneakyThrowingSerDes())
                 .build();
 
@@ -353,12 +355,100 @@ class PluginIntegrationTest {
         }
     }
 
+    @Test
+    void plugin_hooksStayPaired_whenTheResultCannotBeSerialized() {
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder()
+                .withPlugins(info -> plugin)
+                .withSerDes(new ResultRejectingSerDes())
+                .build();
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> "unserializable", config);
+
+        // The invocation fails on the way out, after the handler has already returned.
+        assertThrows(Exception.class, () -> runner.run("input"));
+
+        // The end hook is the only point at which a plugin can flush: releasePlugins() calls nothing on the
+        // instances it drops and the contract has no close(). An exit that skips it therefore discards the whole
+        // invocation's telemetry -- Insight's record and every exporter's flush, and both OTel plugins' spans --
+        // and can leave a record queued for a pump that exports it after this invocation has returned.
+        assertEquals(1, plugin.invocationStarts.size());
+        assertEquals(1, plugin.invocationEnds.size(), "a start hook must not be left without its end hook");
+        // RETRYING, not SUCCEEDED: the result never reached the backend, so the execution is not finished.
+        assertEquals(InvocationStatus.RETRYING, plugin.invocationEnds.get(0).invocationStatus());
+        assertNotNull(
+                plugin.invocationEnds.get(0).executionError(), "the plugin must be told why the invocation ended");
+    }
+
+    /** SerDes that refuses to serialize the handler's result, as JacksonSerDes does for an unwritable value. */
+    static class ResultRejectingSerDes implements SerDes {
+        private final JacksonSerDes delegate = new JacksonSerDes();
+
+        @Override
+        public String serialize(Object value) {
+            if ("unserializable".equals(value)) {
+                throw new IllegalStateException("cannot serialize the result");
+            }
+            return delegate.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            return delegate.deserialize(data, typeToken);
+        }
+    }
+
+    @Test
+    void plugin_seesTheUnderlyingFailure_whenResultDeliveryFailsWrapped() {
+        // handleLargePayload waits with join(), so a failed checkpoint of an oversized result reaches the same catch
+        // wrapped in a CompletionException. Plugins are told what failed, not how it was delivered.
+        var plugin = new RecordingPlugin();
+        var cause = new IllegalStateException("underlying delivery failure");
+        var config = DurableConfig.builder()
+                .withPlugins(info -> plugin)
+                .withSerDes(new WrappedFailureSerDes(cause))
+                .build();
+
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> "unserializable", config);
+
+        assertThrows(Exception.class, () -> runner.run("input"));
+
+        assertEquals(1, plugin.invocationEnds.size());
+        assertSame(
+                cause,
+                plugin.invocationEnds.get(0).executionError(),
+                "the plugin must be told the underlying failure, not the CompletionException wrapper");
+    }
+
+    /** SerDes whose result failure arrives wrapped, as a failed oversized-result checkpoint does. */
+    static class WrappedFailureSerDes implements SerDes {
+        private final JacksonSerDes delegate = new JacksonSerDes();
+        private final Throwable cause;
+
+        WrappedFailureSerDes(Throwable cause) {
+            this.cause = cause;
+        }
+
+        @Override
+        public String serialize(Object value) {
+            if ("unserializable".equals(value)) {
+                throw new CompletionException(cause);
+            }
+            return delegate.serialize(value);
+        }
+
+        @Override
+        public <T> T deserialize(String data, TypeToken<T> typeToken) {
+            return delegate.deserialize(data, typeToken);
+        }
+    }
+
     // ─── Operation-level hooks ───────────────────────────────────────────
 
     @Test
     void plugin_receivesOperationStartAndEnd_forStep() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class, (input, context) -> context.step("my-step", String.class, stepCtx -> "result"), config);
@@ -379,7 +469,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_receivesOperationStart_forMultipleSteps() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -402,7 +492,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_operationEnd_notFiredOnReplay() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -436,7 +526,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_operationEnd_firedForOperationCompletedDuringSuspension() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -473,7 +563,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_operationEnd_firedOnceForStepCompletingInCurrentInvocation() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -496,7 +586,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_operationEnd_includesError_whenInvokeFailsDuringSuspension() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -541,7 +631,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_operationEnd_includesError_whenStepFailsViaCheckpoint() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -572,7 +662,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_operationEnd_noError_whenOperationSucceeds() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class, (input, context) -> context.step("ok-step", String.class, stepCtx -> "success"), config);
@@ -590,7 +680,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_operationEnd_includesResult_whenStepSucceeds() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class, (input, context) -> context.step("my-step", String.class, stepCtx -> "task-a"), config);
@@ -611,7 +701,7 @@ class PluginIntegrationTest {
         var plugin = new RecordingPlugin();
         // withCheckpointEmptyMap is a temporary flag expected to be removed in a future major version.
         var config = DurableConfig.builder()
-                .withPlugins(plugin)
+                .withPlugins(info -> plugin)
                 .withCheckpointEmptyMap(true)
                 .build();
 
@@ -643,7 +733,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_receivesOperationChange_forStep() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class, (input, context) -> context.step("my-step", String.class, stepCtx -> "result"), config);
@@ -666,7 +756,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_operationChange_includesErrorAndStatus_whenStepFails() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -700,7 +790,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_receivesUserFunctionStartAndEnd_forStep() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class, (input, context) -> context.step("compute", String.class, stepCtx -> "42"), config);
@@ -720,7 +810,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_userFunctionEnd_reportsFailed_whenStepFails() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         // When a step's user function throws, the exception propagates through the user-function hook
         // boundary, so onUserFunctionEnd reports FAILED with the error. Retry/checkpoint
@@ -762,7 +852,7 @@ class PluginIntegrationTest {
     void plugin_userFunctionStart_includesAttemptNumber_forRetries() {
         var attemptCounter = new AtomicInteger(0);
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -797,7 +887,9 @@ class PluginIntegrationTest {
     void multiplePlugins_allReceiveHooks() {
         var plugin1 = new RecordingPlugin();
         var plugin2 = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin1, plugin2).build();
+        var config = DurableConfig.builder()
+                .withPlugins(info -> plugin1, info -> plugin2)
+                .build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class, (input, context) -> context.step("step", String.class, stepCtx -> "result"), config);
@@ -816,7 +908,7 @@ class PluginIntegrationTest {
         var throwingPlugin = new ThrowingPlugin();
         var recordingPlugin = new RecordingPlugin();
         var config = DurableConfig.builder()
-                .withPlugins(throwingPlugin, recordingPlugin)
+                .withPlugins(info -> throwingPlugin, info -> recordingPlugin)
                 .build();
 
         var runner = LocalDurableTestRunner.create(
@@ -833,12 +925,63 @@ class PluginIntegrationTest {
         assertFalse(recordingPlugin.invocationEnds.isEmpty());
     }
 
+    @Test
+    void factoryThrowingLinkageError_doesNotDisruptExecution() {
+        // A provider whose optional dependency is missing from the deployment package fails this way. A LinkageError is
+        // an Error, not an Exception, so containment that catches only Exception lets it escape onInvocationStart and
+        // fail the whole execution.
+        var recordingPlugin = new RecordingPlugin();
+        var config = DurableConfig.builder()
+                .withPlugins(
+                        info -> {
+                            throw new NoClassDefFoundError("software/amazon/example/OptionalExporter");
+                        },
+                        info -> recordingPlugin)
+                .build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class, (input, context) -> context.step("step", String.class, stepCtx -> "safe"), config);
+
+        var result = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("safe", result.getResult(String.class));
+        assertFalse(recordingPlugin.invocationStarts.isEmpty(), "the surviving plugin must still receive its hooks");
+        assertFalse(recordingPlugin.invocationEnds.isEmpty());
+    }
+
+    @Test
+    void factoryThrowingAbstractMethodError_doesNotDisruptExecution() {
+        // What a provider compiled against an earlier version of the factory interface throws the first time the SDK
+        // invokes the method it does not implement — the exact failure this SDK's factory-only plugin contract creates
+        // for a provider that has not been recompiled.
+        var recordingPlugin = new RecordingPlugin();
+        var config = DurableConfig.builder()
+                .withPlugins(
+                        info -> {
+                            throw new AbstractMethodError(
+                                    "software.amazon.example.LegacyProvider.createPlugin(InvocationInfo)");
+                        },
+                        info -> recordingPlugin)
+                .build();
+
+        var runner = LocalDurableTestRunner.create(
+                String.class, (input, context) -> context.step("step", String.class, stepCtx -> "safe"), config);
+
+        var result = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("safe", result.getResult(String.class));
+        assertFalse(recordingPlugin.invocationStarts.isEmpty(), "the surviving plugin must still receive its hooks");
+        assertFalse(recordingPlugin.invocationEnds.isEmpty());
+    }
+
     // ─── Child context hooks ─────────────────────────────────────────────
 
     @Test
     void plugin_receivesHooks_forChildContextOperations() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -861,7 +1004,7 @@ class PluginIntegrationTest {
     void plugin_receivesAttemptNumbers_forWaitForCondition() {
         var checkCount = new AtomicInteger(0);
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -892,7 +1035,7 @@ class PluginIntegrationTest {
     void plugin_reportsFailedThenSucceededAttempts_forRetriedStep() {
         var attempts = new AtomicInteger(0);
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -948,7 +1091,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_userFunctionEnd_reportsSuspension_asIncomplete() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         // A child context whose body suspends (on a wait) throws SuspendExecutionException through the
         // user-function boundary, so onUserFunctionEnd fires with INCOMPLETE and the suspend exception.
@@ -976,7 +1119,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_userFunctionEnd_unwrapsCompletionExceptionForSuspension() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
         var suspension = new SuspendExecutionException();
 
         var runner = LocalDurableTestRunner.create(
@@ -1000,7 +1143,7 @@ class PluginIntegrationTest {
     @Test
     void plugin_parallelBranches_emitUserFunctionHooks_butConsumerDoesNot() {
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(info -> plugin).build();
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -1037,7 +1180,15 @@ class PluginIntegrationTest {
 
     // ─── Test helper classes ─────────────────────────────────────────────
 
-    /** Plugin that records all hook invocations for assertions. */
+    /**
+     * Plugin that records all hook invocations for assertions.
+     *
+     * <p>Registered as {@code withPlugins(info -> plugin)}, so every invocation of a test's execution is handed the
+     * same recorder. The SDK creates a plugin instance per invocation, and several tests here span two invocations (a
+     * suspension and its resume, or a retry with a delay); handing all of them one recorder is what lets those tests
+     * assert on what the whole execution observed, e.g. that {@code step1}'s operation-end fired exactly once across
+     * both invocations. Production plugins return a fresh instance instead.
+     */
     private static class RecordingPlugin implements DurableExecutionPlugin {
         final List<InvocationInfo> invocationStarts = Collections.synchronizedList(new ArrayList<>());
         final List<InvocationEndInfo> invocationEnds = Collections.synchronizedList(new ArrayList<>());
@@ -1089,18 +1240,12 @@ class PluginIntegrationTest {
             return "recording";
         }
 
+        /**
+         * Hands every invocation the same recorder so the assertions can read what all of them observed; a real
+         * provider would build a fresh instance here.
+         */
         @Override
-        public int getApiVersion() {
-            return API_VERSION;
-        }
-
-        @Override
-        public Class<? extends DurableExecutionPlugin> getPluginType() {
-            return RecordingPlugin.class;
-        }
-
-        @Override
-        public DurableExecutionPlugin createPlugin() {
+        public DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo) {
             return plugin;
         }
     }

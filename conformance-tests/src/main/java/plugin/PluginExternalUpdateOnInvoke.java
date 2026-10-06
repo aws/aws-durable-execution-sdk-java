@@ -23,7 +23,9 @@ public class PluginExternalUpdateOnInvoke extends DurableHandler<Object, String>
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder().withPlugins(new UpdatedOnInvokePlugin()).build();
+        return DurableConfig.builder()
+                .withPlugins(info -> new UpdatedOnInvokePlugin())
+                .build();
     }
 
     @Override

@@ -6,6 +6,7 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.context.ContextKey;
 import io.opentelemetry.sdk.trace.samplers.SamplingDecision;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Carries the durable execution's sampling intent to {@link DurableSampler} for one durable span.
@@ -32,15 +33,16 @@ import io.opentelemetry.sdk.trace.samplers.SamplingResult;
  *       the full {@link SamplingResult}, including any attributes a custom sampler attached.
  *   <li><b>Thread-scoped system property</b> — a cross-class-loader fallback modelled on
  *       {@link DeterministicIdGenerator}'s scoped-ID bridge. The intent is published on the thread that creates the
- *       durable span for the synchronous duration of {@code startSpan()} (the sampler runs on that same thread), keyed
- *       by thread ID under a bootstrap-visible {@link System} property so both class loaders read the same value. A
- *       resolved decision bridges its {@link SamplingDecision} name (the three built-in decisions carry no attributes,
- *       so reconstructing them is faithful); a deferral bridges a sentinel plus the canonical trace ID.
+ *       durable span until its sampler consumes the value (before synchronous span processors run), keyed by thread ID
+ *       under a bootstrap-visible {@link System} property so both class loaders read the same value. A resolved
+ *       decision bridges its {@link SamplingDecision} name (the three built-in decisions carry no attributes, so
+ *       reconstructing them is faithful); a deferral bridges a sentinel plus the canonical trace ID.
  * </ol>
  *
  * <p>The scope is opened immediately around each durable {@code startSpan()} call and closed right after, so the
- * property never leaks beyond the span it applies to. Nothing is persisted across invocations; cross-invocation
- * consistency comes from recomputing the intent from stable inputs, not from sharing state.
+ * property is consumed once by the sampler before callbacks can create unrelated spans. Nothing is persisted across
+ * invocations; cross-invocation consistency comes from recomputing the intent from stable inputs, not from sharing
+ * state.
  */
 final class DurableSamplingDecision {
 
@@ -65,7 +67,7 @@ final class DurableSamplingDecision {
         }
     }
 
-    private static final ContextKey<Intent> KEY =
+    private static final ContextKey<AtomicReference<Intent>> KEY =
             ContextKey.named("software.amazon.lambda.durable.otel.durable-sampling-decision");
 
     private static final String SCOPED_PROPERTY_PREFIX = "software.amazon.lambda.durable.otel.scopedSamplingDecision.";
@@ -74,9 +76,9 @@ final class DurableSamplingDecision {
 
     private DurableSamplingDecision() {}
 
-    /** Returns a context carrying the durable sampling intent (same-class-loader carrier), derived from the given. */
+    /** Returns a context carrying a one-shot intent for one span, preserving the full SamplingResult. */
     static Context store(Context context, Intent intent) {
-        return context.with(KEY, intent);
+        return context.with(KEY, new AtomicReference<>(intent));
     }
 
     /**
@@ -98,15 +100,28 @@ final class DurableSamplingDecision {
     }
 
     /**
-     * Returns the durable sampling intent for a span, or {@code null} when none is present. Prefers the full-fidelity
-     * context key (same class loader) and falls back to the thread-scoped system property (cross class loader).
+     * Inspects the unconsumed durable sampling intent for a span, or {@code null} when none is present. Prefers the
+     * full-fidelity context key (same class loader) and falls back to the thread-scoped system property (cross class
+     * loader).
      */
     static Intent get(Context context) {
-        var fromContext = context.get(KEY);
+        var holder = context.get(KEY);
+        var fromContext = holder != null ? holder.get() : null;
         if (fromContext != null) {
             return fromContext;
         }
         return fromScopedProperty();
+    }
+
+    /** Consumes both carriers before callbacks can reuse the parent context or cross-loader bridge. */
+    static Intent consume(Context context) {
+        try {
+            var holder = context.get(KEY);
+            var fromContext = holder != null ? holder.getAndSet(null) : null;
+            return fromContext != null ? fromContext : fromScopedProperty();
+        } finally {
+            System.clearProperty(scopedProperty());
+        }
     }
 
     private static String encode(Intent intent) {

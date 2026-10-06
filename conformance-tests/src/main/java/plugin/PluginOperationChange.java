@@ -21,7 +21,7 @@ public class PluginOperationChange extends DurableHandler<String, String> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder().withPlugins(new ChangePlugin()).build();
+        return DurableConfig.builder().withPlugins(info -> new ChangePlugin()).build();
     }
 
     @Override

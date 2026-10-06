@@ -50,7 +50,7 @@ DURABLE_EXECUTION_PLUGINS=otel-invocation,com.example.audit
 
 When the variable is unset or blank, the SDK does not perform provider discovery. During `DurableConfig` construction, the SDK uses `ServiceLoader` and the thread context class loader to find `DurableExecutionPluginProvider` implementations. Only named providers create plugins.
 
-Dynamically loaded plugins run first in the order listed in `DURABLE_EXECUTION_PLUGINS`. Plugins registered through `withPlugins(...)` follow in configuration order. Both sources are additive: if the same plugin type is selected dynamically and registered explicitly, both instances are registered and receive lifecycle hooks. Duplicate configured provider names, duplicate discovered provider names, missing providers, incompatible provider API versions, invalid plugin types, and provider construction failures stop configuration with an `IllegalStateException`.
+Dynamically loaded plugins run first in the order listed in `DURABLE_EXECUTION_PLUGINS`. Plugins registered through `withPlugins(...)` follow in configuration order. Both sources are additive: if the same plugin is selected dynamically and registered explicitly, both factories are registered and each produces an instance that receives lifecycle hooks. Duplicate configured provider names, duplicate discovered provider names, missing providers, provider discovery failures, and selected providers that were built against an older SDK and do not implement `createPlugin(InvocationInfo)` stop configuration with an `IllegalStateException`.
 
 To distribute a provider in a Lambda layer, package its JAR under `java/lib`:
 
@@ -67,7 +67,7 @@ The provider JAR must contain:
 META-INF/services/software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider
 ```
 
-The service file contains the provider implementation class name. A minimal provider looks like:
+The service file contains the provider implementation class name. A provider is itself the per-invocation plugin factory: the SDK calls `createPlugin(InvocationInfo)` once per Lambda invocation and drops the returned instance when that invocation returns, so the instance can hold its invocation's state in plain fields. A minimal provider looks like:
 
 ```java
 public final class AuditPluginProvider implements DurableExecutionPluginProvider {
@@ -77,18 +77,8 @@ public final class AuditPluginProvider implements DurableExecutionPluginProvider
     }
 
     @Override
-    public int getApiVersion() {
-        return API_VERSION;
-    }
-
-    @Override
-    public Class<? extends DurableExecutionPlugin> getPluginType() {
-        return AuditPlugin.class;
-    }
-
-    @Override
-    public DurableExecutionPlugin createPlugin() {
-        return new AuditPlugin();
+    public DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo) {
+        return new AuditPlugin(invocationInfo.durableExecutionArn());
     }
 }
 ```
