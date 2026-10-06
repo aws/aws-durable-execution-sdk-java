@@ -69,8 +69,15 @@ class HandlerScopeTest {
     }
 
     @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void linkageFailuresPreserveTheBodyOutcomeAndAllEarlierScopes(boolean bodyFails) {
+    @CsvSource({
+        "false,linkage",
+        "true,linkage",
+        "false,assert-open",
+        "true,assert-open",
+        "false,assert-close",
+        "true,assert-close"
+    })
+    void nonFatalErrorsPreserveTheBodyOutcomeAndAllEarlierScopes(boolean bodyFails, String failureSite) {
         var active = new ThreadLocal<String>();
         var calls = new ArrayList<String>();
         var healthy = new ScopedPlugin() {
@@ -88,6 +95,7 @@ class HandlerScopeTest {
             @Override
             public AutoCloseable openHandlerScope() {
                 calls.add("open-broken");
+                if (failureSite.equals("assert-open")) throw new AssertionError("optional setup assertion");
                 throw new NoSuchMethodError("optional API missing");
             }
         };
@@ -97,6 +105,7 @@ class HandlerScopeTest {
                 calls.add("open-last");
                 return () -> {
                     calls.add("close-last");
+                    if (failureSite.equals("assert-close")) throw new AssertionError("optional cleanup assertion");
                     throw new NoClassDefFoundError("optional class missing");
                 };
             }
@@ -113,7 +122,7 @@ class HandlerScopeTest {
             if (bodyFails)
                 assertSame(bodyFailure, assertThrows(IllegalStateException.class, () -> runner.runHandler(body)));
             else assertEquals("ok", runner.runHandler(body));
-            assertNull(active.get(), "a later linkage failure must not prevent earlier context cleanup");
+            assertNull(active.get(), "a later optional-scope failure must not prevent earlier context cleanup");
             assertEquals(
                     List.of("open-healthy", "open-broken", "open-last", "body", "close-last", "close-healthy"), calls);
         } finally {
