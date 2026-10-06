@@ -43,9 +43,10 @@ this hook is not exactly-once delivery. Checkpoint batching and retries preserve
 ## Model and backend dependencies
 
 The SDK path and tests are implemented assuming the reviewed generated model member exists. The pinned public Lambda
-model `2.55.6` currently lacks `ChainedInvokeOptions.Builder.xAmznTraceId(String)`, so compilation against that model is
-expected to fail. The implementation does not hide the missing member with reflection, runtime capability checks,
-serializer bypasses or raw HTTP fields. Rebase onto the published model and rerun normal tests when it is available.
+model `2.55.11` currently lacks `ChainedInvokeOptions.XAmznTraceId` (both its builder setter and getter), so compilation
+against that model is expected to fail. The implementation does not hide the missing member with reflection, runtime
+capability checks, serializer bypasses or raw HTTP fields. Rebase onto the published model and rerun normal tests when
+it is available.
 
 The design also adds `XAmznTraceId` to `DistributedMapOptions`. This Java SDK currently exposes no distributed-map
 operation or START dispatch; its existing `map` and `parallel` APIs use CONTEXT operations. There is no new distributed
@@ -60,5 +61,6 @@ separate changes.
 Tests exercise real public invoke and checkpoint paths, pending/terminal replay, failed uncommitted START recovery,
 ordinary plugin fallbacks and Error propagation, sampled/unsampled OTel views, batched invokes with distinct parents,
 custom payload and tenant preservation, generated-model copies, and the normal Lambda client's JSON marshaller with
-only HTTP transport replaced. An isolated local model-preview fixture can test the assumed member shape, but cannot
-establish that the public model or backend supports it.
+only HTTP transport replaced. Batch-boundary tests include the encoded options and trace header in the 750 KiB size
+budget, including JSON escaping and UTF-8. An isolated local model-preview fixture can test the assumed member shape,
+but cannot establish that the public model or backend supports it.

@@ -266,10 +266,37 @@ class CheckpointManager {
         if (update == null) {
             return 0;
         }
-        return update.id().length()
+        long size = (long) update.id().length()
                 + update.type().toString().length()
                 + update.action().toString().length()
                 + (update.payload() != null ? update.payload().length() : 0)
                 + 100;
+        var options = update.chainedInvokeOptions();
+        if (options != null) {
+            size += ",\"ChainedInvokeOptions\":{}".length();
+            size += jsonStringFieldSize("FunctionName", options.functionName());
+            size += jsonStringFieldSize("TenantId", options.tenantId());
+            size += jsonStringFieldSize("XAmznTraceId", options.xAmznTraceId());
+        }
+        return (int) Math.min(size, Integer.MAX_VALUE);
+    }
+
+    /** Include UTF-8 and JSON escaping; conservatively allow a comma before every optional field. */
+    private static long jsonStringFieldSize(String name, String value) {
+        if (value == null) return 0;
+        long size = name.length() + 6L; // comma, quoted key, colon, and quoted value
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (character < 0x20 || character >= 0x80) {
+                // Allow the longest JSON escape per UTF-16 unit. The Lambda marshaller escapes surrogate
+                // pairs as two six-byte escapes, rather than emitting a four-byte UTF-8 code point.
+                size += 6;
+            } else if (character == '"' || character == '\\') {
+                size += 2;
+            } else {
+                size++;
+            }
+        }
+        return size;
     }
 }
