@@ -730,6 +730,36 @@ class CheckpointManagerTest {
     }
 
     @Test
+    void checkpointBatch_revokedTokenOnTerminalExecutionUpdate_clearsPendingPollers() throws Exception {
+        var signalSuspension = mock(Runnable.class);
+        var revocableBatcher = new CheckpointManager(
+                config, "arn:test", "token-1", callbackOperations::addAll, () -> true, () -> {}, signalSuspension);
+
+        when(client.checkpoint(anyString(), anyString(), anyList()))
+                .thenReturn(CheckpointDurableExecutionResponse.builder().build());
+
+        var pollingFuture =
+                revocableBatcher.pollForUpdate("poll-op", Instant.now().plusSeconds(10));
+        var terminalFuture = revocableBatcher.checkpoint(OperationUpdate.builder()
+                .id("exec-op")
+                .type(OperationType.EXECUTION)
+                .action(OperationAction.SUCCEED)
+                .payload("\"result\"")
+                .build());
+
+        terminalFuture.get(200, TimeUnit.MILLISECONDS);
+        var pollingException = assertThrows(Exception.class, () -> pollingFuture.get(200, TimeUnit.MILLISECONDS));
+
+        assertInstanceOf(IllegalStateException.class, pollingException.getCause());
+        assertFalse(revocableBatcher.isCheckpointTokenRevoked());
+        verify(signalSuspension, never()).run();
+
+        revocableBatcher.awaitPendingCheckpoints();
+        revocableBatcher.shutdown();
+        verify(client, times(1)).checkpoint(anyString(), anyString(), anyList());
+    }
+
+    @Test
     void checkpointBatch_revokedToken_abandonsDelayedCheckpoints() throws Exception {
         var revocationStarted = new CountDownLatch(1);
         var returnRevokedResponse = new CountDownLatch(1);

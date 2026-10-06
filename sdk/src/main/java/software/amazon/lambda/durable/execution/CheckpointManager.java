@@ -284,6 +284,7 @@ class CheckpointManager {
                         handleRevokedCheckpointToken();
                         throw new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE);
                     }
+                    failPollingFutures(() -> new IllegalStateException("Execution already completed"));
                     logger.info(
                             "Checkpoint token withheld on durable execution {}'s terminal update; execution is"
                                     + " finished, nothing left to suspend.",
