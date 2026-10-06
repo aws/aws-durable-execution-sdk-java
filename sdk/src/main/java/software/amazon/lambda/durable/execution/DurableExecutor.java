@@ -61,7 +61,7 @@ public class DurableExecutor {
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             var executionArn = input.durableExecutionArn();
             // Capture on the runtime thread before dispatch: LMI trace carriers can be thread-local.
-            var xRayTraceId = RuntimeTraceHeader.capture(lambdaContext);
+            var xRayTraceId = pluginRunner.isEmpty() ? null : RuntimeTraceHeader.capture(lambdaContext);
 
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.

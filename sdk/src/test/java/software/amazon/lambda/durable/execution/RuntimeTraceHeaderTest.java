@@ -155,6 +155,15 @@ class RuntimeTraceHeaderTest {
     }
 
     @Test
+    void runtimeAccessorFailuresRetainFallback() {
+        var context = mock(RuntimeContext.class);
+        when(context.getXrayTraceId())
+                .thenThrow(new SecurityException("access denied"), new IllegalStateException("carrier unavailable"));
+        assertNull(RuntimeTraceHeader.capture(context));
+        assertNull(RuntimeTraceHeader.capture(context));
+    }
+
+    @Test
     void fatalRuntimeFailuresStillPropagate() {
         var context = mock(RuntimeContext.class);
         var fatal = new OutOfMemoryError("simulated");

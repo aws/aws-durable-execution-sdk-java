@@ -9,6 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static software.amazon.lambda.durable.TypeToken.get;
 
@@ -94,6 +96,51 @@ class DurableExecutionTest {
         var output = DurableExecutor.execute(input, lambdaContext, get(String.class), (value, ctx) -> value, config);
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
         assertEquals(header, seen.get());
+    }
+
+    @Test
+    void optionalTraceAccessorFailureDoesNotAbortHandler() {
+        var lambdaContext = mock(RuntimeContext.class);
+        when(lambdaContext.getRemainingTimeInMillis()).thenReturn(30000);
+        when(lambdaContext.getXrayTraceId()).thenThrow(new SecurityException("access denied"));
+        var seen = new AtomicReference<InvocationInfo>();
+        var plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationStart(InvocationInfo info) {
+                seen.set(info);
+            }
+        };
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withPlugins(plugin)
+                .build();
+        var output = DurableExecutor.execute(
+                traceCaptureInput(), lambdaContext, get(String.class), (value, ctx) -> "done " + value, config);
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertEquals("\"done test-input\"", output.result());
+        assertNotNull(seen.get());
+        assertNull(seen.get().xRayTraceId());
+    }
+
+    @Test
+    void noPluginsDoesNotAccessRuntimeTraceCarrier() {
+        var lambdaContext = mock(RuntimeContext.class);
+        when(lambdaContext.getRemainingTimeInMillis()).thenReturn(30000);
+        when(lambdaContext.getXrayTraceId()).thenThrow(new AssertionError("accessor must not be invoked"));
+        var output = DurableExecutor.execute(
+                traceCaptureInput(), lambdaContext, get(String.class), (value, ctx) -> value, configWithMockClient());
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertEquals("\"test-input\"", output.result());
+        verify(lambdaContext, never()).getXrayTraceId();
+    }
+
+    private DurableExecutionInput traceCaptureInput() {
+        return new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(executionOp())
+                        .build());
     }
 
     @Test
