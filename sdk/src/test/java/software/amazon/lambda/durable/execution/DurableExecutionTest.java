@@ -17,11 +17,13 @@ import static software.amazon.lambda.durable.TypeToken.get;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
@@ -119,7 +121,7 @@ class DurableExecutionTest {
                 get(String.class),
                 (userInput, ctx) -> {
                     ctx.step("step1", String.class, stepCtx -> "Done");
-                    ctx.wait(null, java.time.Duration.ofSeconds(60));
+                    ctx.wait(null, Duration.ofSeconds(60));
                     return "Should not reach here";
                 },
                 configWithMockClient());
@@ -468,19 +470,19 @@ class DurableExecutionTest {
     @Test
     void checkpointTokenRevoked_nonTerminalUpdate_suspendsExecutionAsPending() {
         var client = mock(DurableExecutionClient.class);
-        var revokeNextStep = new java.util.concurrent.atomic.AtomicBoolean(false);
+        var revokeNextStep = new AtomicBoolean(false);
         when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
             List<OperationUpdate> updates = invocation.getArgument(2);
-            var responseOperations = new java.util.ArrayList<Operation>();
+            var responseOperations = new ArrayList<Operation>();
             for (var update : updates) {
                 var opBuilder = Operation.builder()
                         .id(update.id())
                         .name(update.name())
                         .subType(update.subType())
                         .type(update.type());
-                if (update.action() == software.amazon.awssdk.services.lambda.model.OperationAction.START) {
+                if (update.action() == OperationAction.START) {
                     opBuilder.status(OperationStatus.STARTED);
-                } else if (update.action() == software.amazon.awssdk.services.lambda.model.OperationAction.SUCCEED) {
+                } else if (update.action() == OperationAction.SUCCEED) {
                     opBuilder.status(OperationStatus.SUCCEEDED);
                     opBuilder.stepDetails(
                             StepDetails.builder().result(update.payload()).build());
@@ -559,7 +561,7 @@ class DurableExecutionTest {
                 (userInput, ctx) -> {
                     // The wait's checkpoint round-trip returns a token-less response: this must surface
                     // as a suspension (PENDING), never as an exception escaping to the caller.
-                    ctx.wait(null, java.time.Duration.ofSeconds(60));
+                    ctx.wait(null, Duration.ofSeconds(60));
                     return "unreachable";
                 },
                 config);
@@ -718,16 +720,16 @@ class DurableExecutionTest {
         var client = mock(DurableExecutionClient.class);
         when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
             List<OperationUpdate> updates = invocation.getArgument(2);
-            var responseOperations = new java.util.ArrayList<Operation>();
+            var responseOperations = new ArrayList<Operation>();
             for (var update : updates) {
                 var opBuilder = Operation.builder()
                         .id(update.id())
                         .name(update.name())
                         .subType(update.subType())
                         .type(update.type());
-                if (update.action() == software.amazon.awssdk.services.lambda.model.OperationAction.START) {
+                if (update.action() == OperationAction.START) {
                     opBuilder.status(OperationStatus.STARTED);
-                } else if (update.action() == software.amazon.awssdk.services.lambda.model.OperationAction.SUCCEED) {
+                } else if (update.action() == OperationAction.SUCCEED) {
                     opBuilder.status(OperationStatus.SUCCEEDED);
                     if (update.type() == OperationType.STEP) {
                         opBuilder.stepDetails(
