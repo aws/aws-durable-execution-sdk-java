@@ -37,8 +37,30 @@ import software.amazon.lambda.durable.plugin.InvocationStatus;
 
 class InvocationHeaderTest {
     @ParameterizedTest
-    @CsvSource({"true,0", "false,0", "true,1", "false,1"})
-    void throwingRuntimeOverrideCannotBorrowStaleGlobalCarrier(boolean executionView, String sampled) {
+    @CsvSource({
+        "true,0,runtime",
+        "true,0,assertion",
+        "true,0,class-linkage",
+        "true,0,method-linkage",
+        "true,0,abstract-linkage",
+        "true,1,runtime",
+        "true,1,assertion",
+        "true,1,class-linkage",
+        "true,1,method-linkage",
+        "true,1,abstract-linkage",
+        "false,0,runtime",
+        "false,0,assertion",
+        "false,0,class-linkage",
+        "false,0,method-linkage",
+        "false,0,abstract-linkage",
+        "false,1,runtime",
+        "false,1,assertion",
+        "false,1,class-linkage",
+        "false,1,method-linkage",
+        "false,1,abstract-linkage"
+    })
+    void throwingRuntimeOverrideCannotBorrowStaleGlobalCarrier(
+            boolean executionView, String sampled, String failureKind) {
         var property = "com.amazonaws.xray.traceHeader";
         var previous = System.getProperty(property);
         var stale = "Root=1-6955b900-aaaaaaaaaaaaaaaaaaaaaaaa;Sampled=" + sampled;
@@ -52,7 +74,7 @@ class InvocationHeaderTest {
             DurableExecutionPlugin plugin = executionView
                     ? new ExecutionOtelPlugin(builder, config)
                     : new InvocationOtelPlugin(builder, config);
-            executeWithThrowingRuntimeOverride(plugin);
+            executeWithThrowingRuntimeOverride(plugin, accessorFailure(failureKind));
             var spans = exporter.getFinishedSpanItems();
             assertEquals(2, spans.size(), "a failed invocation accessor must not inherit stale sampling");
             assertTrue(
@@ -65,9 +87,11 @@ class InvocationHeaderTest {
         }
     }
 
-    private static void executeWithThrowingRuntimeOverride(DurableExecutionPlugin plugin) {
+    private static void executeWithThrowingRuntimeOverride(DurableExecutionPlugin plugin, Throwable failure) {
         var context = mock(RuntimeContext.class);
-        when(context.getXrayTraceId()).thenThrow(new SecurityException("runtime carrier access denied"));
+        when(context.getXrayTraceId()).thenAnswer(invocation -> {
+            throw failure;
+        });
         when(context.getRemainingTimeInMillis()).thenReturn(30000);
         var operation = Operation.builder()
                 .id("id")
@@ -89,6 +113,17 @@ class InvocationHeaderTest {
                 DurableExecutor.execute(input, context, TypeToken.get(String.class), (value, ctx) -> value, config);
         assertEquals(ExecutionStatus.SUCCEEDED, result.status());
         assertEquals("\"input\"", result.result());
+    }
+
+    private static Throwable accessorFailure(String kind) {
+        return switch (kind) {
+            case "runtime" -> new SecurityException("runtime carrier access denied");
+            case "assertion" -> new AssertionError("optional runtime assertion");
+            case "class-linkage" -> new NoClassDefFoundError("optional dependency");
+            case "method-linkage" -> new NoSuchMethodError("inside available override");
+            case "abstract-linkage" -> new AbstractMethodError("inside available override");
+            default -> throw new IllegalArgumentException(kind);
+        };
     }
 
     private abstract static class RuntimeContext implements Context {

@@ -3,7 +3,13 @@
 package software.amazon.lambda.durable.execution;
 
 import com.amazonaws.services.lambda.runtime.Context;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.UndeclaredThrowableException;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,22 +22,47 @@ final class RuntimeTraceHeader {
     static String capture(Context context) {
         if (context == null) return null;
         try {
+            // Check the actual visible interface first: a legacy class may independently declare the same helper.
+            if (!hasAccessorApi()) return null;
             var accessor = context.getClass().getMethod("getXrayTraceId");
-            // Lambda Core 1.4 supplies a default returning null even for pre-1.4 Context implementations.
-            // Only a runtime override provides an invocation-local carrier. Preserve their ordinary fallback.
+            // Lambda Core 1.4's neutral default is not an invocation-local carrier.
             if (accessor.getDeclaringClass() == Context.class
                     || accessor.getReturnType() != String.class
                     || Modifier.isStatic(accessor.getModifiers())) return null;
-            // Null denotes no runtime carrier. An override returning no header is authoritative absence.
             var header = context.getXrayTraceId();
             return header == null ? "" : header;
-        } catch (NoSuchMethodException | NoSuchMethodError | AbstractMethodError unavailable) {
-            logger.debug("Lambda Context X-Ray accessor unavailable; retaining ordinary Lambda trace carriers");
-            return null;
-        } catch (RuntimeException unavailable) {
-            // A failing runtime carrier must not borrow another invocation's process-wide trace or sampling.
+        } catch (Throwable failure) {
+            rethrowFatal(failure);
+            // A failed available override must not borrow another invocation's global trace or sampling.
             logger.debug("Lambda Context X-Ray capture failed; treating invocation header as absent");
             return "";
+        }
+    }
+
+    private static boolean hasAccessorApi() {
+        try {
+            Context.class.getMethod("getXrayTraceId");
+            return true;
+        } catch (NoSuchMethodException unavailable) {
+            return false;
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private static void rethrowFatal(Throwable failure) {
+        if (failure instanceof VirtualMachineError fatal) throw fatal;
+        if (failure instanceof ThreadDeath fatal) throw fatal;
+        var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        var cause = failure;
+        while (seen.add(cause)) {
+            if (cause instanceof VirtualMachineError fatal) throw fatal;
+            if (cause instanceof ThreadDeath fatal) throw fatal;
+            if (!(cause instanceof CompletionException
+                            || cause instanceof ExecutionException
+                            || cause instanceof InvocationTargetException
+                            || cause instanceof UndeclaredThrowableException)
+                    || cause.getCause() == null) return;
+            cause = cause.getCause();
         }
     }
 }
