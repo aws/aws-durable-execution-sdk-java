@@ -30,7 +30,11 @@ permissions:
 
 jobs:
   spotless-check:
-    runs-on: ubuntu-latest
+    # CodeBuild-hosted runner in the Java testing account (Lambda compute,
+    # corretto21 image with Maven preinstalled). The label must match the
+    # CodeBuild project name exactly. Fork PRs stay on GitHub-hosted runners so
+    # untrusted fork code never executes inside the testing account.
+    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || format('codebuild-github-actions-runner-{0}-{1}', github.run_id, github.run_attempt) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7

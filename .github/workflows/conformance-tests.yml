@@ -38,7 +38,9 @@ jobs:
     # 2. For PRs, run only same-repo branches from non-Dependabot actors; forked PRs or Dependabot should not access secrets.
     # Skipping this job also skips the `conformance` matrix, which needs its output.
     if: github.event_name != 'pull_request' || (github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ubuntu-latest
+    # Job is already gated to same-repo, non-Dependabot actors above, so fork
+    # code never runs here; use the plain CodeBuild runner label.
+    runs-on: ${{ format('codebuild-github-actions-runner-{0}-{1}', github.run_id, github.run_attempt) }}
     outputs:
       suites: ${{ steps.discover.outputs.suites }}
     steps:
@@ -53,9 +55,16 @@ jobs:
   conformance:
     name: conformance (${{ matrix.suite }})
     needs: discover_suites
-    runs-on: ubuntu-latest
+    # discover_suites (its `needs`) is gated to same-repo, non-Dependabot actors,
+    # which also gates this matrix; use the plain CodeBuild runner label.
+    runs-on: ${{ format('codebuild-github-actions-runner-{0}-{1}', github.run_id, github.run_attempt) }}
     env:
       AWS_REGION: us-west-2
+      # The runner image ships /etc/pip.conf with `[global] target =
+      # /tmp/opt/python/site-packages` on PYTHONPATH; ignore both so the uv venv
+      # and the conformance runner install stay isolated.
+      PIP_CONFIG_FILE: /dev/null
+      PYTHONPATH: ""
     strategy:
       fail-fast: false
       matrix:
@@ -84,12 +93,15 @@ jobs:
         run: mvn -B -q -Dmaven.test.skip=true install --file pom.xml
 
       - name: Setup Python
-        uses: actions/setup-python@v7
+        # The runner image is Amazon Linux; actions/setup-python only ships Ubuntu
+        # builds, so uv provides the Python 3.14 interpreter and activates a venv.
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.14"
+          activate-environment: true
 
       - name: Install conformance runner
-        run: pip install "git+https://github.com/aws/aws-durable-execution-conformance-tests.git@main#subdirectory=packages/aws-durable-execution-conformance-tests"
+        run: uv pip install "git+https://github.com/aws/aws-durable-execution-conformance-tests.git@main#subdirectory=packages/aws-durable-execution-conformance-tests"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
