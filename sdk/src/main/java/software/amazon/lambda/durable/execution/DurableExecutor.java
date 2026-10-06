@@ -13,8 +13,10 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -30,6 +32,7 @@ import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionExc
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
+import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -76,7 +79,7 @@ public class DurableExecutor {
             var pluginExecutionInput = new AtomicReference<>();
             var hasHandlerScope = new AtomicBoolean();
             var handlerFuture = CompletableFuture.supplyAsync(
-                    () -> {
+                    preservingMdc(pluginRunner, () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
 
                         // Deserialize once and share the value with the plugin hooks and the handler below. A second
@@ -126,7 +129,7 @@ public class DurableExecutor {
                                     () -> hasHandlerScope.set(true),
                                     fatal -> scopeFatal.compareAndSet(null, fatal));
                         }
-                    },
+                    }),
                     config.getExecutorService()); // Get executor from config for running user code
 
             // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
@@ -258,6 +261,24 @@ public class DurableExecutor {
         if (fatal != null) throw fatal;
     }
 
+    /** Restores the worker even when plugin startup runs before a failing input deserialization. */
+    private static <T> Supplier<T> preservingMdc(PluginRunner plugins, Supplier<T> task) {
+        if (plugins.isEmpty()) return task;
+        return () -> {
+            try (var ignored = restoreMdcOnClose()) {
+                return task.get();
+            }
+        };
+    }
+
+    private static SafeCloseable restoreMdcOnClose() {
+        var previous = MDC.getCopyOfContextMap();
+        return () -> {
+            if (previous == null) MDC.clear();
+            else MDC.setContextMap(previous);
+        };
+    }
+
     private static void fireOnInvocationEnd(
             PluginRunner pluginRunner,
             ExecutionManager executionManager,
@@ -271,17 +292,20 @@ public class DurableExecutor {
         if (pluginRunner.isEmpty()) {
             return;
         }
-        pluginRunner.onInvocationEnd(new InvocationEndInfo(
-                requestId,
-                executionArn,
-                isFirstInvocation,
-                executionManager.getExecutionOperation().startTimestamp(),
-                PluginInfoConverter.toOperationItemMap(
-                        executionManager.getOperationsSnapshot(), executionManager.getInitialOperationIds()),
-                status,
-                error,
-                executionInput,
-                executionResult));
+        // Finalization can run on the invocation caller rather than the handler worker.
+        try (var ignored = restoreMdcOnClose()) {
+            pluginRunner.onInvocationEnd(new InvocationEndInfo(
+                    requestId,
+                    executionArn,
+                    isFirstInvocation,
+                    executionManager.getExecutionOperation().startTimestamp(),
+                    PluginInfoConverter.toOperationItemMap(
+                            executionManager.getOperationsSnapshot(), executionManager.getInitialOperationIds()),
+                    status,
+                    error,
+                    executionInput,
+                    executionResult));
+        }
     }
 
     private static String handleLargePayload(ExecutionManager executionManager, String outputPayload) {

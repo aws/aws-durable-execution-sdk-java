@@ -84,7 +84,7 @@ public class PluginRunner {
                         scopes.push(scope);
                         onScopeOpened.run();
                     }
-                } catch (Exception | LinkageError | VirtualMachineError | ThreadDeath e) {
+                } catch (Throwable e) {
                     reportHandlerScopeFailure("Plugin handler scope threw exception", e, onScopeFatal);
                 }
             }
@@ -118,7 +118,7 @@ public class PluginRunner {
         while (!scopes.isEmpty()) {
             try {
                 scopes.pop().close();
-            } catch (Exception | LinkageError | VirtualMachineError | ThreadDeath e) {
+            } catch (Throwable e) {
                 try {
                     reportHandlerScopeFailure("Plugin handler scope cleanup threw exception", e, onScopeFatal);
                 } catch (VirtualMachineError | ThreadDeath fatal) {
