@@ -230,7 +230,11 @@ public final class DurableConfig {
 
     /**
      * Copies this configuration into a builder, preserving the effective plugin instances without repeating dynamic
-     * discovery. Calling {@code withPlugins} on the copy replaces that complete plugin list.
+     * discovery.
+     *
+     * <p>The returned builder never performs dynamic discovery, including after {@code withPlugins} replaces its
+     * complete plugin list. Calling {@code withPlugins()} with no arguments therefore removes every plugin from the
+     * copy. Use {@link #builder()} to create a fresh configuration that reads {@code DURABLE_EXECUTION_PLUGINS}.
      */
     public Builder toBuilder() {
         var builder = new Builder()
@@ -494,6 +498,9 @@ public final class DurableConfig {
          * their existing registration behavior.
          *
          * <p>Calling this method replaces any previously registered plugins. Plugins are called in registration order.
+         * A fresh builder combines this explicit list with environment-selected plugins. On a builder returned by
+         * {@link DurableConfig#toBuilder()}, this method replaces the complete resolved list and dynamic discovery
+         * remains disabled, including when the replacement list is empty.
          *
          * @param plugins the plugins to register
          * @return This builder

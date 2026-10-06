@@ -55,6 +55,11 @@ SDK 2.2.1 without duplicate telemetry. Different subclasses still participate in
 without exclusive-group metadata retain their existing multi-instance behavior. The current testing SDK copies
 resolved plugin instances without rediscovery.
 
+`config.toBuilder()` keeps that resolved-list behavior for the lifetime of the copied builder. Calling `withPlugins(...)`
+on it replaces the complete plugin list without reading `DURABLE_EXECUTION_PLUGINS` again; `withPlugins()` removes all
+plugins from the copy. Use `DurableConfig.builder()` when creating a fresh configuration that should honor the current
+environment selection.
+
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
 1. Add the ADOT Lambda Layer to your function

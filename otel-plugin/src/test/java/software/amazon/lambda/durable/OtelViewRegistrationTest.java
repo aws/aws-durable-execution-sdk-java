@@ -228,6 +228,7 @@ class OtelViewRegistrationTest {
                     config.getPluginRunner().getPlugins(),
                     copy.getPluginRunner().getPlugins());
             assertFalse(copy.shouldDeserializeAfterSerialization());
+            assertCopiedBuilderReplacementDoesNotRediscover(config);
             var effects = new AtomicInteger();
             var runner = LocalDurableTestRunner.create(
                     String.class,
@@ -249,6 +250,35 @@ class OtelViewRegistrationTest {
             assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
             assertEquals("input", result.getResult(String.class));
             assertEquals(1, effects.get());
+        }
+
+        private static void assertCopiedBuilderReplacementDoesNotRediscover(DurableConfig config) {
+            var replacement = new DurableExecutionPlugin() {};
+            var copiedBuilder = config.toBuilder();
+            assertTrue(copiedBuilder
+                    .withPlugins()
+                    .build()
+                    .getPluginRunner()
+                    .getPlugins()
+                    .isEmpty());
+            assertEquals(
+                    List.of(replacement),
+                    copiedBuilder
+                            .withPlugins(replacement)
+                            .build()
+                            .getPluginRunner()
+                            .getPlugins());
+
+            var fresh = DurableConfig.builder()
+                    .withPlugins(replacement)
+                    .build()
+                    .getPluginRunner()
+                    .getPlugins();
+            assertEquals(2, fresh.size(), "Fresh builders continue to honor environment discovery");
+            assertEquals(
+                    config.getPluginRunner().getPlugins().get(0).getClass(),
+                    fresh.get(0).getClass());
+            assertSame(replacement, fresh.get(1));
         }
     }
 
