@@ -844,8 +844,10 @@ class MapIntegrationTest {
     @CsvSource({"FLAT, 2", "NESTED, 16"})
     void testMapWithToleratedFailurePercentage(NestingType nestingType, int events) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var items = List.of("ok1", "FAIL1", "ok2", "FAIL2", "ok3", "FAIL3", "ok4");
+            // Put the threshold-crossing failure last and serialize admission so exact history counts are stable.
+            var items = List.of("ok1", "ok2", "ok3", "ok4", "FAIL1", "FAIL2", "FAIL3");
             var config = MapConfig.builder()
+                    .maxConcurrency(1)
                     .completionConfig(CompletionConfig.toleratedFailurePercentage(0.3))
                     .nestingType(nestingType)
                     .build();
@@ -876,8 +878,10 @@ class MapIntegrationTest {
         var executionCount = new AtomicInteger(0);
 
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
-            var items = List.of("ok1", "FAIL1", "ok2", "FAIL2", "ok3", "FAIL3", "ok4");
+            // Put the threshold-crossing failure last and serialize admission so exact history counts are stable.
+            var items = List.of("ok1", "ok2", "ok3", "ok4", "FAIL1", "FAIL2", "FAIL3");
             var config = MapConfig.builder()
+                    .maxConcurrency(1)
                     .completionConfig(CompletionConfig.toleratedFailurePercentage(0.3))
                     .nestingType(nestingType)
                     .build();
@@ -901,9 +905,10 @@ class MapIntegrationTest {
         var result1 = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result1.getStatus());
         var firstRunCount = executionCount.get();
+        assertEquals(7, firstRunCount);
         assertEquals(events, result1.getHistoryEvents().size());
 
-        // Replay — with unlimited concurrency, children replay simultaneously.
+        // Replay retains the checkpointed completion decision and every previously completed child.
         // Verify completionReason is consistent and no re-execution occurs.
         var result2 = runner.run("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result2.getStatus());

@@ -26,6 +26,7 @@ on:
 concurrency:
   group: e2e-tests
   cancel-in-progress: false
+  queue: max
 
 # permission can be added at job level or workflow level
 permissions:
