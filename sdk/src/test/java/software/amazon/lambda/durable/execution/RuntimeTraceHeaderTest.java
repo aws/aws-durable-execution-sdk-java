@@ -155,12 +155,12 @@ class RuntimeTraceHeaderTest {
     }
 
     @Test
-    void runtimeAccessorFailuresRetainFallback() {
+    void runtimeAccessorFailuresAreAuthoritativeAbsence() {
         var context = mock(RuntimeContext.class);
         when(context.getXrayTraceId())
                 .thenThrow(new SecurityException("access denied"), new IllegalStateException("carrier unavailable"));
-        assertNull(RuntimeTraceHeader.capture(context));
-        assertNull(RuntimeTraceHeader.capture(context));
+        assertEquals("", RuntimeTraceHeader.capture(context));
+        assertEquals("", RuntimeTraceHeader.capture(context));
     }
 
     @Test

@@ -25,9 +25,13 @@ final class RuntimeTraceHeader {
             // Null denotes no runtime carrier. An override returning no header is authoritative absence.
             var header = context.getXrayTraceId();
             return header == null ? "" : header;
-        } catch (NoSuchMethodException | NoSuchMethodError | AbstractMethodError | RuntimeException unavailable) {
+        } catch (NoSuchMethodException | NoSuchMethodError | AbstractMethodError unavailable) {
             logger.debug("Lambda Context X-Ray accessor unavailable; retaining ordinary Lambda trace carriers");
             return null;
+        } catch (RuntimeException unavailable) {
+            // A failing runtime carrier must not borrow another invocation's process-wide trace or sampling.
+            logger.debug("Lambda Context X-Ray capture failed; treating invocation header as absent");
+            return "";
         }
     }
 }

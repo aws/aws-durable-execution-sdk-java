@@ -99,8 +99,10 @@ same object through `ContextExtractor.extract(InvocationInfo)`. There is no inde
 The default extractor prefers this field, preserving Root, Parent and Sampled. A null field denotes an unavailable
 runtime carrier (including an inherited neutral Lambda Context default) or a legacy constructor call, and permits
 ordinary Lambda fallback to `com.amazonaws.xray.traceHeader`, then `_X_AMZN_TRACE_ID`. An actual runtime override
-returning null/empty is captured as an empty string and uses deterministic fallback. A captured malformed header is
-also authoritative and never borrows another invocation's process-wide header. No global carrier is modified.
+returning null/empty is captured as an empty string and uses deterministic fallback. A non-fatal runtime exception
+while reading the accessor is also captured as an empty string, so a failed read cannot inherit another invocation's
+trace or sampling decision. A captured malformed header is likewise authoritative and never borrows another
+invocation's process-wide header. No global carrier is modified. Capture is skipped when no plugins are registered.
 
 The no-argument `ContextExtractor.extract()` remains the functional method, so existing lambdas and custom extractors
 retain their behavior. `XRayContextExtractor` uses a temporary thread-local scope solely to preserve old no-argument

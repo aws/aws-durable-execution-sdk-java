@@ -119,7 +119,7 @@ class DurableExecutionTest {
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
         assertEquals("\"done test-input\"", output.result());
         assertNotNull(seen.get());
-        assertNull(seen.get().xRayTraceId());
+        assertEquals("", seen.get().xRayTraceId());
     }
 
     @Test
