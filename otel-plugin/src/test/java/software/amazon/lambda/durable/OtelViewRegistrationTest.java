@@ -51,9 +51,11 @@ class OtelViewRegistrationTest {
         };
         assertEquals("legacy application group", invocation.getExclusiveGroup());
         assertNull(execution.getExclusiveGroup());
-        assertThrows(
+        var error = assertThrows(
                 IllegalArgumentException.class,
                 () -> DurableConfig.builder().withPlugins(invocation, execution).build());
+        assertTrue(error.getMessage().contains(invocation.getClass().getName()));
+        assertTrue(error.getMessage().contains(execution.getClass().getName()));
         assertDoesNotThrow(() -> DurableConfig.builder().withPlugins(invocation).build());
     }
 

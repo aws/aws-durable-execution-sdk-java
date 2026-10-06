@@ -39,13 +39,17 @@ public class PluginRunner {
                 // Older test runners rediscover environment plugins when copying a resolved configuration.
                 // Keep repeated registrations of one implementation compatible, while rejecting different views.
                 if (previous != null && previous.getClass() != plugin.getClass()) {
-                    throw new IllegalArgumentException(
-                            "Conflicting plugins " + previous.getClass().getSimpleName()
-                                    + " and " + plugin.getClass().getSimpleName() + " in exclusive group '" + group
-                                    + "'. Configure only one plugin implementation from this group.");
+                    throw new IllegalArgumentException("Conflicting plugins " + pluginName(previous)
+                            + " and " + pluginName(plugin) + " in exclusive group '" + group
+                            + "'. Configure only one plugin implementation from this group.");
                 }
             }
         }
+    }
+
+    private static String pluginName(DurableExecutionPlugin plugin) {
+        var type = plugin.getClass();
+        return type.getSimpleName().isEmpty() ? type.getName() : type.getSimpleName();
     }
 
     private static Set<String> exclusiveGroups(Class<?> pluginType) {
