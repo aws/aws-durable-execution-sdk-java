@@ -28,6 +28,10 @@ final class RuntimeTraceHeader {
         } catch (NoSuchMethodException | NoSuchMethodError | AbstractMethodError unavailable) {
             logger.debug("Lambda Context has no X-Ray accessor; retaining ordinary Lambda trace carriers");
             return null;
+        } catch (RuntimeException unavailable) {
+            // Failed invocation-local access must not borrow another invocation's global trace or sampling.
+            logger.debug("Lambda Context X-Ray capture failed; treating invocation header as absent");
+            return "";
         }
     }
 }

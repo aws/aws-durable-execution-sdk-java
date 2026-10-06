@@ -33,6 +33,7 @@ import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionExc
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
+import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -76,7 +77,7 @@ public class DurableExecutor {
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             var executionArn = input.durableExecutionArn();
             // Capture on the runtime thread before dispatch: LMI trace carriers can be thread-local.
-            var xRayTraceId = RuntimeTraceHeader.capture(lambdaContext);
+            var xRayTraceId = pluginRunner.isEmpty() ? null : RuntimeTraceHeader.capture(lambdaContext);
 
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
@@ -138,7 +139,8 @@ public class DurableExecutor {
                                     executionManager::recordHandlerScopeFatal);
                         }
                     },
-                    config.getExecutorService()); // Get executor from config for running user code
+                    config.getExecutorService(),
+                    !pluginRunner.isEmpty()); // Get executor from config for running user code
 
             // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
             // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
@@ -288,18 +290,17 @@ public class DurableExecutor {
     }
 
     /** Completes the observation future without absorbing fatal failures on an executor worker. */
-    private static <T> CompletableFuture<T> supplyAsync(Supplier<T> task, Executor executor) {
+    private static <T> CompletableFuture<T> supplyAsync(
+            Supplier<T> task, Executor executor, boolean preservePluginMdc) {
         var result = new CompletableFuture<T>();
         var caller = Thread.currentThread();
         Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
             try {
                 T value;
-                try {
+                // Preserve the instrumented owner's context even when startup fails. Without plugins, retain
+                // the existing worker cleanup without adding MDC snapshot reads.
+                try (SafeCloseable ignored = preservePluginMdc ? restoreMdcOnClose() : MDC::clear) {
                     value = task.get();
-                } finally {
-                    // Startup hooks can populate MDC before input failures or a later factory aborts. The normal
-                    // handler logger scope has not opened in those paths, so clean up on this owner before publishing.
-                    MDC.clear();
                 }
                 result.complete(value);
             } catch (Throwable failure) {
@@ -375,6 +376,14 @@ public class DurableExecutor {
         if (fatal != null) throw fatal;
     }
 
+    private static SafeCloseable restoreMdcOnClose() {
+        var previous = MDC.getCopyOfContextMap();
+        return () -> {
+            if (previous == null) MDC.clear();
+            else MDC.setContextMap(previous);
+        };
+    }
+
     private static void fireOnInvocationEnd(
             PluginRunner pluginRunner,
             ExecutionManager executionManager,
@@ -388,17 +397,20 @@ public class DurableExecutor {
         if (pluginRunner.isEmpty()) {
             return;
         }
-        pluginRunner.onInvocationEnd(new InvocationEndInfo(
-                requestId,
-                executionArn,
-                isFirstInvocation,
-                executionManager.getExecutionOperation().startTimestamp(),
-                PluginInfoConverter.toOperationItemMap(
-                        executionManager.getOperationsSnapshot(), executionManager.getInitialOperationIds()),
-                status,
-                error,
-                executionInput,
-                executionResult));
+        // Invocation finalization may run on the caller rather than the handler owner.
+        try (var ignored = restoreMdcOnClose()) {
+            pluginRunner.onInvocationEnd(new InvocationEndInfo(
+                    requestId,
+                    executionArn,
+                    isFirstInvocation,
+                    executionManager.getExecutionOperation().startTimestamp(),
+                    PluginInfoConverter.toOperationItemMap(
+                            executionManager.getOperationsSnapshot(), executionManager.getInitialOperationIds()),
+                    status,
+                    error,
+                    executionInput,
+                    executionResult));
+        }
     }
 
     private static String handleLargePayload(ExecutionManager executionManager, String outputPayload) {
