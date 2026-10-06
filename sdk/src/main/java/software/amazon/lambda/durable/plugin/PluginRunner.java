@@ -4,7 +4,9 @@ package software.amazon.lambda.durable.plugin;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,19 +34,29 @@ public class PluginRunner {
     private void validateExclusiveGroups() {
         var groups = new HashMap<String, DurableExecutionPlugin>();
         for (var plugin : plugins) {
-            var metadata = plugin.getClass().getAnnotation(ExclusivePluginGroup.class);
-            if (metadata == null) {
-                continue;
-            }
-            var group = metadata.value();
-            var previous = groups.putIfAbsent(group, plugin);
-            if (previous != null) {
-                throw new IllegalArgumentException(
-                        "Conflicting plugins " + previous.getClass().getSimpleName()
-                                + " and " + plugin.getClass().getSimpleName() + " in exclusive group '" + group
-                                + "'. Configure only one plugin from this group.");
+            for (var group : exclusiveGroups(plugin.getClass())) {
+                var previous = groups.putIfAbsent(group, plugin);
+                // Older test runners rediscover environment plugins when copying a resolved configuration.
+                // Keep repeated registrations of one implementation compatible, while rejecting different views.
+                if (previous != null && previous.getClass() != plugin.getClass()) {
+                    throw new IllegalArgumentException(
+                            "Conflicting plugins " + previous.getClass().getSimpleName()
+                                    + " and " + plugin.getClass().getSimpleName() + " in exclusive group '" + group
+                                    + "'. Configure only one plugin implementation from this group.");
+                }
             }
         }
+    }
+
+    private static Set<String> exclusiveGroups(Class<?> pluginType) {
+        var groups = new LinkedHashSet<String>();
+        for (var type = pluginType; type != null; type = type.getSuperclass()) {
+            var metadata = type.getDeclaredAnnotation(ExclusivePluginGroup.class);
+            if (metadata != null) {
+                groups.add(metadata.value());
+            }
+        }
+        return groups;
     }
 
     /** Returns a no-op runner that does nothing. */

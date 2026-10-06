@@ -12,6 +12,8 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import java.io.File;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -22,7 +24,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.MDC;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.otel.ExecutionOtelPlugin;
@@ -31,6 +32,7 @@ import software.amazon.lambda.durable.otel.InvocationOtelPlugin;
 import software.amazon.lambda.durable.otel.InvocationOtelPluginProvider;
 import software.amazon.lambda.durable.otel.OtelPluginConfig;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.ExclusivePluginGroup;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class OtelViewRegistrationTest {
@@ -54,6 +56,26 @@ class OtelViewRegistrationTest {
                 () -> DurableConfig.builder().withPlugins(invocation, execution).build());
         assertDoesNotThrow(() -> DurableConfig.builder().withPlugins(invocation).build());
     }
+
+    @ParameterizedTest
+    @CsvSource({"true,false", "true,true", "false,false", "false,true"})
+    void reannotatedSubclassesRetainViewExclusivity(boolean executionSubclass, boolean reversed) {
+        DurableExecutionPlugin custom =
+                executionSubclass ? new ReannotatedExecutionPlugin() : new ReannotatedInvocationPlugin();
+        DurableExecutionPlugin opposite = executionSubclass ? new InvocationOtelPlugin() : new ExecutionOtelPlugin();
+        var first = reversed ? opposite : custom;
+        var second = reversed ? custom : opposite;
+        var error = assertThrows(
+                IllegalArgumentException.class,
+                () -> DurableConfig.builder().withPlugins(first, second).build());
+        assertTrue(error.getMessage().contains("durable-otel-view"));
+    }
+
+    @ExclusivePluginGroup("application-instrumentation")
+    private static class ReannotatedInvocationPlugin extends InvocationOtelPlugin {}
+
+    @ExclusivePluginGroup("application-instrumentation")
+    private static class ReannotatedExecutionPlugin extends ExecutionOtelPlugin {}
 
     @ParameterizedTest
     @CsvSource({"explicit,false", "explicit,true", "dynamic,false", "dynamic,true", "mixed,false", "mixed,true"})
@@ -133,13 +155,18 @@ class OtelViewRegistrationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"otel-invocation", "otel-execution"})
-    void environmentSelectedSingleViewCanBeCopiedIntoLocalRunner(String provider, @TempDir Path directory)
-            throws Exception {
+    @CsvSource({"otel-invocation,false", "otel-execution,false", "otel-invocation,true", "otel-execution,true"})
+    void environmentSelectedSingleViewCanBeCopiedIntoLocalRunner(
+            String provider, boolean releasedTestingSdk, @TempDir Path directory) throws Exception {
         var java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
         var classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
+        var testingLocation =
+                releasedTestingSdk ? Path.of(System.getProperty("releasedTestingSdkJar")) : testingSdkLocation();
+        assertTrue(Files.exists(testingLocation), "Testing SDK artifact must exist");
+        classpath = testingLocation + File.pathSeparator + classpath;
         var output = directory.resolve("child.log");
-        var builder = new ProcessBuilder(java, "-cp", classpath, EnvironmentRunnerCheck.class.getName())
+        var builder = new ProcessBuilder(
+                        java, "-cp", classpath, EnvironmentRunnerCheck.class.getName(), testingLocation.toString())
                 .redirectErrorStream(true)
                 .redirectOutput(output.toFile());
         builder.environment().put("DURABLE_EXECUTION_PLUGINS", provider);
@@ -152,6 +179,14 @@ class OtelViewRegistrationTest {
         }
     }
 
+    private static Path testingSdkLocation() throws URISyntaxException {
+        return Path.of(LocalDurableTestRunner.class
+                .getProtectionDomain()
+                .getCodeSource()
+                .getLocation()
+                .toURI());
+    }
+
     private static String read(Path path) {
         try {
             return Files.readString(path);
@@ -161,7 +196,9 @@ class OtelViewRegistrationTest {
     }
 
     public static class EnvironmentRunnerCheck {
-        public static void main(String[] args) {
+        public static void main(String[] args) throws Exception {
+            // Ensure the old-testing cases execute the released bytecode, not the reactor's updated runner.
+            assertEquals(Path.of(args[0]).toRealPath(), testingSdkLocation().toRealPath());
             var config = DurableConfig.builder()
                     .withDeserializeAfterSerialization(false)
                     .build();
@@ -171,17 +208,21 @@ class OtelViewRegistrationTest {
                     config.getPluginRunner().getPlugins(),
                     copy.getPluginRunner().getPlugins());
             assertFalse(copy.shouldDeserializeAfterSerialization());
+            var effects = new AtomicInteger();
             var runner = LocalDurableTestRunner.create(
                     String.class,
                     (input, ctx) -> {
+                        ctx.step("once", Integer.class, step -> effects.incrementAndGet());
                         ctx.wait("pause", Duration.ofSeconds(1));
                         return input;
                     },
                     config);
             assertEquals(ExecutionStatus.PENDING, runner.run("input").getStatus());
             runner.advanceTime();
-            assertEquals(
-                    ExecutionStatus.SUCCEEDED, runner.runUntilComplete("input").getStatus());
+            var result = runner.runUntilComplete("input");
+            assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+            assertEquals("input", result.getResult(String.class));
+            assertEquals(1, effects.get());
         }
     }
 

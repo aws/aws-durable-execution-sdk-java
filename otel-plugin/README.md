@@ -47,7 +47,11 @@ The invocation view groups work by Lambda invocation; the execution view groups 
 Both create Workflow and Invocation telemetry and manage log correlation, so combining them is unsupported.
 `DurableConfig.build()` rejects conflicting views before lifecycle hooks run and names both plugins in the diagnostic.
 This applies to explicit registration, `DURABLE_EXECUTION_PLUGINS=otel-invocation,otel-execution`, and mixed registration.
-Registering the same view twice is also rejected. Zero OTel plugins, either single view, and unrelated plugins remain valid.
+Zero OTel plugins, either single view, and unrelated plugins remain valid.
+Repeated instances of the same concrete plugin class remain accepted for compatibility with older testing SDKs that
+rediscover an environment-selected view while copying configuration. Each registration still receives hooks, so configure
+the view once and update the testing SDK together with the core to avoid duplicate telemetry. The current testing SDK
+copies resolved plugin instances without rediscovery.
 
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
@@ -383,6 +387,8 @@ var otelPlugin = new InvocationOtelPlugin(
 Apache-2.0
 
 View exclusivity is declared with inherited `@ExclusivePluginGroup("durable-otel-view")` metadata.
-Configuration reads this explicit opt-in annotation; it does not call application methods that happen to be named
-`getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled view restriction.
+Configuration reads this explicit opt-in annotation from the entire superclass chain; it does not call application methods
+that happen to be named `getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled
+view restriction. A subclass may add another group, but cannot replace a superclass's group; repeated group names in one
+class hierarchy are checked once.
 Older cores ignore the optional annotation and retain their prior behavior; no provider-version floor is raised.

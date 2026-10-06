@@ -13,14 +13,62 @@ import org.junit.jupiter.api.Test;
 class PluginRunnerTest {
 
     @Test
-    void exclusiveGroupsRejectDuplicatesButAllowUnrelatedPlugins() {
+    void exclusiveGroupsRejectDifferentImplementationsButAllowUnrelatedPlugins() {
         var exclusive = new ExclusivePlugin();
-        assertThrows(IllegalArgumentException.class, () -> new PluginRunner(List.of(exclusive, exclusive)));
+        assertThrows(
+                IllegalArgumentException.class, () -> new PluginRunner(List.of(exclusive, new ConflictingPlugin())));
         assertDoesNotThrow(() -> new PluginRunner(List.of(exclusive, new DurableExecutionPlugin() {})));
     }
 
+    @Test
+    void repeatedImplementationRegistrationsRetainTheirHooksForCompatibility() {
+        var first = new ExclusivePlugin();
+        var second = new ExclusivePlugin();
+        var runner = new PluginRunner(List.of(first, second, first));
+        runner.onInvocationStart(invocationInfo());
+        assertEquals(2, first.starts);
+        assertEquals(1, second.starts);
+    }
+
+    @Test
+    void subclassMetadataAddsToEveryInheritedGroup() {
+        var subclass = new ReannotatedPlugin();
+        assertDoesNotThrow(() -> new PluginRunner(List.of(subclass)));
+        assertThrows(
+                IllegalArgumentException.class, () -> new PluginRunner(List.of(subclass, new ConflictingPlugin())));
+        assertThrows(
+                IllegalArgumentException.class, () -> new PluginRunner(List.of(subclass, new CustomGroupPlugin())));
+    }
+
+    @Test
+    void repeatedGroupInHierarchyDoesNotConflictWithItself() {
+        var subclass = new RepeatedGroupPlugin();
+        assertDoesNotThrow(() -> new PluginRunner(List.of(subclass)));
+        assertThrows(
+                IllegalArgumentException.class, () -> new PluginRunner(List.of(subclass, new CustomGroupPlugin())));
+    }
+
     @ExclusivePluginGroup("example")
-    private static class ExclusivePlugin implements DurableExecutionPlugin {}
+    private static class ExclusivePlugin implements DurableExecutionPlugin {
+        private int starts;
+
+        @Override
+        public void onInvocationStart(InvocationInfo info) {
+            starts++;
+        }
+    }
+
+    @ExclusivePluginGroup("example")
+    private static class ConflictingPlugin implements DurableExecutionPlugin {}
+
+    @ExclusivePluginGroup("custom")
+    private static class ReannotatedPlugin extends ExclusivePlugin {}
+
+    @ExclusivePluginGroup("custom")
+    private static class CustomGroupPlugin implements DurableExecutionPlugin {}
+
+    @ExclusivePluginGroup("example")
+    private static class RepeatedGroupPlugin extends ReannotatedPlugin {}
 
     // ─── No-op / empty behavior ──────────────────────────────────────────
 

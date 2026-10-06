@@ -487,8 +487,10 @@ public final class DurableConfig {
          * <p>Plugins receive hooks at invocation, operation, and user function boundaries. Errors thrown by plugins are
          * isolated and never disrupt SDK execution.
          *
-         * <p>The effective list, including environment-selected plugins, may contain at most one member of each
-         * {@link ExclusivePluginGroup exclusive group}. Conflicts are rejected by {@link #build()}.
+         * <p>The effective list, including environment-selected plugins, may contain at most one concrete plugin class
+         * from each {@link ExclusivePluginGroup exclusive group}. Conflicts are rejected by {@link #build()}. Repeated
+         * registrations of the same concrete class remain permitted for compatibility and each receives lifecycle
+         * hooks.
          *
          * <p>Calling this method replaces any previously registered plugins. Plugins are called in registration order.
          *
