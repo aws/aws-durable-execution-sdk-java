@@ -47,7 +47,7 @@ class PluginRunnerTest {
                 });
         runner.onInvocationStart(invocationInfo());
         assertSame(first, assertThrows(InternalError.class, () -> runner.onInvocationEnd(invocationEndInfo())));
-        assertEquals(List.of("first", "linkage", "second", "healthy", "reported"), calls);
+        assertEquals(List.of("first", "reported", "linkage", "second", "healthy"), calls);
         assertSame(first, reported.get());
     }
 

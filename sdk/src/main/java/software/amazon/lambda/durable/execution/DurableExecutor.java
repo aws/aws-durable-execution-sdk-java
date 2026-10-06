@@ -135,7 +135,7 @@ public class DurableExecutor {
                             return pluginRunner.runHandler(
                                     () -> handler.apply(handlerInput, context),
                                     () -> hasHandlerScope.set(true),
-                                    fatal -> pluginFatal.compareAndSet(null, fatal));
+                                    executionManager::recordHandlerScopeFatal);
                         }
                     },
                     config.getExecutorService()); // Get executor from config for running user code

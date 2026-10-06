@@ -12,7 +12,9 @@ import java.util.List;
 import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
@@ -39,10 +41,23 @@ class InvocationEndFatalDispatchIntegrationTest {
                         .map(fatal -> Arguments.of(wrapped, fatal)));
     }
 
+    static Stream<Arguments> cases() {
+        return Stream.of(false, true)
+                .flatMap(blocked -> failures().map(args -> Arguments.of(blocked, args.get()[0], args.get()[1])));
+    }
+
     @ParameterizedTest
-    @MethodSource("failures")
-    void endHookFatalStopsQueuedAtLeastOnceWorkBeforeShutdown(boolean wrapped, Error fatal) {
+    @MethodSource("cases")
+    void endHookFatalStopsQueuedAtLeastOnceWorkBeforeShutdown(boolean blockedEnd, boolean wrapped, Error fatal)
+            throws Exception {
         var executor = new QueuedExecutor();
+        var enteredEnd = new CountDownLatch(1);
+        var releaseEnd = new CountDownLatch(blockedEnd ? 1 : 0);
+        var finalizer = Executors.newSingleThreadExecutor(task -> {
+            var thread = new Thread(task, "end-hook-dispatch");
+            thread.setDaemon(true);
+            return thread;
+        });
         var bodies = new AtomicInteger();
         var ends = new ArrayList<InvocationEndInfo>();
         var updates = new CopyOnWriteArrayList<OperationUpdate>();
@@ -56,6 +71,8 @@ class InvocationEndFatalDispatchIntegrationTest {
         DurableExecutionPluginFactory healthy = ignored -> new DurableExecutionPlugin() {
             public void onInvocationEnd(InvocationEndInfo info) {
                 ends.add(info);
+                enteredEnd.countDown();
+                await(releaseEnd);
             }
         };
         var config = DurableConfig.builder()
@@ -71,7 +88,8 @@ class InvocationEndFatalDispatchIntegrationTest {
                 .withPlugins(failing, healthy)
                 .build();
         var input = input();
-        try (var manager = new ExecutionManager(input, config, null)) {
+        var manager = new ExecutionManager(input, config, null);
+        try {
             manager.registerActiveThread(null);
             manager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
             var runner = manager.getPluginRunner();
@@ -85,14 +103,43 @@ class InvocationEndFatalDispatchIntegrationTest {
             // Model a handler that returns with accepted async work still waiting for its worker.
             var end = new InvocationEndInfo(
                     "request", input.durableExecutionArn(), true, InvocationStatus.SUCCEEDED, null);
-            assertSame(fatal, assertThrows(Error.class, () -> runner.onInvocationEnd(end)));
+            var dispatch = finalizer.submit(() -> runner.onInvocationEnd(end));
+            assertTrue(enteredEnd.await(3, TimeUnit.SECONDS));
+            try {
+                if (!blockedEnd)
+                    assertSame(
+                            fatal,
+                            assertThrows(ExecutionException.class, () -> dispatch.get(3, TimeUnit.SECONDS))
+                                    .getCause());
+                else assertFalse(dispatch.isDone(), "the later exporter is still flushing");
+                assertSame(fatal, assertThrows(Error.class, executor::runNext));
+            } finally {
+                releaseEnd.countDown();
+                assertSame(
+                        fatal,
+                        assertThrows(ExecutionException.class, () -> dispatch.get(3, TimeUnit.SECONDS))
+                                .getCause());
+            }
             assertEquals(List.of(end, end), ends, "remaining plugins retain their single shared end snapshot");
-            // Release accepted work only after the end dispatch has returned exceptionally.
-            assertSame(fatal, assertThrows(Error.class, executor::runNext));
             assertEquals(0, bodies.get(), "invocation-end fatals must stop queued user bodies");
             assertTrue(updates.isEmpty(), "no queued operation checkpoint may reach the backend");
         } finally {
+            releaseEnd.countDown();
+            finalizer.shutdownNow();
+            try {
+                manager.close();
+            } catch (CompletionException failure) {
+                assertSame(fatal, failure.getCause());
+            }
             BaseContextImpl.setCurrentContext(null);
+        }
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(3, TimeUnit.SECONDS));
+        } catch (InterruptedException failure) {
+            throw new AssertionError(failure);
         }
     }
 

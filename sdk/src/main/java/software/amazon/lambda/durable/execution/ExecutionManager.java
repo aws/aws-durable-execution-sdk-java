@@ -550,7 +550,7 @@ public class ExecutionManager implements SafeCloseable {
 
     boolean tryStartCheckpointProcessing() {
         synchronized (activeThreads) {
-            if (executionExceptionFuture.isDone()) {
+            if (executionExceptionFuture.isDone() || pluginFatal.get() != null) {
                 return false;
             }
             checkpointRequestsInFlight++;
@@ -573,7 +573,10 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private boolean shouldSuspendExecution() {
-        return activeThreads.isEmpty() && checkpointRequestsInFlight == 0 && !executionExceptionFuture.isDone();
+        return activeThreads.isEmpty()
+                && checkpointRequestsInFlight == 0
+                && !executionExceptionFuture.isDone()
+                && pluginFatal.get() == null;
     }
 
     private void preSuspendCheck() {
@@ -710,6 +713,15 @@ public class ExecutionManager implements SafeCloseable {
         var original = pluginFatal.get();
         executionExceptionFuture.completeExceptionally(original);
         stopAllOperations(original);
+        checkpointManager.abortPending(original);
+    }
+
+    /** Stops pending work while leaving the root worker responsible for completing its scope cleanup. */
+    void recordHandlerScopeFatal(Error fatal) {
+        pluginFatal.compareAndSet(null, fatal);
+        var original = pluginFatal.get();
+        stopAllOperations(original);
+        checkpointManager.abortPending(original);
     }
 
     /** Once plugin instrumentation has failed fatally, do not retry or persist unrelated operation outcomes. */

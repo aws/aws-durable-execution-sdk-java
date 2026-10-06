@@ -337,7 +337,7 @@ class ApiRequestDelayedBatcherTest {
         var calls = new AtomicInteger();
         var batcher =
                 new ApiRequestDelayedBatcher<Input>(1, 100, value -> 1, batch -> calls.incrementAndGet(), () -> fatal);
-        var request = batcher.submit(input, Duration.ZERO);
+        var request = batcher.submit(input, Duration.ofMinutes(1));
         assertSame(
                 fatal,
                 assertThrows(ExecutionException.class, () -> request.get(2, TimeUnit.SECONDS))

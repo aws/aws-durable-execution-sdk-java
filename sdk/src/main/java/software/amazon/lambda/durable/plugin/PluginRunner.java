@@ -309,9 +309,9 @@ public class PluginRunner {
 
     /**
      * Called at the end of each invocation. Awaited — the SDK blocks until all plugins return, allowing plugins to
-     * flush spans/metrics before Lambda freezes. A fatal end-hook failure is rethrown after the remaining plugins have
-     * had their one finalization opportunity, without changing the invocation-end snapshot. The fatal signal stops
-     * outstanding operation work before resource shutdown; an earlier invocation fatal retains precedence.
+     * flush spans/metrics before Lambda freezes. The first fatal immediately stops outstanding operation work; an
+     * earlier invocation fatal retains precedence. Remaining plugins still receive their one finalization opportunity
+     * with the shared snapshot before the first end-hook fatal is rethrown.
      */
     @SuppressWarnings("removal")
     public void onInvocationEnd(InvocationEndInfo info) {
@@ -320,18 +320,18 @@ public class PluginRunner {
             try {
                 runPlugin(plugin, p -> p.onInvocationEnd(info));
             } catch (VirtualMachineError | ThreadDeath fatal) {
-                if (firstFatal == null) firstFatal = fatal;
+                if (firstFatal == null) {
+                    firstFatal = fatal;
+                    // Stop queued work before a later exporter can block, but still finalize every plugin below.
+                    var primary = ExceptionHelper.unwrapAsyncFailure(info.executionError());
+                    operationFatalObserver.accept(
+                            primary instanceof VirtualMachineError || primary instanceof ThreadDeath
+                                    ? (Error) primary
+                                    : firstFatal);
+                }
             }
         }
-        if (firstFatal != null) {
-            // A factory or root-handler fatal may predate cleanup without having reached the operation signal.
-            var primary = ExceptionHelper.unwrapAsyncFailure(info.executionError());
-            operationFatalObserver.accept(
-                    primary instanceof VirtualMachineError || primary instanceof ThreadDeath
-                            ? (Error) primary
-                            : firstFatal);
-            throw firstFatal;
-        }
+        if (firstFatal != null) throw firstFatal;
     }
 
     @SuppressWarnings("removal")

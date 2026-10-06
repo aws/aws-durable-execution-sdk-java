@@ -414,8 +414,9 @@ per-invocation plugin instance. Declare or forward the group on custom factory w
 it before construction. The 2.x minor release declares instance groups with inherited `@ExclusivePluginGroup` metadata; migrate that declaration to the factory in3.x so conflicts can be rejected before instances exist. Instance annotations are not a3.x factory registration contract.
 
 Fatal operation/user-function hook errors are reported to the invocation before they are rethrown on the hook thread.
-The first plugin-owned fatal cause aborts operation waits and bypasses user-operation retry and error serialization;
-checkpoint batching fails queued work rather than continuing after that reported fatal. New operations and queued user
+The first plugin-owned fatal cause aborts operation waits and bypasses user-operation retry and error serialization.
+Fatal publication immediately fails delayed checkpoint and polling futures, cancels their flush timer, and rejects later
+submissions. Workers awaiting an at-most-once START can therefore unwind before shutdown waits for them. New operations and queued user
 handlers check the signal before dispatch and execution. With a direct executor, a fatal operation hook leaves the
 operation call exceptionally, before later handler code can run; the invocation boundary still finalizes plugins.
 If a user-function start hook fails fatally, successfully started hooks receive failure cleanup in reverse order on their
@@ -423,6 +424,6 @@ owner thread before invocation finalization is signaled. Cleanup failures do not
 Unrelated user-body failures retain their existing operation semantics. Invocation-end information remains a snapshot at
 dispatch: a fatal reported only during subsequent resource shutdown is rethrown before the response, without replaying an already delivered end hook.
 If an invocation-end hook itself throws a fatal error, the remaining end hooks are still attempted once in registration
-order with that same snapshot. After those hooks finish, the fatal is published to the invocation signal before it is
-rethrown, so queued user bodies and checkpoint work stop during shutdown. A fatal already present in the end snapshot
+order with that same snapshot. The first fatal is published immediately, before a later end hook can block while
+flushing, and is rethrown after the remaining hooks finish. A fatal already present in the end snapshot
 retains precedence over a later cleanup fatal. Ordinary event hooks retain immediate fatal propagation.

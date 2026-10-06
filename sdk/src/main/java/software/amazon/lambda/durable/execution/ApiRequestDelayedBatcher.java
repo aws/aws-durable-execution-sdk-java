@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -100,7 +101,7 @@ public class ApiRequestDelayedBatcher<T> {
      */
     CompletableFuture<Void> submit(T request, Duration flushDelay) {
         synchronized (delayedBatch) {
-            var fatal = terminalFailure.get();
+            var fatal = getFatalFailure();
             if (fatal != null) return CompletableFuture.failedFuture(fatal);
             // add the request to the current batch
             CompletableFuture<Void> future = new CompletableFuture<>();
@@ -130,6 +131,8 @@ public class ApiRequestDelayedBatcher<T> {
 
         // wait for previous batches to be flushed
         flushingQueueFuture.join();
+        var fatal = getFatalFailure();
+        if (fatal != null) throw new CompletionException(fatal);
     }
 
     /** clear the current batch and creates a new batch */
@@ -211,7 +214,10 @@ public class ApiRequestDelayedBatcher<T> {
                     break;
                 }
 
-                flushingItems.add(flushingQueue.poll());
+                // An external fatal publisher can drain the queue between the peek and this poll.
+                var next = flushingQueue.poll();
+                if (next == null) break;
+                flushingItems.add(next);
                 flushingSize += itemSizeInByte;
             }
             if (!flushingItems.isEmpty()) {
@@ -230,10 +236,10 @@ public class ApiRequestDelayedBatcher<T> {
                         item.result().complete(null);
                     }
                 } catch (Throwable ex) {
+                    var fatal = getFatalFailure();
                     for (Item<T> item : flushingItems) {
-                        item.result().completeExceptionally(ex);
+                        item.result().completeExceptionally(fatal == null ? ex : fatal);
                     }
-                    var fatal = pluginFatal.get();
                     if (fatal != null) {
                         abortPending(fatal);
                         throw fatal;
@@ -243,13 +249,20 @@ public class ApiRequestDelayedBatcher<T> {
         }
     }
 
+    Error getFatalFailure() {
+        var fatal = terminalFailure.get();
+        return fatal == null ? pluginFatal.get() : fatal;
+    }
+
     private void rethrowPluginFatalIfPresent() {
-        var fatal = pluginFatal.get();
+        var fatal = getFatalFailure();
         if (fatal != null) throw fatal;
     }
 
-    private void abortPending(Error fatal) {
+    /** Settles delayed and queued requests without waiting for their timer or an in-flight backend call. */
+    void abortPending(Error fatal) {
         terminalFailure.compareAndSet(null, fatal);
+        var original = terminalFailure.get();
         var pending = new ArrayList<Item<T>>();
         synchronized (delayedBatch) {
             delayedBatchFlushTimer.cancel(false);
@@ -258,6 +271,6 @@ public class ApiRequestDelayedBatcher<T> {
             Item<T> item;
             while ((item = flushingQueue.poll()) != null) pending.add(item);
         }
-        pending.forEach(item -> item.result().completeExceptionally(fatal));
+        pending.forEach(item -> item.result().completeExceptionally(original));
     }
 }
