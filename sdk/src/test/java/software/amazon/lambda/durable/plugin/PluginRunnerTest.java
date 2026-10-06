@@ -21,13 +21,19 @@ class PluginRunnerTest {
     }
 
     @Test
-    void repeatedImplementationRegistrationsRetainTheirHooksForCompatibility() {
+    void repeatedExclusiveImplementationRegistrationsAreRejected() {
         var first = new ExclusivePlugin();
-        var second = new ExclusivePlugin();
-        var runner = new PluginRunner(List.of(first, second, first));
-        runner.onInvocationStart(invocationInfo());
-        assertEquals(2, first.starts);
-        assertEquals(1, second.starts);
+        assertThrows(IllegalArgumentException.class, () -> new PluginRunner(List.of(first, new ExclusivePlugin())));
+        assertThrows(IllegalArgumentException.class, () -> new PluginRunner(List.of(first, first)));
+        assertEquals(0, first.starts);
+    }
+
+    @Test
+    void repeatedUnrelatedRegistrationsRetainTheirHooks() {
+        var calls = new ArrayList<String>();
+        var plugin = new TestPlugin("same", calls);
+        new PluginRunner(List.of(plugin, plugin)).onInvocationStart(invocationInfo());
+        assertEquals(List.of("same:onInvocationStart", "same:onInvocationStart"), calls);
     }
 
     @Test

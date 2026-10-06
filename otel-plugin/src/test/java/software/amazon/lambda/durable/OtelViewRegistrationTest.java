@@ -25,6 +25,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.slf4j.MDC;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.otel.ExecutionOtelPlugin;
 import software.amazon.lambda.durable.otel.ExecutionOtelPluginProvider;
@@ -122,6 +123,23 @@ class OtelViewRegistrationTest {
     }
 
     @ParameterizedTest
+    @CsvSource({"true", "false"})
+    void repeatedExplicitViewInstancesAreRejectedBeforeEmission(boolean executionView) {
+        var exporter = InMemorySpanExporter.create();
+        var first = plugin(executionView, exporter);
+        var second = plugin(executionView, exporter);
+        var ambient = Context.current();
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DurableConfig.builder().withPlugins(first, second).build());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DurableConfig.builder().withPlugins(first, first).build());
+        assertTrue(exporter.getFinishedSpanItems().isEmpty());
+        assertSame(ambient, Context.current());
+    }
+
+    @ParameterizedTest
     @CsvSource({"true,true", "true,false", "false,true", "false,false"})
     void singleViewWithUnrelatedPluginPreservesResumeAndOutcome(boolean executionView, boolean success) {
         var exporter = InMemorySpanExporter.create();
@@ -214,6 +232,12 @@ class OtelViewRegistrationTest {
             var runner = LocalDurableTestRunner.create(
                     String.class,
                     (input, ctx) -> {
+                        var effective = ((DurableContextImpl) ctx)
+                                .getDurableConfig()
+                                .getPluginRunner()
+                                .getPlugins();
+                        assertEquals(1, effective.size(), "Released and current runner copies must retain one view");
+                        assertSame(config.getPluginRunner().getPlugins().get(0), effective.get(0));
                         ctx.step("once", Integer.class, step -> effects.incrementAndGet());
                         ctx.wait("pause", Duration.ofSeconds(1));
                         return input;

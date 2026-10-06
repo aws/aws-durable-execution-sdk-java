@@ -36,12 +36,10 @@ public class PluginRunner {
         for (var plugin : plugins) {
             for (var group : exclusiveGroups(plugin.getClass())) {
                 var previous = groups.putIfAbsent(group, plugin);
-                // Older test runners rediscover environment plugins when copying a resolved configuration.
-                // Keep repeated registrations of one implementation compatible, while rejecting different views.
-                if (previous != null && previous.getClass() != plugin.getClass()) {
+                if (previous != null) {
                     throw new IllegalArgumentException("Conflicting plugins " + pluginName(previous)
                             + " and " + pluginName(plugin) + " in exclusive group '" + group
-                            + "'. Configure only one plugin implementation from this group.");
+                            + "'. Configure only one plugin from this group.");
                 }
             }
         }

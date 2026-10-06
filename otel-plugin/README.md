@@ -48,10 +48,12 @@ Both create Workflow and Invocation telemetry and manage log correlation, so com
 `DurableConfig.build()` rejects conflicting views before lifecycle hooks run and names both plugins in the diagnostic.
 This applies to explicit registration, `DURABLE_EXECUTION_PLUGINS=otel-invocation,otel-execution`, and mixed registration.
 Zero OTel plugins, either single view, and unrelated plugins remain valid.
-Repeated instances of the same concrete plugin class remain accepted for compatibility with older testing SDKs that
-rediscover an environment-selected view while copying configuration. Each registration still receives hooks, so configure
-the view once and update the testing SDK together with the core to avoid duplicate telemetry. The current testing SDK
-copies resolved plugin instances without rediscovery.
+Repeated explicit registrations of the same view are also rejected, including registering the same instance twice.
+When an environment-selected exclusive plugin's exact concrete type is already explicitly configured, discovery keeps
+that explicit instance and skips constructing another. This preserves configuration copies made by released testing
+SDK 2.2.1 without duplicate telemetry. Different subclasses still participate in exclusive-group validation; plugins
+without exclusive-group metadata retain their existing multi-instance behavior. The current testing SDK copies
+resolved plugin instances without rediscovery.
 
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 

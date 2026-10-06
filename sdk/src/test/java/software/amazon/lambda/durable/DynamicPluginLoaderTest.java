@@ -16,6 +16,8 @@ import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
+import software.amazon.lambda.durable.plugin.ExclusivePluginGroup;
+import software.amazon.lambda.durable.plugin.PluginRunner;
 
 class DynamicPluginLoaderTest {
 
@@ -88,6 +90,63 @@ class DynamicPluginLoaderTest {
         assertSame(explicitPlugin, plugins.get(1));
         assertEquals(1, creations.get());
     }
+
+    @Test
+    void explicitExclusiveTypeSkipsConstructionAndKeepsRemainingRegistrationOrder() {
+        var explicit = new ExclusivePlugin();
+        var unrelated = new ExplicitPlugin();
+        var created = new ArrayList<String>();
+        var exclusive = provider("exclusive", ExclusivePlugin.class, () -> {
+            throw new AssertionError("An explicit exclusive implementation must not be reconstructed");
+        });
+        var other = provider("other", SecondPlugin.class, () -> {
+            created.add("other");
+            return new SecondPlugin();
+        });
+        var plugins = DynamicPluginLoader.loadConfiguredPlugins(
+                "exclusive,other", List.of(exclusive, other), List.of(explicit, unrelated));
+        assertEquals(3, plugins.size());
+        assertInstanceOf(SecondPlugin.class, plugins.get(0));
+        assertSame(explicit, plugins.get(1));
+        assertSame(unrelated, plugins.get(2));
+        assertEquals(List.of("other"), created);
+    }
+
+    @Test
+    void explicitExclusiveDuplicatesStillReachValidation() {
+        var first = new ExclusivePlugin();
+        var second = new ExclusivePlugin();
+        var provider = provider("exclusive", ExclusivePlugin.class, () -> {
+            throw new AssertionError("Do not create another exclusive instance");
+        });
+        var plugins = DynamicPluginLoader.loadConfiguredPlugins("exclusive", List.of(provider), List.of(first, second));
+        assertEquals(List.of(first, second), plugins);
+        assertThrows(IllegalArgumentException.class, () -> new PluginRunner(plugins));
+    }
+
+    @Test
+    void subclassOfAnExplicitExclusiveTypeIsNotSilentlyDiscarded() {
+        var explicit = new ExclusiveSubclass();
+        var provider = provider("exclusive", ExclusivePlugin.class, ExclusivePlugin::new);
+        var plugins = DynamicPluginLoader.loadConfiguredPlugins("exclusive", List.of(provider), List.of(explicit));
+        assertEquals(2, plugins.size());
+        assertSame(explicit, plugins.get(1));
+        assertThrows(IllegalArgumentException.class, () -> new PluginRunner(plugins));
+    }
+
+    @Test
+    void matchingExplicitTypeDoesNotBypassProviderCompatibilityChecks() {
+        var provider = new TestProvider("exclusive", 2, ExclusivePlugin.class, ExclusivePlugin::new);
+        assertThrows(
+                IllegalStateException.class,
+                () -> DynamicPluginLoader.loadConfiguredPlugins(
+                        "exclusive", List.of(provider), List.of(new ExclusivePlugin())));
+    }
+
+    @ExclusivePluginGroup("exclusive-test")
+    private static class ExclusivePlugin implements DurableExecutionPlugin {}
+
+    private static class ExclusiveSubclass extends ExclusivePlugin {}
 
     @Test
     void rejectsEmptyConfiguredProviderName() {
