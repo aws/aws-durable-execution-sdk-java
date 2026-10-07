@@ -70,6 +70,7 @@ public class DurableExecutor {
             DurableConfig config) {
         var pluginRunner = config.getPluginRunner();
         var scopeFatal = new AtomicReference<Error>();
+        var scopeFailure = new CompletableFuture<O>();
         try (var executionManager = new ExecutionManager(input, config, lambdaContext)) {
             var isFirstInvocation = !executionManager.isReplaying();
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
@@ -128,7 +129,10 @@ public class DurableExecutor {
                             return pluginRunner.runHandler(
                                     () -> handler.apply(handlerInput, context),
                                     () -> hasHandlerScope.set(true),
-                                    fatal -> scopeFatal.compareAndSet(null, fatal));
+                                    fatal -> {
+                                        scopeFatal.compareAndSet(null, fatal);
+                                        scopeFailure.completeExceptionally(scopeFatal.get());
+                                    });
                         }
                     },
                     config.getExecutorService(),
@@ -139,8 +143,9 @@ public class DurableExecutor {
             // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
             // failure.
             try {
+                var executionFuture = executionManager.runUntilCompleteOrSuspend(handlerFuture);
                 return finalizeAfterHandlerScopes(
-                        executionManager.runUntilCompleteOrSuspend(handlerFuture),
+                        pluginRunner.isEmpty() ? executionFuture : observeScopeFailure(executionFuture, scopeFailure),
                         handlerFuture,
                         hasHandlerScope,
                         lambdaContext,
@@ -260,6 +265,20 @@ public class DurableExecutor {
         return result;
     }
 
+    /** Wakes the caller when a reported scope fatal precedes completion of earlier scope cleanup. */
+    private static <T> CompletableFuture<T> observeScopeFailure(
+            CompletableFuture<T> execution, CompletableFuture<T> scopeFailure) {
+        var result = new CompletableFuture<T>();
+        execution.whenComplete((value, failure) -> {
+            if (failure == null) result.complete(value);
+            else result.completeExceptionally(failure);
+        });
+        scopeFailure.whenComplete((ignored, failure) -> {
+            if (failure != null) result.completeExceptionally(failure);
+        });
+        return result;
+    }
+
     private static <T, R> R finalizeAfterHandlerScopes(
             CompletableFuture<T> executionFuture,
             CompletableFuture<T> handlerFuture,
@@ -309,8 +328,11 @@ public class DurableExecutor {
         // This method runs on the invocation caller, never as a callback on the signaling handler worker.
         // Preserve the winning outcome except for an observed fatal error from the new scope callbacks.
         var failure = executionFuture.handle((result, error) -> error).join();
-        throwIfScopeFatal(scopeFatal);
-        if (failure == null || !hasHandlerScope.get()) return executionFuture;
+        // A reported fatal can precede completion of earlier scopes; retain their bounded cleanup budget.
+        if (!hasHandlerScope.get() || (failure == null && scopeFatal.get() == null)) {
+            throwIfScopeFatal(scopeFatal);
+            return executionFuture;
+        }
         var reserve = SHUTDOWN_RESPONSE_RESERVE_MILLIS + PLUGIN_FINALIZATION_RESERVE_MILLIS * pluginCount;
         var budgetMillis = lambdaContext == null
                 ? 500L
