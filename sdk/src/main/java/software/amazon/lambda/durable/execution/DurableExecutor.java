@@ -80,7 +80,7 @@ public class DurableExecutor {
             var pluginExecutionInput = new AtomicReference<>();
             var hasHandlerScope = new AtomicBoolean();
             var handlerFuture = supplyHandler(
-                    preservingMdc(pluginRunner, () -> {
+                    () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
 
                         // Deserialize once and share the value with the plugin hooks and the handler below. A second
@@ -130,7 +130,7 @@ public class DurableExecutor {
                                     () -> hasHandlerScope.set(true),
                                     fatal -> scopeFatal.compareAndSet(null, fatal));
                         }
-                    }),
+                    },
                     config.getExecutorService(),
                     pluginRunner,
                     scopeFatal); // Get executor from config for running user code
@@ -234,16 +234,18 @@ public class DurableExecutor {
         var result = new CompletableFuture<T>();
         var caller = Thread.currentThread();
         Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
-            try {
-                result.complete(task.get());
-            } catch (Throwable failure) {
-                result.completeExceptionally(failure);
-                // Preserve legacy user-body Error handling. Only a positively reported new scope fatal also
-                // escapes its actual owner after its observation future settles. Direct callers finalize below.
-                var fatal = scopeFatal.get();
-                if (Thread.currentThread() != caller
-                        && fatal != null
-                        && ExceptionHelper.unwrapCompletableFuture(failure) == fatal) throw fatal;
+            try (var ignored = restoreMdcOnClose()) {
+                try {
+                    result.complete(task.get());
+                } catch (Throwable failure) {
+                    result.completeExceptionally(failure);
+                    // Preserve legacy user-body Error handling. Only a positively reported new scope fatal also
+                    // escapes its actual owner after its observation future settles. Direct callers finalize below.
+                    var fatal = scopeFatal.get();
+                    if (Thread.currentThread() != caller
+                            && fatal != null
+                            && ExceptionHelper.unwrapCompletableFuture(failure) == fatal) throw fatal;
+                }
             }
         };
         executor.execute(work);
@@ -271,7 +273,9 @@ public class DurableExecutor {
         if (!started.get()) {
             // Only the caller waits: a signaling handler must be free to unwind and close its scopes.
             awaitHandlerScopes(executionFuture, handlerFuture, hasHandlerScope, lambdaContext, pluginCount, scopeFatal);
-            finish.run();
+            // Completion publishes the handler result before its callbacks necessarily run. Once cleanup completed,
+            // let its registered callback finalize on the owner instead of racing it from this waiter.
+            if (!handlerFuture.isDone()) finish.run();
         }
         return finalized.join();
     }
@@ -320,16 +324,6 @@ public class DurableExecutor {
     private static void throwIfScopeFatal(AtomicReference<Error> scopeFatal) {
         var fatal = scopeFatal.get();
         if (fatal != null) throw fatal;
-    }
-
-    /** Restores the worker even when plugin startup runs before a failing input deserialization. */
-    private static <T> Supplier<T> preservingMdc(PluginRunner plugins, Supplier<T> task) {
-        if (plugins.isEmpty()) return task;
-        return () -> {
-            try (var ignored = restoreMdcOnClose()) {
-                return task.get();
-            }
-        };
     }
 
     private static SafeCloseable restoreMdcOnClose() {

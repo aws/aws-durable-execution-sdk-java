@@ -14,6 +14,8 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Function;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.awssdk.services.lambda.model.*;
@@ -23,6 +25,7 @@ import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.HandlerScoped;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
@@ -161,6 +164,115 @@ class InvocationEndCompatibilityTest {
             workers.shutdownNow();
             assertTrue(caller.awaitTermination(3, TimeUnit.SECONDS));
             assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void scopedSuspensionWithinBudgetKeepsLegacyCleanupOnTheReusedWorker() throws Exception {
+        var local = new ThreadLocal<String>();
+        var callerThread = new AtomicReference<Thread>();
+        var callers = Executors.newSingleThreadExecutor(task -> {
+            var thread = daemon(task, "scoped-handoff-caller");
+            callerThread.set(thread);
+            return thread;
+        });
+        var workers = Executors.newSingleThreadExecutor(task -> daemon(task, "scoped-handoff-worker"));
+        try {
+            for (var round = 0; round < 3; round++) {
+                var marker = "scoped-" + round;
+                var scoped = new PausingOtelPlugin();
+                var previous = new AtomicReference<String>();
+                var observed = new AtomicReference<String>();
+                var owner = new AtomicReference<Thread>();
+                var endThread = new AtomicReference<Thread>();
+                var legacy = new DurableExecutionPlugin() {
+                    @Override
+                    public void onInvocationStart(InvocationInfo info) {
+                        owner.set(Thread.currentThread());
+                        previous.set(local.get());
+                        local.set(marker);
+                    }
+
+                    @Override
+                    public void onInvocationEnd(InvocationEndInfo info) {
+                        endThread.set(Thread.currentThread());
+                        observed.set(local.get());
+                        local.remove();
+                    }
+                };
+                var config = DurableConfig.builder()
+                        .withExecutorService(workers)
+                        .withDurableExecutionClient(new LocalMemoryExecutionClient())
+                        .withCheckpointDelay(Duration.ZERO)
+                        .withPlugins(scoped, legacy)
+                        .build();
+                var result = callers.submit(() -> DurableExecutor.execute(
+                        input(marker),
+                        null,
+                        TypeToken.get(String.class),
+                        (value, context) -> {
+                            context.wait("pause", Duration.ofSeconds(1));
+                            return "done";
+                        },
+                        config));
+                try {
+                    assertTrue(scoped.closeEntered.await(3, TimeUnit.SECONDS));
+                    awaitCallerHandoff(callerThread.get());
+                    scoped.releaseClose.countDown();
+                    assertEquals(
+                            ExecutionStatus.PENDING,
+                            result.get(5, TimeUnit.SECONDS).status());
+                    assertSame(owner.get(), endThread.get());
+                    assertEquals(marker, observed.get());
+                    assertNull(previous.get(), "The prior invocation's end hook must clear the reused worker");
+                    assertNull(workers.submit(local::get).get(3, TimeUnit.SECONDS));
+                } finally {
+                    scoped.releaseClose.countDown();
+                }
+            }
+        } finally {
+            callers.shutdownNow();
+            workers.shutdownNow();
+            assertTrue(callers.awaitTermination(3, TimeUnit.SECONDS));
+            assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS));
+        }
+    }
+
+    private static void awaitCallerHandoff(Thread caller) {
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while (System.nanoTime() < deadline) {
+            if (Arrays.stream(caller.getStackTrace())
+                    .anyMatch(frame -> frame.getClassName().equals(DurableExecutor.class.getName())
+                            && frame.getMethodName().equals("awaitHandlerScopes"))) return;
+            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
+        }
+        fail("The caller did not begin its bounded cleanup handoff");
+    }
+
+    @HandlerScoped(PausingOtelPlugin.Opener.class)
+    private static final class PausingOtelPlugin extends InvocationOtelPlugin {
+        private final CountDownLatch closeEntered = new CountDownLatch(1);
+        private final CountDownLatch releaseClose = new CountDownLatch(1);
+
+        private PausingOtelPlugin() {
+            super(
+                    SdkTracerProvider.builder(),
+                    OtelPluginConfig.builder().enableMdc(false).build());
+        }
+
+        public static final class Opener implements Function<PausingOtelPlugin, AutoCloseable> {
+            @Override
+            public AutoCloseable apply(PausingOtelPlugin plugin) {
+                var actual = new InvocationOtelPlugin.HandlerScopeOpener().apply(plugin);
+                return () -> {
+                    try {
+                        if (actual != null) actual.close();
+                    } finally {
+                        plugin.closeEntered.countDown();
+                        await(plugin.releaseClose);
+                    }
+                };
+            }
         }
     }
 

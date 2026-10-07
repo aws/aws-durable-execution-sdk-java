@@ -6,11 +6,16 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -19,6 +24,8 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationEndInfo;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
@@ -172,6 +179,97 @@ class HandlerMdcIntegrationTest {
                 return delegate.deserialize(data, type);
             }
         };
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"success", "failure", "inputFailure"})
+    void endHookObservesTaskMdcBeforeReusedWorkerAmbientStateIsRestored(String outcome) throws Exception {
+        var worker = Executors.newSingleThreadExecutor();
+        var callerThread = new AtomicReference<Thread>();
+        var caller = Executors.newSingleThreadExecutor(task -> {
+            var thread = new Thread(task, "mdc-end-caller");
+            callerThread.set(thread);
+            return thread;
+        });
+        var started = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var startThread = new AtomicReference<Thread>();
+        var endThread = new AtomicReference<Thread>();
+        var endMdc = new AtomicReference<Map<String, String>>();
+        var ambient = Map.of("worker", "ambient");
+        var plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationStart(InvocationInfo info) {
+                startThread.set(Thread.currentThread());
+                MDC.put("start-hook", "request");
+                started.countDown();
+                awaitMdcLatch(release);
+            }
+
+            @Override
+            public void onInvocationEnd(InvocationEndInfo info) {
+                endThread.set(Thread.currentThread());
+                var values = MDC.getCopyOfContextMap();
+                endMdc.set(values == null ? Map.of() : values);
+                MDC.put("end-hook", "must-not-leak");
+            }
+        };
+        try {
+            worker.submit(() -> MDC.setContextMap(ambient)).get(3, TimeUnit.SECONDS);
+            var config = DurableConfig.builder()
+                    .withExecutorService(worker)
+                    .withPlugins(plugin)
+                    .withSerDes(outcome.equals("inputFailure") ? failingInputSerDes() : new JacksonSerDes())
+                    .build();
+            var runner = LocalDurableTestRunner.create(
+                    String.class,
+                    (input, context) -> {
+                        if (outcome.equals("failure")) throw new IllegalStateException("body failure");
+                        return "done";
+                    },
+                    config);
+            var result = caller.submit(() -> runner.run("input"));
+            assertTrue(started.await(3, TimeUnit.SECONDS));
+            awaitMdcCallerJoin(callerThread.get());
+            release.countDown();
+            assertEquals(
+                    outcome.equals("success") ? ExecutionStatus.SUCCEEDED : ExecutionStatus.FAILED,
+                    result.get(5, TimeUnit.SECONDS).getStatus());
+            assertSame(startThread.get(), endThread.get());
+            // Input failure skips DurableLogger; entered handlers retain its established MDC-clearing behavior.
+            assertEquals(
+                    outcome.equals("inputFailure") ? Map.of("worker", "ambient", "start-hook", "request") : Map.of(),
+                    endMdc.get(),
+                    "End hooks must not see prematurely restored ambient worker MDC");
+            assertEquals(ambient, worker.submit(MDC::getCopyOfContextMap).get(3, TimeUnit.SECONDS));
+        } finally {
+            release.countDown();
+            caller.shutdownNow();
+            worker.shutdownNow();
+            assertTrue(caller.awaitTermination(3, TimeUnit.SECONDS));
+            assertTrue(worker.awaitTermination(3, TimeUnit.SECONDS));
+        }
+    }
+
+    private static void awaitMdcLatch(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(3, TimeUnit.SECONDS));
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(error);
+        }
+    }
+
+    private static void awaitMdcCallerJoin(Thread caller) {
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while (System.nanoTime() < deadline) {
+            if (caller.getState() == Thread.State.WAITING
+                    && Arrays.stream(caller.getStackTrace())
+                            .anyMatch(frame -> frame.getClassName().equals(CompletableFuture.class.getName())
+                                    && frame.getMethodName().equals("join"))) return;
+            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
+        }
+        fail("Caller did not attach its completion observer before releasing the handler");
     }
 
     private static void assertRestored(
