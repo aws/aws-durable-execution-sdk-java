@@ -172,6 +172,16 @@ class OtelViewRegistrationTest {
             var copy = config.toBuilder().build();
             assertEquals(config.getPluginFactories(), copy.getPluginFactories());
             assertFalse(copy.shouldDeserializeAfterSerialization());
+            assertTrue(config.toBuilder()
+                    .withPlugins()
+                    .build()
+                    .getPluginFactories()
+                    .isEmpty());
+            DurableExecutionPluginFactory replacement = info -> new DurableExecutionPlugin() {};
+            assertEquals(
+                    List.of(replacement),
+                    config.toBuilder().withPlugins(replacement).build().getPluginFactories());
+            assertEquals(1, DurableConfig.builder().build().getPluginFactories().size());
             var runner = LocalDurableTestRunner.create(
                     String.class,
                     (input, ctx) -> {

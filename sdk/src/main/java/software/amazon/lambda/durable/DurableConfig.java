@@ -228,7 +228,13 @@ public final class DurableConfig {
         return pluginFactories;
     }
 
-    /** Copies effective factory registrations without repeating environment discovery. */
+    /**
+     * Copies effective factory registrations without repeating environment discovery.
+     *
+     * <p>The copied builder never performs dynamic discovery, including after {@code withPlugins} replaces its complete
+     * factory list. Calling {@code withPlugins()} removes all factories. Use {@link #builder()} for a fresh
+     * configuration that reads {@code DURABLE_EXECUTION_PLUGINS}.
+     */
     public Builder toBuilder() {
         var builder = new Builder()
                 .withDurableExecutionClient(durableExecutionClient)

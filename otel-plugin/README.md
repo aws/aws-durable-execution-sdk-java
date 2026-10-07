@@ -99,6 +99,20 @@ sampling policy based on the stable trace ID. A non-deterministic sampler can ex
 a Workflow without its anchor. Any sampler-supplied attributes and trace state must also stay stable for identical
 anchor re-exports.
 
+## Choose one durable OTel view
+
+Configure exactly one of `InvocationOtelPlugin.factory(...)` or `ExecutionOtelPlugin.factory(...)` when enabling
+tracing. Both emit Workflow and Invocation telemetry and manage log correlation. Configuration rejects multiple
+factories in the `durable-otel-view` exclusive group before creating any invocation-owned plugin, including repeated
+explicit factories and conflicting environment/explicit registrations. Either single view and unrelated factories
+remain valid. The factory migration uses `DurableExecutionPluginFactory.getExclusiveGroup()` metadata; it does not
+inspect arbitrary methods on the plugin instances or construct them during validation.
+
+`config.toBuilder()` preserves the resolved factory list without rediscovery. Calling `withPlugins(...)` replaces
+that complete list, and `withPlugins()` removes every factory. Use a fresh `DurableConfig.builder()` to read the
+current environment selection. The 3.x testing SDK uses this copy path; the 2.x instance-registration/testing SDK
+compatibility path is outside this major-version migration.
+
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
 1. Add the ADOT Lambda Layer to your function

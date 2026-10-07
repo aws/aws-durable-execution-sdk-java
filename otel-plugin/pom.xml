@@ -101,6 +101,9 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
+                    <systemPropertyVariables>
+                        <releasedTestingSdkJar>${project.build.directory}/compatibility/testing-sdk-2.2.1.jar</releasedTestingSdkJar>
+                    </systemPropertyVariables>
                     <!--
                         The X-Ray context extractor falls back to the ambient _X_AMZN_TRACE_ID
                         environment variable. CI runners on Lambda/CodeBuild compute inject it,
@@ -113,6 +116,31 @@
                         <_X_AMZN_TRACE_ID/>
                     </environmentVariables>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.11.0</version>
+                <executions>
+                    <execution>
+                        <id>copy-released-testing-sdk</id>
+                        <phase>generate-test-resources</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>software.amazon.lambda.durable</groupId>
+                                    <artifactId>aws-durable-execution-sdk-java-testing</artifactId>
+                                    <version>2.2.1</version>
+                                    <outputDirectory>${project.build.directory}/compatibility</outputDirectory>
+                                    <destFileName>testing-sdk-2.2.1.jar</destFileName>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>com.diffplug.spotless</groupId>
