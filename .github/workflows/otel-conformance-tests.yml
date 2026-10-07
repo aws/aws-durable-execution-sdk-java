@@ -53,6 +53,11 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: otel-conformance-tests
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   opentelemetry:
     # 1. Run for non-PR events, such as scheduled runs and manual invocations
