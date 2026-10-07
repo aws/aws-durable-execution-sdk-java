@@ -517,6 +517,8 @@ public class DurableExecutor {
             Throwable error,
             Object executionInput,
             Object executionResult) {
+        // The selected failure can originate in user code or result delivery, without a plugin callback reporting it.
+        if (isFatal(error)) executionManager.recordInvocationFatal((Error) error);
         if (pluginRunner.isEmpty()) {
             return;
         }

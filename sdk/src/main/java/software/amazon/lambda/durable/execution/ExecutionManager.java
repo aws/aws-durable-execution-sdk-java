@@ -725,7 +725,7 @@ public class ExecutionManager implements SafeCloseable {
         return fatalOperationCleanupDeadline;
     }
 
-    /** Gives cooperative operation owners their existing fatal cleanup allowance before plugin finalization. */
+    /** Gives cooperative operation owners their shared fatal cleanup allowance before invocation finalization. */
     void awaitFatalOperationCleanup() {
         if (pluginFatal.get() == null) return;
         registeredOperations.values().forEach(BaseDurableOperation::interruptRunningUserHandler);
@@ -774,6 +774,11 @@ public class ExecutionManager implements SafeCloseable {
      */
     public boolean isExecutionCompletedExceptionally() {
         return executionExceptionFuture.isCompletedExceptionally();
+    }
+
+    /** Applies the existing shutdown budget to a root or result-delivery fatal already selected by the invocation. */
+    void recordInvocationFatal(Error fatal) {
+        failFromPlugin(fatal);
     }
 
     private void failFromPlugin(Error fatal) {
