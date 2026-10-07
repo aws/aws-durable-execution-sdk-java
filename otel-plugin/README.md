@@ -158,6 +158,19 @@ public class MyHandler extends DurableHandler<MyInput, MyOutput> {
 }
 ```
 
+### OpenTelemetry version compatibility
+
+Keep the OpenTelemetry API, context, SDK, and Java agent versions aligned. This plugin is built and tested against
+OpenTelemetry 1.66.0. Global-provider binding needs `GlobalOpenTelemetry.isSet()` and `getOrNoop()`; when the visible
+API lacks either method (for example, API 1.49.0), the plugin logs a compatibility diagnostic and disables its telemetry
+for that invocation. It does not install a no-op global that would prevent a provider from being registered later.
+
+The existing 2.x plugin constructors, registration interfaces, and instance lifetime are retained. Nonfatal linkage
+errors from plugin callbacks are logged and isolated so healthy plugins and the handler can continue. Fatal JVM errors
+and `ThreadDeath` retain their existing propagation behavior. Provider registration and configuration validation remain
+unchanged. Align incompatible dependencies to restore instrumentation; error isolation does not make every old
+agent/API combination capable of exporting telemetry.
+
 ### 4. Grant Permissions
 
 The function's execution role needs the `AWSXRayDaemonWriteAccess` managed policy (or equivalent permissions) to write traces to X-Ray.

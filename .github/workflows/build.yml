@@ -29,6 +29,8 @@ on:
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
       - 'insight-plugin/**'
+      - 'otel-plugin/**'
+      - '.github/scripts/verify_otel_api_compatibility.py'
       - 'examples/**'
       - 'pom.xml'
   push:
@@ -42,6 +44,8 @@ on:
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
       - 'insight-plugin/**'
+      - 'otel-plugin/**'
+      - '.github/scripts/verify_otel_api_compatibility.py'
       - 'examples/**'
       - 'pom.xml'
 
@@ -80,6 +84,10 @@ jobs:
 
       - name: Build and test
         run: mvn -B install --file pom.xml
+
+      - name: Verify installed OpenTelemetry API compatibility
+        if: ${{ matrix.java == 17 }}
+        run: python3 .github/scripts/verify_otel_api_compatibility.py
 
       - name: Setup uv for coverage badge
         if: ${{ matrix.java == 17 }}
