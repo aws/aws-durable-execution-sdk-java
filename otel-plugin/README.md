@@ -40,6 +40,13 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 </dependency>
 ```
 
+## Chained-invoke propagation
+
+Both views provide the calling operation's X-Ray context to the SDK's synchronous collector. New invoke START
+checkpoints carry that context in the flat optional `ChainedInvokeOptions.XAmznTraceId` field. This draft requires
+the corresponding generated model and backend support; the current public model does not yet compile the new
+typed setter. See [the implemented path and remaining dependencies](../docs/advanced/propagation-metadata.md).
+
 ## Choose one durable OTel view
 
 Configure exactly one of `InvocationOtelPlugin` or `ExecutionOtelPlugin` when enabling durable tracing.
@@ -61,6 +68,13 @@ resolved plugin instances without rediscovery.
 on it replaces the complete plugin list without reading `DURABLE_EXECUTION_PLUGINS` again; `withPlugins()` removes all
 plugins from the copy. Use `DurableConfig.builder()` when creating a fresh configuration that should honor the current
 environment selection.
+
+View exclusivity is declared with inherited `@ExclusivePluginGroup("durable-otel-view")` metadata.
+Configuration reads this explicit opt-in annotation from the entire superclass chain; it does not call application methods
+that happen to be named `getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled
+view restriction. A subclass may add another group, but cannot replace a superclass's group; repeated group names in one
+class hierarchy are checked once.
+Older cores ignore the optional annotation and retain their prior behavior; no provider-version floor is raised.
 
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
@@ -407,10 +421,3 @@ var otelPlugin = new InvocationOtelPlugin(
 ## License
 
 Apache-2.0
-
-View exclusivity is declared with inherited `@ExclusivePluginGroup("durable-otel-view")` metadata.
-Configuration reads this explicit opt-in annotation from the entire superclass chain; it does not call application methods
-that happen to be named `getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled
-view restriction. A subclass may add another group, but cannot replace a superclass's group; repeated group names in one
-class hierarchy are checked once.
-Older cores ignore the optional annotation and retain their prior behavior; no provider-version floor is raised.
