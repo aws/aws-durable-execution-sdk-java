@@ -4,7 +4,6 @@ package software.amazon.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -20,13 +19,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 class ApiRequestDelayedBatcherTest {
     private static final Duration SHORT_DELAY = Duration.ofMillis(5);
@@ -195,80 +195,74 @@ class ApiRequestDelayedBatcherTest {
     }
 
     @Test
-    void whenAbandoned_delayedItemsFailWithoutExecutingBatch() {
-        Supplier<RuntimeException> cause = () -> new RuntimeException("abandoned");
-        var future1 = cut.submit(input, LONG_DELAY);
-        var future2 = cut.submit(input, LONG_DELAY);
+    void whenFlushCalled_longDelayedItemsCompletePromptly() throws Exception {
+        var future1 = cut.submit(input, Duration.ofHours(1));
+        var future2 = cut.submit(input, Duration.ofHours(1));
 
-        cut.abandon(cause);
+        cut.flush();
 
-        var exception1 = assertThrows(Exception.class, () -> future1.get(50, TimeUnit.MILLISECONDS));
-        var exception2 = assertThrows(Exception.class, () -> future2.get(50, TimeUnit.MILLISECONDS));
-        assertEquals("abandoned", exception1.getCause().getMessage());
-        assertEquals("abandoned", exception2.getCause().getMessage());
-        // Each rejected caller gets its own exception, so a stack trace points at the caller that was waiting.
-        assertNotSame(exception1.getCause(), exception2.getCause());
-        verify(doBatchAction, never()).accept(any());
+        CompletableFuture.allOf(future1, future2).get(1, TimeUnit.SECONDS);
+        verify(doBatchAction).accept(argThat(list -> list.size() == 2));
+        cut.shutdown();
     }
 
     @Test
-    void whenAbandoned_flushingQueueItemsFailWithoutExecuting() throws Exception {
+    @Timeout(10)
+    void whenFlushCalledDuringActiveBatch_queuedBatchesWaitWithoutBlockingFlush() throws Exception {
         var firstBatchStarted = new CountDownLatch(1);
         var releaseFirstBatch = new CountDownLatch(1);
         var executions = new AtomicInteger();
-        Consumer<List<Input>> blockingBatchAction = requests -> {
-            executions.incrementAndGet();
-            firstBatchStarted.countDown();
-            try {
-                assertTrue(releaseFirstBatch.await(5, TimeUnit.SECONDS));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new AssertionError(e);
-            }
-        };
-        var singleItemCut =
-                new ApiRequestDelayedBatcher<>(1, MAX_BATCH_BINARY_SIZE_IN_BYTES, item -> 0, blockingBatchAction);
-        var firstFuture = singleItemCut.submit(input, LONG_DELAY);
-        var queuedFuture1 = singleItemCut.submit(input, LONG_DELAY);
-        var queuedFuture2 = singleItemCut.submit(input, SHORT_DELAY);
-        assertTrue(firstBatchStarted.await(5, TimeUnit.SECONDS));
+        var singleItemCut = blockingBatcher(firstBatchStarted, releaseFirstBatch, executions);
+        try {
+            var firstFuture = singleItemCut.submit(input, Duration.ofHours(1));
+            singleItemCut.flush();
+            await(firstBatchStarted);
+            var queuedFuture1 = singleItemCut.submit(input, Duration.ofHours(1));
+            var queuedFuture2 = singleItemCut.submit(input, Duration.ofHours(1));
+            singleItemCut.flush();
 
-        Supplier<RuntimeException> cause = () -> new RuntimeException("abandoned");
-        singleItemCut.abandon(cause);
+            assertFalse(firstFuture.isDone());
+            assertFalse(queuedFuture1.isDone());
+            assertFalse(queuedFuture2.isDone());
+            assertEquals(1, executions.get());
 
-        var exception1 = assertThrows(Exception.class, () -> queuedFuture1.get(50, TimeUnit.MILLISECONDS));
-        var exception2 = assertThrows(Exception.class, () -> queuedFuture2.get(50, TimeUnit.MILLISECONDS));
-        assertEquals("abandoned", exception1.getCause().getMessage());
-        assertEquals("abandoned", exception2.getCause().getMessage());
-        assertNotSame(exception1.getCause(), exception2.getCause());
-        assertFalse(firstFuture.isDone());
-        assertEquals(1, executions.get());
-
-        releaseFirstBatch.countDown();
-        firstFuture.get(50, TimeUnit.MILLISECONDS);
+            releaseFirstBatch.countDown();
+            CompletableFuture.allOf(firstFuture, queuedFuture1, queuedFuture2).get(1, TimeUnit.SECONDS);
+            assertEquals(3, executions.get());
+        } finally {
+            releaseFirstBatch.countDown();
+            singleItemCut.shutdown();
+        }
     }
 
     @Test
-    void whenAbandoned_newItemsFailWithoutExecutingBatch() {
-        cut.abandon(() -> new RuntimeException("abandoned"));
+    @Timeout(10)
+    void whenShutdownCalledDuringActiveBatch_itWaitsForCompletion() throws Exception {
+        var batchStarted = new CountDownLatch(1);
+        var releaseBatch = new CountDownLatch(1);
+        var shutdownStarted = new CountDownLatch(1);
+        var blockingCut = blockingBatcher(batchStarted, releaseBatch, new AtomicInteger());
+        var caller = Executors.newSingleThreadExecutor();
+        try {
+            var future = blockingCut.submit(input, Duration.ofHours(1));
+            blockingCut.flush();
+            await(batchStarted);
+            var shutdown = caller.submit(() -> {
+                shutdownStarted.countDown();
+                blockingCut.shutdown();
+            });
+            await(shutdownStarted);
+            assertThrows(TimeoutException.class, () -> shutdown.get(100, TimeUnit.MILLISECONDS));
+            assertFalse(future.isDone());
 
-        var future = cut.submit(input, SHORT_DELAY);
-
-        var exception = assertThrows(Exception.class, () -> future.get(50, TimeUnit.MILLISECONDS));
-        assertEquals("abandoned", exception.getCause().getMessage());
-        verify(doBatchAction, never()).accept(any());
-    }
-
-    @Test
-    void whenAbandonedMultipleTimes_firstCauseWins() {
-        cut.abandon(() -> new RuntimeException("first"));
-
-        cut.abandon(() -> new RuntimeException("second"));
-        var future = cut.submit(input, SHORT_DELAY);
-
-        var exception = assertThrows(Exception.class, () -> future.get(50, TimeUnit.MILLISECONDS));
-        assertEquals("first", exception.getCause().getMessage());
-        verify(doBatchAction, never()).accept(any());
+            releaseBatch.countDown();
+            shutdown.get(1, TimeUnit.SECONDS);
+            assertTrue(future.isDone());
+        } finally {
+            releaseBatch.countDown();
+            blockingCut.shutdown();
+            caller.shutdownNow();
+        }
     }
 
     @Test
@@ -306,5 +300,23 @@ class ApiRequestDelayedBatcherTest {
         var future2 = cut.submit(input, LONG_DELAY);
         cut.shutdown();
         assertTrue(future2.isDone());
+    }
+
+    private ApiRequestDelayedBatcher<Input> blockingBatcher(
+            CountDownLatch started, CountDownLatch release, AtomicInteger executions) {
+        return new ApiRequestDelayedBatcher<>(1, MAX_BATCH_BINARY_SIZE_IN_BYTES, item -> 0, requests -> {
+            executions.incrementAndGet();
+            started.countDown();
+            await(release);
+        });
+    }
+
+    private void await(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(5, TimeUnit.SECONDS), "Timed out waiting for the test latch");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        }
     }
 }

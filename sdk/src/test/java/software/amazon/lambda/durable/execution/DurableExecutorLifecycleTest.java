@@ -68,7 +68,7 @@ class DurableExecutorLifecycleTest {
 
     @ParameterizedTest
     @EnumSource(HandlerOutcome.class)
-    void queuedRevocationOverridesHandlerOutcomeAndPreservesPluginError(HandlerOutcome outcome) {
+    void queuedRevocationOverridesHandlerOutcomeAndClearsPluginError(HandlerOutcome outcome) {
         when(client.checkpoint(any(), any(), any()))
                 .thenReturn(CheckpointDurableExecutionResponse.builder().build());
         var handlerError =
@@ -89,7 +89,7 @@ class DurableExecutorLifecycleTest {
         verify(client, times(1)).checkpoint(any(), any(), any());
         verify(plugin, times(1))
                 .onInvocationEnd(argThat(info -> info.invocationStatus() == InvocationStatus.PENDING
-                        && info.executionError() == handlerError
+                        && info.executionError() == null
                         && info.executionResult() == null));
     }
 
@@ -212,7 +212,7 @@ class DurableExecutorLifecycleTest {
     }
 
     @Test
-    void terminalCheckpointWithoutTokenPreservesPluginStateWithoutPagination() {
+    void terminalCheckpointWithoutTokenRetainsPreviouslyObservedPluginStateWithoutPagination() {
         var terminalOperation = executionOperation().toBuilder()
                 .status(OperationStatus.SUCCEEDED)
                 .build();
@@ -232,7 +232,7 @@ class DurableExecutorLifecycleTest {
         verify(client, never()).getExecutionState(any(), any(), any());
         verify(plugin, times(1))
                 .onInvocationEnd(argThat(info -> info.invocationStatus() == InvocationStatus.SUCCEEDED
-                        && info.operations().get("exec").status() == OperationStatus.SUCCEEDED));
+                        && info.operations().get("exec").status() == OperationStatus.STARTED));
     }
 
     private DurableConfig.Builder config() {

@@ -154,10 +154,7 @@ public class DurableExecutor {
             HandlerResult handlerResult, ExecutionManager executionManager, DurableConfig config) {
         var cause = ExceptionHelper.unwrapCompletableFuture(handlerResult.error());
         if (executionManager.isCheckpointTokenRevoked() || cause instanceof SuspendExecutionException) {
-            return new InvocationOutcome(
-                    DurableExecutionOutput.pending(),
-                    InvocationStatus.PENDING,
-                    cause instanceof SuspendExecutionException ? null : cause);
+            return new InvocationOutcome(DurableExecutionOutput.pending(), InvocationStatus.PENDING, null);
         }
         if (cause instanceof UnrecoverableDurableExecutionException error && error.isRetryable()) {
             return new InvocationOutcome(null, InvocationStatus.RETRYING, cause);

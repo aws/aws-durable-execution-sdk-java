@@ -13,7 +13,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
@@ -46,8 +45,8 @@ class CheckpointManager {
     private final ApiRequestDelayedBatcher<OperationUpdate> checkpointApiRequestDelayedBatcher;
     private final DurableConfig config;
     private final BooleanSupplier tryStartCheckpointProcessing;
-    private final Runnable finishCheckpointProcessing;
-    private final Runnable signalSuspensionForRevokedCheckpointToken;
+    private final Runnable onCheckpointProcessingFinish;
+    private final Runnable onTokenRevoked;
     private volatile String checkpointToken;
     private boolean pollingStopped; // Guarded by pollingFutures.
     /**
@@ -70,15 +69,15 @@ class CheckpointManager {
             String checkpointToken,
             Consumer<List<Operation>> callback,
             BooleanSupplier tryStartCheckpointProcessing,
-            Runnable finishCheckpointProcessing,
-            Runnable signalSuspensionForRevokedCheckpointToken) {
+            Runnable onCheckpointProcessingFinish,
+            Runnable onTokenRevoked) {
         this.config = config;
         this.durableExecutionArn = durableExecutionArn;
         this.callback = callback;
         this.checkpointToken = checkpointToken;
         this.tryStartCheckpointProcessing = tryStartCheckpointProcessing;
-        this.finishCheckpointProcessing = finishCheckpointProcessing;
-        this.signalSuspensionForRevokedCheckpointToken = signalSuspensionForRevokedCheckpointToken;
+        this.onCheckpointProcessingFinish = onCheckpointProcessingFinish;
+        this.onTokenRevoked = onTokenRevoked;
         this.checkpointApiRequestDelayedBatcher = new ApiRequestDelayedBatcher<>(
                 MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointManager::estimateSize, this::checkpointBatch);
     }
@@ -97,8 +96,15 @@ class CheckpointManager {
         if (checkpointToken == null) {
             return CompletableFuture.failedFuture(new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE));
         }
+
         logger.debug("Checkpoint request received: Action {}", update.action());
-        return checkpointApiRequestDelayedBatcher.submit(update, config.getCheckpointDelay());
+        var future = checkpointApiRequestDelayedBatcher.submit(update, config.getCheckpointDelay());
+        // Withdrawal can flush before this request is submitted, so check again to avoid waiting for its timer.
+        if (checkpointToken == null) {
+            checkpointApiRequestDelayedBatcher.flush();
+        }
+
+        return future;
     }
 
     /**
@@ -175,12 +181,12 @@ class CheckpointManager {
     /** Cancels all polling futures and waits for all pending checkpoint requests to complete */
     void shutdown() {
         // complete all polling futures with an exception
-        stopPolling(() -> new IllegalStateException("CheckpointManager shutdown"));
+        stopPolling(new IllegalStateException("CheckpointManager shutdown"));
         // wait for all non-polling checkpoint requests to complete
         checkpointApiRequestDelayedBatcher.shutdown();
     }
 
-    private void stopPolling(Supplier<? extends Throwable> cause) {
+    private void stopPolling(Throwable cause) {
         List<List<CompletableFuture<Operation>>> allFutures;
         synchronized (pollingFutures) {
             pollingStopped = true;
@@ -189,7 +195,7 @@ class CheckpointManager {
         }
 
         for (var futures : allFutures) {
-            futures.forEach(future -> future.completeExceptionally(cause.get()));
+            futures.forEach(future -> future.completeExceptionally(cause));
         }
     }
 
@@ -258,7 +264,7 @@ class CheckpointManager {
             } catch (AwsServiceException e) {
                 throw DurableApiErrorClassifier.classifyException(e);
             } finally {
-                finishCheckpointProcessing.run();
+                onCheckpointProcessingFinish.run();
             }
         }
     }
@@ -272,25 +278,31 @@ class CheckpointManager {
         checkpointToken = response.checkpointToken();
         if (checkpointToken == null) {
             handleMissingToken(request);
+            return; // The token is gone, so this invocation cannot use the response state or fetch more pages.
         }
 
         var state = response.newExecutionState();
         if (state != null) {
-            // An accepted terminal response has no usable token. Preserve its inline state without requesting pages.
-            processUpdatedOperations(checkpointToken == null ? state.operations() : fetchAllPages(state));
+            processUpdatedOperations(fetchAllPages(state));
         }
     }
 
-    private void handleMissingToken(List<OperationUpdate> request) {
-        var isTerminalExecutionUpdate = request.stream().anyMatch(update -> update.type() == OperationType.EXECUTION);
-        if (!isTerminalExecutionUpdate) {
-            handleRevokedCheckpointToken();
-            throw new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE);
+    private void handleMissingToken(List<OperationUpdate> updates) {
+        var cause = new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE);
+        stopPolling(cause);
+        checkpointApiRequestDelayedBatcher.flush();
+
+        // A terminal execution update was accepted, so only nonterminal requests require suspension.
+        checkpointTokenRevoked = updates.stream().noneMatch(update -> update.type() == OperationType.EXECUTION);
+        if (checkpointTokenRevoked) {
+            logger.warn(
+                    "The checkpoint response for durable execution {} did not include a checkpoint token. The SDK will"
+                            + " stop checkpointing and report the invocation as PENDING.",
+                    durableExecutionArn);
+            onTokenRevoked.run();
+            throw cause;
         }
 
-        stopPolling(() -> new IllegalStateException("Execution already completed"));
-        checkpointApiRequestDelayedBatcher.abandon(
-                () -> new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE));
         logger.info(
                 "Checkpoint token withheld on durable execution {}'s terminal update; execution is finished.",
                 durableExecutionArn);
@@ -314,26 +326,6 @@ class CheckpointManager {
                 operations.size(),
                 completedFutures,
                 System.nanoTime() - processStartTime);
-    }
-
-    // Sets checkpointTokenRevoked and signals suspension. Called only when the batch that surfaced the
-    // token-less response did not carry the execution's own terminal update.
-    private void handleRevokedCheckpointToken() {
-        checkpointTokenRevoked = true;
-        logger.warn(
-                "The checkpoint response for durable execution {} did not include a checkpoint token. The SDK will"
-                        + " stop checkpointing and report the invocation as PENDING.",
-                durableExecutionArn);
-        // Runs the shared suspend mechanism (stopAllOperations + executionExceptionFuture) without throwing: this
-        // call site still has cleanup of its own to do and throws its own descriptive SuspendExecutionException
-        // right after, so ExecutionManager's copy of the exception must not propagate from here instead.
-        signalSuspensionForRevokedCheckpointToken.run();
-        // A fresh exception per rejected caller, so each stack trace is the waiting caller's own rather than this
-        // detecting thread's.
-        Supplier<SuspendExecutionException> cause =
-                () -> new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE);
-        stopPolling(cause);
-        checkpointApiRequestDelayedBatcher.abandon(cause);
     }
 
     private static int estimateSize(OperationUpdate update) {

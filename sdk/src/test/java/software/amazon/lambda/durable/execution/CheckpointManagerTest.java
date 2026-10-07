@@ -10,12 +10,15 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.http.SdkHttpResponse;
@@ -752,7 +755,7 @@ class CheckpointManagerTest {
         terminalFuture.get(200, TimeUnit.MILLISECONDS);
         var pollingException = assertThrows(Exception.class, () -> pollingFuture.get(200, TimeUnit.MILLISECONDS));
 
-        assertInstanceOf(IllegalStateException.class, pollingException.getCause());
+        assertInstanceOf(SuspendExecutionException.class, pollingException.getCause());
         assertFalse(revocableBatcher.isCheckpointTokenRevoked());
         verify(signalSuspension, never()).run();
 
@@ -761,7 +764,7 @@ class CheckpointManagerTest {
     }
 
     @Test
-    void checkpointBatch_terminalTokenWithdrawal_preservesInlineStateWithoutPagination() throws Exception {
+    void checkpointBatch_terminalTokenWithdrawal_skipsInlineStateAndPagination() throws Exception {
         var operation = Operation.builder()
                 .id("exec-op")
                 .type(OperationType.EXECUTION)
@@ -782,7 +785,7 @@ class CheckpointManagerTest {
                         .build())
                 .get(1, TimeUnit.SECONDS);
 
-        assertEquals(List.of(operation), callbackOperations);
+        assertTrue(callbackOperations.isEmpty());
         assertFalse(batcher.isCheckpointTokenRevoked());
         verify(client, never()).getExecutionState(any(), any(), any());
         batcher.shutdown();
@@ -820,39 +823,31 @@ class CheckpointManagerTest {
     }
 
     @Test
-    void checkpointBatch_revokedToken_abandonsDelayedCheckpoints() throws Exception {
+    @Timeout(10)
+    void checkpointBatch_revokedToken_flushesLongDelayedCheckpointsAcrossMultipleBatches() throws Exception {
         var revocationStarted = new CountDownLatch(1);
         var returnRevokedResponse = new CountDownLatch(1);
-        var revocableBatcher = new CheckpointManager(
-                config, "arn:test", "token-1", callbackOperations::addAll, () -> true, () -> {}, () -> {});
-
-        when(client.checkpoint(anyString(), anyString(), anyList())).thenAnswer(invocation -> {
-            revocationStarted.countDown();
-            assertTrue(returnRevokedResponse.await(5, TimeUnit.SECONDS));
-            return CheckpointDurableExecutionResponse.builder().build();
-        });
-
-        var firstFuture = revocableBatcher.checkpoint(OperationUpdate.builder()
-                .id("op-1")
-                .type(OperationType.STEP)
-                .action(OperationAction.START)
-                .build());
-        assertTrue(revocationStarted.await(5, TimeUnit.SECONDS));
-
-        var delayedFuture = revocableBatcher.checkpoint(OperationUpdate.builder()
-                .id("op-2")
-                .type(OperationType.STEP)
-                .action(OperationAction.START)
-                .build());
-        returnRevokedResponse.countDown();
-
-        var firstException = assertThrows(Exception.class, () -> firstFuture.get(200, TimeUnit.MILLISECONDS));
-        var delayedException = assertThrows(Exception.class, () -> delayedFuture.get(200, TimeUnit.MILLISECONDS));
-        assertInstanceOf(SuspendExecutionException.class, firstException.getCause());
-        assertInstanceOf(SuspendExecutionException.class, delayedException.getCause());
-        // A distinct exception per caller, so each stack trace is the waiting caller's own.
-        assertNotSame(firstException.getCause(), delayedException.getCause());
-        verify(client, times(1)).checkpoint(anyString(), anyString(), anyList());
+        var delayedConfig = longDelayedConfig();
+        var revocableBatcher = new CheckpointManager(delayedConfig, "arn:test", "token-1", callbackOperations::addAll);
+        revokeAfterRelease(revocationStarted, returnRevokedResponse);
+        try {
+            var poller = revocableBatcher.pollForUpdate("poll", Instant.now());
+            await(revocationStarted);
+            var queued = new ArrayList<CompletableFuture<Void>>();
+            for (int i = 0; i < 401; i++) {
+                queued.add(revocableBatcher.checkpoint(stepUpdate("op-" + i)));
+            }
+            returnRevokedResponse.countDown();
+            assertSuspended(poller);
+            for (var future : queued) {
+                assertSuspended(future);
+            }
+            verify(client, times(1)).checkpoint(anyString(), anyString(), anyList());
+            verify(client, never()).getExecutionState(any(), any(), any());
+        } finally {
+            returnRevokedResponse.countDown();
+            revocableBatcher.shutdown();
+        }
     }
 
     @Test
@@ -874,8 +869,38 @@ class CheckpointManagerTest {
         var pollingException = assertThrows(Exception.class, () -> pollingFuture.get(200, TimeUnit.MILLISECONDS));
         assertInstanceOf(SuspendExecutionException.class, checkpointException.getCause());
         assertInstanceOf(SuspendExecutionException.class, pollingException.getCause());
-        assertNotSame(checkpointException.getCause(), pollingException.getCause());
         verify(client, times(1)).checkpoint(anyString(), anyString(), anyList());
+    }
+
+    @Test
+    @Timeout(10)
+    void checkpoint_withdrawalBetweenTokenCheckAndSubmission_flushesLateRequest() throws Exception {
+        var requestStarted = new CountDownLatch(1);
+        var returnRevokedResponse = new CountDownLatch(1);
+        var submissionPaused = new CountDownLatch(1);
+        var resumeSubmission = new CountDownLatch(1);
+        var delayedConfig = blockedCheckpointConfig(submissionPaused, resumeSubmission);
+        var revocableBatcher = new CheckpointManager(delayedConfig, "arn:test", "token-1", callbackOperations::addAll);
+        var caller = Executors.newSingleThreadExecutor();
+        revokeAfterRelease(requestStarted, returnRevokedResponse);
+        try {
+            var poller = revocableBatcher.pollForUpdate("poll", Instant.now());
+            await(requestStarted);
+            var submission = caller.submit(() -> revocableBatcher.checkpoint(stepUpdate("late")));
+            await(submissionPaused);
+            returnRevokedResponse.countDown();
+            assertSuspended(poller);
+            revocableBatcher.shutdown();
+            resumeSubmission.countDown();
+            assertSuspended(submission.get(1, TimeUnit.SECONDS));
+            verify(client, times(1)).checkpoint(anyString(), anyString(), anyList());
+            verify(client, never()).getExecutionState(any(), any(), any());
+        } finally {
+            returnRevokedResponse.countDown();
+            resumeSubmission.countDown();
+            caller.shutdownNow();
+            revocableBatcher.shutdown();
+        }
     }
 
     @Test
@@ -961,5 +986,54 @@ class CheckpointManagerTest {
                 .build();
 
         assertThrows(UnrecoverableDurableExecutionException.class, () -> batcher.fetchAllPages(state));
+    }
+
+    private DurableConfig longDelayedConfig() {
+        return DurableConfig.builder()
+                .withDurableExecutionClient(client)
+                .withCheckpointDelay(Duration.ofHours(1))
+                .build();
+    }
+
+    private DurableConfig blockedCheckpointConfig(CountDownLatch paused, CountDownLatch resume) {
+        var blockedConfig = spy(longDelayedConfig());
+        doAnswer(invocation -> {
+                    paused.countDown();
+                    await(resume);
+                    return Duration.ofHours(1);
+                })
+                .when(blockedConfig)
+                .getCheckpointDelay();
+        return blockedConfig;
+    }
+
+    private void revokeAfterRelease(CountDownLatch started, CountDownLatch release) {
+        when(client.checkpoint(anyString(), anyString(), anyList())).thenAnswer(invocation -> {
+            started.countDown();
+            await(release);
+            return CheckpointDurableExecutionResponse.builder().build();
+        });
+    }
+
+    private OperationUpdate stepUpdate(String id) {
+        return OperationUpdate.builder()
+                .id(id)
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build();
+    }
+
+    private void assertSuspended(CompletableFuture<?> future) {
+        var error = assertThrows(Exception.class, () -> future.get(1, TimeUnit.SECONDS));
+        assertInstanceOf(SuspendExecutionException.class, error.getCause());
+    }
+
+    private void await(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(5, TimeUnit.SECONDS), "Timed out waiting for the test latch");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        }
     }
 }

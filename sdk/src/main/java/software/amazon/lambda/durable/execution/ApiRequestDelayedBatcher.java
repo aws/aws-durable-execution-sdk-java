@@ -11,7 +11,6 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
-import java.util.function.Supplier;
 
 /**
  * Batches API requests to optimize throughput by grouping individual calls into batch operations. Batches are flushed
@@ -50,13 +49,6 @@ public class ApiRequestDelayedBatcher<T> {
     /** Future of flushing items in queue */
     private CompletableFuture<Void> flushingQueueFuture;
 
-    /**
-     * Supplies the cause for each request rejected after abandonment. A supplier rather than one shared instance, so
-     * every rejected caller gets an exception whose stack trace is its own rather than that of whichever thread first
-     * detected the abandonment.
-     */
-    private volatile Supplier<? extends Throwable> abandonmentCause;
-
     private record Item<T>(T request, CompletableFuture<Void> result) {}
 
     /**
@@ -93,11 +85,6 @@ public class ApiRequestDelayedBatcher<T> {
      */
     CompletableFuture<Void> submit(T request, Duration flushDelay) {
         synchronized (delayedBatch) {
-            var cause = abandonmentCause;
-            if (cause != null) {
-                return CompletableFuture.failedFuture(cause.get());
-            }
-
             // add the request to the current batch
             CompletableFuture<Void> future = new CompletableFuture<>();
             delayedBatch.add(new Item<>(request, future));
@@ -117,41 +104,18 @@ public class ApiRequestDelayedBatcher<T> {
 
     /** Flushes pending batch and waits for completion */
     void shutdown() {
+        flush();
+        flushingQueueFuture.join();
+    }
+
+    /** Schedules pending requests immediately without waiting for the current batch. */
+    void flush() {
         synchronized (delayedBatch) {
             // cancel the flush timer if it has not been triggered
             this.delayedBatchFlushTimer.cancel(false);
             // execute the current batch now
             flushDelayedBatch();
         }
-
-        // wait for previous batches to be flushed
-        flushingQueueFuture.join();
-    }
-
-    /**
-     * Rejects new and queued requests. A batch already executing is allowed to finish.
-     *
-     * @param cause supplies the cause used to complete each rejected request
-     */
-    void abandon(Supplier<? extends Throwable> cause) {
-        var abandonedItems = new ArrayList<Item<T>>();
-        synchronized (delayedBatch) {
-            if (abandonmentCause != null) {
-                return;
-            }
-
-            abandonmentCause = Objects.requireNonNull(cause);
-            delayedBatchFlushTimer.cancel(false);
-            abandonedItems.addAll(delayedBatch);
-            delayedBatch.clear();
-
-            Item<T> item;
-            while ((item = flushingQueue.poll()) != null) {
-                abandonedItems.add(item);
-            }
-        }
-
-        completeExceptionally(abandonedItems, cause);
     }
 
     /** clear the current batch and creates a new batch */
@@ -193,57 +157,44 @@ public class ApiRequestDelayedBatcher<T> {
         // - new items being added when processing the previous items
         // This allows the items being added when making the checkpoint request to be immediately processed
         while (flushingQueue.peek() != null) {
-            List<Item<T>> flushingItems;
-            synchronized (delayedBatch) {
-                flushingItems = pollNextBatch();
-            }
-            if (flushingItems.isEmpty()) {
-                continue;
-            }
-
-            var cause = abandonmentCause;
-            if (cause != null) {
-                completeExceptionally(flushingItems, cause);
-                continue;
-            }
-
-            try {
-                // requests might be null for polling requests
-                var requests = flushingItems.stream()
-                        .map(Item::request)
-                        .filter(Objects::nonNull)
-                        .toList();
-                executeBatch.accept(requests);
-                for (Item<T> item : flushingItems) {
-                    item.result().complete(null);
+            var flushingSize = 0L;
+            var flushingItems = new ArrayList<Item<T>>();
+            while (true) {
+                var item = flushingQueue.peek();
+                if (item == null) {
+                    break;
                 }
-            } catch (Throwable ex) {
-                completeExceptionally(flushingItems, () -> ex);
+
+                var itemSizeInByte = calculateItemSize.apply(item.request);
+                var canFit = flushingSize + itemSizeInByte <= maxBatchBytes;
+
+                // Add the item if
+                // - it can fit in one checkpoint call, or
+                // - flushingItems is empty, so that we can try the big item even if it's bigger than the max batch size
+                if (!flushingItems.isEmpty() && (!canFit || flushingItems.size() >= maxItemCount)) {
+                    break;
+                }
+
+                flushingItems.add(flushingQueue.poll());
+                flushingSize += itemSizeInByte;
+            }
+            if (!flushingItems.isEmpty()) {
+                try {
+                    // requests might be null for polling requests
+                    var requests = flushingItems.stream()
+                            .map(Item::request)
+                            .filter(Objects::nonNull)
+                            .toList();
+                    executeBatch.accept(requests);
+                    for (Item<T> item : flushingItems) {
+                        item.result().complete(null);
+                    }
+                } catch (Throwable ex) {
+                    for (Item<T> item : flushingItems) {
+                        item.result().completeExceptionally(ex);
+                    }
+                }
             }
         }
-    }
-
-    private List<Item<T>> pollNextBatch() {
-        var flushingSize = 0L;
-        var flushingItems = new ArrayList<Item<T>>();
-        while (true) {
-            var item = flushingQueue.peek();
-            if (item == null) {
-                return flushingItems;
-            }
-
-            var itemSizeInByte = calculateItemSize.apply(item.request);
-            var canFit = flushingSize + itemSizeInByte <= maxBatchBytes;
-            if (!flushingItems.isEmpty() && (!canFit || flushingItems.size() >= maxItemCount)) {
-                return flushingItems;
-            }
-
-            flushingItems.add(flushingQueue.remove());
-            flushingSize += itemSizeInByte;
-        }
-    }
-
-    private void completeExceptionally(List<Item<T>> items, Supplier<? extends Throwable> cause) {
-        items.forEach(item -> item.result().completeExceptionally(cause.get()));
     }
 }
