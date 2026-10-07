@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Exercise real released/candidate core and plugin artifacts with two visible OTel APIs.
+"""Exercise the current 3.x core, plugin, and testing artifacts with two visible OTel APIs.
 
 Dependency resolution and every probe are required: a network, compilation, or case
 failure returns nonzero. No production dependency versions are modified.
@@ -105,67 +105,59 @@ def run_matrix(args: argparse.Namespace) -> int:
     output.mkdir(parents=True, exist_ok=True)
     fixture = root / "otel-plugin/src/test/compatibility/b1"
     cp = resolve_classpaths(fixture, output, args.maven)
-    released_core = artifact(cp["1.66.0"], CORE, RELEASED_VERSION)
-    released_plugin = artifact(cp["1.66.0"], PLUGIN, RELEASED_VERSION)
-    new_core = args.new_core.resolve() if args.new_core else candidate_jar(root, "sdk", CORE)
-    new_plugin = args.new_plugin.resolve() if args.new_plugin else candidate_jar(root, "otel-plugin", PLUGIN)
-    for jar in (new_core, new_plugin):
-        if not jar.is_file():
-            raise RuntimeError(f"Candidate artifact missing: {jar}")
-    candidate_inputs = {"core": jar_facts(new_core), "plugin": jar_facts(new_plugin)}
-    new_core = snapshot_candidate(new_core, output)
-    new_plugin = snapshot_candidate(new_plugin, output)
+    testing_name = CORE + "-testing"
+    inputs = {
+        "core": args.new_core.resolve() if args.new_core else candidate_jar(root, "sdk", CORE),
+        "plugin": args.new_plugin.resolve() if args.new_plugin else candidate_jar(root, "otel-plugin", PLUGIN),
+        "testing": args.new_testing.resolve() if args.new_testing else candidate_jar(root, "sdk-testing", testing_name),
+    }
+    candidate_inputs = {name: jar_facts(path) for name, path in inputs.items()}
+    selected = {name: snapshot_candidate(path, output) for name, path in inputs.items()}
+    excluded = {f"{name}-{RELEASED_VERSION}.jar" for name in (CORE, PLUGIN, testing_name)}
+    dependencies = {version: [path for path in paths if path.name not in excluded]
+                    for version, paths in cp.items()}
     classes = output / "classes"
     classes.mkdir(exist_ok=True)
-    execute([args.javac, "--release", "17", "-classpath", os.pathsep.join(map(str, cp["1.66.0"])),
+    compile_cp = [*selected.values(), *dependencies["1.66.0"]]
+    execute([args.javac, "--release", "17", "-classpath", os.pathsep.join(map(str, compile_cp)),
              "-d", str(classes), str(fixture / "InstalledApiProbe.java")], output / "compile.log")
     services = classes / "META-INF/services"
     services.mkdir(parents=True, exist_ok=True)
     (services / "software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider").write_text(
         PROBE + "$HealthyProvider\n")
     report: dict[str, object] = {
-        "released_core": jar_facts(released_core), "released_plugin": jar_facts(released_plugin),
-        "new_core": jar_facts(new_core), "new_plugin": jar_facts(new_plugin),
+        "contract": "Current 3.x factory API; cross-major core/plugin mixtures are unsupported.",
         "candidate_inputs": candidate_inputs,
+        "candidate_snapshots": {name: jar_facts(path) for name, path in selected.items()},
         "cases": [], "agent_coverage": "This matrix is visible-API skew, not a deployed Java-agent test.",
     }
     cases: list[dict[str, object]] = report["cases"]  # type: ignore[assignment]
     failures = 0
-    pairs = {"old-old": (released_core, released_plugin), "new-old": (new_core, released_plugin),
-             "old-new": (released_core, new_plugin), "new-new": (new_core, new_plugin)}
     for version in API_VERSIONS:
         api = artifact(cp[version], "opentelemetry-api", version)
         context = artifact(cp[version], "opentelemetry-context", version)
-        dependencies = [p for p in cp[version] if p.name not in
-                        (f"{CORE}-{RELEASED_VERSION}.jar", f"{PLUGIN}-{RELEASED_VERSION}.jar")]
-        for label, (core, plugin) in pairs.items():
-            for view in ("otel-invocation", "otel-execution"):
-                name = f"{label}-api{version}-{view}"
-                negative = label == "old-old" and version == "1.49.0"
-                case: dict[str, object] = {"name": name, "expected_negative_control": negative,
-                                          "api": jar_facts(api), "context": jar_facts(context)}
-                command = [args.java, "-cp", os.pathsep.join(map(str, [classes, core, plugin, *dependencies])),
-                           PROBE, str(core), str(plugin), str(api), str(context), view,
-                           str(negative).lower(), str(version == "1.66.0").lower()]
-                try:
-                    log = output / f"{name}.log"
-                    execute(command, log, env=probe_environment(view), timeout=90)
-                    contents = log.read_text(errors="replace")
-                    if "COMPAT_PASS " not in contents:
-                        raise RuntimeError("Probe did not report successful completion")
-                    if negative and "NEGATIVE_CONTROL_REPRODUCED" not in contents:
-                        raise RuntimeError("Released negative control did not reproduce the reported failure")
-                    case["passed"] = True
-                except RuntimeError as error:
-                    failures += 1
-                    case.update(passed=False, error=str(error))
-                cases.append(case)
-                (output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
-                print(f"{'PASS' if case['passed'] else 'FAIL'} {name}", flush=True)
+        for view in ("otel-invocation", "otel-execution"):
+            name = f"current3x-api{version}-{view}"
+            case: dict[str, object] = {"name": name, "api": jar_facts(api), "context": jar_facts(context)}
+            command = [args.java, "-cp", os.pathsep.join(map(str, [classes, *selected.values(), *dependencies[version]])),
+                       PROBE, str(selected["core"]), str(selected["plugin"]), str(api), str(context), view,
+                       str(version == "1.66.0").lower(), str(selected["testing"])]
+            try:
+                log = output / f"{name}.log"
+                execute(command, log, env=probe_environment(view), timeout=90)
+                if "COMPAT_PASS " not in log.read_text(errors="replace"):
+                    raise RuntimeError("Probe did not report successful completion")
+                case["passed"] = True
+            except RuntimeError as error:
+                failures += 1
+                case.update(passed=False, error=str(error))
+            cases.append(case)
+            (output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
+            print(f"{'PASS' if case['passed'] else 'FAIL'} {name}", flush=True)
     report["passed"] = failures == 0
     report["failure_count"] = failures
     (output / "results.json").write_text(json.dumps(report, indent=2) + "\n")
-    print(f"Installed artifact matrix: {len(cases) - failures}/{len(cases)} passed; {output / 'results.json'}")
+    print(f"Current 3.x artifact matrix: {len(cases) - failures}/{len(cases)} passed; {output / 'results.json'}")
     return 1 if failures else 0
 
 
@@ -175,6 +167,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=Path("target/otel-api-compatibility"))
     parser.add_argument("--new-core", type=Path)
     parser.add_argument("--new-plugin", type=Path)
+    parser.add_argument("--new-testing", type=Path)
     parser.add_argument("--maven", default=shutil.which("mvn") or "mvn")
     parser.add_argument("--java", default=shutil.which("java") or "java")
     parser.add_argument("--javac", default=shutil.which("javac") or "javac")

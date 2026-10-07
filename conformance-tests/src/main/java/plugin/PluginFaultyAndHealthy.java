@@ -29,7 +29,7 @@ public class PluginFaultyAndHealthy extends DurableHandler<String, String> {
     @Override
     protected DurableConfig createConfiguration() {
         return DurableConfig.builder()
-                .withPlugins(new FaultyPlugin(), new HealthyPlugin())
+                .withPlugins(info -> new FaultyPlugin(), info -> new HealthyPlugin())
                 .build();
     }
 

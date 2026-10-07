@@ -3,7 +3,6 @@
 package software.amazon.lambda.durable.testing;
 
 import com.amazonaws.services.lambda.runtime.Context;
-import java.lang.reflect.InvocationTargetException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,11 +21,9 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 import software.amazon.lambda.durable.testing.local.OperationResult;
-import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * In-memory test runner for durable Lambda functions. Simulates the Lambda re-invocation loop locally without requiring
@@ -66,7 +63,7 @@ public class LocalDurableTestRunner<I, O> {
         // Create config that uses customer's configuration but overrides the client with in-memory storage
         if (customerConfig != null) {
             // Use customer's config but override the client with our in-memory implementation
-            this.customerConfig = copyConfiguration(customerConfig, DurableConfig.class)
+            this.customerConfig = customerConfig.toBuilder()
                     .withDurableExecutionClient(storage)
                     .build();
         } else {
@@ -75,28 +72,6 @@ public class LocalDurableTestRunner<I, O> {
                     DurableConfig.builder().withDurableExecutionClient(storage).build();
         }
         this.serDes = this.customerConfig.getSerDes();
-    }
-
-    /** Uses the resolved-list copy capability when present, retaining the prior copy path for older cores. */
-    static DurableConfig.Builder copyConfiguration(DurableConfig config, Class<?> configurationApi) {
-        try {
-            return (DurableConfig.Builder)
-                    configurationApi.getMethod("toBuilder").invoke(config);
-        } catch (NoSuchMethodException olderCore) {
-            return DurableConfig.builder()
-                    .withSerDes(config.getSerDes())
-                    .withExecutorService(config.getExecutorService())
-                    .withPollingStrategy(config.getPollingStrategy())
-                    .withCheckpointDelay(config.getCheckpointDelay())
-                    .withLoggerConfig(config.getLoggerConfig())
-                    .withCheckpointEmptyMap(config.shouldCheckpointEmptyMap())
-                    .withPlugins(config.getPluginRunner().getPlugins().toArray(new DurableExecutionPlugin[0]));
-        } catch (InvocationTargetException failure) {
-            ExceptionHelper.sneakyThrow(failure.getCause());
-            throw new AssertionError("unreachable");
-        } catch (IllegalAccessException failure) {
-            throw new IllegalStateException("Unable to copy durable configuration", failure);
-        }
     }
 
     /**

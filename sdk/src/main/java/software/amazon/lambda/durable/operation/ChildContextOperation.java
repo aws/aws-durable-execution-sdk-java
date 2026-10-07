@@ -187,6 +187,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private void handleChildContextFailure(Throwable exception) {
+        executionManager.rethrowPluginFatalIfPresent();
         exception = ExceptionHelper.unwrapCompletableFuture(exception);
         if (exception instanceof SuspendExecutionException suspendExecutionException) {
             // Rethrow Error immediately — do not checkpoint

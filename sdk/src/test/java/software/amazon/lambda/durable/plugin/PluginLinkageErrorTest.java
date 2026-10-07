@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.plugin;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.lang.reflect.Proxy;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -19,29 +20,24 @@ class PluginLinkageErrorTest {
     void linkageFailureDoesNotPreventTheNextPlugin(
             String hook, String failureName, Consumer<PluginRunner> dispatch, Error failure) {
         var healthyCalls = new AtomicInteger();
-        var runner = new PluginRunner(List.of(
-                plugin(() -> {
-                    throw failure;
-                }),
-                plugin(healthyCalls::incrementAndGet)));
+        var runner = runner(hook, failure, healthyCalls);
 
         assertDoesNotThrow(() -> dispatch.accept(runner));
         assertEquals(1, healthyCalls.get(), "The next plugin must still receive the hook");
     }
 
     @ParameterizedTest(name = "{0}: {1}")
-    @MethodSource("otherErrors")
-    void otherErrorsRetainTheirExistingPropagation(
+    @MethodSource("fatalErrors")
+    void fatalErrorsRetainTheirIdentity(
             String hook, String failureName, Consumer<PluginRunner> dispatch, Error failure) {
         var healthyCalls = new AtomicInteger();
-        var runner = new PluginRunner(List.of(
-                plugin(() -> {
-                    throw failure;
-                }),
-                plugin(healthyCalls::incrementAndGet)));
+        var runner = runner(hook, failure, healthyCalls);
 
         assertSame(failure, assertThrows(Error.class, () -> dispatch.accept(runner)));
-        assertEquals(0, healthyCalls.get(), "Fatal and unrelated errors must not be blanket-caught");
+        assertEquals(
+                hook.equals("onInvocationEnd") || hook.equals("onUserFunctionEnd") ? 1 : 0,
+                healthyCalls.get(),
+                "End hooks still give every plugin its cleanup opportunity; other fatal hooks stop dispatch");
     }
 
     static Stream<Arguments> linkageFailures() {
@@ -53,24 +49,43 @@ class PluginLinkageErrorTest {
                 .map(error -> Arguments.of(hook.name(), error.getClass().getSimpleName(), hook.dispatch(), error)));
     }
 
-    static Stream<Arguments> otherErrors() {
-        return hooks().flatMap(hook -> Stream.of(
-                        new InternalError("fatal JVM failure"), new ThreadDeath(), new AssertionError("unchanged"))
+    static Stream<Arguments> fatalErrors() {
+        return hooks().flatMap(hook -> Stream.of(new InternalError("fatal JVM failure"), new ThreadDeath())
                 .map(error -> Arguments.of(hook.name(), error.getClass().getSimpleName(), hook.dispatch(), error)));
     }
 
     private static Stream<Hook> hooks() {
         return Stream.of(
-                new Hook("invocation start", runner -> runner.onInvocationStart(null)),
-                new Hook("invocation end", runner -> runner.onInvocationEnd(null)),
-                new Hook("operation start", runner -> runner.onOperationStart(null)),
-                new Hook("operation end", runner -> runner.onOperationEnd(null)),
-                new Hook("operation change", runner -> runner.onOperationChange(null)),
-                new Hook("user function start", runner -> runner.onUserFunctionStart(null)),
-                new Hook("user function end", runner -> runner.onUserFunctionEnd(null)));
+                new Hook("onInvocationStart", runner -> runner.onInvocationStart(invocationInfo())),
+                new Hook(
+                        "onInvocationEnd",
+                        runner -> runner.onInvocationEnd(new InvocationEndInfo(
+                                "request", "arn:execution", true, InvocationStatus.SUCCEEDED, null))),
+                new Hook("onOperationStart", runner -> runner.onOperationStart(null)),
+                new Hook("onOperationEnd", runner -> runner.onOperationEnd(null)),
+                new Hook("onOperationChange", runner -> runner.onOperationChange(null)),
+                new Hook(
+                        "onUserFunctionStart",
+                        runner -> runner.onUserFunctionStart(new UserFunctionStartInfo(
+                                "step", "step", "STEP", null, null, Instant.EPOCH, false, 1))),
+                new Hook("onUserFunctionEnd", runner -> runner.onUserFunctionEnd(null)));
     }
 
-    private static DurableExecutionPlugin plugin(Runnable action) {
+    private static InvocationInfo invocationInfo() {
+        return new InvocationInfo("request", "arn:execution", true, Instant.EPOCH);
+    }
+
+    private static PluginRunner runner(String hook, Error failure, AtomicInteger healthyCalls) {
+        var runner = new PluginRunner(List.of(
+                info -> plugin(hook, () -> {
+                    throw failure;
+                }),
+                info -> plugin(hook, healthyCalls::incrementAndGet)));
+        if (!hook.equals("onInvocationStart")) runner.onInvocationStart(invocationInfo());
+        return runner;
+    }
+
+    private static DurableExecutionPlugin plugin(String hook, Runnable action) {
         return (DurableExecutionPlugin) Proxy.newProxyInstance(
                 DurableExecutionPlugin.class.getClassLoader(),
                 new Class<?>[] {DurableExecutionPlugin.class},
@@ -82,7 +97,7 @@ class PluginLinkageErrorTest {
                             default -> proxy == args[0];
                         };
                     }
-                    action.run();
+                    if (method.getName().equals(hook)) action.run();
                     return null;
                 });
     }

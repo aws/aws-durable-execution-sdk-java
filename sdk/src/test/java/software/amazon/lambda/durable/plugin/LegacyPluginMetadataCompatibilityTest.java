@@ -58,7 +58,7 @@ class LegacyPluginMetadataCompatibilityTest {
                 new URL[] {classes.toUri().toURL()}, getClass().getClassLoader())) {
             var type = loader.loadClass("LegacyPlugin");
             var plugin = (DurableExecutionPlugin) type.getConstructor().newInstance();
-            assertDoesNotThrow(() -> new PluginRunner(List.of(plugin)));
+            assertDoesNotThrow(() -> new PluginRunner(List.of(info -> plugin)));
             assertEquals(
                     "legacy application value", type.getMethod("originalCall").invoke(plugin));
         }

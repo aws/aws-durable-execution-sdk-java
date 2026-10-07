@@ -53,13 +53,16 @@ class DurableSamplingDecisionClassLoaderTest {
             openScope.setAccessible(true);
             var get = agentDecision.getDeclaredMethod("get", Context.class);
             get.setAccessible(true);
+            var consume = agentDecision.getDeclaredMethod("consume", Context.class);
+            consume.setAccessible(true);
 
             // The application-side loader publishes the intent on this thread; the agent-side loader reads it back from
             // a ROOT context (its context key would be a different instance and would miss), reconstructing its own
             // Intent from the bridged value.
             var scope = (AutoCloseable) openScope.invoke(null, appIntent);
             try {
-                var crossLoaderIntent = get.invoke(null, Context.root());
+                var crossLoaderIntent = consume.invoke(null, Context.root());
+                assertNull(get.invoke(null, Context.root()), "The bridge is consumed before onStart processors run");
                 assertNotNull(
                         crossLoaderIntent, "The agent-side loader must read the intent published by the app side");
                 // Its Intent type is the agent loader's copy; read the resolved SamplingResult reflectively.
@@ -84,7 +87,7 @@ class DurableSamplingDecisionClassLoaderTest {
      * holds its own copies, mirroring the two plugin class loaders) while delegating OpenTelemetry and JDK classes to
      * the parent so those types are shared and interoperable across loaders.
      */
-    private static URLClassLoader pluginClassLoader() {
+    static URLClassLoader pluginClassLoader() {
         var classesDir = DurableSamplingDecisionClassLoaderTest.class
                 .getProtectionDomain()
                 .getCodeSource()

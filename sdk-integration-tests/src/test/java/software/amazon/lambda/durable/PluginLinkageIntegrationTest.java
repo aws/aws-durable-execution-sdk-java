@@ -24,9 +24,14 @@ class PluginLinkageIntegrationTest {
         var starts = new AtomicInteger();
         var stepCalls = new AtomicInteger();
         var ends = Collections.synchronizedList(new ArrayList<InvocationStatus>());
-        var healthy = healthyPlugin(starts, ends);
-        var config =
-                DurableConfig.builder().withPlugins(brokenPlugin(), healthy).build();
+        var instances = new ArrayList<DurableExecutionPlugin>();
+        var config = DurableConfig.builder()
+                .withPlugins(info -> brokenPlugin(), info -> {
+                    var healthy = healthyPlugin(starts, ends);
+                    instances.add(healthy);
+                    return healthy;
+                })
+                .build();
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, ctx) -> {
@@ -47,10 +52,8 @@ class PluginLinkageIntegrationTest {
         assertEquals(1, stepCalls.get(), "The completed step must not be repeated on resume");
         assertEquals(2, starts.get());
         assertEquals(List.of(InvocationStatus.PENDING, InvocationStatus.SUCCEEDED), ends);
-        assertSame(
-                healthy,
-                config.getPluginRunner().getPlugins().get(1),
-                "Existing plugin instances and their lifetime are retained");
+        assertEquals(2, instances.size(), "Each invocation creates its own healthy plugin");
+        assertNotSame(instances.get(0), instances.get(1), "Plugin instances must not leak across resumes");
     }
 
     private static DurableExecutionPlugin healthyPlugin(AtomicInteger starts, List<InvocationStatus> ends) {
