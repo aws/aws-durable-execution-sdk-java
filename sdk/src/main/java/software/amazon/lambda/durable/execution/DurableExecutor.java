@@ -294,13 +294,24 @@ public class DurableExecutor {
         var caller = Thread.currentThread();
         Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
             try {
-                T value;
-                // Preserve the instrumented owner's context even when startup fails. Without plugins, retain
-                // the existing worker cleanup without adding MDC snapshot reads.
-                try (SafeCloseable ignored = preservePluginMdc ? restoreMdcOnClose() : MDC::clear) {
-                    value = task.get();
+                if (!preservePluginMdc) {
+                    T value;
+                    try (SafeCloseable ignored = MDC::clear) {
+                        value = task.get();
+                    }
+                    result.complete(value);
+                    return;
                 }
-                result.complete(value);
+                // Preserve worker MDC through plugin startup, handler work, and completion callbacks.
+                try (SafeCloseable ignored = restoreMdcOnClose()) {
+                    try {
+                        result.complete(task.get());
+                    } catch (Throwable failure) {
+                        // End hooks triggered by this completion must observe the task's MDC before restoration.
+                        result.completeExceptionally(failure);
+                        throw failure;
+                    }
+                }
             } catch (Throwable failure) {
                 result.completeExceptionally(failure);
                 // A direct executor is already on the invocation caller; its fatal result is rethrown below after
@@ -363,7 +374,8 @@ public class DurableExecutor {
             // Only the caller waits: a signaling handler must be free to unwind and close its scopes.
             awaitHandlerScopes(
                     executionFuture, handlerFuture, hasHandlerScope, lambdaContext, pluginCount, pluginFatal);
-            finish.run();
+            // A completed handler owns its registered end callback even if the caller wakes first.
+            if (!handlerFuture.isDone()) finish.run();
         }
         return finalized.join();
     }
@@ -391,8 +403,10 @@ public class DurableExecutor {
         // instrumentation.
         var failure = executionFuture.handle((result, error) -> error).join();
         var fatal = pluginFatal.get();
-        if (fatal != null) return CompletableFuture.failedFuture(fatal);
-        if (failure == null || !hasHandlerScope.get()) return executionFuture;
+        // A later scope can fail before earlier scopes finish closing. Preserve their existing cleanup budget.
+        if (!hasHandlerScope.get() || (failure == null && fatal == null)) {
+            return fatal == null ? executionFuture : CompletableFuture.failedFuture(fatal);
+        }
         var reserve = SHUTDOWN_RESPONSE_RESERVE_MILLIS + PLUGIN_FINALIZATION_RESERVE_MILLIS * pluginCount;
         var budgetMillis = lambdaContext == null
                 ? 500L

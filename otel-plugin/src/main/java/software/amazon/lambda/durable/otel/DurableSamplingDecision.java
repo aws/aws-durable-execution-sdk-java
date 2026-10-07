@@ -29,8 +29,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * identity, so a key created in one loader is not equal to the key created in the other. To bridge this:
  *
  * <ol>
- *   <li><b>Context key</b> — used when both sides share a class loader (an application-owned provider). It preserves
- *       the full {@link SamplingResult}, including any attributes a custom sampler attached.
+ *   <li><b>Context key</b> — used when both sides share a class loader (an application-owned provider). Agent-backed
+ *       spans omit this carrier because another loader cannot consume its key. It preserves the full
+ *       {@link SamplingResult}, including any attributes a custom sampler attached.
  *   <li><b>Thread-scoped system property</b> — a cross-class-loader fallback modelled on
  *       {@link DeterministicIdGenerator}'s scoped-ID bridge. The intent is published on the thread that creates the
  *       durable span until its sampler consumes the value (before synchronous span processors run), keyed by thread ID

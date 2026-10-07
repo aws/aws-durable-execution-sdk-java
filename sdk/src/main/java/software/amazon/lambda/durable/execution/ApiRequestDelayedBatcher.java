@@ -6,8 +6,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -39,6 +41,8 @@ public class ApiRequestDelayedBatcher<T> {
 
     private final Supplier<Error> pluginFatal;
     private final AtomicReference<Error> terminalFailure = new AtomicReference<>();
+    private final CompletableFuture<Void> abortSignal = new CompletableFuture<>();
+    private final Set<CompletableFuture<Void>> activeRequests = ConcurrentHashMap.newKeySet();
 
     /** Accumulated requests to be executed in future */
     private final List<Item<T>> delayedBatch;
@@ -122,6 +126,8 @@ public class ApiRequestDelayedBatcher<T> {
 
     /** Flushes pending batch and waits for completion */
     void shutdown() {
+        var observedFatal = getFatalFailure();
+        if (observedFatal != null) abortPending(observedFatal);
         synchronized (delayedBatch) {
             // cancel the flush timer if it has not been triggered
             this.delayedBatchFlushTimer.cancel(false);
@@ -130,7 +136,8 @@ public class ApiRequestDelayedBatcher<T> {
         }
 
         // wait for previous batches to be flushed
-        flushingQueueFuture.join();
+        // A terminal invocation failure must not wait for an already admitted backend call to return.
+        CompletableFuture.anyOf(flushingQueueFuture, abortSignal).join();
         var fatal = getFatalFailure();
         if (fatal != null) throw new CompletionException(fatal);
     }
@@ -215,7 +222,11 @@ public class ApiRequestDelayedBatcher<T> {
                 }
 
                 // An external fatal publisher can drain the queue between the peek and this poll.
-                var next = flushingQueue.poll();
+                Item<T> next;
+                synchronized (delayedBatch) {
+                    next = flushingQueue.poll();
+                    if (next != null) activeRequests.add(next.result());
+                }
                 if (next == null) break;
                 flushingItems.add(next);
                 flushingSize += itemSizeInByte;
@@ -244,6 +255,8 @@ public class ApiRequestDelayedBatcher<T> {
                         abortPending(fatal);
                         throw fatal;
                     }
+                } finally {
+                    flushingItems.forEach(item -> activeRequests.remove(item.result()));
                 }
             }
         }
@@ -259,18 +272,21 @@ public class ApiRequestDelayedBatcher<T> {
         if (fatal != null) throw fatal;
     }
 
-    /** Settles delayed and queued requests without waiting for their timer or an in-flight backend call. */
+    /** Settles delayed, queued, and active request futures without interrupting an admitted backend call. */
     void abortPending(Error fatal) {
         terminalFailure.compareAndSet(null, fatal);
         var original = terminalFailure.get();
-        var pending = new ArrayList<Item<T>>();
+        var pending = new ArrayList<CompletableFuture<Void>>();
         synchronized (delayedBatch) {
             delayedBatchFlushTimer.cancel(false);
-            pending.addAll(delayedBatch);
+            delayedBatch.forEach(item -> pending.add(item.result()));
             delayedBatch.clear();
             Item<T> item;
-            while ((item = flushingQueue.poll()) != null) pending.add(item);
+            while ((item = flushingQueue.poll()) != null) pending.add(item.result());
+            // Queue removal and active registration share this lock, so an item cannot escape the abort.
+            pending.addAll(activeRequests);
         }
-        pending.forEach(item -> item.result().completeExceptionally(original));
+        pending.forEach(future -> future.completeExceptionally(original));
+        abortSignal.completeExceptionally(original);
     }
 }

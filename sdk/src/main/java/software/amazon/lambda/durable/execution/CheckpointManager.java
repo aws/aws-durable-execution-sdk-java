@@ -44,6 +44,7 @@ class CheckpointManager {
     private final DurableConfig config;
     private final BooleanSupplier tryStartCheckpointProcessing;
     private final Runnable finishCheckpointProcessing;
+    private final Object checkpointLock = new Object();
     private String checkpointToken;
 
     CheckpointManager(
@@ -191,8 +192,10 @@ class CheckpointManager {
             pollingFutures.clear();
         }
 
+        var fatal = checkpointApiRequestDelayedBatcher.getFatalFailure();
+        Throwable shutdownFailure = fatal != null ? fatal : new IllegalStateException("CheckpointManager shutdown");
         for (var futures : allFutures) {
-            futures.forEach(f -> f.completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
+            futures.forEach(f -> f.completeExceptionally(shutdownFailure));
         }
 
         // wait for all non-polling checkpoint requests to complete
@@ -231,7 +234,8 @@ class CheckpointManager {
     }
 
     private void checkpointBatch(List<OperationUpdate> updates) {
-        synchronized (pollingFutures) {
+        // Backend serialization must not hold the poller registry lock needed by terminal shutdown.
+        synchronized (checkpointLock) {
             // filter the null values from pollers
             var request = updates.stream().filter(Objects::nonNull).toList();
 
@@ -276,7 +280,10 @@ class CheckpointManager {
 
                     // complete the registered pollingFutures
                     for (var operation : operations) {
-                        var pollers = pollingFutures.remove(operation.id());
+                        List<CompletableFuture<Operation>> pollers;
+                        synchronized (pollingFutures) {
+                            pollers = pollingFutures.remove(operation.id());
+                        }
                         if (pollers != null) {
                             completedFutures += pollers.size();
                             pollers.forEach(poller -> poller.complete(operation));

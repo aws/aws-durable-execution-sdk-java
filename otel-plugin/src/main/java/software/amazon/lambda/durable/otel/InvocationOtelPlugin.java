@@ -428,7 +428,13 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
             workflowSpan.end();
         }
         OtelPluginSupport.exportExecutionRoot(
-                tracer, idGenerator, executionAncestor, durableExecutionArn, executionStartTime, samplingIntent);
+                tracer,
+                idGenerator,
+                executionAncestor,
+                durableExecutionArn,
+                executionStartTime,
+                samplingIntent,
+                sdkTracerProvider != null);
 
         if (sdkTracerProvider != null) {
             // Flush spans before Lambda freezes
@@ -725,7 +731,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
      */
     private Context withDurableDecision(Context context) {
         var intent = samplingIntent;
-        return intent != null ? DurableSamplingDecision.store(context, intent) : context;
+        return intent != null && sdkTracerProvider != null ? DurableSamplingDecision.store(context, intent) : context;
     }
 
     /**

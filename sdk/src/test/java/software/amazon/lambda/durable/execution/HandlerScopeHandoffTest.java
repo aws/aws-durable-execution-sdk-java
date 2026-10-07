@@ -9,10 +9,15 @@ import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -83,6 +88,106 @@ class HandlerScopeHandoffTest {
                         execution, handler, new AtomicBoolean(false), context, 1, new AtomicReference<>()));
         verifyNoInteractions(context);
         assertFalse(handler.isDone());
+    }
+
+    @Test
+    void knownFatalStillGivesEarlierScopeCleanupItsHandoffBudget() throws Exception {
+        var fatal = new InternalError("later scope failed");
+        var handler = new CompletableFuture<String>();
+        var callers = Executors.newSingleThreadExecutor();
+        try {
+            var result = callers.submit(() -> DurableExecutor.awaitHandlerScopes(
+                    CompletableFuture.<String>failedFuture(fatal),
+                    handler,
+                    new AtomicBoolean(true),
+                    null,
+                    2,
+                    new AtomicReference<Error>(fatal)));
+            assertThrows(TimeoutException.class, () -> result.get(100, TimeUnit.MILLISECONDS));
+            handler.completeExceptionally(fatal);
+            var chosen = result.get(1, TimeUnit.SECONDS);
+            assertSame(
+                    fatal, assertThrows(CompletionException.class, chosen::join).getCause());
+        } finally {
+            handler.completeExceptionally(fatal);
+            callers.shutdownNow();
+            assertTrue(callers.awaitTermination(3, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void completedHandoffWaitsForTheRegisteredOwnerFinalizer() throws Exception {
+        var callbackRegistered = new CountDownLatch(1);
+        var callbacks = new LinkedBlockingQueue<Runnable>();
+        var handler = new CompletableFuture<String>() {
+            @Override
+            public CompletableFuture<String> whenComplete(BiConsumer<? super String, ? super Throwable> action) {
+                callbackRegistered.countDown();
+                // A completed future may publish its result before its registered completion action executes.
+                return super.whenCompleteAsync(action, callbacks::add);
+            }
+        };
+        var local = new ThreadLocal<String>();
+        var owner = new AtomicReference<Thread>();
+        var finalizerThread = new AtomicReference<Thread>();
+        var finalizerValue = new AtomicReference<String>();
+        var workers = Executors.newSingleThreadExecutor();
+        var callers = Executors.newSingleThreadExecutor();
+        var method = DurableExecutor.class.getDeclaredMethod(
+                "finalizeAfterHandlerScopes",
+                CompletableFuture.class,
+                CompletableFuture.class,
+                AtomicBoolean.class,
+                Context.class,
+                int.class,
+                AtomicReference.class,
+                BiFunction.class);
+        method.setAccessible(true);
+        BiFunction<String, Throwable, String> end = (value, failure) -> {
+            finalizerThread.set(Thread.currentThread());
+            finalizerValue.set(local.get());
+            local.remove();
+            return "pending";
+        };
+        try {
+            var result = callers.submit(() -> method.invoke(
+                    null,
+                    CompletableFuture.<String>failedFuture(control(false)),
+                    handler,
+                    new AtomicBoolean(true),
+                    null,
+                    2,
+                    new AtomicReference<Error>(),
+                    end));
+            assertTrue(callbackRegistered.await(3, TimeUnit.SECONDS));
+            workers.submit(() -> {
+                        owner.set(Thread.currentThread());
+                        local.set("invocation");
+                        handler.complete("handler finished");
+                    })
+                    .get(3, TimeUnit.SECONDS);
+            assertTrue(handler.isDone());
+            assertThrows(
+                    TimeoutException.class,
+                    () -> result.get(100, TimeUnit.MILLISECONDS),
+                    "The waiter must not steal a completed handoff's pending completion callback");
+            var callback = callbacks.poll(3, TimeUnit.SECONDS);
+            assertNotNull(callback);
+            workers.submit(callback).get(3, TimeUnit.SECONDS);
+            assertEquals("pending", result.get(3, TimeUnit.SECONDS));
+            assertSame(owner.get(), finalizerThread.get());
+            assertEquals("invocation", finalizerValue.get());
+            assertNull(workers.submit(local::get).get(3, TimeUnit.SECONDS), "The reused owner must be clean");
+        } finally {
+            handler.complete("cleanup");
+            Runnable callback;
+            while ((callback = callbacks.poll()) != null)
+                workers.submit(callback).get(3, TimeUnit.SECONDS);
+            callers.shutdownNow();
+            workers.shutdownNow();
+            assertTrue(callers.awaitTermination(3, TimeUnit.SECONDS));
+            assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS));
+        }
     }
 
     private static CompletableFuture<String> handoff(

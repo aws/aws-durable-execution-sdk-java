@@ -36,13 +36,14 @@ final class OtelPluginSupport {
             SpanContext ancestor,
             String arn,
             Instant start,
-            DurableSamplingDecision.Intent intent) {
+            DurableSamplingDecision.Intent intent,
+            boolean useContextCarrier) {
         if (ancestor == null || ancestor.isRemote()) {
             return;
         }
         var builder = tracer.spanBuilder("DurableExecutionRoot")
                 .setSpanKind(SpanKind.INTERNAL)
-                .setParent(DurableSamplingDecision.store(Context.root(), intent))
+                .setParent(useContextCarrier ? DurableSamplingDecision.store(Context.root(), intent) : Context.root())
                 .setAttribute(DURABLE_EXECUTION_ARN, arn)
                 .setAttribute(DURABLE_EXECUTION_SYNTHETIC_ROOT, true)
                 .setStartTimestamp(start);

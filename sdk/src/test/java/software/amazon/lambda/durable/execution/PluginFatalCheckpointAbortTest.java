@@ -144,8 +144,11 @@ class PluginFatalCheckpointAbortTest {
             assertAll(
                     () -> assertFalse(admitted, "a published fatal must reject backend admission during scope cleanup"),
                     () -> assertDoesNotThrow(() -> manager.deregisterActiveThread(null)),
-                    () -> assertFalse(outcome.isDone(), "a fatal must not become a suspension before owner cleanup"));
-            assertFalse(outcome.isDone(), "the root must retain ownership of its remaining scope cleanup");
+                    () -> assertSame(
+                            fatal,
+                            ExceptionHelper.unwrapAsyncFailure(
+                                    assertThrows(CompletionException.class, outcome::join))));
+            assertFalse(owner.isDone(), "the root must retain ownership of its remaining scope cleanup");
             owner.completeExceptionally(fatal);
             assertSame(
                     fatal, ExceptionHelper.unwrapAsyncFailure(assertThrows(CompletionException.class, outcome::join)));

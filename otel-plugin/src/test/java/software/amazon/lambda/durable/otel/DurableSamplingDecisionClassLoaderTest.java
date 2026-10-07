@@ -87,7 +87,7 @@ class DurableSamplingDecisionClassLoaderTest {
      * holds its own copies, mirroring the two plugin class loaders) while delegating OpenTelemetry and JDK classes to
      * the parent so those types are shared and interoperable across loaders.
      */
-    private static URLClassLoader pluginClassLoader() {
+    static URLClassLoader pluginClassLoader() {
         var classesDir = DurableSamplingDecisionClassLoaderTest.class
                 .getProtectionDomain()
                 .getCodeSource()

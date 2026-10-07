@@ -743,6 +743,8 @@ public class ExecutionManager implements SafeCloseable {
     /** Stops pending work while leaving the root worker responsible for completing its scope cleanup. */
     void recordHandlerScopeFatal(Error fatal) {
         var original = recordPluginFatal(fatal, true);
+        // Wake the invocation caller so it can apply the bounded handoff while the owner continues cleanup.
+        executionExceptionFuture.completeExceptionally(original);
         stopAllOperations(original);
         checkpointManager.abortPending(original);
     }
