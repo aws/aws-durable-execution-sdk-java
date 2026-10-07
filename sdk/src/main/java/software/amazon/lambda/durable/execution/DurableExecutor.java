@@ -18,6 +18,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -141,7 +142,8 @@ public class DurableExecutor {
                         }
                     },
                     config.getExecutorService(),
-                    !pluginRunner.isEmpty()); // Get executor from config for running user code
+                    !pluginRunner.isEmpty(),
+                    pluginRunner.isEmpty() ? null : executionManager::recordHandlerScopeFatal);
 
             // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
             // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
@@ -294,7 +296,7 @@ public class DurableExecutor {
 
     /** Completes the observation future without absorbing fatal failures on an executor worker. */
     private static <T> CompletableFuture<T> supplyAsync(
-            Supplier<T> task, Executor executor, boolean preservePluginMdc) {
+            Supplier<T> task, Executor executor, boolean preservePluginMdc, Consumer<Error> onPostCompletionFatal) {
         var result = new CompletableFuture<T>();
         var caller = Thread.currentThread();
         Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
@@ -318,11 +320,23 @@ public class DurableExecutor {
                     }
                 }
             } catch (Throwable failure) {
-                result.completeExceptionally(failure);
+                var settled = result.completeExceptionally(failure);
+                Throwable normalizedFailure = null;
+                if (preservePluginMdc && !settled && !result.isCompletedExceptionally()) {
+                    // Worker restoration follows completion callbacks. Report a fatal that follows a successful
+                    // result through the existing owner-cleanup boundary: before end dispatch it changes the
+                    // invocation outcome; after dispatch it only escapes the owner. An already-failed task retains
+                    // its primary failure and normal try-with-resources suppression.
+                    normalizedFailure = ExceptionHelper.unwrapAsyncFailure(failure);
+                    if (isFatal(normalizedFailure)) onPostCompletionFatal.accept((Error) normalizedFailure);
+                }
                 // A direct executor is already on the invocation caller; its fatal result is rethrown below after
                 // finalization. On an asynchronous executor it must also escape the runnable so the worker terminates.
                 if (Thread.currentThread() != caller) {
-                    rethrowFatal(ExceptionHelper.unwrapAsyncFailure(failure));
+                    rethrowFatal(
+                            normalizedFailure != null
+                                    ? normalizedFailure
+                                    : ExceptionHelper.unwrapAsyncFailure(failure));
                 }
             }
         };
