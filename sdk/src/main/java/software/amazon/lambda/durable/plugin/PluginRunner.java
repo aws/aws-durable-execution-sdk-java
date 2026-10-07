@@ -212,7 +212,26 @@ public class PluginRunner {
         if (cause instanceof ThreadDeath fatal) {
             throw fatal;
         }
-        logger.warn(message, t);
+        try {
+            logger.warn(message, t);
+        } catch (Throwable loggingFailure) {
+            rethrowDiagnosticFatal(loggingFailure);
+            try {
+                logger.warn(
+                        "{} ({}; exception details unavailable)",
+                        message,
+                        t.getClass().getName());
+            } catch (Throwable fallbackFailure) {
+                rethrowDiagnosticFatal(fallbackFailure);
+            }
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private static void rethrowDiagnosticFatal(Throwable failure) {
+        var cause = ExceptionHelper.unwrapAsyncFailure(failure);
+        if (cause instanceof VirtualMachineError fatal) throw fatal;
+        if (cause instanceof ThreadDeath fatal) throw fatal;
     }
 
     /**
@@ -288,13 +307,12 @@ public class PluginRunner {
 
     @SuppressWarnings("removal")
     private static void reportHandlerScopeFailure(String message, Throwable failure, Consumer<Error> onScopeFatal) {
-        var cause = ExceptionHelper.unwrapAsyncFailure(failure);
-        if (cause instanceof VirtualMachineError || cause instanceof ThreadDeath) {
-            var fatal = (Error) cause;
+        try {
+            contain(failure, message);
+        } catch (VirtualMachineError | ThreadDeath fatal) {
             onScopeFatal.accept(fatal);
             throw fatal;
         }
-        logger.warn(message, failure);
     }
 
     public void onInvocationStart(InvocationInfo info) {

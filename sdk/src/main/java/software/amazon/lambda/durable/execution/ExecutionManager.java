@@ -18,6 +18,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -77,6 +79,7 @@ public class ExecutionManager implements SafeCloseable {
     // factory when the invocation starts, and releases them in close(), so instances never outlive the invocation.
     private final PluginRunner pluginRunner;
     private final AtomicReference<Error> pluginFatal;
+    private final CompletableFuture<Void> pluginFatalSignal = new CompletableFuture<>();
     private final Object pluginFinalizationLock = new Object();
     private boolean invocationFinalized;
     private Error lateScopeFatal;
@@ -664,6 +667,7 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private void validateRunningThreads() {
+        var cleanupDeadline = Long.MAX_VALUE;
         // This will detect stuck user thread and thread leaks in the thread pool
         for (BaseDurableOperation op : registeredOperations.values()) {
             var userHandlerFuture = op.getRunningUserHandler();
@@ -672,9 +676,23 @@ public class ExecutionManager implements SafeCloseable {
                 // the operations that run them have never been waiting for and the execution has completed.
                 logger.info("Waiting for operation to complete before shutting down: {}", op.getOperationId());
                 try {
-                    userHandlerFuture.get();
+                    if (pluginFatal.get() == null) {
+                        CompletableFuture.anyOf(userHandlerFuture, pluginFatalSignal)
+                                .handle((result, failure) -> null)
+                                .get();
+                    }
+                    cleanupDeadline = fatalCleanupDeadline(cleanupDeadline);
+                    if (cleanupDeadline == Long.MAX_VALUE) userHandlerFuture.get();
+                    else userHandlerFuture.get(Math.max(0L, cleanupDeadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                } catch (TimeoutException e) {
+                    logger.warn("Operation owner exceeded the fatal cleanup budget: {}", op.getOperationId());
+                    break;
                 } catch (InterruptedException | CancellationException e) {
-                    // if the user handler is stuck
+                    if (pluginFatal.get() != null) {
+                        if (e instanceof InterruptedException)
+                            Thread.currentThread().interrupt();
+                        break;
+                    }
                     throw new IllegalStateException(
                             "Stuck running user handler when shutting down: " + op.getOperationId());
                 } catch (Exception e) {
@@ -691,6 +709,15 @@ public class ExecutionManager implements SafeCloseable {
                 logger.warn("{} active threads in user executor pool when shutting down", threadCount);
             }
         }
+    }
+
+    private long fatalCleanupDeadline(long current) {
+        if (current != Long.MAX_VALUE || pluginFatal.get() == null) return current;
+        // One budget across all peers, with response headroom when the runtime exposes its deadline.
+        var budgetMillis = lambdaContext == null
+                ? 500L
+                : Math.min(500L, Math.max(0L, (long) lambdaContext.getRemainingTimeInMillis() - 1_000L));
+        return System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMillis);
     }
 
     /** Returns {@code true} if the given status represents a terminal (final) operation state. */
@@ -758,12 +785,15 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private Error recordPluginFatal(Error fatal, boolean fromScope) {
+        Error original;
         synchronized (pluginFinalizationLock) {
             if (pluginFatal.compareAndSet(null, fatal) && fromScope && invocationFinalized) {
                 lateScopeFatal = fatal;
             }
-            return pluginFatal.get();
+            original = pluginFatal.get();
         }
+        pluginFatalSignal.complete(null);
+        return original;
     }
 
     private boolean isLateScopeFatal(Throwable failure) {
@@ -779,7 +809,10 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private void stopAllOperations(Throwable cause) {
-        registeredOperations.values().forEach(op -> op.getCompletionFuture().completeExceptionally(cause));
+        registeredOperations.values().forEach(op -> {
+            op.getCompletionFuture().completeExceptionally(cause);
+            op.interruptRunningUserHandler();
+        });
     }
 
     /**

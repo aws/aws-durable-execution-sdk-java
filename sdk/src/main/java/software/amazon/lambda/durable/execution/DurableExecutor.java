@@ -326,14 +326,7 @@ public class DurableExecutor {
     }
 
     private static Throwable normalizeInvocationFailure(Throwable failure) {
-        var unwrapped = ExceptionHelper.unwrapAsyncFailure(failure);
-        if (isFatal(unwrapped)) return unwrapped;
-        // ExecutionException can be an application failure itself. Only CompletionException is the SDK's
-        // ordinary transport here; retain the application's error type, message, and serialized cause chain.
-        while (failure instanceof CompletionException && failure.getCause() != null) {
-            failure = failure.getCause();
-        }
-        return failure;
+        return ExceptionHelper.unwrapInvocationFailure(failure);
     }
 
     @SuppressWarnings("removal")

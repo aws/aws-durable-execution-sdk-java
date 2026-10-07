@@ -62,6 +62,9 @@ public abstract class BaseDurableOperation {
     protected final AtomicBoolean replayCompletedOperation = new AtomicBoolean(false);
     private final DurableContextImpl durableContext;
     private final AtomicReference<CompletableFuture<Void>> runningUserHandler = new AtomicReference<>(null);
+    private final Object handlerOwnerLock = new Object();
+    private Thread handlerOwner;
+    private CompletableFuture<Void> handlerOwnerCompletion;
 
     protected BaseDurableOperation(
             OperationIdentifier operationIdentifier,
@@ -329,14 +332,27 @@ public abstract class BaseDurableOperation {
         var completion = new CompletableFuture<Void>();
         runningUserHandler.set(completion);
         Runnable observed = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
+            synchronized (handlerOwnerLock) {
+                handlerOwner = Thread.currentThread();
+                handlerOwnerCompletion = completion;
+            }
             try {
                 wrapped.run();
+                executionManager.rethrowPluginFatalIfPresent();
                 completion.complete(null);
             } catch (Throwable failure) {
                 completion.completeExceptionally(failure);
                 // Settle accepted work before propagating on either an async worker or the direct caller. The
                 // invocation boundary still finalizes plugins, but the operation call must not return normally.
                 executionManager.rethrowPluginFatalIfPresent();
+            } finally {
+                synchronized (handlerOwnerLock) {
+                    // A completion callback can start the next attempt before this runnable exits.
+                    if (handlerOwnerCompletion == completion) {
+                        handlerOwner = null;
+                        handlerOwnerCompletion = null;
+                    }
+                }
             }
         };
         try {
@@ -555,6 +571,16 @@ public abstract class BaseDurableOperation {
             throw terminateExecution(new NonDeterministicExecutionException(String.format(
                     "Operation subType mismatch for \"%s\". Expected \"%s\", got \"%s\"",
                     getOperationId(), checkpointed.subType(), getSubType())));
+        }
+    }
+
+    /**
+     * Requests cooperative owner interruption after an invocation has failed fatally. The actual completion future is
+     * left pending until the owner unwinds. Synchronization prevents interrupting a worker after it has been reused.
+     */
+    public void interruptRunningUserHandler() {
+        synchronized (handlerOwnerLock) {
+            if (handlerOwner != null && handlerOwner != Thread.currentThread()) handlerOwner.interrupt();
         }
     }
 

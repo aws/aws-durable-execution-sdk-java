@@ -3,6 +3,8 @@
 package software.amazon.lambda.durable.util;
 
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
@@ -33,24 +35,63 @@ public class ExceptionHelper {
      * @return the original Throwable that is not a CompletionException
      */
     public static Throwable unwrapCompletableFuture(Throwable throwable) {
-        while (throwable instanceof CompletionException) {
-            throwable = throwable.getCause();
-        }
-        return throwable;
+        return unwrap(throwable, UnwrapMode.COMPLETION);
+    }
+
+    /** Inspects asynchronous wrappers for fatal causes without looping on cyclic or unreadable cause chains. */
+    public static Throwable unwrapAsyncFailure(Throwable failure) {
+        return unwrap(failure, UnwrapMode.ASYNC);
     }
 
     /**
-     * Unwraps completion/future wrappers to inspect potentially fatal causes. Callers must retain ordinary application
-     * {@link ExecutionException} values when reporting or serializing failures. Non-wrapper failures and cause-less
-     * wrappers keep their identity.
-     *
-     * @param failure the failure to inspect, possibly null
-     * @return the underlying asynchronous failure, or the original non-wrapper failure
+     * Removes completion transport wrappers while retaining application ExecutionException values, except when an
+     * asynchronous wrapper contains a fatal JVM error. Each cause accessor is read at most once.
      */
-    public static Throwable unwrapAsyncFailure(Throwable failure) {
-        while ((failure instanceof CompletionException || failure instanceof ExecutionException)
-                && failure.getCause() != null) {
-            failure = failure.getCause();
+    public static Throwable unwrapInvocationFailure(Throwable failure) {
+        return unwrap(failure, UnwrapMode.INVOCATION);
+    }
+
+    private enum UnwrapMode {
+        COMPLETION,
+        ASYNC,
+        INVOCATION
+    }
+
+    @SuppressWarnings("removal")
+    private static Throwable unwrap(Throwable failure, UnwrapMode mode) {
+        if (!(failure instanceof CompletionException)
+                && !(mode != UnwrapMode.COMPLETION && failure instanceof ExecutionException)) return failure;
+        var visited = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        Throwable applicationWrapper = null;
+        while (failure instanceof CompletionException
+                || (mode != UnwrapMode.COMPLETION && failure instanceof ExecutionException)) {
+            if (!visited.add(failure)) break;
+            if (mode == UnwrapMode.INVOCATION && applicationWrapper == null && failure instanceof ExecutionException) {
+                applicationWrapper = failure;
+            }
+            Throwable cause;
+            try {
+                cause = failure.getCause();
+            } catch (VirtualMachineError | ThreadDeath fatal) {
+                // Fatal inspectors return the fatal so their caller can notify the invocation before rethrowing it.
+                if (mode == UnwrapMode.COMPLETION) throw fatal;
+                return fatal;
+            } catch (Throwable unreadableCause) {
+                // A malformed diagnostic must not replace the failure that crossed the plugin boundary.
+                break;
+            }
+            if (cause == null) {
+                // Preserve the released completion-only helper's cause-less-wrapper behavior.
+                if (mode == UnwrapMode.COMPLETION) return null;
+                break;
+            }
+            failure = cause;
+        }
+        if (mode == UnwrapMode.INVOCATION
+                && applicationWrapper != null
+                && !(failure instanceof VirtualMachineError)
+                && !(failure instanceof ThreadDeath)) {
+            return applicationWrapper;
         }
         return failure;
     }
