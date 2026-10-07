@@ -38,7 +38,9 @@ public interface DurableExecutionPlugin {
      * later handler finally block returns or throws.
      *
      * <p>Start hooks run in registration order; end hooks run in reverse order to unwind nested thread-local scopes. If
-     * an end hook throws an Error that is not isolated, the remaining end hooks still run before it is rethrown.
+     * an end hook throws an Error that is not isolated, the remaining end hooks still run before it is rethrown. If a
+     * start hook throws an Error that is not isolated, later start hooks are not called, but all configured end hooks
+     * still run in reverse order. An end hook must therefore tolerate a start hook that did not complete.
      *
      * <p>Check {@link InvocationEndInfo#invocationStatus()} to detect if the execution reached a terminal state in this
      * invocation (useful for writing summary records or flushing final data).

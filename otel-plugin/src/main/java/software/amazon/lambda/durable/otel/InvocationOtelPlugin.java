@@ -172,6 +172,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      * @param config the plugin configuration
      */
     public InvocationOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, OtelPluginConfig config) {
+        OtelPluginSupport.requireSameThreadInvocationHooks();
         this.idGenerator = DeterministicIdGenerator.installOn(tracerProviderBuilder);
         // Wrap the configured sampler so durable spans use the execution's single precomputed decision.
         DurableSampler.installOn(tracerProviderBuilder);
@@ -193,6 +194,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      * @param config the plugin configuration
      */
     public InvocationOtelPlugin(OtelPluginConfig config) {
+        OtelPluginSupport.requireSameThreadInvocationHooks();
         this.contextExtractor = config.contextExtractor();
         this.enableMdc = config.enableMdc();
         this.workflowSpanName = config.workflowSpanName();
