@@ -3,9 +3,11 @@
 package software.amazon.lambda.durable.plugin;
 
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.UndeclaredThrowableException;
 import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -167,19 +169,46 @@ public class PluginRunner {
         if (firstFatal != null) throw firstFatal;
     }
 
-    @SuppressWarnings("removal")
     private static void reportHandlerScopeFailure(String message, Throwable failure, Consumer<Error> onScopeFatal) {
-        var cause = failure;
-        while ((cause instanceof CompletionException || cause instanceof ExecutionException)
-                && cause.getCause() != null) {
-            cause = cause.getCause();
+        reportHandlerScopeFatal(failure, onScopeFatal);
+        try {
+            // A plugin-controlled diagnostic must not be inspected again by the logger.
+            logger.warn("{} ({})", message, failure.getClass().getName());
+        } catch (Throwable loggingFailure) {
+            reportHandlerScopeFatal(loggingFailure, onScopeFatal);
         }
-        if (cause instanceof VirtualMachineError || cause instanceof ThreadDeath) {
-            var fatal = (Error) cause;
+    }
+
+    private static void reportHandlerScopeFatal(Throwable failure, Consumer<Error> onScopeFatal) {
+        var fatal = findHandlerScopeFatal(failure);
+        if (fatal != null) {
+            // The caller must wake even when the fatal originated in an exception's cause accessor.
             onScopeFatal.accept(fatal);
             throw fatal;
         }
-        logger.warn(message, failure);
+    }
+
+    @SuppressWarnings("removal")
+    private static Error findHandlerScopeFatal(Throwable failure) {
+        if (failure instanceof VirtualMachineError || failure instanceof ThreadDeath) return (Error) failure;
+        var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        var cause = failure;
+        while (seen.add(cause)) {
+            if (cause instanceof VirtualMachineError || cause instanceof ThreadDeath) return (Error) cause;
+            if (!(cause instanceof CompletionException
+                    || cause instanceof ExecutionException
+                    || cause instanceof InvocationTargetException
+                    || cause instanceof UndeclaredThrowableException)) return null;
+            try {
+                cause = cause.getCause();
+            } catch (VirtualMachineError | ThreadDeath fatal) {
+                return fatal;
+            } catch (Throwable unreadableCause) {
+                return null;
+            }
+            if (cause == null) return null;
+        }
+        return null;
     }
 
     public void onInvocationStart(InvocationInfo info) {
