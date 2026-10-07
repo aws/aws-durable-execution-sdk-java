@@ -28,7 +28,7 @@ class UserFunctionStartFailureTest {
 
     @ParameterizedTest
     @MethodSource("failures")
-    void completedStartHooksUnwindOnOwnerBeforeFatalPublication(boolean wrapped, Error fatal) {
+    void fatalIsPublishedBeforeCompletedStartHooksUnwindInOwnerOrder(boolean wrapped, Error fatal) {
         var owner = Thread.currentThread();
         var scopes = new ArrayDeque<String>();
         var calls = new ArrayList<String>();
@@ -58,7 +58,8 @@ class UserFunctionStartFailureTest {
         var start = start();
         assertSame(fatal, assertThrows(Error.class, () -> runner.onUserFunctionStart(start)));
         assertSame(fatal, reported.get());
-        assertEquals(0, cleanupAtPublication.get());
+        assertEquals(2, cleanupAtPublication.get(), "publication must wake the caller before cleanup can block");
+        assertTrue(scopes.isEmpty(), "all earlier starts must still unwind on their owner before dispatch returns");
         assertEquals(List.of("first:start", "second:start", "second:end", "first:end"), calls);
         assertEquals(2, endInfos.size());
         for (var end : endInfos) {

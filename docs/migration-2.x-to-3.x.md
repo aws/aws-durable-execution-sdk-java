@@ -226,7 +226,7 @@ What actually changed:
 - `DurableConfig.getPluginRunner()` is removed. `DurableConfig.getPluginFactories()` replaces it and returns an immutable `List<DurableExecutionPluginFactory>` in dispatch order.
 - `PluginRunner.getPlugins()` is removed. A runner holds no plugin instances until `onInvocationStart(InvocationInfo)` materializes them, and there is no accessor for them.
 - `PluginRunner`'s constructor takes `List<DurableExecutionPluginFactory>` instead of `List<DurableExecutionPlugin>`.
-- `PluginRunner.releasePlugins()` is added. The SDK calls it when the invocation returns, which is what bounds a plugin instance's lifetime to one invocation.
+- `PluginRunner.releasePlugins()` is added. The SDK calls it when the invocation returns, releasing invocation-level references. If fatal cleanup exceeds its bounded allowance, a started operation retains that invocation's end-hook recipients until its owner unwinds. These cleanup references do not create or share plugin instances with another invocation.
 - `ExecutionManager.getPluginRunner()` exists in `3.x` and returns the runner for the current invocation. It is new in this release, not a renamed `2.x` method, and `ExecutionManager` is an internal coordination class. It is reachable only through `BaseContextImpl.getExecutionManager()`, which is declared on the implementation class and not on the `DurableContext` or `BaseContext` interfaces that handlers are given.
 
 What to do instead, by what you were trying to achieve:

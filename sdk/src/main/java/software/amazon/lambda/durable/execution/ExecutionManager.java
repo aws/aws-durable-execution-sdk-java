@@ -76,7 +76,8 @@ public class ExecutionManager implements SafeCloseable {
 
     // ===== Plugins =====
     // Created per invocation, alongside this manager: the runner materializes one plugin instance per configured
-    // factory when the invocation starts, and releases them in close(), so instances never outlive the invocation.
+    // factory when the invocation starts and releases the runner's references in close(). Started operation owners
+    // retain only their matching cleanup recipients until they unwind, including after a bounded fatal return.
     private final PluginRunner pluginRunner;
     private final AtomicReference<Error> pluginFatal;
     private final CompletableFuture<Void> pluginFatalSignal = new CompletableFuture<>();
@@ -729,6 +730,10 @@ public class ExecutionManager implements SafeCloseable {
         if (pluginFatal.get() == null) return;
         registeredOperations.values().forEach(BaseDurableOperation::interruptRunningUserHandler);
         validateRunningThreads();
+    }
+
+    boolean isRunningOperationOwner() {
+        return registeredOperations.values().stream().anyMatch(BaseDurableOperation::isRunningUserHandlerOwner);
     }
 
     /** Returns {@code true} if the given status represents a terminal (final) operation state. */

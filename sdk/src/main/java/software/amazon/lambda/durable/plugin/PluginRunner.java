@@ -37,6 +37,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
 public class PluginRunner {
 
     private static final Logger logger = LoggerFactory.getLogger(PluginRunner.class);
+    private static final UserFunctionHooks EMPTY_USER_FUNCTION_HOOKS = new UserFunctionHooks(List.of(), fatal -> {});
 
     private final List<DurableExecutionPluginFactory> pluginFactories;
     private final Consumer<Error> operationFatalObserver;
@@ -130,8 +131,8 @@ public class PluginRunner {
     }
 
     /**
-     * Drops this invocation's plugin instances. Called when the invocation returns so the instances are unreachable
-     * from the SDK and cannot leak into the next invocation the environment hosts.
+     * Drops invocation-level plugin references when the invocation returns. A started operation retains only its
+     * matching hook recipients until its owner unwinds; these recipients are never reused by another invocation.
      *
      * <p>No containment here: this only replaces the field, and calls nothing on the plugins it drops. There is no
      * {@code close()} in the plugin contract, so releasing cannot run plugin code and cannot fail.
@@ -368,19 +369,26 @@ public class PluginRunner {
         runOperationHook(p -> p.onOperationChange(info));
     }
 
-    @SuppressWarnings("removal")
     public void onUserFunctionStart(UserFunctionStartInfo info) {
+        startUserFunctions(plugins, info, operationFatalObserver);
+    }
+
+    @SuppressWarnings("removal")
+    private static void startUserFunctions(
+            List<DurableExecutionPlugin> plugins, UserFunctionStartInfo info, Consumer<Error> operationFatalObserver) {
         var started = new ArrayDeque<DurableExecutionPlugin>();
         try {
-            run(plugin -> {
-                plugin.onUserFunctionStart(info);
-                started.push(plugin);
-            });
+            for (var plugin : plugins) {
+                runPlugin(plugin, current -> {
+                    current.onUserFunctionStart(info);
+                    started.push(current);
+                });
+            }
         } catch (VirtualMachineError | ThreadDeath fatal) {
-            // Unwind attempt scopes on their owner before publishing the fatal: publication can start invocation
-            // finalization on another thread, where it is too late to restore these thread-local scopes safely.
-            closeStartedUserFunctions(started, info, fatal);
+            // Wake the caller before an earlier plugin's cleanup can block. Operation-owner fatal handoff keeps
+            // finalization off this cleanup thread, while earlier starts still unwind in LIFO order here.
             operationFatalObserver.accept(fatal);
+            closeStartedUserFunctions(started, info, fatal);
             throw fatal;
         }
     }
@@ -400,17 +408,67 @@ public class PluginRunner {
     }
 
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
-        runOperationHook(p -> p.onUserFunctionEnd(info));
+        endUserFunctions(plugins, info, operationFatalObserver);
+    }
+
+    private static void endUserFunctions(
+            List<DurableExecutionPlugin> plugins, UserFunctionEndInfo info, Consumer<Error> operationFatalObserver) {
+        var fatal = closeUserFunctions(plugins, info, null, operationFatalObserver);
+        if (fatal != null) {
+            throw fatal;
+        }
     }
 
     /** Completes same-owner attempt cleanup after a peer fatal while retaining the invocation's original failure. */
     public void onUserFunctionEndAfterFatal(UserFunctionEndInfo info, Error original) {
+        closeUserFunctions(plugins, info, original, operationFatalObserver);
+    }
+
+    private static Error closeUserFunctions(
+            List<DurableExecutionPlugin> plugins,
+            UserFunctionEndInfo info,
+            Error original,
+            Consumer<Error> operationFatalObserver) {
+        var first = original;
         for (var plugin : plugins) {
             try {
                 runPlugin(plugin, p -> p.onUserFunctionEnd(info));
             } catch (Error cleanupFailure) {
-                if (cleanupFailure != original) original.addSuppressed(cleanupFailure);
+                if (first == null) {
+                    first = cleanupFailure;
+                    operationFatalObserver.accept(first);
+                } else if (cleanupFailure != first) first.addSuppressed(cleanupFailure);
             }
+        }
+        return first;
+    }
+
+    /** Captures this invocation's attempt hook recipients without invoking factories or sharing plugin instances. */
+    public UserFunctionHooks captureUserFunctionHooks() {
+        var snapshot = plugins;
+        return snapshot.isEmpty() ? EMPTY_USER_FUNCTION_HOOKS : new UserFunctionHooks(snapshot, operationFatalObserver);
+    }
+
+    /** An operation owner retains these recipients through its matching end, including after a bounded fatal return. */
+    public static final class UserFunctionHooks {
+        private final List<DurableExecutionPlugin> plugins;
+        private final Consumer<Error> operationFatalObserver;
+
+        private UserFunctionHooks(List<DurableExecutionPlugin> plugins, Consumer<Error> operationFatalObserver) {
+            this.plugins = plugins;
+            this.operationFatalObserver = operationFatalObserver;
+        }
+
+        public void onUserFunctionStart(UserFunctionStartInfo info) {
+            startUserFunctions(plugins, info, operationFatalObserver);
+        }
+
+        public void onUserFunctionEnd(UserFunctionEndInfo info) {
+            endUserFunctions(plugins, info, operationFatalObserver);
+        }
+
+        public void onUserFunctionEndAfterFatal(UserFunctionEndInfo info, Error original) {
+            closeUserFunctions(plugins, info, original, operationFatalObserver);
         }
     }
 }

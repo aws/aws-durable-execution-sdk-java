@@ -65,12 +65,12 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * </ul>
  *
  * <p><b>Lifetime.</b> One instance serves exactly one Lambda invocation: {@link #factory()} and its overloads return a
- * {@link DurableExecutionPluginFactory} that the SDK calls once per invocation, and the instance is dropped when the
- * invocation returns. Everything about the invocation — the execution ARN, the resolved execution trace and ancestor,
- * the sampling intent, the Invocation span, the deferred Workflow span context — is therefore a {@code final} field,
- * resolved in the constructor from the {@link InvocationInfo} the factory receives (the same instance
- * {@link #onInvocationStart(InvocationInfo)} then receives). Nothing is reset between invocations because nothing is
- * carried between them.
+ * {@link DurableExecutionPluginFactory} that the SDK calls once per invocation. Invocation-level references are
+ * released at return; an unfinished operation retains its matching cleanup until its owner unwinds. Everything about
+ * the invocation — the execution ARN, the resolved execution trace and ancestor, the sampling intent, the Invocation
+ * span, the deferred Workflow span context — is therefore a {@code final} field, resolved in the constructor from the
+ * {@link InvocationInfo} the factory receives (the same instance {@link #onInvocationStart(InvocationInfo)} then
+ * receives). Nothing is reset between invocations because nothing is carried between them.
  *
  * <p>What belongs to the execution environment stays in the factory's {@link OtelPluginEnvironment}: the configuration,
  * the ID generator, and either the application-owned tracer provider (built once) or the lazily resolved ADOT global
@@ -570,7 +570,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
             // Still set the operation span as current so auto-instrumented calls become children
             var operationSpan = operationSpans.get(info.id());
             if (operationSpan != null) {
-                var scope = operationSpan.makeCurrent();
+                var scope = OtelPluginSupport.onOwnerThread(operationSpan.makeCurrent());
                 var key = attemptKey(info.id(), info.attempt());
                 attemptScopes.put(key, scope);
             }
@@ -610,7 +610,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
         attemptSpans.put(key, span);
 
         // Make span current on this thread so auto-instrumented calls become children
-        var scope = span.makeCurrent();
+        var scope = OtelPluginSupport.onOwnerThread(span.makeCurrent());
         attemptScopes.put(key, scope);
 
         // Inject trace context into MDC for log-trace correlation
@@ -621,7 +621,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
-        if (disabled()) return;
+        if (invocationSpan == null) return;
 
         var key = attemptKey(info.id(), info.attempt());
 
@@ -635,6 +635,9 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
         if (enableMdc) {
             MDC.remove(MdcSpanEnricher.MDC_SPAN_ID);
         }
+
+        // A bounded fatal return can finish spans before this operation owner finally unwinds.
+        if (ended) return;
 
         // CONTEXT operations don't have attempt spans — scope cleanup is all we need
         if ("CONTEXT".equals(info.type())) {
@@ -677,7 +680,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
     }
 
     private void endOpenSpansChildFirst() {
-        // Attempt spans are children of operation spans, so release their scopes and end them first.
+        // Close scopes owned by this thread, retaining other owners' scopes for their matching end hooks.
         for (var scope : attemptScopes.values()) {
             scope.close();
         }
@@ -694,8 +697,8 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
                 span.end();
             }
         }
-        // The registries are not emptied afterwards: every span they held has been ended above, and this instance is
-        // dropped when the invocation returns, so there is nothing to recycle them for.
+        // Every span has ended. Only unfinished owners may retain this invocation's instance for scope cleanup;
+        // these registries are never recycled for another invocation.
     }
 
     /**

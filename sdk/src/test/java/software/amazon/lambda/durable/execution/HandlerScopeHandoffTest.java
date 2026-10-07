@@ -141,6 +141,7 @@ class HandlerScopeHandoffTest {
                 Context.class,
                 int.class,
                 AtomicReference.class,
+                ExecutionManager.class,
                 BiFunction.class);
         method.setAccessible(true);
         BiFunction<String, Throwable, String> end = (value, failure) -> {
@@ -158,6 +159,7 @@ class HandlerScopeHandoffTest {
                     null,
                     2,
                     new AtomicReference<Error>(),
+                    mock(ExecutionManager.class),
                     end));
             assertTrue(callbackRegistered.await(3, TimeUnit.SECONDS));
             workers.submit(() -> {

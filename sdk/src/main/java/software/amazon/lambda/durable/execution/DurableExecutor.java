@@ -150,6 +150,7 @@ public class DurableExecutor {
                         lambdaContext,
                         config.getPluginFactories().size(),
                         pluginFatal,
+                        executionManager,
                         (result, ex) -> {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
@@ -347,8 +348,10 @@ public class DurableExecutor {
             Context lambdaContext,
             int pluginCount,
             AtomicReference<Error> pluginFatal,
+            ExecutionManager executionManager,
             BiFunction<T, Throwable, R> finalizer) {
         var started = new AtomicBoolean();
+        var operationOwnerHandoff = new AtomicBoolean();
         var finalized = new CompletableFuture<R>();
         // Attach before waiting so legacy hooks retain normal CompletableFuture completion-thread dispatch.
         var ready = executionFuture.handle((value, failure) -> {
@@ -358,7 +361,11 @@ public class DurableExecutor {
                 var fatal = pluginFatal.get();
                 return finalizer.apply(value, fatal == null ? failure : fatal);
             });
-            if (!hasHandlerScope.get() || handlerFuture.isDone()) finish.run();
+            if (pluginFatal.get() != null && executionManager.isRunningOperationOwner()) {
+                // Reporting a fatal must not finalize inline while this operation still owns attempt cleanup.
+                // Wake the invocation caller, which can apply the existing bounded owner handoff independently.
+                operationOwnerHandoff.set(true);
+            } else if (!hasHandlerScope.get() || handlerFuture.isDone()) finish.run();
             else handlerFuture.whenComplete((ignored, ignoredFailure) -> finish.run());
             return finish;
         });
@@ -368,7 +375,7 @@ public class DurableExecutor {
             awaitHandlerScopes(
                     executionFuture, handlerFuture, hasHandlerScope, lambdaContext, pluginCount, pluginFatal);
             // A completed handler owns its registered end callback even if the caller wakes first.
-            if (!handlerFuture.isDone()) finish.run();
+            if (operationOwnerHandoff.get() || !handlerFuture.isDone()) finish.run();
         }
         return finalized.join();
     }

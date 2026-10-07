@@ -35,9 +35,9 @@ class PluginLinkageErrorTest {
 
         assertSame(failure, assertThrows(Error.class, () -> dispatch.accept(runner)));
         assertEquals(
-                hook.equals("onInvocationEnd") ? 1 : 0,
+                hook.equals("onInvocationEnd") || hook.equals("onUserFunctionEnd") ? 1 : 0,
                 healthyCalls.get(),
-                "Invocation finalization still gives every plugin its cleanup opportunity");
+                "End hooks still give every plugin its cleanup opportunity; other fatal hooks stop dispatch");
     }
 
     static Stream<Arguments> linkageFailures() {

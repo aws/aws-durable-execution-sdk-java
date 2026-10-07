@@ -11,6 +11,7 @@ import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
 import java.util.Map;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -39,8 +40,16 @@ class InvocationInfoHeaderIntegrationTest {
 
     @ParameterizedTest
     @CsvSource({
-        "factory,present", "hook,present", "factory,empty", "hook,empty",
-        "factory,null", "hook,null", "factory,unavailable", "hook,unavailable"
+        "factory,unreadable-cause",
+        "hook,unreadable-cause",
+        "factory,present",
+        "hook,present",
+        "factory,empty",
+        "hook,empty",
+        "factory,null",
+        "hook,null",
+        "factory,unavailable",
+        "hook,unavailable"
     })
     void ordinaryFactoryAndHookCanReadTheCapturedHeader(String reader, String carrier) {
         var runtimeThread = Thread.currentThread();
@@ -54,6 +63,13 @@ class InvocationInfoHeaderIntegrationTest {
             when(runtime.getXrayTraceId()).thenAnswer(ignored -> {
                 capturedThread.set(Thread.currentThread());
                 return switch (carrier) {
+                    case "unreadable-cause" ->
+                        throw new CompletionException("unreadable cause", null) {
+                            @Override
+                            public synchronized Throwable getCause() {
+                                throw new IllegalStateException("cause accessor failed");
+                            }
+                        };
                     case "present" -> HEADER;
                     case "empty" -> "";
                     default -> null;

@@ -13,6 +13,7 @@ import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.nio.file.Files;
@@ -58,6 +59,22 @@ final class OtelPluginSupport {
     private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);
 
     private OtelPluginSupport() {}
+
+    /** Keeps finalization on another thread from consuming an operation owner's eventual scope cleanup. */
+    static Scope onOwnerThread(Scope scope) {
+        var owner = Thread.currentThread();
+        return new Scope() {
+            // Only the owner can read or mutate this flag; other threads return before accessing it.
+            private boolean closed;
+
+            @Override
+            public void close() {
+                if (Thread.currentThread() != owner || closed) return;
+                closed = true;
+                scope.close();
+            }
+        };
+    }
 
     /** Creates a new DeterministicIdGenerator for the application-side state bridge. */
     static DeterministicIdGenerator createDefaultIdGenerator() {

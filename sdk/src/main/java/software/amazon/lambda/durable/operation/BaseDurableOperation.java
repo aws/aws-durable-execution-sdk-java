@@ -391,7 +391,7 @@ public abstract class BaseDurableOperation {
      * @return the user function's result
      */
     protected <T> T runUserFunction(Integer attempt, Supplier<T> userFunction) {
-        var pluginRunner = getPluginRunner();
+        var pluginRunner = getPluginRunner().captureUserFunctionHooks();
         var startInfo = PluginInfoConverter.toUserFunctionStartInfo(
                 operationIdentifier,
                 durableContext.getParentId(),

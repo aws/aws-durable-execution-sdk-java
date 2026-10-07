@@ -69,11 +69,12 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * derived from the execution ARN and start time rather than carried in the plugin.
  *
  * <p><b>Lifetime.</b> One instance serves exactly one Lambda invocation: {@link #factory()} and its overloads return a
- * {@link DurableExecutionPluginFactory} that the SDK calls once per invocation, and the instance is dropped when the
- * invocation returns. Everything about the invocation — the execution ARN, the resolved execution trace and ancestor,
- * the sampling intent, the Invocation span, the deferred Workflow span context — is therefore a {@code final} field,
- * resolved in the constructor from the {@link InvocationInfo} the factory receives. Nothing is reset between
- * invocations because nothing is carried between them.
+ * {@link DurableExecutionPluginFactory} that the SDK calls once per invocation. Invocation-level references are
+ * released at return; an unfinished operation retains its matching cleanup until its owner unwinds. Everything about
+ * the invocation — the execution ARN, the resolved execution trace and ancestor, the sampling intent, the Invocation
+ * span, the deferred Workflow span context — is therefore a {@code final} field, resolved in the constructor from the
+ * {@link InvocationInfo} the factory receives. Nothing is reset between invocations because nothing is carried between
+ * them.
  *
  * <p>What belongs to the execution environment stays in the factory's {@link OtelPluginEnvironment}: the configuration,
  * the ID generator, and either the application-owned tracer provider (built once) or the lazily resolved ADOT global
@@ -380,17 +381,15 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
             MdcSpanEnricher.clear();
         }
 
-        // Release OTel context on worker threads, then end any attempt spans still open so no recording span is
-        // abandoned. Attempt spans normally start and end within one user-function call, so this is a safeguard.
+        // Close scopes owned by this thread, retaining other owners' scopes until their matching end hooks run.
         for (var scope : attemptScopes.values()) {
             scope.close();
         }
         for (var span : attemptSpans.values()) {
             span.end();
         }
-        // The placeholder and attempt registries are not emptied: an operation that never completed has no recording
-        // span to abandon, every attempt span above has been ended, and this instance is dropped when the invocation
-        // returns, so there is nothing to recycle them for.
+        // Every attempt span has ended. Only unfinished owners may retain this invocation's instance for scope
+        // cleanup; these registries are never recycled for another invocation.
 
         // End the invocation span every invocation.
         invocationSpan.setAttribute(
@@ -531,7 +530,8 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
         if ("CONTEXT".equals(info.type())) {
             var operationContext = operationContexts.get(info.id());
             if (operationContext != null) {
-                var scope = Span.wrap(operationContext).makeCurrent();
+                var scope = OtelPluginSupport.onOwnerThread(
+                        Span.wrap(operationContext).makeCurrent());
                 var key = attemptKey(info.id(), info.attempt());
                 attemptScopes.put(key, scope);
             }
@@ -571,7 +571,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
         attemptSpans.put(key, span);
 
         // Make span current on this thread so auto-instrumented calls become children
-        var scope = span.makeCurrent();
+        var scope = OtelPluginSupport.onOwnerThread(span.makeCurrent());
         attemptScopes.put(key, scope);
 
         if (enableMdc) {
@@ -581,7 +581,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
-        if (disabled()) return;
+        if (invocationSpan == null) return;
 
         var key = attemptKey(info.id(), info.attempt());
 
@@ -590,6 +590,8 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
         if (scope != null) {
             scope.close();
         }
+
+        if (ended) return;
 
         // CONTEXT operations don't have attempt spans — scope cleanup is all we need
         if ("CONTEXT".equals(info.type())) {
