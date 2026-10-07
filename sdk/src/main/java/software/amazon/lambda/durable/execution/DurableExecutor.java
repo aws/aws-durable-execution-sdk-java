@@ -4,9 +4,14 @@ package software.amazon.lambda.durable.execution;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.UndeclaredThrowableException;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -52,6 +57,15 @@ public class DurableExecutor {
     private static final int LAMBDA_RESPONSE_SIZE_LIMIT = 6 * 1024 * 1024 - 50;
 
     private DurableExecutor() {}
+
+    /**
+     * Returns whether this core runs invocation start/end hooks on the root handler thread and awaits handler cleanup
+     * and end-hook completion before returning. Plugins that retain thread-local scopes may require this capability
+     * before construction. Introduced with the 2.2.2 lifecycle contract.
+     */
+    public static boolean supportsSameThreadInvocationHooks() {
+        return true;
+    }
 
     public static <I, O> DurableExecutionOutput execute(
             DurableExecutionInput input,
@@ -104,22 +118,18 @@ public class DurableExecutor {
         }
 
         private CompletableFuture<DurableExecutionOutput> execute() {
-            if (plugins.isEmpty()) {
-                var body = CompletableFuture.supplyAsync(this::invokeHandler, config.getExecutorService());
-                return manager.runUntilCompleteOrSuspend(body).handle(this::finishInvocation);
-            }
             var body = new CompletableFuture<O>();
             // Select the invocation outcome before scheduling, including with an inline executor. A suspension or
             // termination can win while the handler is still unwinding; its finally block must not replace it.
             var outcome = manager.runUntilCompleteOrSuspend(body).handle(Outcome<O>::new);
-            return supplyHandler(
-                    () -> {
-                        Outcome.capture(this::invokeHandler).complete(body);
-                        var selected = outcome.join();
-                        return finishInvocation(selected.value(), selected.failure());
-                    },
-                    failure -> finishInvocation(null, failure),
-                    config.getExecutorService());
+            Supplier<DurableExecutionOutput> task = () -> {
+                Outcome.capture(this::invokeHandler).complete(body);
+                var selected = outcome.join();
+                return finishInvocation(selected.value(), selected.failure());
+            };
+            // Cleanup is awaited even without plugins. Keep that path free of plugin MDC handling.
+            if (plugins.isEmpty()) return CompletableFuture.supplyAsync(task, config.getExecutorService());
+            return supplyHandler(task, failure -> finishInvocation(null, failure), config.getExecutorService());
         }
 
         private O invokeHandler() {
@@ -166,7 +176,8 @@ public class DurableExecutor {
                 // Result serialization/checkpointing also belongs to this invocation. Close plugin resources even
                 // when delivery fails, then retain the original exception for the Lambda caller.
                 var cause = ExceptionHelper.unwrapCompletableFuture(deliveryFailure);
-                fireOnInvocationEnd(failureStatus(cause), cause, null);
+                // No terminal output is delivered: this exception escapes for a Lambda invocation retry.
+                fireOnInvocationEnd(InvocationStatus.RETRYING, cause, null);
                 ExceptionHelper.sneakyThrow(deliveryFailure);
                 return null;
             }
@@ -238,15 +249,51 @@ public class DurableExecutor {
             }
             var outcome = Outcome.capture(task);
             try {
-                restore.close();
+                try (var ignored = restore) {
+                    // End/delivery failures must also escape their actual worker. Handler-body failures have
+                    // already been mapped to their selected durable outcome; this does not reclassify them.
+                    rethrowLifecycleFatal(outcome.failure());
+                }
             } finally {
                 // End and worker restoration have run before publishing. A restoration failure still escapes its
                 // owner, without changing the invocation outcome already delivered to the end hooks.
                 outcome.complete(result);
             }
         };
-        executor.execute(work);
+        try {
+            executor.execute(work);
+        } catch (RuntimeException dispatchFailure) {
+            if (!result.isDone()) throw dispatchFailure;
+            // Inline execution can throw from MDC restoration after settling the selected outcome. Preserve that
+            // outcome for an ordinary cleanup failure, while a JVM-fatal failure still reaches the caller.
+            rethrowLifecycleFatal(dispatchFailure);
+        }
         return result;
+    }
+
+    /** Inspects only standard transport wrappers at this lifecycle boundary, without trusting diagnostics. */
+    @SuppressWarnings("removal")
+    private static void rethrowLifecycleFatal(Throwable failure) {
+        if (failure instanceof VirtualMachineError fatal) throw fatal;
+        if (failure instanceof ThreadDeath fatal) throw fatal;
+        if (failure == null) return;
+        var visited = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        var cause = failure;
+        while (cause != null && visited.add(cause)) {
+            if (cause instanceof VirtualMachineError fatal) throw fatal;
+            if (cause instanceof ThreadDeath fatal) throw fatal;
+            if (!(cause instanceof CompletionException
+                    || cause instanceof ExecutionException
+                    || cause instanceof InvocationTargetException
+                    || cause instanceof UndeclaredThrowableException)) return;
+            try {
+                cause = cause.getCause();
+            } catch (VirtualMachineError | ThreadDeath fatal) {
+                throw fatal;
+            } catch (Throwable unreadableDiagnostic) {
+                return;
+            }
+        }
     }
 
     private static SafeCloseable restoreMdcOnClose() {

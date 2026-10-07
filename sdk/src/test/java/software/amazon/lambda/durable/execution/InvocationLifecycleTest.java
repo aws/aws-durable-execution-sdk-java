@@ -287,7 +287,7 @@ class InvocationLifecycleTest {
             assertEquals(1, plugin.starts.size());
             assertEquals(1, plugin.ends.size());
             assertEquals(plugin.startThreads, plugin.endThreads);
-            assertEquals(InvocationStatus.FAILED, plugin.ends.get(0).invocationStatus());
+            assertEquals(InvocationStatus.RETRYING, plugin.ends.get(0).invocationStatus());
             assertSame(failure, plugin.ends.get(0).executionError());
             assertNull(plugin.ends.get(0).executionResult());
         } finally {

@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.util.Collections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.execution.DurableExecutor;
 
 /** Shared utilities for OTel plugin default constructor support (ADOT Java agent SPI path). */
 final class OtelPluginSupport {
@@ -23,6 +24,17 @@ final class OtelPluginSupport {
     private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);
 
     private OtelPluginSupport() {}
+
+    /** Rejects an older core before a plugin builds a provider or activates any thread-local context. */
+    static void requireSameThreadInvocationHooks() {
+        var message = "This OpenTelemetry plugin requires same-thread invocation hooks from the Durable Execution"
+                + " core (2.2.2 lifecycle capability). Upgrade the core together with the plugin layer.";
+        try {
+            if (!DurableExecutor.supportsSameThreadInvocationHooks()) throw new IllegalStateException(message);
+        } catch (NoSuchMethodError missingCapability) {
+            throw new IllegalStateException(message, missingCapability);
+        }
+    }
 
     /** Creates a new DeterministicIdGenerator for the application-side state bridge. */
     static DeterministicIdGenerator createDefaultIdGenerator() {

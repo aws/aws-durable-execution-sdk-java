@@ -27,10 +27,17 @@ can run; a blocked handler cleanup therefore also blocks the invocation response
 when span finalization or flushing fails. Ordinary exceptions and nonfatal linkage errors retain the existing
 plugin-hook isolation behavior. Invocation-end hooks run in reverse registration order so nested scopes unwind
 correctly; remaining end hooks run even when another hook raises an Error, then the first Error propagates.
+Invocations without plugins also wait for handler cleanup before returning the selected suspension or retry outcome.
+Output-delivery failures that escape for a Lambda retry report `RETRYING`, so they do not prematurely end the Workflow
+span. An ordinary MDC-restoration failure on an inline executor does not replace an already selected outcome.
 
-This plugin version requires a core version that provides that same-thread invocation-hook contract. Upgrade the
-core together with the plugin layer. Older cores may call `onInvocationEnd` on another thread and are not supported
-with this plugin version.
+This plugin version requires the core's `DurableExecutor.supportsSameThreadInvocationHooks()` capability, introduced
+in the 2.2.2 lifecycle contract (currently `2.2.2-SNAPSHOT`). Upgrade the core together with the plugin layer. Every
+plugin constructor checks this capability before building a tracer provider or activating context. A core without
+it, including released 2.2.1, is rejected with an explicit configuration error. Older cores may call
+`onInvocationEnd` on another thread and are not supported with this plugin version. Existing plugin binaries remain
+usable with the updated core; their invocation-end hooks now follow the same-thread, reverse-registration-order
+contract described above.
 
 ## Installation
 
