@@ -4,20 +4,12 @@ package software.amazon.lambda.durable.execution;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.UndeclaredThrowableException;
 import java.nio.charset.StandardCharsets;
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,11 +51,6 @@ public class DurableExecutor {
     // Lambda response size limit is 6MB minus small epsilon for envelope
     private static final int LAMBDA_RESPONSE_SIZE_LIMIT = 6 * 1024 * 1024 - 50;
 
-    // Best-effort allowance for each configured plugin's finalization (including the bundled OTel 5s join),
-    // plus shutdown/response headroom. Existing arbitrary callbacks and checkpoint draining can exceed it.
-    private static final long PLUGIN_FINALIZATION_RESERVE_MILLIS = 5_000;
-    private static final long SHUTDOWN_RESPONSE_RESERVE_MILLIS = 1_000;
-
     private DurableExecutor() {}
 
     public static <I, O> DurableExecutionOutput execute(
@@ -72,299 +59,194 @@ public class DurableExecutor {
             TypeToken<I> inputType,
             BiFunction<I, DurableContext, O> handler,
             DurableConfig config) {
-        var pluginRunner = config.getPluginRunner();
-        var scopeFatal = new AtomicReference<Error>();
-        var scopeFailure = new CompletableFuture<O>();
-        try (var executionManager = new ExecutionManager(input, config, lambdaContext)) {
-            var isFirstInvocation = !executionManager.isReplaying();
-            var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
-            var executionArn = input.durableExecutionArn();
-
-            executionManager.registerActiveThread(null);
-            // Captured for onInvocationEnd, which runs outside the handler thread below.
-            var pluginExecutionInput = new AtomicReference<>();
-            var invocationStarted = new AtomicBoolean();
-            var hasHandlerScope = new AtomicBoolean();
-            var handlerFuture = supplyHandler(
-                    () -> {
-                        executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
-
-                        // Deserialize once and share the value with the plugin hooks and the handler below. A second
-                        // deserialization would double the cost, hand plugins a different object than the handler, and
-                        // re-run any side effects in a stateful custom SerDes. A failure is captured rather than thrown
-                        // so onInvocationStart still fires before it surfaces, keeping the start/end hooks paired.
-                        // SerDes is a public extension point whose deserialize declares no checked exceptions, so an
-                        // implementation may sneaky-throw one; capture every Throwable and rethrow it unchanged.
-                        I userInput = null;
-                        Throwable inputFailure = null;
-                        try {
-                            userInput = extractUserInput(
-                                    executionManager.getExecutionOperation(), config.getSerDes(), inputType);
-                        } catch (Throwable t) {
-                            inputFailure = t;
-                        }
-                        pluginExecutionInput.set(userInput);
-
-                        // onInvocationStart runs on the user thread so plugins can
-                        // inject ThreadLocal objects, update MDC, etc.
-                        // executionStartTime comes from the initial EXECUTION operation in the first backend event.
-                        if (!pluginRunner.isEmpty()) {
-                            var invocationInfo = new InvocationInfo(
-                                    requestId,
-                                    executionArn,
-                                    isFirstInvocation,
-                                    executionManager.getExecutionOperation().startTimestamp(),
-                                    userInput,
-                                    PluginInfoConverter.toOperationItemMap(
-                                            executionManager.getOperationsSnapshot(),
-                                            executionManager.getInitialOperationIds()),
-                                    PluginInfoConverter.toOperationItemMap(
-                                            executionManager.getUpdatedOperationsSnapshot(),
-                                            executionManager.getInitialOperationIds()));
-                            invocationStarted.set(true);
-                            pluginRunner.onInvocationStart(invocationInfo);
-                        }
-                        if (inputFailure != null) {
-                            ExceptionHelper.sneakyThrow(inputFailure);
-                        }
-
-                        var context = DurableContextImpl.createRootContext(executionManager, config, lambdaContext);
-                        DurableContextImpl.setCurrentContext(context);
-                        // use a try-with-resources to clear logger properties
-                        try (var ignored = DurableLogger.attachContext()) {
-                            var handlerInput = userInput;
-                            return pluginRunner.runHandler(
-                                    () -> handler.apply(handlerInput, context),
-                                    () -> hasHandlerScope.set(true),
-                                    fatal -> {
-                                        scopeFatal.compareAndSet(null, fatal);
-                                        scopeFailure.completeExceptionally(scopeFatal.get());
-                                    });
-                        }
-                    },
-                    config.getExecutorService(),
-                    pluginRunner,
-                    scopeFatal); // Get executor from config for running user code
-
-            // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
-            // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
-            // failure.
+        try (var manager = new ExecutionManager(input, config, lambdaContext)) {
+            manager.registerActiveThread(ROOT_THREAD_ID);
+            var invocation = new Invocation<>(input, lambdaContext, inputType, handler, config, manager);
             try {
-                var executionFuture = executionManager.runUntilCompleteOrSuspend(handlerFuture);
-                return finalizeAfterHandlerScopes(
-                        pluginRunner.isEmpty() ? executionFuture : observeScopeFailure(executionFuture, scopeFailure),
-                        handlerFuture,
-                        hasHandlerScope,
-                        lambdaContext,
-                        pluginRunner.getPlugins().size(),
-                        scopeFatal,
-                        (result, ex) -> {
-                            if (ex != null) {
-                                // an exception thrown from handlerFuture or suspension/termination occurred
-                                Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);
-
-                                // return PENDING if it's SuspendExecutionException
-                                if (cause instanceof SuspendExecutionException) {
-                                    fireOnInvocationEnd(
-                                            invocationStarted.get(),
-                                            scopeFatal,
-                                            pluginRunner,
-                                            executionManager,
-                                            requestId,
-                                            executionArn,
-                                            isFirstInvocation,
-                                            InvocationStatus.PENDING,
-                                            null,
-                                            pluginExecutionInput.get(),
-                                            null);
-                                    return DurableExecutionOutput.pending();
-                                }
-
-                                // let the backend retry the invocation if the exception is retryable
-                                if (cause
-                                                instanceof
-                                                UnrecoverableDurableExecutionException
-                                                        unrecoverableDurableExecutionException
-                                        && unrecoverableDurableExecutionException.isRetryable()) {
-                                    fireOnInvocationEnd(
-                                            invocationStarted.get(),
-                                            scopeFatal,
-                                            pluginRunner,
-                                            executionManager,
-                                            requestId,
-                                            executionArn,
-                                            isFirstInvocation,
-                                            InvocationStatus.RETRYING,
-                                            cause,
-                                            pluginExecutionInput.get(),
-                                            null);
-                                    throw unrecoverableDurableExecutionException;
-                                }
-
-                                // fail the execution otherwise
-                                logger.debug("Execution failed: {}", cause.getMessage());
-                                fireOnInvocationEnd(
-                                        invocationStarted.get(),
-                                        scopeFatal,
-                                        pluginRunner,
-                                        executionManager,
-                                        requestId,
-                                        executionArn,
-                                        isFirstInvocation,
-                                        InvocationStatus.FAILED,
-                                        cause,
-                                        pluginExecutionInput.get(),
-                                        null);
-                                return DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
-                            }
-                            // user handler complete successfully
-                            logger.debug("Execution completed");
-                            var outputPayload = config.getSerDes().serialize(result);
-                            var output =
-                                    DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
-                            fireOnInvocationEnd(
-                                    invocationStarted.get(),
-                                    scopeFatal,
-                                    pluginRunner,
-                                    executionManager,
-                                    requestId,
-                                    executionArn,
-                                    isFirstInvocation,
-                                    InvocationStatus.SUCCEEDED,
-                                    null,
-                                    pluginExecutionInput.get(),
-                                    result);
-                            return output;
-                        });
-            } catch (CompletionException e) {
-                // unwrap the CompletionException and rethrow the wrapped exception
-                ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(e));
+                return invocation.execute().join();
+            } catch (CompletionException failure) {
+                ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(failure));
                 return null;
             }
         }
     }
 
-    private static <T> CompletableFuture<T> supplyHandler(
-            Supplier<T> task, Executor executor, PluginRunner plugins, AtomicReference<Error> scopeFatal) {
-        if (plugins.isEmpty()) return CompletableFuture.supplyAsync(task, executor);
-        var result = new CompletableFuture<T>();
-        var caller = Thread.currentThread();
-        Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
-            SafeCloseable mdcRestore;
+    /** Invocation-local state, accessed on the handler thread when plugins are present. */
+    private static final class Invocation<I, O> {
+        private final Context lambdaContext;
+        private final TypeToken<I> inputType;
+        private final BiFunction<I, DurableContext, O> handler;
+        private final DurableConfig config;
+        private final ExecutionManager manager;
+        private final PluginRunner plugins;
+        private final String requestId;
+        private final String executionArn;
+        private final boolean isFirstInvocation;
+        private I userInput;
+        private boolean started;
+
+        private Invocation(
+                DurableExecutionInput input,
+                Context lambdaContext,
+                TypeToken<I> inputType,
+                BiFunction<I, DurableContext, O> handler,
+                DurableConfig config,
+                ExecutionManager manager) {
+            this.lambdaContext = lambdaContext;
+            this.inputType = inputType;
+            this.handler = handler;
+            this.config = config;
+            this.manager = manager;
+            plugins = config.getPluginRunner();
+            requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
+            executionArn = input.durableExecutionArn();
+            isFirstInvocation = !manager.isReplaying();
+        }
+
+        private CompletableFuture<DurableExecutionOutput> execute() {
+            if (plugins.isEmpty()) {
+                var body = CompletableFuture.supplyAsync(this::invokeHandler, config.getExecutorService());
+                return manager.runUntilCompleteOrSuspend(body).handle(this::finishInvocation);
+            }
+            var body = new CompletableFuture<O>();
+            // Select the invocation outcome before scheduling, including with an inline executor. A suspension or
+            // termination can win while the handler is still unwinding; its finally block must not replace it.
+            var outcome = manager.runUntilCompleteOrSuspend(body).handle(Outcome<O>::new);
+            return supplyHandler(
+                    () -> {
+                        Outcome.capture(this::invokeHandler).complete(body);
+                        var selected = outcome.join();
+                        return finishInvocation(selected.value(), selected.failure());
+                    },
+                    failure -> finishInvocation(null, failure),
+                    config.getExecutorService());
+        }
+
+        private O invokeHandler() {
+            manager.setCurrentThreadContext(new ThreadContext(ROOT_THREAD_ID, ThreadType.CONTEXT));
+            Throwable inputFailure = null;
             try {
-                mdcRestore = restoreMdcOnClose();
+                userInput = extractUserInput(manager.getExecutionOperation(), config.getSerDes(), inputType);
             } catch (Throwable failure) {
-                // Initialization can fail before task execution; the observer must still receive that failure.
-                result.completeExceptionally(failure);
+                // Deserialize only once. Even failed input gets paired start/end hooks with a null input value.
+                inputFailure = failure;
+            }
+            fireOnInvocationStart();
+            if (inputFailure != null) ExceptionHelper.sneakyThrow(inputFailure);
+            var context = DurableContextImpl.createRootContext(manager, config, lambdaContext);
+            DurableContextImpl.setCurrentContext(context);
+            try (var ignored = DurableLogger.attachContext()) {
+                return handler.apply(userInput, context);
+            }
+        }
+
+        private void fireOnInvocationStart() {
+            if (plugins.isEmpty()) return;
+            var info = new InvocationInfo(
+                    requestId,
+                    executionArn,
+                    isFirstInvocation,
+                    manager.getExecutionOperation().startTimestamp(),
+                    userInput,
+                    PluginInfoConverter.toOperationItemMap(
+                            manager.getOperationsSnapshot(), manager.getInitialOperationIds()),
+                    PluginInfoConverter.toOperationItemMap(
+                            manager.getUpdatedOperationsSnapshot(), manager.getInitialOperationIds()));
+            started = true;
+            plugins.onInvocationStart(info);
+        }
+
+        private DurableExecutionOutput finishInvocation(O value, Throwable failure) {
+            if (failure != null) return finishFailure(ExceptionHelper.unwrapCompletableFuture(failure));
+            DurableExecutionOutput output;
+            try {
+                var payload = config.getSerDes().serialize(value);
+                output = DurableExecutionOutput.success(handleLargePayload(manager, payload));
+            } catch (Throwable deliveryFailure) {
+                // Result serialization/checkpointing also belongs to this invocation. Close plugin resources even
+                // when delivery fails, then retain the original exception for the Lambda caller.
+                var cause = ExceptionHelper.unwrapCompletableFuture(deliveryFailure);
+                fireOnInvocationEnd(failureStatus(cause), cause, null);
+                ExceptionHelper.sneakyThrow(deliveryFailure);
+                return null;
+            }
+            fireOnInvocationEnd(InvocationStatus.SUCCEEDED, null, value);
+            return output;
+        }
+
+        private DurableExecutionOutput finishFailure(Throwable cause) {
+            var status = failureStatus(cause);
+            fireOnInvocationEnd(status, status == InvocationStatus.PENDING ? null : cause, null);
+            if (status == InvocationStatus.PENDING) return DurableExecutionOutput.pending();
+            if (status == InvocationStatus.RETRYING) {
+                ExceptionHelper.sneakyThrow(cause);
+                return null;
+            }
+            return DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
+        }
+
+        private void fireOnInvocationEnd(InvocationStatus status, Throwable error, Object result) {
+            if (!started) return;
+            plugins.onInvocationEnd(new InvocationEndInfo(
+                    requestId,
+                    executionArn,
+                    isFirstInvocation,
+                    manager.getExecutionOperation().startTimestamp(),
+                    PluginInfoConverter.toOperationItemMap(
+                            manager.getOperationsSnapshot(), manager.getInitialOperationIds()),
+                    status,
+                    error,
+                    userInput,
+                    result));
+        }
+    }
+
+    private static InvocationStatus failureStatus(Throwable failure) {
+        if (failure instanceof SuspendExecutionException) return InvocationStatus.PENDING;
+        if (failure instanceof UnrecoverableDurableExecutionException unrecoverable && unrecoverable.isRetryable()) {
+            return InvocationStatus.RETRYING;
+        }
+        return InvocationStatus.FAILED;
+    }
+
+    /** Captures task completion without running lifecycle hooks on CompletableFuture completion threads. */
+    private record Outcome<T>(T value, Throwable failure) {
+        private static <T> Outcome<T> capture(Supplier<T> task) {
+            try {
+                return new Outcome<>(task.get(), null);
+            } catch (Throwable failure) {
+                return new Outcome<>(null, failure);
+            }
+        }
+
+        private void complete(CompletableFuture<T> future) {
+            if (failure == null) future.complete(value);
+            else future.completeExceptionally(failure);
+        }
+    }
+
+    private static <T> CompletableFuture<T> supplyHandler(
+            Supplier<T> task, Function<Throwable, T> initializationFailure, Executor executor) {
+        var result = new CompletableFuture<T>();
+        Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
+            SafeCloseable restore;
+            try {
+                restore = restoreMdcOnClose();
+            } catch (Throwable failure) {
+                Outcome.capture(() -> initializationFailure.apply(failure)).complete(result);
                 return;
             }
-            try (var ignored = mdcRestore) {
-                try {
-                    result.complete(task.get());
-                } catch (Throwable failure) {
-                    result.completeExceptionally(failure);
-                    // Preserve legacy user-body Error handling. Only a positively reported new scope fatal also
-                    // escapes its actual owner after its observation future settles. Direct callers finalize below.
-                    var fatal = scopeFatal.get();
-                    if (Thread.currentThread() != caller
-                            && fatal != null
-                            && ExceptionHelper.unwrapCompletableFuture(failure) == fatal) throw fatal;
-                }
+            var outcome = Outcome.capture(task);
+            try {
+                restore.close();
+            } finally {
+                // End and worker restoration have run before publishing. A restoration failure still escapes its
+                // owner, without changing the invocation outcome already delivered to the end hooks.
+                outcome.complete(result);
             }
         };
         executor.execute(work);
         return result;
-    }
-
-    /** Wakes the caller when a reported scope fatal precedes completion of earlier scope cleanup. */
-    private static <T> CompletableFuture<T> observeScopeFailure(
-            CompletableFuture<T> execution, CompletableFuture<T> scopeFailure) {
-        var result = new CompletableFuture<T>();
-        execution.whenComplete((value, failure) -> {
-            if (failure == null) result.complete(value);
-            else result.completeExceptionally(failure);
-        });
-        scopeFailure.whenComplete((ignored, failure) -> {
-            if (failure != null) result.completeExceptionally(failure);
-        });
-        return result;
-    }
-
-    private static <T, R> R finalizeAfterHandlerScopes(
-            CompletableFuture<T> executionFuture,
-            CompletableFuture<T> handlerFuture,
-            AtomicBoolean hasHandlerScope,
-            Context lambdaContext,
-            int pluginCount,
-            AtomicReference<Error> scopeFatal,
-            BiFunction<T, Throwable, R> finalizer) {
-        var started = new AtomicBoolean();
-        var finalized = new CompletableFuture<R>();
-        // Attach before waiting so legacy hooks retain normal CompletableFuture completion-thread dispatch.
-        var ready = executionFuture.handle((value, failure) -> {
-            Runnable finish = () -> completeFinalization(started, finalized, () -> finalizer.apply(value, failure));
-            if (!hasHandlerScope.get() || handlerFuture.isDone()) finish.run();
-            else handlerFuture.whenComplete((ignored, ignoredFailure) -> finish.run());
-            return finish;
-        });
-        var finish = ready.join();
-        if (!started.get()) {
-            // Only the caller waits: a signaling handler must be free to unwind and close its scopes.
-            awaitHandlerScopes(executionFuture, handlerFuture, hasHandlerScope, lambdaContext, pluginCount, scopeFatal);
-            // Completion publishes the handler result before its callbacks necessarily run. Once cleanup completed,
-            // let its registered callback finalize on the owner instead of racing it from this waiter.
-            if (!handlerFuture.isDone()) finish.run();
-        }
-        return finalized.join();
-    }
-
-    private static <R> void completeFinalization(
-            AtomicBoolean started, CompletableFuture<R> result, Supplier<R> finalizer) {
-        if (!started.compareAndSet(false, true)) return;
-        try {
-            result.complete(finalizer.get());
-        } catch (Throwable failure) {
-            // Match CompletableFuture.handle: transfer failures unchanged for the invocation caller to rethrow.
-            result.completeExceptionally(failure);
-        }
-    }
-
-    static <T> CompletableFuture<T> awaitHandlerScopes(
-            CompletableFuture<T> executionFuture,
-            CompletableFuture<T> handlerFuture,
-            AtomicBoolean hasHandlerScope,
-            Context lambdaContext,
-            int pluginCount,
-            AtomicReference<Error> scopeFatal) {
-        // This method runs on the invocation caller, never as a callback on the signaling handler worker.
-        // Preserve the winning outcome except for an observed fatal error from the new scope callbacks.
-        var failure = executionFuture.handle((result, error) -> error).join();
-        // A reported fatal can precede completion of earlier scopes; retain their bounded cleanup budget.
-        if (!hasHandlerScope.get() || (failure == null && scopeFatal.get() == null)) {
-            throwIfScopeFatal(scopeFatal);
-            return executionFuture;
-        }
-        var reserve = SHUTDOWN_RESPONSE_RESERVE_MILLIS + PLUGIN_FINALIZATION_RESERVE_MILLIS * pluginCount;
-        var budgetMillis = lambdaContext == null
-                ? 500L
-                : Math.min(500L, Math.max(0L, (long) lambdaContext.getRemainingTimeInMillis() - reserve));
-        try {
-            handlerFuture.handle((result, error) -> null).get(budgetMillis, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException e) {
-            logger.warn("Handler scope cleanup exceeded its handoff budget; cleanup continues on the handler thread");
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.warn("Interrupted while awaiting handler scope cleanup; preserving the execution outcome", e);
-        } catch (ExecutionException e) {
-            logger.warn("Could not observe handler scope cleanup; preserving the execution outcome", e);
-        }
-        throwIfScopeFatal(scopeFatal);
-        return executionFuture;
-    }
-
-    private static void throwIfScopeFatal(AtomicReference<Error> scopeFatal) {
-        var fatal = scopeFatal.get();
-        if (fatal != null) throw fatal;
     }
 
     private static SafeCloseable restoreMdcOnClose() {
@@ -373,95 +255,6 @@ public class DurableExecutor {
             if (previous == null) MDC.clear();
             else MDC.setContextMap(previous);
         };
-    }
-
-    /** MDC is ancillary to end dispatch; ordinary adapter failures must not replace the selected outcome. */
-    private static SafeCloseable preserveEndMdc() {
-        SafeCloseable restore;
-        try {
-            restore = restoreMdcOnClose();
-        } catch (Throwable failure) {
-            reportEndMdcFailure(failure);
-            return () -> {};
-        }
-        return () -> {
-            try {
-                restore.close();
-            } catch (Throwable failure) {
-                reportEndMdcFailure(failure);
-            }
-        };
-    }
-
-    private static void reportEndMdcFailure(Throwable failure) {
-        throwIfMdcFatal(failure);
-        try {
-            // Do not ask a malformed Throwable for its message or cause again while logging.
-            logger.warn(
-                    "Could not preserve MDC around invocation-end dispatch; preserving execution outcome ({})",
-                    failure.getClass().getName());
-        } catch (Throwable loggingFailure) {
-            // An MDC-backed logger may encounter the same adapter failure while reporting it.
-            throwIfMdcFatal(loggingFailure);
-        }
-    }
-
-    @SuppressWarnings("removal")
-    private static void throwIfMdcFatal(Throwable failure) {
-        if (failure instanceof VirtualMachineError fatal) throw fatal;
-        if (failure instanceof ThreadDeath fatal) throw fatal;
-        var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
-        var cause = failure;
-        while (seen.add(cause)) {
-            if (cause instanceof VirtualMachineError fatal) throw fatal;
-            if (cause instanceof ThreadDeath fatal) throw fatal;
-            if (!(cause instanceof CompletionException
-                    || cause instanceof ExecutionException
-                    || cause instanceof InvocationTargetException
-                    || cause instanceof UndeclaredThrowableException)) return;
-            try {
-                cause = cause.getCause();
-            } catch (VirtualMachineError | ThreadDeath fatal) {
-                throw fatal;
-            } catch (Throwable unreadableCause) {
-                return;
-            }
-            if (cause == null) return;
-        }
-    }
-
-    private static void fireOnInvocationEnd(
-            boolean invocationStarted,
-            AtomicReference<Error> scopeFatal,
-            PluginRunner pluginRunner,
-            ExecutionManager executionManager,
-            String requestId,
-            String executionArn,
-            boolean isFirstInvocation,
-            InvocationStatus status,
-            Throwable error,
-            Object executionInput,
-            Object executionResult) {
-        if (pluginRunner.isEmpty() || !invocationStarted) {
-            return;
-        }
-        // Freeze the selected end snapshot here. A scope fatal already observed still escapes before dispatch;
-        // a later scope fatal escapes its owner instead of rewriting this caller outcome after finalization.
-        throwIfScopeFatal(scopeFatal);
-        // Finalization can run on the invocation caller rather than the handler worker.
-        try (var ignored = preserveEndMdc()) {
-            pluginRunner.onInvocationEnd(new InvocationEndInfo(
-                    requestId,
-                    executionArn,
-                    isFirstInvocation,
-                    executionManager.getExecutionOperation().startTimestamp(),
-                    PluginInfoConverter.toOperationItemMap(
-                            executionManager.getOperationsSnapshot(), executionManager.getInitialOperationIds()),
-                    status,
-                    error,
-                    executionInput,
-                    executionResult));
-        }
     }
 
     private static String handleLargePayload(ExecutionManager executionManager, String outputPayload) {

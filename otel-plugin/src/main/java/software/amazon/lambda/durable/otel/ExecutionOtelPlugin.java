@@ -21,13 +21,11 @@ import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.ExclusivePluginGroup;
-import software.amazon.lambda.durable.plugin.HandlerScoped;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.OperationEndInfo;
@@ -91,7 +89,6 @@ import software.amazon.lambda.durable.plugin.UserFunctionStartInfo;
  * <p>Thread-safe: uses {@link ConcurrentHashMap} for span/scope storage since the SDK runs user code on multiple
  * threads.
  */
-@HandlerScoped(ExecutionOtelPlugin.HandlerScopeOpener.class)
 @ExclusivePluginGroup("durable-otel-view")
 public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
@@ -108,6 +105,8 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     // Per-invocation state
     private volatile boolean tracingEnabled;
     private volatile Span invocationSpan;
+    // Opened and closed by the invocation hooks on the root handler thread.
+    private Scope handlerScope;
     private volatile String durableExecutionArn;
 
     // Trace ID and flags of the execution trace, published together as one snapshot so readers never pair a trace ID
@@ -274,17 +273,10 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
                     invocationSpan.getSpanContext().getTraceId());
         }
         tracingEnabled = true;
+        handlerScope = activateHandlerContext();
     }
 
-    /** JDK-only scope bridge; does not dispatch to coincidental subclass methods. */
-    public static final class HandlerScopeOpener implements Function<ExecutionOtelPlugin, AutoCloseable> {
-        @Override
-        public AutoCloseable apply(ExecutionOtelPlugin plugin) {
-            return plugin.activateHandlerContext();
-        }
-    }
-
-    private AutoCloseable activateHandlerContext() {
+    private Scope activateHandlerContext() {
         var trace = executionTrace;
         if (!tracingEnabled || trace == null) return null;
         var ambient = Span.current().getSpanContext();
@@ -296,6 +288,16 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
+        try {
+            endInvocation(info);
+        } finally {
+            var scope = handlerScope;
+            handlerScope = null;
+            if (scope != null) scope.close();
+        }
+    }
+
+    private void endInvocation(InvocationEndInfo info) {
         if (!tracingEnabled) {
             return;
         }

@@ -8,13 +8,15 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
+import java.time.Instant;
 import javax.tools.ToolProvider;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
-import software.amazon.lambda.durable.plugin.PluginRunner;
+import software.amazon.lambda.durable.plugin.InvocationEndInfo;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.plugin.InvocationStatus;
 
 class LegacySubclassScopeCompatibilityTest {
     @TempDir
@@ -64,7 +66,8 @@ class LegacySubclassScopeCompatibilityTest {
                 new URL[] {classes.toUri().toURL()}, getClass().getClassLoader())) {
             var type = loader.loadClass("LegacySubclass");
             var plugin = (DurableExecutionPlugin) type.getConstructor().newInstance();
-            assertEquals("body", new PluginRunner(List.of(plugin)).runHandler(() -> "body"));
+            plugin.onInvocationStart(new InvocationInfo("req", "arn", true, Instant.now()));
+            plugin.onInvocationEnd(new InvocationEndInfo("req", "arn", true, InvocationStatus.SUCCEEDED, null));
             assertEquals(0, type.getField("opened").get(null), "SDK must not invoke an unrelated subclass resource");
             type.getMethod("originalCall").invoke(plugin);
             assertEquals(

@@ -308,8 +308,8 @@ class InvocationOtelPluginTest {
 
         try (var ignored = Span.wrap(ambientSpanContext).makeCurrent()) {
             plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+            plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
         }
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var invocationSpan = spanByName("Invocation");
         var workflowSpan = spanByName("Workflow");

@@ -18,7 +18,9 @@ public interface DurableExecutionPlugin {
     // ─── Invocation-level hooks ──────────────────────────────────────────
 
     /**
-     * Called at the start of each Lambda invocation. Use to set up per-invocation state (trace ID, invocation span).
+     * Called on the root handler thread at the start of each Lambda invocation. Use to set up per-invocation state
+     * (trace ID, invocation span) and thread-local context. The paired {@link #onInvocationEnd} runs on this same
+     * thread.
      *
      * <p>Check {@link InvocationInfo#isFirstInvocation()} to detect the first invocation of an execution (useful for
      * sampling decisions or execution-level span creation).
@@ -26,10 +28,17 @@ public interface DurableExecutionPlugin {
     default void onInvocationStart(InvocationInfo info) {}
 
     /**
-     * Called at the end of each Lambda invocation. Use to flush spans/metrics before Lambda freezes.
+     * Called on the same root handler thread as {@link #onInvocationStart}, after the handler and its finally blocks
+     * have exited. Use to restore thread-local context and flush spans/metrics before Lambda freezes.
      *
      * <p>This hook is awaited — the SDK blocks until it returns. This is the only safe flush point before Lambda
-     * freezes the execution environment.
+     * freezes the execution environment. Suspension and termination also wait for the handler to unwind and this hook
+     * to finish; a blocked handler, finally block, or end hook delays the invocation response. No caller-thread
+     * fallback or cleanup timeout is applied. An earlier suspension/termination retains its selected outcome even if a
+     * later handler finally block returns or throws.
+     *
+     * <p>Start hooks run in registration order; end hooks run in reverse order to unwind nested thread-local scopes. If
+     * an end hook throws an Error that is not isolated, the remaining end hooks still run before it is rethrown.
      *
      * <p>Check {@link InvocationEndInfo#invocationStatus()} to detect if the execution reached a terminal state in this
      * invocation (useful for writing summary records or flushing final data).

@@ -155,7 +155,7 @@ class PluginRunnerTest {
     // ─── Awaited hooks ───────────────────────────────────────────────────
 
     @Test
-    void awaitedHooks_callAllPlugins() {
+    void invocationEnd_unwindsPluginsInReverseRegistrationOrder() {
         var calls = new ArrayList<String>();
         var plugin1 = new TestPlugin("p1", calls);
         var plugin2 = new TestPlugin("p2", calls);
@@ -163,7 +163,33 @@ class PluginRunnerTest {
 
         runner.onInvocationEnd(invocationEndInfo());
 
-        assertEquals(List.of("p1:onInvocationEnd", "p2:onInvocationEnd"), calls);
+        assertEquals(List.of("p2:onInvocationEnd", "p1:onInvocationEnd"), calls);
+    }
+
+    @SuppressWarnings("removal")
+    @Test
+    void invocationEnd_runsRemainingCleanupThenRethrowsTheFirstError() {
+        for (var firstFailure :
+                List.of(new InternalError("fatal"), new AssertionError("assertion"), new ThreadDeath())) {
+            var calls = new ArrayList<String>();
+            var inner = new TestPlugin("inner", calls) {
+                @Override
+                public void onInvocationEnd(InvocationEndInfo info) {
+                    super.onInvocationEnd(info);
+                    throw firstFailure;
+                }
+            };
+            var middle = new TestPlugin("middle", calls) {
+                @Override
+                public void onInvocationEnd(InvocationEndInfo info) {
+                    super.onInvocationEnd(info);
+                    throw new AssertionError("later cleanup failure");
+                }
+            };
+            var runner = new PluginRunner(List.of(new TestPlugin("outer", calls), middle, inner));
+            assertSame(firstFailure, assertThrows(Error.class, () -> runner.onInvocationEnd(invocationEndInfo())));
+            assertEquals(List.of("inner:onInvocationEnd", "middle:onInvocationEnd", "outer:onInvocationEnd"), calls);
+        }
     }
 
     @Test
@@ -171,7 +197,7 @@ class PluginRunnerTest {
         var calls = new ArrayList<String>();
         var throwingPlugin = new ThrowingPlugin();
         var normalPlugin = new TestPlugin("p2", calls);
-        var runner = new PluginRunner(List.of(throwingPlugin, normalPlugin));
+        var runner = new PluginRunner(List.of(normalPlugin, throwingPlugin));
 
         assertDoesNotThrow(() -> runner.onInvocationEnd(invocationEndInfo()));
         assertEquals(List.of("p2:onInvocationEnd"), calls);

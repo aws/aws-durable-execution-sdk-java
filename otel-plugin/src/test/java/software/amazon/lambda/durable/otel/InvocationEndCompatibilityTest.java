@@ -14,7 +14,6 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
-import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -25,19 +24,18 @@ import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
-import software.amazon.lambda.durable.plugin.HandlerScoped;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 
-/** Preserves legacy completion-thread dispatch without promising owner affinity for precompleted futures. */
+/** Verifies invocation-hook thread affinity, including executors that complete tasks before submission returns. */
 class InvocationEndCompatibilityTest {
     @ParameterizedTest
     @CsvSource({
         "false,false,false", "true,false,false", "false,true,false", "true,true,false",
         "false,false,true", "true,false,true", "false,true,true", "true,true,true"
     })
-    void legacyEndThread(boolean mixed, boolean precompleted, boolean pending) throws Exception {
+    void invocationEndRunsOnHandlerThread(boolean mixed, boolean precompleted, boolean pending) throws Exception {
         var local = new ThreadLocal<String>();
         var observations = new ArrayList<Observation>();
         var callerThread = new AtomicReference<Thread>();
@@ -139,9 +137,9 @@ class InvocationEndCompatibilityTest {
                     observations.add(new Observation(
                             startThread.get(), endThread.get(), endValue.get(), after, previous.get(), endCalls.get()));
                     assertEquals(
-                            mixed ? List.of("otel", "legacy") : List.of("legacy"),
+                            mixed ? List.of("legacy", "otel") : List.of("legacy"),
                             endOrder,
-                            "scoped and legacy end hooks retain registration order and execute once");
+                            "all end hooks unwind registration order and execute once");
                 } finally {
                     release.countDown();
                 }
@@ -149,15 +147,11 @@ class InvocationEndCompatibilityTest {
             for (int index = 0; index < observations.size(); index++) {
                 var observation = observations.get(index);
                 assertEquals(1, observation.endCalls());
-                if (precompleted) {
-                    assertSame(callerThread.get(), observation.endThread(), "completed futures keep caller dispatch");
-                } else if (!pending) {
-                    assertSame(observation.startThread(), observation.endThread());
-                    assertEquals("inv" + (index + 1), observation.endValue());
-                    assertNull(observation.workerAfter(), "legacy end hook clears its original worker value");
-                    assertNull(observation.previous(), "reused worker must not retain the prior invocation");
-                }
-                // Suspension can complete from the handler or checkpoint processing; no owner-thread guarantee.
+                assertSame(observation.startThread(), observation.endThread());
+                assertNotSame(callerThread.get(), observation.endThread());
+                assertEquals("inv" + (index + 1), observation.endValue());
+                assertNull(observation.workerAfter(), "end hook clears its original worker value");
+                assertNull(observation.previous(), "reused worker must not retain the prior invocation");
             }
         } finally {
             caller.shutdownNow();
@@ -168,7 +162,7 @@ class InvocationEndCompatibilityTest {
     }
 
     @Test
-    void scopedSuspensionWithinBudgetKeepsLegacyCleanupOnTheReusedWorker() throws Exception {
+    void suspendedInvocationWaitsForEndOnTheReusedWorker() throws Exception {
         var local = new ThreadLocal<String>();
         var callerThread = new AtomicReference<Thread>();
         var callers = Executors.newSingleThreadExecutor(task -> {
@@ -217,7 +211,10 @@ class InvocationEndCompatibilityTest {
                         config));
                 try {
                     assertTrue(scoped.closeEntered.await(3, TimeUnit.SECONDS));
-                    awaitCallerHandoff(callerThread.get());
+                    assertThrows(
+                            TimeoutException.class,
+                            () -> result.get(600, TimeUnit.MILLISECONDS),
+                            "a blocked end hook has no fallback to the caller thread");
                     scoped.releaseClose.countDown();
                     assertEquals(
                             ExecutionStatus.PENDING,
@@ -238,18 +235,6 @@ class InvocationEndCompatibilityTest {
         }
     }
 
-    private static void awaitCallerHandoff(Thread caller) {
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
-        while (System.nanoTime() < deadline) {
-            if (Arrays.stream(caller.getStackTrace())
-                    .anyMatch(frame -> frame.getClassName().equals(DurableExecutor.class.getName())
-                            && frame.getMethodName().equals("awaitHandlerScopes"))) return;
-            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
-        }
-        fail("The caller did not begin its bounded cleanup handoff");
-    }
-
-    @HandlerScoped(PausingOtelPlugin.Opener.class)
     private static final class PausingOtelPlugin extends InvocationOtelPlugin {
         private final CountDownLatch closeEntered = new CountDownLatch(1);
         private final CountDownLatch releaseClose = new CountDownLatch(1);
@@ -260,18 +245,13 @@ class InvocationEndCompatibilityTest {
                     OtelPluginConfig.builder().enableMdc(false).build());
         }
 
-        public static final class Opener implements Function<PausingOtelPlugin, AutoCloseable> {
-            @Override
-            public AutoCloseable apply(PausingOtelPlugin plugin) {
-                var actual = new InvocationOtelPlugin.HandlerScopeOpener().apply(plugin);
-                return () -> {
-                    try {
-                        if (actual != null) actual.close();
-                    } finally {
-                        plugin.closeEntered.countDown();
-                        await(plugin.releaseClose);
-                    }
-                };
+        @Override
+        public void onInvocationEnd(InvocationEndInfo info) {
+            try {
+                super.onInvocationEnd(info);
+            } finally {
+                closeEntered.countDown();
+                await(releaseClose);
             }
         }
     }
