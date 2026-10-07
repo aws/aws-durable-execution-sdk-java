@@ -77,12 +77,19 @@ jobs:
       # bundled examples/java. Path is relative to the conformance workspace where the SDK is
       # checked out (.build/durable-sdk).
       examples_dir: .build/durable-sdk/conformance-tests-otel
+      # Java 21 on either runner image: GitHub-hosted runners expose it as
+      # JAVA_HOME_21_X64, the CodeBuild standard image installs Corretto under
+      # /usr/lib/jvm. Fail if neither is present rather than building with the
+      # default JDK.
       setup_command: |
-        if [ -z "${JAVA_HOME_21_X64:-}" ]; then
+        if [ -n "${JAVA_HOME_21_X64:-}" ]; then
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+        elif [ -x /usr/lib/jvm/java-21-amazon-corretto/bin/java ]; then
+          export JAVA_HOME=/usr/lib/jvm/java-21-amazon-corretto
+        else
           echo "The runner does not provide Java 21"
           exit 1
         fi
-        export JAVA_HOME="$JAVA_HOME_21_X64"
         export PATH="$JAVA_HOME/bin:$PATH"
         java -version
       prepare_command: |
