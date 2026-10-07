@@ -84,8 +84,14 @@ jobs:
         set -euo pipefail
         if [ -n "${JAVA_HOME_21_X64:-}" ]; then
           export JAVA_HOME="$JAVA_HOME_21_X64"
+        elif [ -x /usr/lib/jvm/java-21-amazon-corretto/bin/java ]; then
+          export JAVA_HOME=/usr/lib/jvm/java-21-amazon-corretto
         elif [ -z "${JAVA_HOME:-}" ]; then
           export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
+        fi
+        if [ ! -x "$JAVA_HOME/bin/java" ] || [ ! -x "$JAVA_HOME/bin/javac" ]; then
+          echo "Selected JAVA_HOME=$JAVA_HOME is not a complete JDK"
+          exit 1
         fi
         export PATH="$JAVA_HOME/bin:$PATH"
         java_spec=$(java -XshowSettings:properties -version 2>&1 | awk '$1 == "java.specification.version" {print $3}')
