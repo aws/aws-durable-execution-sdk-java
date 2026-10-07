@@ -277,6 +277,9 @@ public abstract class BaseDurableOperation {
             executionManager.setCurrentThreadContext(new ThreadContext(operationId, threadType));
 
             try {
+                if (executionManager.isCheckpointTokenRevoked()) {
+                    throw new SuspendExecutionException();
+                }
                 runnable.run();
             } catch (Throwable throwable) {
                 // Operations wrap the user function and handle all outcomes except for SuspendExecutionException.

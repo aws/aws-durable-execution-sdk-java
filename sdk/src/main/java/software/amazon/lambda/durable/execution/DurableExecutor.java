@@ -114,138 +114,30 @@ public class DurableExecutor {
                     },
                     config.getExecutorService()); // Get executor from config for running user code
 
-            // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
-            // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
-            // failure.
             try {
-                return executionManager
+                // User work may be queued on a bounded executor. Drain on the invocation thread so completing the
+                // handler cannot occupy the executor thread that the queued work needs.
+                var handlerResult = executionManager
                         .runUntilCompleteOrSuspend(handlerFuture)
-                        .handle((result, ex) -> {
-                            if (ex != null) {
-                                // an exception thrown from handlerFuture or suspension/termination occurred
-                                Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);
-
-                                // A checkpoint response can omit the checkpoint token on a thread other than the one
-                                // that produced `cause`, e.g. an unfinished map/parallel branch's checkpoint that the
-                                // handler never awaited. This consult must win over both the retryable-rethrow and
-                                // FAILED exits below: resending the omitted token would fail one call later, so this
-                                // invocation must return PENDING and must not issue further checkpoints. A plain
-                                // SuspendExecutionException is ordinary control flow, not an execution error, so
-                                // plugins only see `cause` when it is a genuine error the latch happened to
-                                // accompany.
-                                if (cause instanceof SuspendExecutionException) {
-                                    fireOnInvocationEnd(
-                                            pluginRunner,
-                                            executionManager,
-                                            requestId,
-                                            executionArn,
-                                            isFirstInvocation,
-                                            InvocationStatus.PENDING,
-                                            null,
-                                            pluginExecutionInput.get(),
-                                            null);
-                                    return DurableExecutionOutput.pending();
-                                }
-                                if (isCheckpointTokenRevokedAfterTerminalPreparation(executionManager)) {
-                                    fireOnInvocationEnd(
-                                            pluginRunner,
-                                            executionManager,
-                                            requestId,
-                                            executionArn,
-                                            isFirstInvocation,
-                                            InvocationStatus.PENDING,
-                                            cause,
-                                            pluginExecutionInput.get(),
-                                            null);
-                                    return DurableExecutionOutput.pending();
-                                }
-
-                                // let the backend retry the invocation if the exception is retryable
-                                if (cause
-                                                instanceof
-                                                UnrecoverableDurableExecutionException
-                                                        unrecoverableDurableExecutionException
-                                        && unrecoverableDurableExecutionException.isRetryable()) {
-                                    fireOnInvocationEnd(
-                                            pluginRunner,
-                                            executionManager,
-                                            requestId,
-                                            executionArn,
-                                            isFirstInvocation,
-                                            InvocationStatus.RETRYING,
-                                            cause,
-                                            pluginExecutionInput.get(),
-                                            null);
-                                    throw unrecoverableDurableExecutionException;
-                                }
-
-                                // fail the execution otherwise
-                                logger.debug("Execution failed: {}", cause.getMessage());
-                                fireOnInvocationEnd(
-                                        pluginRunner,
-                                        executionManager,
-                                        requestId,
-                                        executionArn,
-                                        isFirstInvocation,
-                                        InvocationStatus.FAILED,
-                                        cause,
-                                        pluginExecutionInput.get(),
-                                        null);
-                                return DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
-                            }
-                            // user handler complete successfully
-                            logger.debug("Execution completed");
-
-                            if (isCheckpointTokenRevokedAfterTerminalPreparation(executionManager)) {
-                                fireOnInvocationEnd(
-                                        pluginRunner,
-                                        executionManager,
-                                        requestId,
-                                        executionArn,
-                                        isFirstInvocation,
-                                        InvocationStatus.PENDING,
-                                        null,
-                                        pluginExecutionInput.get(),
-                                        null);
-                                return DurableExecutionOutput.pending();
-                            }
-
-                            var outputPayload = config.getSerDes().serialize(result);
-                            try {
-                                var output = DurableExecutionOutput.success(
-                                        handleLargePayload(executionManager, outputPayload));
-                                fireOnInvocationEnd(
-                                        pluginRunner,
-                                        executionManager,
-                                        requestId,
-                                        executionArn,
-                                        isFirstInvocation,
-                                        InvocationStatus.SUCCEEDED,
-                                        null,
-                                        pluginExecutionInput.get(),
-                                        result);
-                                return output;
-                            } catch (SuspendExecutionException suspendExecutionException) {
-                                // The oversized-result checkpoint (handleLargePayload) never reached the service, or
-                                // this invocation's checkpoint response already omitted the token: either way the
-                                // execution's terminal update was not recorded, so this is not a success. Report
-                                // PENDING, the same outcome the ex != null branch above reports for an unawaited
-                                // checkpoint. A plain SuspendExecutionException here is ordinary control flow, not an
-                                // execution error, so plugins see no error.
-                                fireOnInvocationEnd(
-                                        pluginRunner,
-                                        executionManager,
-                                        requestId,
-                                        executionArn,
-                                        isFirstInvocation,
-                                        InvocationStatus.PENDING,
-                                        null,
-                                        pluginExecutionInput.get(),
-                                        null);
-                                return DurableExecutionOutput.pending();
-                            }
-                        })
+                        .handle(HandlerResult::new)
                         .join();
+                executionManager.drainOperations();
+
+                var outcome = finishInvocation(handlerResult, executionManager, config);
+                fireOnInvocationEnd(
+                        pluginRunner,
+                        executionManager,
+                        requestId,
+                        executionArn,
+                        isFirstInvocation,
+                        outcome.status(),
+                        outcome.error(),
+                        pluginExecutionInput.get(),
+                        outcome.status() == InvocationStatus.SUCCEEDED ? handlerResult.result() : null);
+                if (outcome.status() == InvocationStatus.RETRYING) {
+                    ExceptionHelper.sneakyThrow(outcome.error());
+                }
+                return outcome.output();
             } catch (CompletionException e) {
                 // unwrap the CompletionException and rethrow the wrapped exception
                 ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(e));
@@ -254,12 +146,44 @@ public class DurableExecutor {
         }
     }
 
-    private static boolean isCheckpointTokenRevokedAfterTerminalPreparation(ExecutionManager executionManager) {
-        // A checkpoint response can omit the checkpoint token on a thread other than the one that produced the handler
-        // result/error, e.g. an unawaited stepAsync checkpoint. Drain already-started work before any terminal exit so
-        // a late token revocation wins over SUCCEEDED, FAILED, or RETRYING.
-        executionManager.prepareForTerminalDecision();
-        return executionManager.isCheckpointTokenRevoked();
+    private record HandlerResult(Object result, Throwable error) {}
+
+    private record InvocationOutcome(DurableExecutionOutput output, InvocationStatus status, Throwable error) {}
+
+    private static InvocationOutcome finishInvocation(
+            HandlerResult handlerResult, ExecutionManager executionManager, DurableConfig config) {
+        var cause = ExceptionHelper.unwrapCompletableFuture(handlerResult.error());
+        if (executionManager.isCheckpointTokenRevoked() || cause instanceof SuspendExecutionException) {
+            return new InvocationOutcome(
+                    DurableExecutionOutput.pending(),
+                    InvocationStatus.PENDING,
+                    cause instanceof SuspendExecutionException ? null : cause);
+        }
+        if (cause instanceof UnrecoverableDurableExecutionException error && error.isRetryable()) {
+            return new InvocationOutcome(null, InvocationStatus.RETRYING, cause);
+        }
+        if (cause != null) {
+            logger.debug("Execution failed: {}", cause.getMessage());
+            return new InvocationOutcome(
+                    DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes())),
+                    InvocationStatus.FAILED,
+                    cause);
+        }
+
+        // Polling has stopped and submitted checkpoints have settled, so only the terminal result can use the token.
+        var outputPayload = config.getSerDes().serialize(handlerResult.result());
+        try {
+            logger.debug("Execution completed");
+            return new InvocationOutcome(
+                    DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload)),
+                    InvocationStatus.SUCCEEDED,
+                    null);
+        } catch (CompletionException e) {
+            if (ExceptionHelper.unwrapCompletableFuture(e) instanceof SuspendExecutionException) {
+                return new InvocationOutcome(DurableExecutionOutput.pending(), InvocationStatus.PENDING, null);
+            }
+            throw e;
+        }
     }
 
     private static void fireOnInvocationEnd(
@@ -298,28 +222,15 @@ public class DurableExecutor {
                     payloadSize,
                     LAMBDA_RESPONSE_SIZE_LIMIT);
 
-            // Checkpoint the large result and wait for it to complete. This must report whether the service
-            // accepted this EXECUTION update rather than assume it from the future completing: CheckpointManager
-            // throws SuspendExecutionException, instead of completing normally, whenever the update is abandoned
-            // (the token was already revoked, or execution processing had already stopped), so join() surfaces that
-            // as a CompletionException here rather than blocking. Unwrap and rethrow it unchanged so the caller can
-            // pattern-match a plain SuspendExecutionException the same way the rest of this class already does.
-            try {
-                executionManager
-                        .sendOperationUpdate(OperationUpdate.builder()
-                                .type(OperationType.EXECUTION)
-                                .id(executionManager.getExecutionOperation().id())
-                                .action(OperationAction.SUCCEED)
-                                .payload(outputPayload)
-                                .build())
-                        .join();
-            } catch (CompletionException e) {
-                var cause = ExceptionHelper.unwrapCompletableFuture(e);
-                if (cause instanceof SuspendExecutionException suspendExecutionException) {
-                    throw suspendExecutionException;
-                }
-                throw e;
-            }
+            // Checkpoint the large result and wait for it to complete
+            executionManager
+                    .sendOperationUpdate(OperationUpdate.builder()
+                            .type(OperationType.EXECUTION)
+                            .id(executionManager.getExecutionOperation().id())
+                            .action(OperationAction.SUCCEED)
+                            .payload(outputPayload)
+                            .build())
+                    .join();
 
             // Return empty result, we checkpointed the data manually
             logger.debug("Execution completed (large response checkpointed)");

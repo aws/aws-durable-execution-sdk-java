@@ -596,18 +596,17 @@ public class ExecutionManager implements SafeCloseable {
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-        prepareForTerminalDecision();
-        validateExecutorPool();
-        checkpointManager.shutdown();
+        drainOperations();
     }
 
     /**
-     * Waits for already-started operation handlers and checkpoint requests to finish so terminal executor decisions
-     * observe any state changes they caused.
+     * Settles submitted operation handlers and stops polling before flushing checkpoints. Terminal decisions therefore
+     * observe token withdrawal without allowing later polls to change that decision.
      */
-    void prepareForTerminalDecision() {
+    void drainOperations() {
         waitForRunningUserHandlers();
-        checkpointManager.awaitPendingCheckpoints();
+        validateExecutorPool();
+        checkpointManager.shutdown();
     }
 
     private void waitForRunningUserHandlers() {
@@ -682,13 +681,6 @@ public class ExecutionManager implements SafeCloseable {
         return executionExceptionFuture.isCompletedExceptionally();
     }
 
-    /**
-     * Returns {@code true} once a checkpoint response has omitted this invocation's checkpoint token. When a checkpoint
-     * response does not include a checkpoint token, the current invocation must return PENDING and must not issue
-     * further checkpoints. DurableExecutor consults this before any exit that would otherwise report SUCCEEDED or
-     * FAILED, because the token is spent and resending it, or reporting an outcome the service was never told about, is
-     * not possible once this is {@code true}.
-     */
     public boolean isCheckpointTokenRevoked() {
         return checkpointManager.isCheckpointTokenRevoked();
     }

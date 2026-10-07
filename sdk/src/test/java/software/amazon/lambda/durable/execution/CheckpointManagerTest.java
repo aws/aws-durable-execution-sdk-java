@@ -93,7 +93,9 @@ class CheckpointManagerTest {
                 .action(OperationAction.START)
                 .build();
 
-        guardedBatcher.checkpoint(update).get(200, TimeUnit.MILLISECONDS);
+        var error = assertThrows(
+                Exception.class, () -> guardedBatcher.checkpoint(update).get(200, TimeUnit.MILLISECONDS));
+        assertInstanceOf(SuspendExecutionException.class, error.getCause());
 
         verifyNoInteractions(client);
         verify(finishCheckpointProcessing, never()).run();
@@ -754,9 +756,67 @@ class CheckpointManagerTest {
         assertFalse(revocableBatcher.isCheckpointTokenRevoked());
         verify(signalSuspension, never()).run();
 
-        revocableBatcher.awaitPendingCheckpoints();
         revocableBatcher.shutdown();
         verify(client, times(1)).checkpoint(anyString(), anyString(), anyList());
+    }
+
+    @Test
+    void checkpointBatch_terminalTokenWithdrawal_preservesInlineStateWithoutPagination() throws Exception {
+        var operation = Operation.builder()
+                .id("exec-op")
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.SUCCEEDED)
+                .build();
+        when(client.checkpoint(any(), any(), any()))
+                .thenReturn(CheckpointDurableExecutionResponse.builder()
+                        .newExecutionState(CheckpointUpdatedExecutionState.builder()
+                                .operations(operation)
+                                .nextMarker("unused")
+                                .build())
+                        .build());
+
+        batcher.checkpoint(OperationUpdate.builder()
+                        .id("exec-op")
+                        .type(OperationType.EXECUTION)
+                        .action(OperationAction.SUCCEED)
+                        .build())
+                .get(1, TimeUnit.SECONDS);
+
+        assertEquals(List.of(operation), callbackOperations);
+        assertFalse(batcher.isCheckpointTokenRevoked());
+        verify(client, never()).getExecutionState(any(), any(), any());
+        batcher.shutdown();
+    }
+
+    @Test
+    void checkpointBatch_terminalTokenWithdrawal_rejectsLaterCheckpointsAndPollers() throws Exception {
+        when(client.checkpoint(any(), any(), any()))
+                .thenReturn(CheckpointDurableExecutionResponse.builder().build());
+        var update = OperationUpdate.builder()
+                .id("exec-op")
+                .type(OperationType.EXECUTION)
+                .action(OperationAction.SUCCEED)
+                .build();
+
+        batcher.checkpoint(update).get(1, TimeUnit.SECONDS);
+
+        assertTrue(batcher.checkpoint(update).isCompletedExceptionally());
+        assertTrue(batcher.pollForUpdate("late").isCompletedExceptionally());
+        assertFalse(batcher.isCheckpointTokenRevoked());
+        batcher.shutdown();
+        verify(client, times(1)).checkpoint(any(), any(), any());
+    }
+
+    @Test
+    void shutdown_rejectsLaterPollRegistration() throws Exception {
+        batcher.shutdown();
+
+        var poller = batcher.pollForUpdate("late", Instant.now().plusSeconds(60));
+        assertTrue(poller.isCompletedExceptionally());
+        var error = assertThrows(Exception.class, () -> poller.get(1, TimeUnit.SECONDS));
+        assertInstanceOf(SuspendExecutionException.class, error.getCause());
+        batcher.shutdown();
+        verifyNoInteractions(client);
     }
 
     @Test
