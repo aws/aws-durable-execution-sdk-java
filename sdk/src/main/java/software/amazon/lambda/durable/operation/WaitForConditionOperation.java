@@ -20,6 +20,7 @@ import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
@@ -129,11 +130,14 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
                 op -> isReadyOrTerminal(op) ? CompletableFuture.completedFuture(op) : pollUntilReady());
     }
 
-    private static boolean isReadyOrTerminal(Operation operation) {
-        return operation != null
-                && (operation.status() == OperationStatus.READY
-                        || operation.status() == OperationStatus.SUCCEEDED
-                        || operation.status() == OperationStatus.FAILED);
+    private boolean isReadyOrTerminal(Operation operation) {
+        if (operation == null) return false;
+        var status = operation.status();
+        if (status == null || status == OperationStatus.UNKNOWN_TO_SDK_VERSION) {
+            throw terminateExecutionWithIllegalDurableOperationException(
+                    "Unexpected waitForCondition status: " + operation.statusAsString());
+        }
+        return status == OperationStatus.READY || ExecutionManager.isTerminalStatus(status);
     }
 
     private void executeCheckLogic(T currentState, int attempt) {
