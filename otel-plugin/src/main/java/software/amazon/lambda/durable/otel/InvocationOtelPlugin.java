@@ -339,7 +339,13 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             workflowSpan.end();
         }
         OtelPluginSupport.exportExecutionRoot(
-                tracer, idGenerator, executionAncestor, durableExecutionArn, executionStartTime, samplingIntent);
+                tracer,
+                idGenerator,
+                executionAncestor,
+                durableExecutionArn,
+                executionStartTime,
+                samplingIntent,
+                sdkTracerProvider != null);
         workflowSpanContext = null;
         executionAncestor = null;
         executionStartTime = null;
@@ -652,7 +658,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      */
     private Context withDurableDecision(Context context) {
         var intent = samplingIntent;
-        return intent != null ? DurableSamplingDecision.store(context, intent) : context;
+        return intent != null && sdkTracerProvider != null ? DurableSamplingDecision.store(context, intent) : context;
     }
 
     /**

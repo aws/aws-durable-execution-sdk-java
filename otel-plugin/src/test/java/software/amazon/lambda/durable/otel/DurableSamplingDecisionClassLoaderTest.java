@@ -3,17 +3,38 @@
 package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
+import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.sdk.trace.IdGenerator;
+import io.opentelemetry.sdk.trace.ReadWriteSpan;
+import io.opentelemetry.sdk.trace.ReadableSpan;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.SpanProcessor;
+import io.opentelemetry.sdk.trace.samplers.Sampler;
 import io.opentelemetry.sdk.trace.samplers.SamplingDecision;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationEndInfo;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.plugin.InvocationStatus;
 
 /**
  * Verifies the durable sampling decision crosses the application/Java-agent class-loader boundary.
@@ -79,6 +100,103 @@ class DurableSamplingDecisionClassLoaderTest {
 
             // After the scope closes, the bridge is cleared and the agent-side read returns null (delegate applies).
             assertNull(get.invoke(null, Context.root()), "Closing the scope clears the cross-loader decision");
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"InvocationOtelPlugin", "ExecutionOtelPlugin"})
+    void agentProcessorForwardingParentCannotReuseApplicationSamplingIntent(String pluginName) throws Exception {
+        var previousHeader = System.getProperty("com.amazonaws.xray.traceHeader");
+        GlobalOpenTelemetry.resetForTest();
+        OtelPluginAutoConfigurationState.markInstalled();
+        System.setProperty("com.amazonaws.xray.traceHeader", "Root=1-6955b900-123456789012345678901234;Sampled=1");
+        try (var appLoader = pluginClassLoader();
+                var agentLoader = pluginClassLoader()) {
+            var appSamplerType = Class.forName(DurableSampler.class.getName(), true, appLoader);
+            var appWrap = appSamplerType.getDeclaredMethod("wrap", Sampler.class);
+            appWrap.setAccessible(true);
+            var agentSamplerType = Class.forName(DurableSampler.class.getName(), true, agentLoader);
+            var agentWrap = agentSamplerType.getDeclaredMethod("wrap", Sampler.class);
+            agentWrap.setAccessible(true);
+            var agentIdType = Class.forName(DeterministicIdGenerator.class.getName(), true, agentLoader);
+            var callbacks = new AtomicInteger();
+            var leakedSampling = new AtomicBoolean();
+            try (var appProvider = SdkTracerProvider.builder()
+                            .setSampler((Sampler) appWrap.invoke(null, Sampler.alwaysOff()))
+                            .build();
+                    var agentProvider = SdkTracerProvider.builder()
+                            .setSampler((Sampler) agentWrap.invoke(null, Sampler.alwaysOff()))
+                            .setIdGenerator(
+                                    (IdGenerator) agentIdType.getConstructor().newInstance())
+                            .addSpanProcessor(new SpanProcessor() {
+                                @Override
+                                public void onStart(Context parent, ReadWriteSpan span) {
+                                    if (!span.getName().equals("DurableExecutionRoot")) return;
+                                    var unrelated = appProvider
+                                            .get("processor")
+                                            .spanBuilder("unrelated-forwarded-parent")
+                                            .setParent(parent)
+                                            .startSpan();
+                                    callbacks.incrementAndGet();
+                                    leakedSampling.compareAndSet(false, unrelated.isRecording());
+                                    unrelated.end();
+                                }
+
+                                @Override
+                                public boolean isStartRequired() {
+                                    return true;
+                                }
+
+                                @Override
+                                public void onEnd(ReadableSpan span) {}
+
+                                @Override
+                                public boolean isEndRequired() {
+                                    return false;
+                                }
+                            })
+                            .build()) {
+                var hiddenAgentProvider = new TracerProvider() {
+                    @Override
+                    public Tracer get(String name) {
+                        return agentProvider.get(name);
+                    }
+
+                    @Override
+                    public Tracer get(String name, String version) {
+                        return agentProvider.get(name, version);
+                    }
+                };
+                GlobalOpenTelemetry.set(new OpenTelemetry() {
+                    @Override
+                    public TracerProvider getTracerProvider() {
+                        return hiddenAgentProvider;
+                    }
+
+                    @Override
+                    public ContextPropagators getPropagators() {
+                        return ContextPropagators.noop();
+                    }
+                });
+                var plugin = (DurableExecutionPlugin)
+                        Class.forName("software.amazon.lambda.durable.otel." + pluginName, true, appLoader)
+                                .getConstructor()
+                                .newInstance();
+                var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/test/id";
+                for (var first : new boolean[] {true, false}) {
+                    plugin.onInvocationStart(new InvocationInfo("request", arn, first, Instant.EPOCH));
+                    plugin.onInvocationEnd(
+                            new InvocationEndInfo("request", arn, first, InvocationStatus.PENDING, null));
+                }
+                assertEquals(2, callbacks.get(), "Both invocation roots must reach the real agent-side processor");
+                assertFalse(
+                        leakedSampling.get(), "The supplied parent must not override the app provider's DROP policy");
+            }
+        } finally {
+            GlobalOpenTelemetry.resetForTest();
+            OtelPluginAutoConfigurationState.resetInstalledForTest();
+            if (previousHeader == null) System.clearProperty("com.amazonaws.xray.traceHeader");
+            else System.setProperty("com.amazonaws.xray.traceHeader", previousHeader);
         }
     }
 
