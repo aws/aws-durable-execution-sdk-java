@@ -29,6 +29,7 @@ on:
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
       - 'insight-plugin/**'
+      - 'otel-plugin/**'
       - 'examples/**'
       - 'pom.xml'
   push:
@@ -42,6 +43,7 @@ on:
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
       - 'insight-plugin/**'
+      - 'otel-plugin/**'
       - 'examples/**'
       - 'pom.xml'
 
