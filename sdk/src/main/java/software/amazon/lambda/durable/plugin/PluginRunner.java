@@ -11,7 +11,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Composes multiple {@link DurableExecutionPlugin} instances into a single dispatcher.
  *
- * <p>Event hooks are fire-and-forget: each plugin is called in order, errors are swallowed.
+ * <p>Event hooks call each plugin in order. Exceptions and nonfatal linkage failures are isolated; other errors,
+ * including fatal JVM failures, retain their existing propagation behavior.
  *
  * <p>{@code onInvocationEnd} is awaited (the SDK blocks until it returns) to allow plugins to flush data before Lambda
  * freezes.
@@ -44,13 +45,15 @@ public class PluginRunner {
 
     // ─── Event hooks ─────────────────────────────────────────────────────
 
-    /** Calls a void hook on all plugins, swallowing any errors. */
+    /** Calls a void hook on all plugins, isolating exceptions and incompatible binary dependencies. */
     private void run(Consumer<DurableExecutionPlugin> hook) {
         for (var plugin : plugins) {
             try {
                 hook.accept(plugin);
             } catch (Exception e) {
                 logger.warn("Plugin hook threw exception", e);
+            } catch (LinkageError e) {
+                logger.warn("Plugin hook could not link a dependency; check SDK/plugin dependency compatibility", e);
             }
         }
     }

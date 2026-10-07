@@ -151,6 +151,19 @@ final class OtelPluginSupport {
      * @return the resolved provider and tracer, or {@code null} when telemetry must be disabled for this invocation
      */
     static ProviderSetup tryResolveGlobalProvider(String instrumentationName, String pluginName) {
+        try {
+            return resolveGlobalProvider(instrumentationName, pluginName);
+        } catch (LinkageError error) {
+            logger.warn(
+                    "{} telemetry is disabled for this invocation because the visible OpenTelemetry dependencies "
+                            + "are incompatible. Align the OpenTelemetry API, SDK, and Java agent versions.",
+                    pluginName,
+                    error);
+            return null;
+        }
+    }
+
+    private static ProviderSetup resolveGlobalProvider(String instrumentationName, String pluginName) {
         if (!OtelPluginAutoConfigurationState.isInstalled()) {
             logger.warn(
                     "{} telemetry is disabled for this invocation because "
@@ -158,6 +171,9 @@ final class OtelPluginSupport {
                             + "will be retried on the next invocation. {}",
                     pluginName,
                     javaAgentExtensionsDiagnostic());
+            return null;
+        }
+        if (!supportsGlobalProviderLookup(pluginName)) {
             return null;
         }
         if (!GlobalOpenTelemetry.isSet()) {
@@ -184,6 +200,22 @@ final class OtelPluginSupport {
                 tracerProvider.getClass().getName());
         return new ProviderSetup(
                 getSdkTracerProviderForFlush(tracerProvider, pluginName), tracerProvider.get(instrumentationName));
+    }
+
+    private static boolean supportsGlobalProviderLookup(String pluginName) {
+        try {
+            GlobalOpenTelemetry.class.getMethod("isSet");
+            GlobalOpenTelemetry.class.getMethod("getOrNoop");
+            return true;
+        } catch (NoSuchMethodException missingApi) {
+            logger.warn(
+                    "{} telemetry is disabled for this invocation because the visible OpenTelemetry API lacks {}. "
+                            + "Global provider binding requires GlobalOpenTelemetry.isSet() and getOrNoop(); "
+                            + "align the API, SDK, and Java agent versions.",
+                    pluginName,
+                    missingApi.getMessage());
+            return false;
+        }
     }
 
     /** Returns the SdkTracerProvider for flushing, or null if the provider is wrapped by the agent classloader. */
