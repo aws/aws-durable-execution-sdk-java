@@ -4,7 +4,11 @@ package software.amazon.lambda.durable.execution;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.UndeclaredThrowableException;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
@@ -79,6 +83,7 @@ public class DurableExecutor {
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
             var pluginExecutionInput = new AtomicReference<>();
+            var invocationStarted = new AtomicBoolean();
             var hasHandlerScope = new AtomicBoolean();
             var handlerFuture = supplyHandler(
                     () -> {
@@ -104,7 +109,7 @@ public class DurableExecutor {
                         // inject ThreadLocal objects, update MDC, etc.
                         // executionStartTime comes from the initial EXECUTION operation in the first backend event.
                         if (!pluginRunner.isEmpty()) {
-                            pluginRunner.onInvocationStart(new InvocationInfo(
+                            var invocationInfo = new InvocationInfo(
                                     requestId,
                                     executionArn,
                                     isFirstInvocation,
@@ -115,7 +120,9 @@ public class DurableExecutor {
                                             executionManager.getInitialOperationIds()),
                                     PluginInfoConverter.toOperationItemMap(
                                             executionManager.getUpdatedOperationsSnapshot(),
-                                            executionManager.getInitialOperationIds())));
+                                            executionManager.getInitialOperationIds()));
+                            invocationStarted.set(true);
+                            pluginRunner.onInvocationStart(invocationInfo);
                         }
                         if (inputFailure != null) {
                             ExceptionHelper.sneakyThrow(inputFailure);
@@ -159,6 +166,7 @@ public class DurableExecutor {
                                 // return PENDING if it's SuspendExecutionException
                                 if (cause instanceof SuspendExecutionException) {
                                     fireOnInvocationEnd(
+                                            invocationStarted.get(),
                                             scopeFatal,
                                             pluginRunner,
                                             executionManager,
@@ -179,6 +187,7 @@ public class DurableExecutor {
                                                         unrecoverableDurableExecutionException
                                         && unrecoverableDurableExecutionException.isRetryable()) {
                                     fireOnInvocationEnd(
+                                            invocationStarted.get(),
                                             scopeFatal,
                                             pluginRunner,
                                             executionManager,
@@ -195,6 +204,7 @@ public class DurableExecutor {
                                 // fail the execution otherwise
                                 logger.debug("Execution failed: {}", cause.getMessage());
                                 fireOnInvocationEnd(
+                                        invocationStarted.get(),
                                         scopeFatal,
                                         pluginRunner,
                                         executionManager,
@@ -213,6 +223,7 @@ public class DurableExecutor {
                             var output =
                                     DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
                             fireOnInvocationEnd(
+                                    invocationStarted.get(),
                                     scopeFatal,
                                     pluginRunner,
                                     executionManager,
@@ -364,7 +375,63 @@ public class DurableExecutor {
         };
     }
 
+    /** MDC is ancillary to end dispatch; ordinary adapter failures must not replace the selected outcome. */
+    private static SafeCloseable preserveEndMdc() {
+        SafeCloseable restore;
+        try {
+            restore = restoreMdcOnClose();
+        } catch (Throwable failure) {
+            reportEndMdcFailure(failure);
+            return () -> {};
+        }
+        return () -> {
+            try {
+                restore.close();
+            } catch (Throwable failure) {
+                reportEndMdcFailure(failure);
+            }
+        };
+    }
+
+    private static void reportEndMdcFailure(Throwable failure) {
+        throwIfMdcFatal(failure);
+        try {
+            // Do not ask a malformed Throwable for its message or cause again while logging.
+            logger.warn(
+                    "Could not preserve MDC around invocation-end dispatch; preserving execution outcome ({})",
+                    failure.getClass().getName());
+        } catch (Throwable loggingFailure) {
+            // An MDC-backed logger may encounter the same adapter failure while reporting it.
+            throwIfMdcFatal(loggingFailure);
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private static void throwIfMdcFatal(Throwable failure) {
+        if (failure instanceof VirtualMachineError fatal) throw fatal;
+        if (failure instanceof ThreadDeath fatal) throw fatal;
+        var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        var cause = failure;
+        while (seen.add(cause)) {
+            if (cause instanceof VirtualMachineError fatal) throw fatal;
+            if (cause instanceof ThreadDeath fatal) throw fatal;
+            if (!(cause instanceof CompletionException
+                    || cause instanceof ExecutionException
+                    || cause instanceof InvocationTargetException
+                    || cause instanceof UndeclaredThrowableException)) return;
+            try {
+                cause = cause.getCause();
+            } catch (VirtualMachineError | ThreadDeath fatal) {
+                throw fatal;
+            } catch (Throwable unreadableCause) {
+                return;
+            }
+            if (cause == null) return;
+        }
+    }
+
     private static void fireOnInvocationEnd(
+            boolean invocationStarted,
             AtomicReference<Error> scopeFatal,
             PluginRunner pluginRunner,
             ExecutionManager executionManager,
@@ -375,14 +442,14 @@ public class DurableExecutor {
             Throwable error,
             Object executionInput,
             Object executionResult) {
-        if (pluginRunner.isEmpty()) {
+        if (pluginRunner.isEmpty() || !invocationStarted) {
             return;
         }
         // Freeze the selected end snapshot here. A scope fatal already observed still escapes before dispatch;
         // a later scope fatal escapes its owner instead of rewriting this caller outcome after finalization.
         throwIfScopeFatal(scopeFatal);
         // Finalization can run on the invocation caller rather than the handler worker.
-        try (var ignored = restoreMdcOnClose()) {
+        try (var ignored = preserveEndMdc()) {
             pluginRunner.onInvocationEnd(new InvocationEndInfo(
                     requestId,
                     executionArn,
