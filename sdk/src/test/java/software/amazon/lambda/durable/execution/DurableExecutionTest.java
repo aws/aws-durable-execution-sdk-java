@@ -504,7 +504,12 @@ class DurableExecutionTest {
                 (userInput, ctx) -> ctx.step("test1", String.class, stepCtx -> "Result 1: " + userInput),
                 config);
 
-        assertEquals(ExecutionStatus.SUCCEEDED, output1.status(), () -> "First invocation error: " + output1.error());
+        assertEquals(
+                ExecutionStatus.SUCCEEDED,
+                output1.status(),
+                () -> output1.error() == null
+                        ? "No error payload"
+                        : output1.error().errorType() + ": " + output1.error().errorMessage());
         assertFalse(sharedExecutor.isShutdown(), "Executor should not be shutdown after first execution");
 
         // Create second input with different execution operation
@@ -533,7 +538,12 @@ class DurableExecutionTest {
                 (userInput, ctx) -> ctx.step("test2", String.class, stepCtx -> "Result 2: " + userInput),
                 config);
 
-        assertEquals(ExecutionStatus.SUCCEEDED, output2.status(), () -> "Second invocation error: " + output2.error());
+        assertEquals(
+                ExecutionStatus.SUCCEEDED,
+                output2.status(),
+                () -> output2.error() == null
+                        ? "No error payload"
+                        : output2.error().errorType() + ": " + output2.error().errorMessage());
         assertFalse(sharedExecutor.isShutdown(), "Executor should not be shutdown after second execution");
 
         // Verify both executions completed successfully and used the same executor
