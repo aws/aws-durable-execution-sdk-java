@@ -400,6 +400,7 @@ public abstract class BaseDurableOperation {
         pluginRunner.onUserFunctionStart(startInfo);
         T result;
         try {
+            executionManager.rethrowPluginFatalIfPresent();
             result = userFunction.get();
             executionManager.rethrowPluginFatalIfPresent();
         } catch (Throwable e) {
