@@ -292,8 +292,8 @@ class ExecutionOtelPluginTest {
                 SpanContext.create(canonicalTraceId, ambientSpanId, TraceFlags.getSampled(), TraceState.getDefault());
         try (var ignored = Span.wrap(ambient).makeCurrent()) {
             plugin.onInvocationStart(new InvocationInfo("req-1", ARN, false, executionStart));
+            plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, false, InvocationStatus.SUCCEEDED, null));
         }
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, false, InvocationStatus.SUCCEEDED, null));
 
         var invocationSpan = spanByName(spanExporter.getFinishedSpanItems(), "Invocation");
         assertEquals(canonicalTraceId, invocationSpan.getTraceId());
@@ -312,8 +312,8 @@ class ExecutionOtelPluginTest {
                 SpanContext.create(ambientTraceId, ambientSpanId, TraceFlags.getSampled(), TraceState.getDefault());
         try (var ignored = Span.wrap(ambient).makeCurrent()) {
             plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+            plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
         }
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
         var workflowSpan = spanByName(spans, "Workflow");
@@ -350,8 +350,9 @@ class ExecutionOtelPluginTest {
                 TraceState.getDefault());
         try (var ignored = Span.wrap(ambient).makeCurrent()) {
             extractorPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+            extractorPlugin.onInvocationEnd(
+                    new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
         }
-        extractorPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         assertEquals(1, extractCalls.get(), "Extractor is invoked even when a valid ambient span is active");
         var spans = exporter.getFinishedSpanItems();
@@ -378,16 +379,16 @@ class ExecutionOtelPluginTest {
 
         try (var ignored = Span.wrap(ambientA).makeCurrent()) {
             plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, startTime));
+            plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
         }
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
         var firstInvocationTrace =
                 spanByName(spanExporter.getFinishedSpanItems(), "Invocation").getTraceId();
         spanExporter.reset();
 
         try (var ignored = Span.wrap(ambientB).makeCurrent()) {
             plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, startTime));
+            plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
         }
-        plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
         var secondInvocationTrace =
                 spanByName(spanExporter.getFinishedSpanItems(), "Invocation").getTraceId();
 
