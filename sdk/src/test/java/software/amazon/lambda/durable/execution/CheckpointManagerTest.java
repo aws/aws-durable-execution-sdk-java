@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -94,29 +95,38 @@ class CheckpointManagerTest {
 
     @Test
     void pollForUpdate_completesWhenOperationReturned() throws Exception {
+        var checkpointStarted = new CountDownLatch(1);
+        var releaseResponse = new CountDownLatch(1);
         var operation = Operation.builder()
                 .id("op-1")
                 .type(OperationType.STEP)
                 .status(OperationStatus.SUCCEEDED)
                 .build();
 
-        when(client.checkpoint(anyString(), anyString(), anyList()))
-                .thenReturn(CheckpointDurableExecutionResponse.builder()
-                        .checkpointToken("token-2")
-                        .newExecutionState(CheckpointUpdatedExecutionState.builder()
-                                .operations(List.of(operation))
-                                .build())
-                        .build());
+        when(client.checkpoint(anyString(), anyString(), anyList())).thenAnswer(ignored -> {
+            checkpointStarted.countDown();
+            releaseResponse.await();
+            return CheckpointDurableExecutionResponse.builder()
+                    .checkpointToken("token-2")
+                    .newExecutionState(CheckpointUpdatedExecutionState.builder()
+                            .operations(List.of(operation))
+                            .build())
+                    .build();
+        });
 
-        var future = batcher.pollForUpdate("op-1");
+        try {
+            var future = batcher.pollForUpdate("op-1");
+            assertTrue(checkpointStarted.await(300, TimeUnit.MILLISECONDS));
+            assertFalse(future.isDone(), "polling stays pending until the backend returns the operation");
+            releaseResponse.countDown();
 
-        assertFalse(future.isDone());
-
-        // Wait for polling to trigger checkpoint
-        var result = future.get(300, TimeUnit.MILLISECONDS);
-
-        assertEquals(operation, result);
-        assertEquals(1, callbackOperations.size());
+            var result = future.get(300, TimeUnit.MILLISECONDS);
+            assertEquals(operation, result);
+            assertEquals(1, callbackOperations.size());
+        } finally {
+            releaseResponse.countDown();
+            batcher.shutdown();
+        }
     }
 
     @Test

@@ -47,6 +47,35 @@ checkpoints carry that context in the flat optional `ChainedInvokeOptions.XAmznT
 the corresponding generated model and backend support; the current public model does not yet compile the new
 typed setter. See [the implemented path and remaining dependencies](../docs/advanced/propagation-metadata.md).
 
+## Choose one durable OTel view
+
+Configure exactly one of `InvocationOtelPlugin` or `ExecutionOtelPlugin` when enabling durable tracing.
+The invocation view groups work by Lambda invocation; the execution view groups operations under the durable Workflow.
+Both create Workflow and Invocation telemetry and manage log correlation, so combining them is unsupported.
+`DurableConfig.Builder.build()` rejects conflicting views before lifecycle hooks run and names both plugins in the
+diagnostic. It throws `IllegalStateException` with the `Dynamic plugin configuration failed: ` prefix used for other
+plugin-configuration errors.
+This applies to explicit registration, `DURABLE_EXECUTION_PLUGINS=otel-invocation,otel-execution`, and mixed registration.
+Zero OTel plugins, either single view, and unrelated plugins remain valid.
+Repeated explicit registrations of the same view are also rejected, including registering the same instance twice.
+When an environment-selected exclusive plugin's exact concrete type is already explicitly configured, discovery keeps
+that explicit instance and skips constructing another. This preserves configuration copies made by released testing
+SDK 2.2.1 without duplicate telemetry. Different subclasses still participate in exclusive-group validation; plugins
+without exclusive-group metadata retain their existing multi-instance behavior. The current testing SDK copies
+resolved plugin instances without rediscovery.
+
+`config.toBuilder()` keeps that resolved-list behavior for the lifetime of the copied builder. Calling `withPlugins(...)`
+on it replaces the complete plugin list without reading `DURABLE_EXECUTION_PLUGINS` again; `withPlugins()` removes all
+plugins from the copy. Use `DurableConfig.builder()` when creating a fresh configuration that should honor the current
+environment selection.
+
+View exclusivity is declared with inherited `@ExclusivePluginGroup("durable-otel-view")` metadata.
+Configuration reads this explicit opt-in annotation from the entire superclass chain; it does not call application methods
+that happen to be named `getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled
+view restriction. A subclass may add another group, but cannot replace a superclass's group; repeated group names in one
+class hierarchy are checked once.
+Older cores ignore the optional annotation and retain their prior behavior; no provider-version floor is raised.
+
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
 1. Add the ADOT Lambda Layer to your function
