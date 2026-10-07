@@ -68,8 +68,9 @@ jobs:
       actions: write
       contents: read
       id-token: write
-    uses: aws/aws-durable-execution-conformance-tests/.github/workflows/opentelemetry-orchestrator.yml@98b802cdb172614f98e217f7464784d47b9bb484
+    uses: aws/aws-durable-execution-conformance-tests/.github/workflows/opentelemetry-orchestrator.yml@f5855f2d0f60be996973173cf479c3567f83e30f
     with:
+      runs_on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || format('codebuild-github-actions-runner-{0}-{1}', github.run_id, github.run_attempt) }}
       language: java
       resource_prefix: j
       sdk_repository: aws/aws-durable-execution-sdk-java
@@ -81,13 +82,37 @@ jobs:
       # checked out (.build/durable-sdk).
       examples_dir: .build/durable-sdk/conformance-tests-otel
       setup_command: |
-        if [ -z "${JAVA_HOME_21_X64:-}" ]; then
-          echo "The runner does not provide Java 21"
+        set -euo pipefail
+        if [ -n "${JAVA_HOME_21_X64:-}" ]; then
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+        elif [ -x /usr/lib/jvm/java-21-amazon-corretto/bin/java ]; then
+          export JAVA_HOME=/usr/lib/jvm/java-21-amazon-corretto
+        elif [ -z "${JAVA_HOME:-}" ]; then
+          export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
+        fi
+        if [ ! -x "$JAVA_HOME/bin/java" ] || [ ! -x "$JAVA_HOME/bin/javac" ]; then
+          echo "Selected JAVA_HOME=$JAVA_HOME is not a complete JDK"
           exit 1
         fi
-        export JAVA_HOME="$JAVA_HOME_21_X64"
         export PATH="$JAVA_HOME/bin:$PATH"
+        java_spec=$(java -XshowSettings:properties -version 2>&1 | awk '$1 == "java.specification.version" {print $3}')
+        if [ "$java_spec" != "21" ]; then
+          echo "Java 21 is required; selected JAVA_HOME=$JAVA_HOME reports specification version $java_spec"
+          exit 1
+        fi
+        javac_version=$(javac -version 2>&1)
+        if [[ ! "$javac_version" =~ ^javac[[:space:]]21([.]|[[:space:]]|$) ]]; then
+          echo "Java 21 javac is required; selected compiler reports $javac_version"
+          exit 1
+        fi
         java -version
+        javac -version
+        if [ -n "${GITHUB_ENV:-}" ]; then
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+        fi
+        if [ -n "${GITHUB_PATH:-}" ]; then
+          echo "$JAVA_HOME/bin" >> "$GITHUB_PATH"
+        fi
       prepare_command: |
         JAVA_SDK_VERSION=$(
           mvn -B -q \
