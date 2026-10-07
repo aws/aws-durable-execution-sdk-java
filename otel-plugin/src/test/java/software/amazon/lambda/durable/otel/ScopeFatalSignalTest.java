@@ -18,10 +18,19 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
 
 class ScopeFatalSignalTest {
     @ParameterizedTest
-    @CsvSource({"false,false", "true,false", "false,true", "true,true"})
+    @CsvSource({
+        "false,false,false",
+        "true,false,false",
+        "false,true,false",
+        "true,true,false",
+        "false,false,true",
+        "true,false,true",
+        "false,true,true",
+        "true,true,true"
+    })
     @SuppressWarnings("removal")
-    void fatalCloseWakesCallerAndStillAllowsBoundedEarlierCleanup(boolean threadDeath, boolean releaseInBudget)
-            throws Exception {
+    void fatalCloseWakesCallerAndStillAllowsBoundedEarlierCleanup(
+            boolean threadDeath, boolean releaseInBudget, boolean fatalAccessor) throws Exception {
         var earlierEntered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         var closed = new AtomicBoolean();
@@ -44,6 +53,13 @@ class ScopeFatalSignalTest {
                 closed.set(true);
             });
             var later = new Scoped(() -> {
+                if (fatalAccessor)
+                    throw new CompletionException("scope cause accessor", null) {
+                        @Override
+                        public synchronized Throwable getCause() {
+                            throw fatal;
+                        }
+                    };
                 throw fatal;
             });
             var config = DurableConfig.builder()
