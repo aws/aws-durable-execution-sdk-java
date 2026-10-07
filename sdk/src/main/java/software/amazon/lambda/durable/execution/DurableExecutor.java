@@ -234,7 +234,15 @@ public class DurableExecutor {
         var result = new CompletableFuture<T>();
         var caller = Thread.currentThread();
         Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
-            try (var ignored = restoreMdcOnClose()) {
+            SafeCloseable mdcRestore;
+            try {
+                mdcRestore = restoreMdcOnClose();
+            } catch (Throwable failure) {
+                // Initialization can fail before task execution; the observer must still receive that failure.
+                result.completeExceptionally(failure);
+                return;
+            }
+            try (var ignored = mdcRestore) {
                 try {
                     result.complete(task.get());
                 } catch (Throwable failure) {

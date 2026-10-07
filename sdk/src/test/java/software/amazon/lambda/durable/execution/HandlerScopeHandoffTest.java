@@ -7,9 +7,13 @@ import static org.mockito.Mockito.*;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -18,11 +22,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.slf4j.MDC;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.PluginRunner;
 
 class HandlerScopeHandoffTest {
     @ParameterizedTest
@@ -162,6 +170,78 @@ class HandlerScopeHandoffTest {
             workers.shutdownNow();
             assertTrue(callers.awaitTermination(3, TimeUnit.SECONDS));
             assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void mdcCaptureFailureSettlesAsyncHandlerFuture() throws Exception {
+        var failure = new IllegalStateException("MDC capture failed");
+        var taskCalled = new AtomicBoolean();
+        var worker = Executors.newSingleThreadExecutor();
+        Executor failingCaptureWorker = task -> worker.execute(() -> {
+            // Static mocks are thread-scoped: fail only the real asynchronous worker's MDC capture.
+            try (var mdc = mockStatic(MDC.class, CALLS_REAL_METHODS)) {
+                mdc.when(MDC::getCopyOfContextMap).thenThrow(failure);
+                task.run();
+            }
+        });
+        var supply = DurableExecutor.class.getDeclaredMethod(
+                "supplyHandler", Supplier.class, Executor.class, PluginRunner.class, AtomicReference.class);
+        supply.setAccessible(true);
+        try {
+            Supplier<String> task = () -> {
+                taskCalled.set(true);
+                return "unexpected";
+            };
+            var result = (CompletableFuture<?>) supply.invoke(
+                    null,
+                    task,
+                    failingCaptureWorker,
+                    new PluginRunner(List.of(new DurableExecutionPlugin() {})),
+                    new AtomicReference<Error>());
+            var thrown = assertThrows(ExecutionException.class, () -> result.get(2, TimeUnit.SECONDS));
+            assertSame(
+                    failure, thrown.getCause(), "Initialization failure must settle the observation future unchanged");
+            assertFalse(taskCalled.get(), "Failed MDC capture must not start user/plugin work");
+        } finally {
+            worker.shutdownNow();
+            assertTrue(worker.awaitTermination(3, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void mdcRestorationFailureAfterCompletionStillEscapesItsOwner() throws Exception {
+        var failure = new IllegalStateException("MDC restoration failed");
+        var ownerFailure = new CompletableFuture<Throwable>();
+        var worker = Executors.newSingleThreadExecutor();
+        Executor failingRestoreWorker = task -> worker.execute(() -> {
+            try (var mdc = mockStatic(MDC.class, CALLS_REAL_METHODS)) {
+                mdc.when(MDC::getCopyOfContextMap).thenReturn(Map.of("worker", "ambient"));
+                mdc.when(() -> MDC.setContextMap(Map.of("worker", "ambient"))).thenThrow(failure);
+                try {
+                    task.run();
+                } catch (Throwable thrown) {
+                    ownerFailure.complete(thrown);
+                }
+            }
+        });
+        var supply = DurableExecutor.class.getDeclaredMethod(
+                "supplyHandler", Supplier.class, Executor.class, PluginRunner.class, AtomicReference.class);
+        supply.setAccessible(true);
+        try {
+            Supplier<String> task = () -> "completed";
+            var result = (CompletableFuture<?>) supply.invoke(
+                    null,
+                    task,
+                    failingRestoreWorker,
+                    new PluginRunner(List.of(new DurableExecutionPlugin() {})),
+                    new AtomicReference<Error>());
+            assertEquals("completed", result.get(2, TimeUnit.SECONDS));
+            assertSame(failure, ownerFailure.get(2, TimeUnit.SECONDS));
+            assertEquals("completed", result.join(), "Post-completion restoration must not rewrite the result");
+        } finally {
+            worker.shutdownNow();
+            assertTrue(worker.awaitTermination(3, TimeUnit.SECONDS));
         }
     }
 
