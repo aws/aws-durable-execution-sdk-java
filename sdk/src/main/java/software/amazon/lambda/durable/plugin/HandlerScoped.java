@@ -26,5 +26,5 @@ import java.util.function.Function;
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)
 public @interface HandlerScoped {
-    Class<? extends Function<?, AutoCloseable>> value();
+    Class<? extends Function<?, ? extends AutoCloseable>> value();
 }
