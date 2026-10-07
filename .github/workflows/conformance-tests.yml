@@ -25,6 +25,7 @@ concurrency:
   # same stack -- mirrors e2e-tests.yml.
   group: conformance-tests
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read

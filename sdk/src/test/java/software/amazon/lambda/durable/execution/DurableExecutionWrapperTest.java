@@ -91,7 +91,7 @@ class DurableExecutionWrapperTest {
         var output = handler.handleRequest(input, null);
 
         // Verify
-        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status(), () -> String.valueOf(output.error()));
         assertNotNull(output.result());
 
         var result = serDes.deserialize(output.result(), get(TestOutput.class));
@@ -126,7 +126,7 @@ class DurableExecutionWrapperTest {
 
         var output = handler.handleRequest(input, null);
 
-        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status(), () -> String.valueOf(output.error()));
         var result = serDes.deserialize(output.result(), get(TestOutput.class));
         assertEquals("Method: method-ref", result.result);
     }
