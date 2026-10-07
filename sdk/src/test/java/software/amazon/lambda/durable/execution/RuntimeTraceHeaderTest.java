@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import javax.tools.ToolProvider;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 class RuntimeTraceHeaderTest {
     @Test
@@ -221,6 +223,59 @@ class RuntimeTraceHeaderTest {
                         Arguments.of(new InvocationTargetException(fatal), fatal),
                         Arguments.of(new UndeclaredThrowableException(fatal), fatal),
                         Arguments.of(new CompletionException(new InvocationTargetException(fatal)), fatal)));
+    }
+
+    @ParameterizedTest
+    @MethodSource("unreadableCauses")
+    void unreadableNonfatalWrapperCauseIsAuthoritativeAbsence(Throwable unreadable) {
+        var reads = new AtomicInteger();
+        var wrapper = new CompletionException("unreadable", null) {
+            @Override
+            public synchronized Throwable getCause() {
+                reads.incrementAndGet();
+                ExceptionHelper.sneakyThrow(unreadable);
+                return null;
+            }
+        };
+        var context = mock(RuntimeContext.class);
+        when(context.getXrayTraceId()).thenThrow(wrapper);
+        assertEquals("", RuntimeTraceHeader.capture(context));
+        assertEquals(1, reads.get());
+    }
+
+    private static Stream<Throwable> unreadableCauses() {
+        return Stream.of(new IllegalStateException("unreadable"), new AssertionError("unreadable"));
+    }
+
+    @Test
+    void wrapperCauseIsReadOnceAndFatalIdentityIsPreserved() {
+        var reads = new AtomicInteger();
+        var fatal = new InternalError("original cause");
+        var wrapper = new CompletionException("changing cause", null) {
+            @Override
+            public synchronized Throwable getCause() {
+                if (reads.incrementAndGet() > 1) throw new IllegalStateException("second cause read");
+                return fatal;
+            }
+        };
+        var context = mock(RuntimeContext.class);
+        when(context.getXrayTraceId()).thenThrow(wrapper);
+        assertSame(fatal, assertThrows(InternalError.class, () -> RuntimeTraceHeader.capture(context)));
+        assertEquals(1, reads.get());
+    }
+
+    @Test
+    void fatalCauseAccessorFailureRetainsIdentity() {
+        var fatal = new InternalError("cause accessor fatal");
+        var wrapper = new CompletionException("unreadable", null) {
+            @Override
+            public synchronized Throwable getCause() {
+                throw fatal;
+            }
+        };
+        var context = mock(RuntimeContext.class);
+        when(context.getXrayTraceId()).thenThrow(wrapper);
+        assertSame(fatal, assertThrows(InternalError.class, () -> RuntimeTraceHeader.capture(context)));
     }
 
     private abstract static class RuntimeContext implements Context {

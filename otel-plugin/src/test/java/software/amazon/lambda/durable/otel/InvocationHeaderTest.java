@@ -13,6 +13,7 @@ import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -38,6 +39,10 @@ import software.amazon.lambda.durable.plugin.InvocationStatus;
 class InvocationHeaderTest {
     @ParameterizedTest
     @CsvSource({
+        "true,0,unreadable-cause",
+        "true,1,unreadable-cause",
+        "false,0,unreadable-cause",
+        "false,1,unreadable-cause",
         "true,0,runtime",
         "true,0,assertion",
         "true,0,class-linkage",
@@ -117,6 +122,13 @@ class InvocationHeaderTest {
 
     private static Throwable accessorFailure(String kind) {
         return switch (kind) {
+            case "unreadable-cause" ->
+                new CompletionException("unreadable cause", null) {
+                    @Override
+                    public synchronized Throwable getCause() {
+                        throw new IllegalStateException("cause accessor failed");
+                    }
+                };
             case "runtime" -> new SecurityException("runtime carrier access denied");
             case "assertion" -> new AssertionError("optional runtime assertion");
             case "class-linkage" -> new NoClassDefFoundError("optional dependency");

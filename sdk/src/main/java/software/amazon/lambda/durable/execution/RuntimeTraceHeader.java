@@ -58,11 +58,17 @@ final class RuntimeTraceHeader {
             if (cause instanceof VirtualMachineError fatal) throw fatal;
             if (cause instanceof ThreadDeath fatal) throw fatal;
             if (!(cause instanceof CompletionException
-                            || cause instanceof ExecutionException
-                            || cause instanceof InvocationTargetException
-                            || cause instanceof UndeclaredThrowableException)
-                    || cause.getCause() == null) return;
-            cause = cause.getCause();
+                    || cause instanceof ExecutionException
+                    || cause instanceof InvocationTargetException
+                    || cause instanceof UndeclaredThrowableException)) return;
+            try {
+                cause = cause.getCause();
+            } catch (VirtualMachineError | ThreadDeath fatal) {
+                throw fatal;
+            } catch (Throwable unreadableCause) {
+                return;
+            }
+            if (cause == null) return;
         }
     }
 }
