@@ -29,6 +29,8 @@ on:
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
       - 'insight-plugin/**'
+      - 'otel-plugin/**'
+      - '.github/scripts/verify_otel_api_compatibility.py'
       - 'examples/**'
       - 'pom.xml'
   push:
@@ -42,6 +44,8 @@ on:
       - 'sdk-testing/**'
       - 'sdk-integration-tests/**'
       - 'insight-plugin/**'
+      - 'otel-plugin/**'
+      - '.github/scripts/verify_otel_api_compatibility.py'
       - 'examples/**'
       - 'pom.xml'
 
