@@ -89,6 +89,51 @@ class OperationOwnerInterruptionTest {
         }
     }
 
+    @Test
+    void completedAttemptIsNotInterruptedWhileItsCompletionCallbackIsStillRunning() throws Exception {
+        var releaseBody = new CountDownLatch(1);
+        var callbackEntered = new CountDownLatch(1);
+        var releaseCallback = new CountDownLatch(1);
+        var callbackExited = new CountDownLatch(1);
+        var callbackInterrupted = new AtomicBoolean();
+        var workers = Executors.newSingleThreadExecutor();
+        try {
+            var context = mock(DurableContextImpl.class);
+            var manager = mock(ExecutionManager.class);
+            when(context.getExecutionManager()).thenReturn(manager);
+            when(manager.getCurrentThreadContext()).thenReturn(new ThreadContext("op", ThreadType.STEP));
+            when(context.getDurableConfig())
+                    .thenReturn(
+                            DurableConfig.builder().withExecutorService(workers).build());
+            var operation = new TestOperation(context);
+            operation.run(() -> await(releaseBody));
+            var completion = operation.getRunningUserHandler();
+            completion.whenComplete((ignored, failure) -> {
+                callbackEntered.countDown();
+                try {
+                    releaseCallback.await();
+                } catch (InterruptedException unexpected) {
+                    callbackInterrupted.set(true);
+                } finally {
+                    callbackExited.countDown();
+                }
+            });
+            releaseBody.countDown();
+            assertTrue(callbackEntered.await(3, TimeUnit.SECONDS));
+            assertTrue(completion.isDone());
+            operation.interruptRunningUserHandler();
+            releaseCallback.countDown();
+            assertTrue(callbackExited.await(3, TimeUnit.SECONDS));
+            workers.submit(() -> {}).get(3, TimeUnit.SECONDS);
+            assertFalse(callbackInterrupted.get(), "completed ownership must not authorize a later interrupt");
+        } finally {
+            releaseBody.countDown();
+            releaseCallback.countDown();
+            workers.shutdownNow();
+            assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS));
+        }
+    }
+
     private static void await(CountDownLatch latch) {
         try {
             assertTrue(latch.await(3, TimeUnit.SECONDS));

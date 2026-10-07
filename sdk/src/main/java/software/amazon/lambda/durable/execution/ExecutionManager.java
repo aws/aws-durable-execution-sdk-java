@@ -80,6 +80,7 @@ public class ExecutionManager implements SafeCloseable {
     private final PluginRunner pluginRunner;
     private final AtomicReference<Error> pluginFatal;
     private final CompletableFuture<Void> pluginFatalSignal = new CompletableFuture<>();
+    private long fatalOperationCleanupDeadline = Long.MAX_VALUE;
     private final Object pluginFinalizationLock = new Object();
     private boolean invocationFinalized;
     private Error lateScopeFatal;
@@ -670,6 +671,7 @@ public class ExecutionManager implements SafeCloseable {
         var cleanupDeadline = Long.MAX_VALUE;
         // This will detect stuck user thread and thread leaks in the thread pool
         for (BaseDurableOperation op : registeredOperations.values()) {
+            if (pluginFatal.get() != null && op.isRunningUserHandlerOwner()) continue;
             var userHandlerFuture = op.getRunningUserHandler();
             if (userHandlerFuture != null && !userHandlerFuture.isDone()) {
                 // Some user threads can still be running because
@@ -711,13 +713,22 @@ public class ExecutionManager implements SafeCloseable {
         }
     }
 
-    private long fatalCleanupDeadline(long current) {
+    private synchronized long fatalCleanupDeadline(long current) {
         if (current != Long.MAX_VALUE || pluginFatal.get() == null) return current;
+        if (fatalOperationCleanupDeadline != Long.MAX_VALUE) return fatalOperationCleanupDeadline;
         // One budget across all peers, with response headroom when the runtime exposes its deadline.
         var budgetMillis = lambdaContext == null
                 ? 500L
                 : Math.min(500L, Math.max(0L, (long) lambdaContext.getRemainingTimeInMillis() - 1_000L));
-        return System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMillis);
+        fatalOperationCleanupDeadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMillis);
+        return fatalOperationCleanupDeadline;
+    }
+
+    /** Gives cooperative operation owners their existing fatal cleanup allowance before plugin finalization. */
+    void awaitFatalOperationCleanup() {
+        if (pluginFatal.get() == null) return;
+        registeredOperations.values().forEach(BaseDurableOperation::interruptRunningUserHandler);
+        validateRunningThreads();
     }
 
     /** Returns {@code true} if the given status represents a terminal (final) operation state. */
@@ -811,7 +822,7 @@ public class ExecutionManager implements SafeCloseable {
     private void stopAllOperations(Throwable cause) {
         registeredOperations.values().forEach(op -> {
             op.getCompletionFuture().completeExceptionally(cause);
-            op.interruptRunningUserHandler();
+            if (pluginFatal.get() != null) op.interruptRunningUserHandler();
         });
     }
 

@@ -65,6 +65,7 @@ public abstract class BaseDurableOperation {
     private final Object handlerOwnerLock = new Object();
     private Thread handlerOwner;
     private CompletableFuture<Void> handlerOwnerCompletion;
+    private CompletableFuture<Void> interruptedHandlerCompletion;
 
     protected BaseDurableOperation(
             OperationIdentifier operationIdentifier,
@@ -339,20 +340,16 @@ public abstract class BaseDurableOperation {
             try {
                 wrapped.run();
                 executionManager.rethrowPluginFatalIfPresent();
+                clearHandlerOwner(completion);
                 completion.complete(null);
             } catch (Throwable failure) {
+                clearHandlerOwner(completion);
                 completion.completeExceptionally(failure);
                 // Settle accepted work before propagating on either an async worker or the direct caller. The
                 // invocation boundary still finalizes plugins, but the operation call must not return normally.
                 executionManager.rethrowPluginFatalIfPresent();
             } finally {
-                synchronized (handlerOwnerLock) {
-                    // A completion callback can start the next attempt before this runnable exits.
-                    if (handlerOwnerCompletion == completion) {
-                        handlerOwner = null;
-                        handlerOwnerCompletion = null;
-                    }
-                }
+                clearHandlerOwner(completion);
             }
         };
         try {
@@ -364,6 +361,17 @@ public abstract class BaseDurableOperation {
                 executionManager.cancelThreadRegistration(operationId);
             }
             ExceptionHelper.sneakyThrow(failure);
+        }
+    }
+
+    private void clearHandlerOwner(CompletableFuture<Void> completion) {
+        synchronized (handlerOwnerLock) {
+            // Revoke interruption before publishing completion and invoking callbacks. A callback may start a new
+            // attempt, so an older runnable's finally must not clear that new owner.
+            if (handlerOwnerCompletion == completion) {
+                handlerOwner = null;
+                handlerOwnerCompletion = null;
+            }
         }
     }
 
@@ -390,13 +398,18 @@ public abstract class BaseDurableOperation {
                 executionManager.wasObservedAtInvocationStart(getOperationId()),
                 attempt);
         pluginRunner.onUserFunctionStart(startInfo);
+        T result;
         try {
-            T result = userFunction.get();
-            pluginRunner.onUserFunctionEnd(
-                    PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.SUCCEEDED, null));
-            return result;
-        } catch (Throwable e) {
+            result = userFunction.get();
             executionManager.rethrowPluginFatalIfPresent();
+        } catch (Throwable e) {
+            try {
+                executionManager.rethrowPluginFatalIfPresent();
+            } catch (Error fatal) {
+                pluginRunner.onUserFunctionEndAfterFatal(
+                        PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.FAILED, fatal), fatal);
+                throw fatal;
+            }
             var error = ExceptionHelper.unwrapCompletableFuture(e);
             if (error == null) {
                 error = e;
@@ -408,6 +421,9 @@ public abstract class BaseDurableOperation {
             ExceptionHelper.sneakyThrow(e);
             return null; // unreachable — sneakyThrow always throws
         }
+        pluginRunner.onUserFunctionEnd(
+                PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.SUCCEEDED, null));
+        return result;
     }
 
     /**
@@ -580,7 +596,20 @@ public abstract class BaseDurableOperation {
      */
     public void interruptRunningUserHandler() {
         synchronized (handlerOwnerLock) {
-            if (handlerOwner != null && handlerOwner != Thread.currentThread()) handlerOwner.interrupt();
+            if (handlerOwner != null
+                    && handlerOwner != Thread.currentThread()
+                    && !handlerOwnerCompletion.isDone()
+                    && interruptedHandlerCompletion != handlerOwnerCompletion) {
+                interruptedHandlerCompletion = handlerOwnerCompletion;
+                handlerOwner.interrupt();
+            }
+        }
+    }
+
+    /** Whether this caller is the current operation attempt's owner, which must never await itself. */
+    public boolean isRunningUserHandlerOwner() {
+        synchronized (handlerOwnerLock) {
+            return handlerOwner == Thread.currentThread();
         }
     }
 

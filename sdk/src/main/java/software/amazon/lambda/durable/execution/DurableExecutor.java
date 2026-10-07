@@ -440,6 +440,7 @@ public class DurableExecutor {
         if (pluginRunner.isEmpty()) {
             return;
         }
+        executionManager.awaitFatalOperationCleanup();
         // Freeze the caller outcome immediately before finalization. Observe instrumentation fatals already
         // reported at this boundary, retaining an earlier invocation fatal. Later scope failures still escape their
         // owner thread, but cannot rewrite the outcome whose one end snapshot has already been dispatched.

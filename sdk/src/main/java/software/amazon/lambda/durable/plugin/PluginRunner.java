@@ -402,4 +402,15 @@ public class PluginRunner {
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
         runOperationHook(p -> p.onUserFunctionEnd(info));
     }
+
+    /** Completes same-owner attempt cleanup after a peer fatal while retaining the invocation's original failure. */
+    public void onUserFunctionEndAfterFatal(UserFunctionEndInfo info, Error original) {
+        for (var plugin : plugins) {
+            try {
+                runPlugin(plugin, p -> p.onUserFunctionEnd(info));
+            } catch (Error cleanupFailure) {
+                if (cleanupFailure != original) original.addSuppressed(cleanupFailure);
+            }
+        }
+    }
 }
