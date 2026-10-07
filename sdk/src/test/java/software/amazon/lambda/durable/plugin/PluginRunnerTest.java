@@ -39,6 +39,68 @@ class PluginRunnerTest {
                 () -> DurableExecutionPlugin.class.getMethod("onInvocationStart", InvocationInfo.class, String.class));
     }
 
+    @Test
+    void exclusiveGroupsRejectDifferentImplementationsButAllowUnrelatedPlugins() {
+        var exclusive = new ExclusivePlugin();
+        var error = assertThrows(
+                IllegalStateException.class, () -> new PluginRunner(List.of(exclusive, new ConflictingPlugin())));
+        assertTrue(error.getMessage().startsWith("Dynamic plugin configuration failed: "));
+        assertDoesNotThrow(() -> new PluginRunner(List.of(exclusive, new DurableExecutionPlugin() {})));
+    }
+
+    @Test
+    void repeatedExclusiveImplementationRegistrationsAreRejected() {
+        var first = new ExclusivePlugin();
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(first, new ExclusivePlugin())));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(first, first)));
+        assertEquals(0, first.starts);
+    }
+
+    @Test
+    void repeatedUnrelatedRegistrationsRetainTheirHooks() {
+        var calls = new ArrayList<String>();
+        var plugin = new TestPlugin("same", calls);
+        new PluginRunner(List.of(plugin, plugin)).onInvocationStart(invocationInfo());
+        assertEquals(List.of("same:onInvocationStart", "same:onInvocationStart"), calls);
+    }
+
+    @Test
+    void subclassMetadataAddsToEveryInheritedGroup() {
+        var subclass = new ReannotatedPlugin();
+        assertDoesNotThrow(() -> new PluginRunner(List.of(subclass)));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(subclass, new ConflictingPlugin())));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(subclass, new CustomGroupPlugin())));
+    }
+
+    @Test
+    void repeatedGroupInHierarchyDoesNotConflictWithItself() {
+        var subclass = new RepeatedGroupPlugin();
+        assertDoesNotThrow(() -> new PluginRunner(List.of(subclass)));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(subclass, new CustomGroupPlugin())));
+    }
+
+    @ExclusivePluginGroup("example")
+    private static class ExclusivePlugin implements DurableExecutionPlugin {
+        private int starts;
+
+        @Override
+        public void onInvocationStart(InvocationInfo info) {
+            starts++;
+        }
+    }
+
+    @ExclusivePluginGroup("example")
+    private static class ConflictingPlugin implements DurableExecutionPlugin {}
+
+    @ExclusivePluginGroup("custom")
+    private static class ReannotatedPlugin extends ExclusivePlugin {}
+
+    @ExclusivePluginGroup("custom")
+    private static class CustomGroupPlugin implements DurableExecutionPlugin {}
+
+    @ExclusivePluginGroup("example")
+    private static class RepeatedGroupPlugin extends ReannotatedPlugin {}
+
     // ─── No-op / empty behavior ──────────────────────────────────────────
 
     @Test

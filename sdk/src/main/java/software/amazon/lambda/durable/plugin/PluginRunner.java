@@ -3,7 +3,10 @@
 package software.amazon.lambda.durable.plugin;
 
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +29,38 @@ public class PluginRunner {
 
     public PluginRunner(List<DurableExecutionPlugin> plugins) {
         this.plugins = plugins != null ? List.copyOf(plugins) : Collections.emptyList();
+        validateExclusiveGroups();
+    }
+
+    private void validateExclusiveGroups() {
+        var groups = new HashMap<String, DurableExecutionPlugin>();
+        for (var plugin : plugins) {
+            for (var group : exclusiveGroups(plugin.getClass())) {
+                var previous = groups.putIfAbsent(group, plugin);
+                if (previous != null) {
+                    throw new IllegalStateException(
+                            "Dynamic plugin configuration failed: Conflicting plugins " + pluginName(previous)
+                                    + " and " + pluginName(plugin) + " in exclusive group '" + group
+                                    + "'. Configure only one plugin from this group.");
+                }
+            }
+        }
+    }
+
+    private static String pluginName(DurableExecutionPlugin plugin) {
+        var type = plugin.getClass();
+        return type.getSimpleName().isEmpty() ? type.getName() : type.getSimpleName();
+    }
+
+    private static Set<String> exclusiveGroups(Class<?> pluginType) {
+        var groups = new LinkedHashSet<String>();
+        for (var type = pluginType; type != null; type = type.getSuperclass()) {
+            var metadata = type.getDeclaredAnnotation(ExclusivePluginGroup.class);
+            if (metadata != null) {
+                groups.add(metadata.value());
+            }
+        }
+        return groups;
     }
 
     /** Returns a no-op runner that does nothing. */
