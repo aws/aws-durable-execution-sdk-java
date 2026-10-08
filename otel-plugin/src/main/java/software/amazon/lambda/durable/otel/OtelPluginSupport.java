@@ -118,9 +118,11 @@ final class OtelPluginSupport {
             }
             return ambientSpan.isRecording() ? SamplingResult.recordOnly() : SamplingResult.drop();
         }
-        // 3. Only a same-copy DurableSampler can consume the full resolved context carrier. Defer for a foreign
-        // sampler so its own delegate retains attributes and updated trace state, not just the bridge decision.
-        if (usesLocalDurableSampler(sdkTracerProvider)) {
+        // 3. Resolve a local durable sampler's full result, or a visible replacement's root policy for ancestor flags.
+        // A foreign DurableSampler still resolves in its own loader to retain full attributes and trace state.
+        // A plain replacement receives no carrier; the provider keeps its normal per-span sampling behavior.
+        if (sdkTracerProvider != null
+                && (usesLocalDurableSampler(sdkTracerProvider) || !usesDurableSamplingBridge(sdkTracerProvider))) {
             return sdkTracerProvider
                     .getSampler()
                     .shouldSample(
