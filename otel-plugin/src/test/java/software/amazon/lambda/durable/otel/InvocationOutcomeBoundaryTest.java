@@ -3,7 +3,9 @@
 package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static software.amazon.lambda.durable.otel.SpanAttributes.DURABLE_INVOCATION_STATUS;
 
+import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.ContextKey;
 import io.opentelemetry.context.Scope;
@@ -150,6 +152,23 @@ class InvocationOutcomeBoundaryTest {
     })
     void inlineNonfatalMdcRestorationPreservesSelectedOutcome(String outcome, boolean ambient) throws Exception {
         runInlineMdcFailure(outcome, ambient, new IllegalStateException("restore failed"), null);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "SUCCEEDED,false,assertion", "SUCCEEDED,true,assertion",
+        "PENDING,false,assertion", "PENDING,true,assertion",
+        "RETRYING,false,assertion", "RETRYING,true,assertion",
+        "SUCCEEDED,false,linkage", "SUCCEEDED,true,linkage",
+        "PENDING,false,linkage", "PENDING,true,linkage",
+        "RETRYING,false,linkage", "RETRYING,true,linkage"
+    })
+    void inlineNonfatalErrorRestorationPreservesSelectedOutcome(String outcome, boolean ambient, String kind)
+            throws Exception {
+        Error failure = kind.equals("linkage")
+                ? new NoClassDefFoundError("restore failed")
+                : new AssertionError("restore failed");
+        runInlineMdcFailure(outcome, ambient, failure, null);
     }
 
     @SuppressWarnings("removal")
@@ -309,6 +328,89 @@ class InvocationOutcomeBoundaryTest {
                 1,
                 exporter.getFinishedSpanItems().stream()
                         .filter(s -> s.getName().equals("Workflow"))
+                        .count());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void failureSerializationRemainsRetryingUntilFailureCanBeDelivered(boolean executionView) {
+        var exporter = InMemorySpanExporter.create();
+        var provider = SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter));
+        var options = OtelPluginConfig.builder()
+                .contextExtractor(() -> null)
+                .enableMdc(false)
+                .build();
+        DurableExecutionPlugin otel = executionView
+                ? new ExecutionOtelPlugin(provider, options)
+                : new InvocationOtelPlugin(provider, options);
+        var ends = new CopyOnWriteArrayList<InvocationEndInfo>();
+        var failDelivery = new AtomicBoolean(true);
+        var deliveryFailure = new IllegalStateException("cannot serialize failure yet");
+        var bodyFailure = new IllegalArgumentException("handler failed");
+        var completedSideEffects = new AtomicInteger();
+        var serDes = new SerDes() {
+            private final JacksonSerDes delegate = new JacksonSerDes();
+
+            @Override
+            public String serialize(Object value) {
+                if (value == bodyFailure && failDelivery.compareAndSet(true, false)) throw deliveryFailure;
+                return delegate.serialize(value);
+            }
+
+            @Override
+            public <T> T deserialize(String value, TypeToken<T> type) {
+                return delegate.deserialize(value, type);
+            }
+        };
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    context.step("saved-before-failure", String.class, step -> {
+                        completedSideEffects.incrementAndGet();
+                        return "checkpointed";
+                    });
+                    throw bodyFailure;
+                },
+                DurableConfig.builder()
+                        .withSerDes(serDes)
+                        .withPlugins(otel, new DurableExecutionPlugin() {
+                            @Override
+                            public void onInvocationEnd(InvocationEndInfo info) {
+                                ends.add(info);
+                            }
+                        })
+                        .build());
+        assertSame(deliveryFailure, assertThrows(IllegalStateException.class, () -> runner.run("input")));
+        assertEquals(1, ends.size());
+        assertEquals(InvocationStatus.RETRYING, ends.get(0).invocationStatus());
+        assertSame(deliveryFailure, ends.get(0).executionError());
+        assertEquals(
+                0,
+                exporter.getFinishedSpanItems().stream()
+                        .filter(span -> span.getName().equals("Workflow"))
+                        .count());
+        var firstInvocation = exporter.getFinishedSpanItems().stream()
+                .filter(span -> span.getName().equals("Invocation"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("RETRYING", firstInvocation.getAttributes().get(DURABLE_INVOCATION_STATUS));
+        assertEquals(StatusCode.UNSET, firstInvocation.getStatus().getStatusCode());
+
+        var result = runner.run("input");
+        assertEquals(ExecutionStatus.FAILED, result.getStatus());
+        assertEquals(
+                bodyFailure.getClass().getName(),
+                result.getError().orElseThrow().errorType());
+        assertEquals(bodyFailure.getMessage(), result.getError().orElseThrow().errorMessage());
+        assertEquals(
+                List.of(InvocationStatus.RETRYING, InvocationStatus.FAILED),
+                ends.stream().map(InvocationEndInfo::invocationStatus).toList());
+        assertSame(bodyFailure, ends.get(1).executionError());
+        assertEquals(1, completedSideEffects.get(), "the completed step body must not run again after delivery retry");
+        assertEquals(
+                1,
+                exporter.getFinishedSpanItems().stream()
+                        .filter(span -> span.getName().equals("Workflow"))
                         .count());
     }
 

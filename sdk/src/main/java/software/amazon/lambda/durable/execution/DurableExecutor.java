@@ -173,13 +173,7 @@ public class DurableExecutor {
                 var payload = config.getSerDes().serialize(value);
                 output = DurableExecutionOutput.success(handleLargePayload(manager, payload));
             } catch (Throwable deliveryFailure) {
-                // Result serialization/checkpointing also belongs to this invocation. Close plugin resources even
-                // when delivery fails, then retain the original exception for the Lambda caller.
-                var cause = ExceptionHelper.unwrapCompletableFuture(deliveryFailure);
-                // No terminal output is delivered: this exception escapes for a Lambda invocation retry.
-                fireOnInvocationEnd(InvocationStatus.RETRYING, cause, null);
-                ExceptionHelper.sneakyThrow(deliveryFailure);
-                return null;
+                return failDelivery(deliveryFailure);
             }
             fireOnInvocationEnd(InvocationStatus.SUCCEEDED, null, value);
             return output;
@@ -187,13 +181,31 @@ public class DurableExecutor {
 
         private DurableExecutionOutput finishFailure(Throwable cause) {
             var status = failureStatus(cause);
+            if (status == InvocationStatus.FAILED) return finishTerminalFailure(cause);
             fireOnInvocationEnd(status, status == InvocationStatus.PENDING ? null : cause, null);
             if (status == InvocationStatus.PENDING) return DurableExecutionOutput.pending();
-            if (status == InvocationStatus.RETRYING) {
-                ExceptionHelper.sneakyThrow(cause);
-                return null;
+            ExceptionHelper.sneakyThrow(cause);
+            return null;
+        }
+
+        private DurableExecutionOutput finishTerminalFailure(Throwable cause) {
+            DurableExecutionOutput output;
+            try {
+                output = DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
+            } catch (Throwable deliveryFailure) {
+                return failDelivery(deliveryFailure);
             }
-            return DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
+            fireOnInvocationEnd(InvocationStatus.FAILED, cause, null);
+            return output;
+        }
+
+        private DurableExecutionOutput failDelivery(Throwable deliveryFailure) {
+            // Serialization/checkpointing did not produce a terminal response. Close plugin resources with RETRYING
+            // before preserving the original delivery failure for the Lambda caller.
+            var cause = ExceptionHelper.unwrapCompletableFuture(deliveryFailure);
+            fireOnInvocationEnd(InvocationStatus.RETRYING, cause, null);
+            ExceptionHelper.sneakyThrow(deliveryFailure);
+            return null;
         }
 
         private void fireOnInvocationEnd(InvocationStatus status, Throwable error, Object result) {
@@ -271,7 +283,7 @@ public class DurableExecutor {
         };
         try {
             executor.execute(work);
-        } catch (RuntimeException dispatchFailure) {
+        } catch (Throwable dispatchFailure) {
             if (!result.isDone()) throw dispatchFailure;
             // Inline execution can throw from MDC restoration after settling the selected outcome. Preserve that
             // outcome for an ordinary cleanup failure, while a JVM-fatal failure still reaches the caller.
