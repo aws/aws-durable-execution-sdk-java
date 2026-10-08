@@ -315,6 +315,7 @@ public class DurableExecutor {
             } catch (Throwable workerFailure) {
                 try {
                     rethrowLifecycleFatal(workerFailure);
+                    clearMdcAfterOrdinaryFailure(workerFailure);
                 } catch (VirtualMachineError | ThreadDeath fatal) {
                     if (restoringAfterNonfatalOutcome && outcome.failure() != null && outcome.failure() != fatal) {
                         fatal.addSuppressed(outcome.failure());
@@ -342,6 +343,22 @@ public class DurableExecutor {
             if (dispatchFailure != classifiedWorkerFailure.get()) rethrowLifecycleFatal(dispatchFailure);
         }
         return result;
+    }
+
+    @SuppressWarnings("removal")
+    private static void clearMdcAfterOrdinaryFailure(Throwable restorationFailure) {
+        try {
+            MDC.clear();
+        } catch (Throwable clearFailure) {
+            if (clearFailure == restorationFailure) return; // Already classified; do not re-read its diagnostics.
+            try {
+                rethrowLifecycleFatal(clearFailure);
+            } catch (VirtualMachineError | ThreadDeath fatal) {
+                if (fatal != restorationFailure) fatal.addSuppressed(restorationFailure);
+                throw fatal;
+            }
+            restorationFailure.addSuppressed(clearFailure);
+        }
     }
 
     /** A repeated fatal object must not be replaced by try-with-resources self-suppression failure. */
