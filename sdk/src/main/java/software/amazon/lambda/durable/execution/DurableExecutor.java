@@ -203,7 +203,11 @@ public class DurableExecutor {
             // Serialization/checkpointing did not produce a terminal response. Close plugin resources with RETRYING
             // before preserving the original delivery failure for the Lambda caller.
             var cause = ExceptionHelper.unwrapCompletableFuture(deliveryFailure);
-            fireOnInvocationEnd(InvocationStatus.RETRYING, cause, null);
+            try {
+                fireOnInvocationEnd(InvocationStatus.RETRYING, cause, null);
+            } catch (Error endFailure) {
+                deliveryFailure = combinePreparationAndEndFailures(deliveryFailure, endFailure);
+            }
             ExceptionHelper.sneakyThrow(deliveryFailure);
             return null;
         }
@@ -222,6 +226,23 @@ public class DurableExecutor {
                     userInput,
                     result));
         }
+    }
+
+    /** Preserves preparation as primary unless cleanup introduces the first JVM-fatal failure. */
+    @SuppressWarnings("removal")
+    private static Throwable combinePreparationAndEndFailures(Throwable preparation, Error cleanup) {
+        try {
+            rethrowLifecycleFatal(preparation);
+        } catch (VirtualMachineError | ThreadDeath fatal) {
+            if (fatal != cleanup) fatal.addSuppressed(cleanup);
+            return fatal;
+        }
+        if (cleanup instanceof VirtualMachineError || cleanup instanceof ThreadDeath) {
+            if (cleanup != preparation) cleanup.addSuppressed(preparation);
+            return cleanup;
+        }
+        if (preparation != cleanup) preparation.addSuppressed(cleanup);
+        return preparation;
     }
 
     private static InvocationStatus failureStatus(Throwable failure) {

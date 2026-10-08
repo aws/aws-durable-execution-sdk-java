@@ -33,7 +33,9 @@ JVM-fatal precedence, so an ordinary cleanup exception cannot hide an earlier Er
 Invocations without plugins also wait for handler cleanup before returning the selected suspension or retry outcome.
 SDK output preparation, including customer `SerDes` calls and durable large-result checkpointing, finishes before
 terminal invocation-end notification. Failures in this preparation report `RETRYING` instead of ending the Workflow
-span. End describes the SDK outcome at that point, not acknowledgment of a response by the Lambda service.
+span. If End also raises an unisolated Error, the preparation failure remains primary with the cleanup error
+suppressed, unless cleanup introduces the first JVM-fatal error. An original JVM-fatal preparation error retains its
+identity. End describes the SDK outcome at that point, not acknowledgment of a response by the Lambda service.
 Caller-side execution-manager cleanup, response-envelope encoding and output-stream writes follow End; runtime
 response transport follows the handler return. Failures at those later boundaries still propagate, without a second
 End dispatch or changing its already reported outcome. Non-JVM-fatal MDC-restoration failures on an inline executor,

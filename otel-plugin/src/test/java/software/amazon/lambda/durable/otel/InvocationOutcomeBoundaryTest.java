@@ -46,6 +46,7 @@ import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 class InvocationOutcomeBoundaryTest {
     @ParameterizedTest
@@ -412,6 +413,113 @@ class InvocationOutcomeBoundaryTest {
                 exporter.getFinishedSpanItems().stream()
                         .filter(span -> span.getName().equals("Workflow"))
                         .count());
+    }
+
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @CsvSource({
+        "ordinary,assertion,false,false", "ordinary,assertion,true,false",
+        "vm,assertion,false,false", "vm,assertion,true,false",
+        "death,assertion,false,false", "death,assertion,true,false",
+        "ordinary,vm,false,false", "ordinary,vm,true,false",
+        "vm,death,false,false", "vm,death,true,false",
+        "wrapped,assertion,false,false", "wrapped,assertion,true,false",
+        "ordinary,assertion,false,true", "ordinary,assertion,true,true",
+        "vm,assertion,false,true", "vm,assertion,true,true",
+        "death,assertion,false,true", "death,assertion,true,true",
+        "ordinary,vm,false,true", "ordinary,vm,true,true",
+        "vm,death,false,true", "vm,death,true,true",
+        "wrapped,assertion,false,true", "wrapped,assertion,true,true"
+    })
+    void preparationAndEndFailuresRetainPrimaryAndFatalIdentity(
+            String preparationKind, String endKind, boolean serializeFailure, boolean inline) throws Exception {
+        Throwable original =
+                switch (preparationKind) {
+                    case "vm", "wrapped" -> new InternalError("preparation fatal");
+                    case "death" -> new ThreadDeath();
+                    default -> new IllegalStateException("preparation failure");
+                };
+        var delivery = preparationKind.equals("wrapped") ? new CompletionException(original) : original;
+        Error endFailure =
+                switch (endKind) {
+                    case "vm" -> new InternalError("end fatal");
+                    case "death" -> new ThreadDeath();
+                    default -> new AssertionError("end failure");
+                };
+        var expected = preparationKind.equals("ordinary") && endKind.equals("vm") ? endFailure : original;
+        var suppressed = expected == endFailure ? original : endFailure;
+        var ends = new CopyOnWriteArrayList<InvocationEndInfo>();
+        var bodyFailure = new IllegalArgumentException("body failure");
+        var escaped = new CountDownLatch(1);
+        var workerFailure = new AtomicReference<Throwable>();
+        var callers = Executors.newSingleThreadExecutor();
+        var workers =
+                new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new SynchronousQueue<Runnable>(), task -> {
+                    var thread = new Thread(task, "combined-failure-owner");
+                    thread.setUncaughtExceptionHandler((owner, failure) -> {
+                        workerFailure.set(failure);
+                        escaped.countDown();
+                    });
+                    return thread;
+                }) {
+                    @Override
+                    public void execute(Runnable task) {
+                        if (inline) task.run();
+                        else super.execute(task);
+                    }
+                };
+        var serDes = new SerDes() {
+            private final JacksonSerDes delegate = new JacksonSerDes();
+
+            @Override
+            public String serialize(Object value) {
+                if (serializeFailure ? value == bodyFailure : "done".equals(value)) {
+                    ExceptionHelper.sneakyThrow(delivery);
+                }
+                return delegate.serialize(value);
+            }
+
+            @Override
+            public <T> T deserialize(String value, TypeToken<T> type) {
+                return delegate.deserialize(value, type);
+            }
+        };
+        try {
+            var runner = LocalDurableTestRunner.create(
+                    String.class,
+                    (input, context) -> {
+                        if (serializeFailure) throw bodyFailure;
+                        return "done";
+                    },
+                    DurableConfig.builder()
+                            .withExecutorService(workers)
+                            .withSerDes(serDes)
+                            .withPlugins(new DurableExecutionPlugin() {
+                                @Override
+                                public void onInvocationEnd(InvocationEndInfo info) {
+                                    ends.add(info);
+                                    throw endFailure;
+                                }
+                            })
+                            .build());
+            var response = callers.submit(() -> runner.run("input"));
+            var observed = assertThrows(ExecutionException.class, () -> response.get(3, TimeUnit.SECONDS))
+                    .getCause();
+            assertSame(expected, observed);
+            assertEquals(List.of(suppressed), List.of(observed.getSuppressed()));
+            assertEquals(1, ends.size());
+            assertEquals(InvocationStatus.RETRYING, ends.get(0).invocationStatus());
+            assertSame(original, ends.get(0).executionError());
+            if (!inline && (expected instanceof VirtualMachineError || expected instanceof ThreadDeath)) {
+                assertTrue(escaped.await(3, TimeUnit.SECONDS));
+                assertSame(expected, workerFailure.get());
+            }
+        } finally {
+            callers.shutdownNow();
+            workers.shutdownNow();
+            assertTrue(callers.awaitTermination(5, TimeUnit.SECONDS));
+            assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS));
+        }
     }
 
     @Test

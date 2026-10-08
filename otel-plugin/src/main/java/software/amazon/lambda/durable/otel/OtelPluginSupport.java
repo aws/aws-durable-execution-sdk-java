@@ -31,6 +31,12 @@ final class OtelPluginSupport {
         return provider != null && provider.getSampler() instanceof DurableSampler;
     }
 
+    /** A visible replacement sampler cannot consume our bridge; an opaque agent provider may still need it. */
+    static boolean usesDurableSamplingBridge(SdkTracerProvider provider) {
+        // Class-name matching is only for the cross-loader wire carrier, never for the context-key ownership check.
+        return provider == null || provider.getSampler().getClass().getName().equals(DurableSampler.class.getName());
+    }
+
     /** Closes the owning thread's scope without hiding a finalization error or a later JVM-fatal cleanup failure. */
     static void runInvocationEnd(Scope scope, Runnable end) {
         Throwable primary = null;
