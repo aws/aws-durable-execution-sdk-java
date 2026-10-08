@@ -111,7 +111,7 @@ final class OtelPluginSupport {
      *       pipeline finally installs, and another extension's customizer can wrap or replace a recognized configured
      *       sampler, so a reconstruction could disagree with the real delegate. Deferring routes the decision to the
      *       agent-installed {@link DurableSampler}, which consults its actual delegate once per execution, caches the
-     *       result by trace ID, and reuses it for the execution's remaining durable spans (see
+     *       result by execution ARN and trace ID, and reuses it for the execution's remaining durable spans (see
      *       {@link DurableSampler#shouldSample}). The delegate's decision is honored in full — including a
      *       {@code DROP}/rate-limited outcome — so durable spans are not force-sampled.
      * </ol>
@@ -162,8 +162,9 @@ final class OtelPluginSupport {
             }
             return ambientSpan.isRecording() ? SamplingResult.recordOnly() : SamplingResult.drop();
         }
-        // 3. An application-owned provider exposes the real sampler: evaluate it once, preserving its full result.
-        if (sdkTracerProvider != null) {
+        // 3. Only a same-copy DurableSampler can consume the full resolved context carrier. Defer for a foreign
+        // sampler so its own delegate retains attributes and updated trace state, not just the bridge decision.
+        if (usesLocalDurableSampler(sdkTracerProvider)) {
             return sdkTracerProvider
                     .getSampler()
                     .shouldSample(

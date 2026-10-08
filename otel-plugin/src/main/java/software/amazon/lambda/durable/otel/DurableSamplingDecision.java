@@ -19,8 +19,8 @@ import java.util.concurrent.atomic.AtomicReference;
  *       preserving the full three-way decision (including {@code RECORD_ONLY}) and consulting no delegate; or
  *   <li>a <b>deferral</b> marker (carrying the canonical trace ID) — used on the Java-agent path when the real sampler
  *       (a remote/custom/file-only policy) cannot be reproduced here. {@link DurableSampler} then evaluates its actual
- *       delegate once per execution, caches the result by trace ID, and reuses it for the execution's remaining durable
- *       spans, so an installed drop/rate-limit policy is honored and consulted only once.
+ *       delegate once per execution, caches the result by execution ARN and trace ID, and reuses it for the execution's
+ *       remaining durable spans, so an installed drop/rate-limit policy is honored and consulted only once.
  * </ul>
  *
  * <p><b>Two carriers, because the plugin runs across two class loaders.</b> Under the documented ADOT setup the plugin
@@ -49,10 +49,10 @@ final class DurableSamplingDecision {
 
     /**
      * The durable sampling intent for a span: either a resolved {@link SamplingResult}, or a deferral to the agent-side
-     * sampler's own delegate keyed by the canonical trace ID.
+     * sampler's own delegate. The sampler uses the execution ARN already attached to the span with this trace ID.
      *
      * @param resolved the resolved decision, or null when deferring
-     * @param deferredTraceId the canonical trace ID to key the agent-side delegate cache on, or null when resolved
+     * @param deferredTraceId the canonical trace ID passed to the agent-side delegate, or null when resolved
      */
     record Intent(SamplingResult resolved, String deferredTraceId) {
         static Intent resolved(SamplingResult result) {
