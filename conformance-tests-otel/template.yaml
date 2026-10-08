@@ -271,6 +271,7 @@ Resources:
     TestingMetadata:
       TestDescription:
         - otel-invocation-17
+        - otel-invocation-25
     Properties:
       CodeUri: .
       Handler: software.amazon.lambda.durable.conformance.otel.Otel17WaitForCallbackFailure
@@ -354,6 +355,16 @@ Resources:
     Properties:
       CodeUri: .
       Handler: software.amazon.lambda.durable.conformance.otel.Otel24InvocationRetryStatus
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel26ExternalCompletionReplay:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-26
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel26ExternalCompletionReplay
       Role: !Ref LambdaExecutionRoleArn
 
   OtelExecution1Success:
@@ -583,6 +594,7 @@ Resources:
     TestingMetadata:
       TestDescription:
         - otel-execution-17
+        - otel-execution-25
     Properties:
       CodeUri: .
       Handler: software.amazon.lambda.durable.conformance.otel.Otel17WaitForCallbackFailure
@@ -688,6 +700,19 @@ Resources:
     Properties:
       CodeUri: .
       Handler: software.amazon.lambda.durable.conformance.otel.Otel24InvocationRetryStatus
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution26ExternalCompletionReplay:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-26
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel26ExternalCompletionReplay
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:
