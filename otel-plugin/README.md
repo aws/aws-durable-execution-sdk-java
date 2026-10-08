@@ -52,12 +52,15 @@ completes the observation future exceptionally with that same fatal before escap
 body, or end hook runs, and no durable `FAILED` response is produced for that fatal. Ordinary initialization errors
 and handler/body failure classification retain their existing behavior.
 
-A direct `VirtualMachineError` or `ThreadDeath` from an SDK checkpoint continuation selects a retryable invocation
-control failure before the continuation releases its activity lease. The caller receives the original fatal as the
-cause of `UnrecoverableDurableExecutionException`, and started hooks receive `RETRYING`. The continuation's
-observation future settles with the original fatal after lease release and before the fatal escapes its coordinator
-worker. Already selected outcomes retain first-completion precedence. This direct-fatal continuation boundary
-does not add general wrapped-fatal classification or change ordinary continuation and handler/body failures.
+An SDK checkpoint continuation owned by an operation reports resumption/deserialization and dispatch failures
+through retryable manager control before releasing its activity lease. The caller receives the original failure as
+the cause of `UnrecoverableDurableExecutionException`, and started End hooks receive `RETRYING`; persisted operation
+state is unchanged for the next invocation. A rejected user-worker dispatch rolls back its activity registration.
+Ordinary failures during normal manager closing do not replace the selected outcome or stop unrelated operations.
+Unowned ordinary helper failures retain their observation-only behavior. Direct `VirtualMachineError` or
+`ThreadDeath` failures also settle their observation future after lease release and before escaping the coordinator
+worker. Observation cancellation cannot skip the actual task or discard its operation failure. This boundary does
+not reclassify handler/predicate failures or add general wrapped-fatal classification.
 
 SDK inspection of MDC-capture failures reads each visited standard transport cause once and detects identity cycles.
 Cyclic, null, or unreadable leading `CompletionException` chains retain the original wrapper; ordinary initialization

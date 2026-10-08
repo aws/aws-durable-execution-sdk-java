@@ -604,6 +604,63 @@ class ExecutionManagerTest {
         assertTrue(completion.isCancelled());
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void ownedFailureReachesExecutionDespiteCancelledObservation(boolean cancelled) throws Exception {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        manager.registerActiveThread("root");
+        var owner = mock(BaseDurableOperation.class);
+        when(owner.getCompletionFuture()).thenReturn(new CompletableFuture<>());
+        var queued = new AtomicReference<Runnable>();
+        var failure = new IllegalArgumentException("owned continuation failure");
+        var selected = manager.runUntilCompleteOrSuspend(new CompletableFuture<>());
+        var observation = manager.runCheckpointContinuation(
+                owner,
+                () -> {
+                    throw failure;
+                },
+                queued::set);
+        if (cancelled) assertTrue(observation.cancel(false));
+        queued.get().run();
+        var control = assertInstanceOf(
+                UnrecoverableDurableExecutionException.class,
+                assertThrows(ExecutionException.class, () -> selected.get(3, TimeUnit.SECONDS))
+                        .getCause());
+        assertTrue(control.isRetryable());
+        assertSame(failure, control.getCause());
+        if (cancelled) assertTrue(observation.isCancelled());
+        else
+            assertSame(
+                    failure,
+                    assertThrows(ExecutionException.class, () -> observation.get(3, TimeUnit.SECONDS))
+                            .getCause());
+        CompletableFuture.runAsync(manager::close).get(3, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void ownedCoordinatorRejectionSettlesExecutionAndReleasesAdmission() throws Exception {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        manager.registerActiveThread("root");
+        var owner = mock(BaseDurableOperation.class);
+        when(owner.getCompletionFuture()).thenReturn(new CompletableFuture<>());
+        var selected = manager.runUntilCompleteOrSuspend(new CompletableFuture<>());
+        var rejection = new RejectedExecutionException("coordinator admission rejected");
+        assertSame(
+                rejection,
+                assertThrows(
+                        RejectedExecutionException.class,
+                        () -> manager.runCheckpointContinuation(owner, () -> fail("not admitted"), task -> {
+                            throw rejection;
+                        })));
+        var control = assertInstanceOf(
+                UnrecoverableDurableExecutionException.class,
+                assertThrows(ExecutionException.class, () -> selected.get(3, TimeUnit.SECONDS))
+                        .getCause());
+        assertTrue(control.isRetryable());
+        assertSame(rejection, control.getCause());
+        CompletableFuture.runAsync(manager::close).get(3, TimeUnit.SECONDS);
+    }
+
     @Test
     void rejectedContinuationReleasesActivityAndPreservesTheRejection() {
         var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
