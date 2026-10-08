@@ -112,10 +112,24 @@ public class PluginRunner {
                 runHook(plugins.get(index), p -> p.onInvocationEnd(info));
             } catch (Error failure) {
                 // Finish unwinding earlier plugins' thread-local scopes before propagating an end-hook error.
-                if (firstError == null) firstError = failure;
+                if (firstError == null) {
+                    firstError = failure;
+                } else if (firstError != failure) {
+                    if (isJvmFatal(failure) && !isJvmFatal(firstError)) {
+                        failure.addSuppressed(firstError);
+                        firstError = failure;
+                    } else {
+                        firstError.addSuppressed(failure);
+                    }
+                }
             }
         }
         if (firstError != null) throw firstError;
+    }
+
+    @SuppressWarnings("removal")
+    private static boolean isJvmFatal(Error failure) {
+        return failure instanceof VirtualMachineError || failure instanceof ThreadDeath;
     }
 
     public void onOperationStart(OperationInfo info) {

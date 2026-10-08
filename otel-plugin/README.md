@@ -26,7 +26,10 @@ including when execution suspends or terminates. Handler `finally` blocks must f
 can run; a blocked handler cleanup therefore also blocks the invocation response. Context restoration still runs
 when span finalization or flushing fails. Ordinary exceptions and nonfatal linkage errors retain the existing
 plugin-hook isolation behavior. Invocation-end hooks run in reverse registration order so nested scopes unwind
-correctly; remaining end hooks run even when another hook raises an Error, then the first Error propagates.
+correctly; remaining end hooks run even when another hook raises an Error. The first unisolated Error propagates,
+unless a later `VirtualMachineError` or `ThreadDeath` takes precedence over a non-JVM-fatal Error; other distinct
+end-hook Errors are retained as suppressed failures. Scope cleanup preserves finalization failures using the same
+JVM-fatal precedence, so an ordinary cleanup exception cannot hide an earlier Error.
 Invocations without plugins also wait for handler cleanup before returning the selected suspension or retry outcome.
 Output-delivery failures that escape for a Lambda retry report `RETRYING`, so they do not prematurely end the Workflow
 span. An ordinary MDC-restoration failure on an inline executor does not replace an already selected outcome.

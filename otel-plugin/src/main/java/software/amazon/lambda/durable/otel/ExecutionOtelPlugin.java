@@ -290,13 +290,9 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
-        try {
-            endInvocation(info);
-        } finally {
-            var scope = handlerScope;
-            handlerScope = null;
-            if (scope != null) scope.close();
-        }
+        var scope = handlerScope;
+        handlerScope = null;
+        OtelPluginSupport.runInvocationEnd(scope, () -> endInvocation(info));
     }
 
     private void endInvocation(InvocationEndInfo info) {

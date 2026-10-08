@@ -88,6 +88,91 @@ class InvocationEndFailureTest {
         }
     }
 
+    @ParameterizedTest
+    @MethodSource("combinedFailures")
+    void preservesCombinedFinalizationAndScopeFailures(boolean executionView, String phase, String pair)
+            throws Exception {
+        Throwable primary =
+                switch (pair.split("-")[0]) {
+                    case "fatal" -> new InternalError("primary finalization");
+                    case "assert" -> new AssertionError("primary finalization");
+                    case "linkage" -> new NoClassDefFoundError("primary finalization");
+                    default -> new IllegalStateException("primary finalization");
+                };
+        Throwable cleanup =
+                switch (pair.split("-")[1]) {
+                    case "fatal" -> new InternalError("scope cleanup");
+                    case "assert" -> new AssertionError("scope cleanup");
+                    case "same" -> primary;
+                    default -> new IllegalStateException("scope cleanup");
+                };
+        var cleanupWins = List.of("runtime-fatal", "assert-fatal", "runtime-assert", "linkage-assert")
+                .contains(pair);
+        var expected = cleanupWins ? cleanup : primary;
+        var secondary = cleanupWins ? primary : cleanup;
+        var processor = new FailingProcessor(phase, primary);
+        var config = OtelPluginConfig.builder()
+                .enableMdc(false)
+                .contextExtractor(() -> new ExtractedContext(
+                        "12345678901234567890123456789012", "1234567890123456", ExtractedContext.Sampling.SAMPLED))
+                .build();
+        var builder = SdkTracerProvider.builder().addSpanProcessor(processor);
+        DurableExecutionPlugin plugin =
+                executionView ? new ExecutionOtelPlugin(builder, config) : new InvocationOtelPlugin(builder, config);
+        var healthyEnds = new AtomicInteger();
+        var closed = new AtomicInteger();
+        var healthy = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationEnd(InvocationEndInfo info) {
+                healthyEnds.incrementAndGet();
+            }
+        };
+        var runner = new PluginRunner(List.of(healthy, plugin));
+        var ambient = Span.wrap(SpanContext.create(
+                "abcdefabcdefabcdefabcdefabcdefab",
+                "abcdefabcdefabcd",
+                TraceFlags.getSampled(),
+                TraceState.getDefault()));
+        try (var ignored = ambient.makeCurrent()) {
+            var original = Context.current();
+            runner.onInvocationStart(new InvocationInfo("req", "arn", true, Instant.now()));
+            var field = plugin.getClass().getDeclaredField("handlerScope");
+            field.setAccessible(true);
+            var scope = (Scope) field.get(plugin);
+            field.set(plugin, (Scope) () -> {
+                closed.incrementAndGet();
+                scope.close();
+                raise(cleanup);
+            });
+            var end = new InvocationEndInfo("req", "arn", true, InvocationStatus.SUCCEEDED, null);
+            if (expected instanceof RuntimeException || expected instanceof LinkageError) {
+                assertDoesNotThrow(() -> runner.onInvocationEnd(end));
+            } else assertSame(expected, assertThrows(Error.class, () -> runner.onInvocationEnd(end)));
+            assertEquals(expected == secondary ? List.of() : List.of(secondary), List.of(expected.getSuppressed()));
+            assertSame(original, Context.current());
+            assertEquals(1, healthyEnds.get());
+            assertEquals(1, closed.get());
+            assertDoesNotThrow(() -> plugin.onInvocationEnd(end));
+            assertEquals(1, closed.get(), "scope cleanup is one-shot even when both phases throw");
+        }
+    }
+
+    private static Stream<Arguments> combinedFailures() {
+        return Stream.of(false, true)
+                .flatMap(view -> Stream.of("span", "flush")
+                        .flatMap(phase -> Stream.of(
+                                        "fatal-runtime",
+                                        "assert-runtime",
+                                        "runtime-fatal",
+                                        "assert-fatal",
+                                        "fatal-fatal",
+                                        "fatal-same",
+                                        "runtime-assert",
+                                        "linkage-assert",
+                                        "runtime-runtime")
+                                .map(pair -> Arguments.of(view, phase, pair))));
+    }
+
     private static Stream<Arguments> failures() {
         return Stream.of(false, true)
                 .flatMap(executionView -> Stream.of("span", "flush", "scope")

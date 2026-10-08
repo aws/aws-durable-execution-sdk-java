@@ -9,6 +9,7 @@ import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.nio.file.Files;
@@ -24,6 +25,37 @@ final class OtelPluginSupport {
     private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);
 
     private OtelPluginSupport() {}
+
+    /** Closes the owning thread's scope without hiding a finalization error or a later JVM-fatal cleanup failure. */
+    static void runInvocationEnd(Scope scope, Runnable end) {
+        Throwable primary = null;
+        try {
+            end.run();
+        } catch (Throwable failure) {
+            primary = failure;
+            throw failure;
+        } finally {
+            try {
+                if (scope != null) scope.close();
+            } catch (Throwable cleanup) {
+                if (primary == null) throw cleanup;
+                if (primary != cleanup) {
+                    if (endFailurePriority(cleanup) > endFailurePriority(primary)) {
+                        cleanup.addSuppressed(primary);
+                        throw cleanup;
+                    }
+                    primary.addSuppressed(cleanup);
+                }
+            }
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private static int endFailurePriority(Throwable failure) {
+        if (failure instanceof VirtualMachineError || failure instanceof ThreadDeath) return 3;
+        if (failure instanceof Error && !(failure instanceof LinkageError)) return 2;
+        return 1;
+    }
 
     /** Rejects an older core before a plugin builds a provider or activates any thread-local context. */
     static void requireSameThreadInvocationHooks() {
