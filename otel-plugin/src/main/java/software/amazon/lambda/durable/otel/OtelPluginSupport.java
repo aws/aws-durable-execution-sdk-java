@@ -26,11 +26,12 @@ import org.slf4j.LoggerFactory;
 final class OtelPluginSupport {
 
     /**
-     * Exports the SDK-owned fallback ancestor before each invocation returns, including PENDING. It is a zero-duration
-     * identity anchor at the checkpointed execution start, not a completion summary. Recovery re-exports use identical
-     * identity and timestamps; Workflow alone carries execution duration and outcome. Remote parents are never owned.
+     * Starts the SDK-owned fallback ancestor before descendants so they inherit the provider's actual sampling
+     * metadata. The caller ends this identity anchor at the same checkpointed start timestamp before invocation return.
+     * Recovery re-exports retain identity and timestamps; Workflow carries duration and outcome. Remote parents are
+     * never owned.
      */
-    static void exportExecutionRoot(
+    static Span startExecutionRoot(
             Tracer tracer,
             DeterministicIdGenerator idGenerator,
             SpanContext ancestor,
@@ -40,7 +41,7 @@ final class OtelPluginSupport {
             boolean useContextCarrier,
             boolean useThreadCarrier) {
         if (ancestor == null || ancestor.isRemote()) {
-            return;
+            return null;
         }
         var builder = tracer.spanBuilder("DurableExecutionRoot")
                 .setSpanKind(SpanKind.INTERNAL)
@@ -56,8 +57,38 @@ final class OtelPluginSupport {
         } else {
             root = idGenerator.startSpan(builder, ancestor.getTraceId(), ancestor.getSpanId());
         }
-        // End processors/exporters may create unrelated spans; they must not inherit this sampling override.
-        root.end(start);
+        return root;
+    }
+
+    /** Always releases an invocation's new root resource without hiding an earlier failure or a later JVM fatal. */
+    static void finishWithRootCleanup(Runnable finish, Runnable cleanup) {
+        Throwable primary = null;
+        try {
+            finish.run();
+        } catch (Throwable failure) {
+            primary = failure;
+            throw failure;
+        } finally {
+            try {
+                cleanup.run();
+            } catch (Throwable failure) {
+                if (primary == null) throw failure;
+                if (primary != failure) {
+                    if (endFailurePriority(failure) > endFailurePriority(primary)) {
+                        failure.addSuppressed(primary);
+                        throw failure;
+                    }
+                    primary.addSuppressed(failure);
+                }
+            }
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private static int endFailurePriority(Throwable failure) {
+        if (failure instanceof VirtualMachineError || failure instanceof ThreadDeath) return 3;
+        if (failure instanceof Error && !(failure instanceof LinkageError)) return 2;
+        return 1;
     }
 
     private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);

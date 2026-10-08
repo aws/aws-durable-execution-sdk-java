@@ -44,6 +44,11 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 
 When the backend supplies no complete remote parent, both views export a `DurableExecutionRoot` anchor before the first
 invocation returns, including when it suspends with `PENDING` or fails with `RETRYING`.
+The anchor is started before descendants so their parent context includes its provider-resolved trace flags and
+trace state. It ends at invocation end, before flushing, with the same fixed execution-start timestamp. For a
+deferred sampler, the first actual fallback span is now `DurableExecutionRoot`; custom policies that depend on the
+first span name or attributes can observe that ordering. No arbitrary name/input invariance is promised.
+
 The anchor is marked `durable.execution.synthetic_root=true`. Its trace and span IDs are deterministic and its start
 and end timestamps are the checkpointed execution start. It does not report execution status or duration; `Workflow`
 continues to report those at terminal completion. Complete remote parents remain externally owned and are never exported.

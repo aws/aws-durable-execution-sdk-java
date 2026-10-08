@@ -105,6 +105,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     // Per-invocation state
     private volatile boolean tracingEnabled;
     private volatile Span invocationSpan;
+    private volatile Span executionRootSpan;
     private volatile String durableExecutionArn;
 
     // Trace ID and flags of the execution trace, published together as one snapshot so readers never pair a trace ID
@@ -238,9 +239,22 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
                 : DurableSamplingDecision.Intent.deferred(canonicalTraceId);
         var sampled = OtelPluginSupport.isSampled(decision);
         var execCtx = ExecutionTraceContext.resolve(extracted, canonicalTraceId, arn(), idGenerator, () -> sampled);
+        executionStartTime = info.executionStartTime();
+        executionRootSpan = OtelPluginSupport.startExecutionRoot(
+                tracer,
+                idGenerator,
+                execCtx.executionAncestor(),
+                info.durableExecutionArn(),
+                executionStartTime,
+                samplingIntent,
+                OtelPluginSupport.usesLocalDurableSampler(sdkTracerProvider),
+                OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider));
+        // A visible plain replacement keeps its documented ancestor-flag fallback, without SDK-wide overrides.
+        if (executionRootSpan != null && OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)) {
+            execCtx = new ExecutionTraceContext(executionRootSpan.getSpanContext());
+        }
         executionTrace = new ExecutionTrace(canonicalTraceId, execCtx.traceFlags());
         executionAncestor = execCtx.executionAncestor();
-        executionStartTime = info.executionStartTime();
 
         // Invocation span — child of the ambient Lambda span when it is on the execution trace, otherwise a child of
         // the execution ancestor so it stays within the same trace.
@@ -275,6 +289,22 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
+        var root = executionRootSpan;
+        var rootTimestamp = executionStartTime;
+        var provider = sdkTracerProvider;
+        var shouldFlush = tracingEnabled || root != null;
+        executionRootSpan = null; // One-shot release even if an end processor throws or re-enters.
+        OtelPluginSupport.finishWithRootCleanup(() -> finishInvocationEnd(info), () -> {
+            if (root != null) root.end(rootTimestamp);
+            if (shouldFlush && provider != null) {
+                var flushResult = provider.forceFlush().join(5, TimeUnit.SECONDS);
+                if (!flushResult.isSuccess())
+                    logger.warn("OTel span flush failed or timed out — some spans may be lost");
+            }
+        });
+    }
+
+    private void finishInvocationEnd(InvocationEndInfo info) {
         if (!tracingEnabled) {
             return;
         }
@@ -334,27 +364,10 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
             }
             workflowSpan.end();
         }
-        OtelPluginSupport.exportExecutionRoot(
-                tracer,
-                idGenerator,
-                executionAncestor,
-                durableExecutionArn,
-                executionStartTime,
-                samplingIntent,
-                OtelPluginSupport.usesLocalDurableSampler(sdkTracerProvider),
-                OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider));
         workflowSpanContext = null;
         executionAncestor = null;
         executionStartTime = null;
         samplingIntent = null;
-
-        // Flush spans before Lambda freezes
-        if (sdkTracerProvider != null) {
-            var flushResult = sdkTracerProvider.forceFlush().join(5, TimeUnit.SECONDS);
-            if (!flushResult.isSuccess()) {
-                logger.warn("OTel span flush failed or timed out — some spans may be lost");
-            }
-        }
     }
 
     // ─── Operation hooks ─────────────────────────────────────────────────

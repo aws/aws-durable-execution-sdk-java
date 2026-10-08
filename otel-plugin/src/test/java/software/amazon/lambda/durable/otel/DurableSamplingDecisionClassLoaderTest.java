@@ -66,6 +66,141 @@ class DurableSamplingDecisionClassLoaderTest {
         "ExecutionOtelPlugin,foreign,false", "ExecutionOtelPlugin,foreign,true",
         "ExecutionOtelPlugin,opaque,false", "ExecutionOtelPlugin,opaque,true"
     })
+    void materializedRootSuppliesParentSamplingMetadata(String pluginName, String topology, boolean recordOnly)
+            throws Exception {
+        var previousHeader = System.getProperty("com.amazonaws.xray.traceHeader");
+        GlobalOpenTelemetry.resetForTest();
+        OtelPluginAutoConfigurationState.markInstalled();
+        System.setProperty("com.amazonaws.xray.traceHeader", "Root=1-6955b900-123456789012345678901234");
+        var evaluations = new AtomicInteger();
+        var key = AttributeKey.stringKey("sampler.extra");
+        var result = new SamplingResult() {
+            public SamplingDecision getDecision() {
+                return recordOnly ? SamplingDecision.RECORD_ONLY : SamplingDecision.RECORD_AND_SAMPLE;
+            }
+
+            public Attributes getAttributes() {
+                return Attributes.of(key, "kept");
+            }
+
+            public TraceState getUpdatedTraceState(TraceState parent) {
+                var depth = parent.get("depth");
+                return parent.toBuilder()
+                        .put("vendor", "kept")
+                        .put("depth", Integer.toString(depth == null ? 1 : Integer.parseInt(depth) + 1))
+                        .build();
+            }
+        };
+        var delegate = new Sampler() {
+            public SamplingResult shouldSample(
+                    Context parent,
+                    String traceId,
+                    String name,
+                    SpanKind kind,
+                    Attributes attributes,
+                    List<LinkData> links) {
+                evaluations.incrementAndGet();
+                return result;
+            }
+
+            public String getDescription() {
+                return "custom-metadata";
+            }
+        };
+        try (var appLoader = pluginClassLoader();
+                var agentLoader = pluginClassLoader();
+                var exporter = InMemorySpanExporter.create()) {
+            var loader = topology.equals("local") ? appLoader : agentLoader;
+            var samplerType = Class.forName(DurableSampler.class.getName(), true, loader);
+            var wrap = samplerType.getDeclaredMethod("wrap", Sampler.class);
+            wrap.setAccessible(true);
+            var idType = Class.forName(DeterministicIdGenerator.class.getName(), true, loader);
+            try (var provider = SdkTracerProvider.builder()
+                    .setSampler((Sampler) wrap.invoke(null, delegate))
+                    .setIdGenerator((IdGenerator) idType.getConstructor().newInstance())
+                    .addSpanProcessor(SimpleSpanProcessor.builder(exporter)
+                            .setExportUnsampledSpans(true)
+                            .build())
+                    .build()) {
+                var hidden = new TracerProvider() {
+                    public Tracer get(String name) {
+                        return provider.get(name);
+                    }
+
+                    public Tracer get(String name, String version) {
+                        return provider.get(name, version);
+                    }
+                };
+                GlobalOpenTelemetry.set(new OpenTelemetry() {
+                    public TracerProvider getTracerProvider() {
+                        return topology.equals("opaque") ? hidden : provider;
+                    }
+
+                    public ContextPropagators getPropagators() {
+                        return ContextPropagators.noop();
+                    }
+                });
+                var plugin = (DurableExecutionPlugin)
+                        Class.forName("software.amazon.lambda.durable.otel." + pluginName, true, appLoader)
+                                .getConstructor()
+                                .newInstance();
+                var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/custom/id";
+                for (var first : new boolean[] {true, false}) {
+                    plugin.onInvocationStart(new InvocationInfo("request", arn, first, Instant.ofEpochSecond(10)));
+                    plugin.onInvocationEnd(new InvocationEndInfo(
+                            "request",
+                            arn,
+                            first,
+                            first ? InvocationStatus.PENDING : InvocationStatus.SUCCEEDED,
+                            null));
+                }
+                var spans = exporter.getFinishedSpanItems();
+                var roots = spans.stream()
+                        .filter(span -> span.getName().equals("DurableExecutionRoot"))
+                        .toList();
+                assertEquals(2, roots.size());
+                var rootContext = roots.get(0).getSpanContext();
+                for (var anchor : roots) {
+                    assertEquals(
+                            rootContext, anchor.getSpanContext(), "Re-export keeps the complete stable root context");
+                    assertEquals(10_000_000_000L, anchor.getStartEpochNanos());
+                    assertEquals(anchor.getStartEpochNanos(), anchor.getEndEpochNanos());
+                    assertEquals("1", anchor.getSpanContext().getTraceState().get("depth"));
+                    assertEquals(!recordOnly, anchor.getSpanContext().isSampled());
+                    assertEquals("kept", anchor.getAttributes().get(key));
+                }
+                var descendants = spans.stream()
+                        .filter(span -> span.getName().equals("Invocation")
+                                || span.getName().equals("Workflow"))
+                        .toList();
+                assertEquals(3, descendants.size());
+                for (var child : descendants) {
+                    assertEquals(
+                            rootContext,
+                            child.getParentSpanContext(),
+                            "A child must record the materialized parent's flags and trace state: " + child.getName());
+                    assertEquals("2", child.getSpanContext().getTraceState().get("depth"));
+                    assertEquals("kept", child.getAttributes().get(key));
+                }
+                assertEquals(topology.equals("local") ? 2 : 1, evaluations.get());
+            }
+        } finally {
+            GlobalOpenTelemetry.resetForTest();
+            OtelPluginAutoConfigurationState.resetInstalledForTest();
+            if (previousHeader == null) System.clearProperty("com.amazonaws.xray.traceHeader");
+            else System.setProperty("com.amazonaws.xray.traceHeader", previousHeader);
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "InvocationOtelPlugin,local,false", "InvocationOtelPlugin,local,true",
+        "InvocationOtelPlugin,foreign,false", "InvocationOtelPlugin,foreign,true",
+        "InvocationOtelPlugin,opaque,false", "InvocationOtelPlugin,opaque,true",
+        "ExecutionOtelPlugin,local,false", "ExecutionOtelPlugin,local,true",
+        "ExecutionOtelPlugin,foreign,false", "ExecutionOtelPlugin,foreign,true",
+        "ExecutionOtelPlugin,opaque,false", "ExecutionOtelPlugin,opaque,true"
+    })
     void customSamplerMetadataSurvivesProviderOwnershipBoundaries(
             String pluginName, String topology, boolean sharedTraceExecutions) throws Exception {
         var previousHeader = System.getProperty("com.amazonaws.xray.traceHeader");
