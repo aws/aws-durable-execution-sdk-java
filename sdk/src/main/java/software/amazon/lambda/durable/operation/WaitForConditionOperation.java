@@ -66,7 +66,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
     @Override
     protected void replay(Operation existing) {
         switch (existing.status()) {
-            case SUCCEEDED, FAILED -> markAlreadyCompleted(); // Check if already completed / failed
+            case SUCCEEDED, FAILED, CANCELLED, TIMED_OUT, STOPPED -> markAlreadyCompleted();
             case PENDING -> pollReadyAndResumeCheckLoop(existing); // Check if pending retry
             case STARTED, READY -> resumeCheckLoop(existing);
             default ->
@@ -84,7 +84,8 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
             var result = (stepDetails != null) ? stepDetails.result() : null;
             return deserializeResult(result);
         } else {
-            var errorObject = op.stepDetails().error();
+            var stepDetails = op.stepDetails();
+            var errorObject = stepDetails != null ? stepDetails.error() : null;
 
             // Attempt to reconstruct and throw the original exception
             Throwable original = deserializeException(errorObject);
