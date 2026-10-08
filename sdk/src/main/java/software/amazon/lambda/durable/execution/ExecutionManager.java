@@ -15,6 +15,7 @@ import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -75,7 +76,7 @@ public class ExecutionManager implements SafeCloseable {
     private final Set<String> activeThreads = Collections.synchronizedSet(new HashSet<>());
     private static final ThreadLocal<ThreadContext> currentThreadContext = new ThreadLocal<>();
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
-    // Guarded by activeThreads so starting a checkpoint request is atomic with the last-thread suspension decision.
+    // Requests and polling continuations; guarded by activeThreads so admission is atomic with last-thread suspension.
     private int checkpointRequestsInFlight;
 
     /**
@@ -541,6 +542,41 @@ public class ExecutionManager implements SafeCloseable {
                 preSuspendCheck();
                 signalSuspension();
             }
+        }
+    }
+
+    /**
+     * Runs a polling continuation away from the serialized checkpoint batcher. Keeps checkpoint processing active from
+     * receiving the callback until the continuation has registered its next worker (or finished inline). Canceling the
+     * returned future affects observation only; queued or running work still owns its activity lease.
+     *
+     * @param continuation operation work to dispatch after receiving a polling update
+     * @return completion of the continuation, or an already-completed future when execution has stopped
+     */
+    public CompletableFuture<Void> runCheckpointContinuation(Runnable continuation) {
+        return runCheckpointContinuation(continuation, InternalExecutor.INSTANCE);
+    }
+
+    CompletableFuture<Void> runCheckpointContinuation(Runnable continuation, Executor coordinator) {
+        if (!tryStartCheckpointProcessing()) return CompletableFuture.completedFuture(null);
+        try {
+            var completion = new CompletableFuture<Void>();
+            coordinator.execute(() -> {
+                try {
+                    try {
+                        continuation.run();
+                    } finally {
+                        finishCheckpointProcessing();
+                    }
+                    completion.complete(null);
+                } catch (Throwable failure) {
+                    completion.completeExceptionally(failure);
+                }
+            });
+            return completion;
+        } catch (RuntimeException | Error failure) {
+            finishCheckpointProcessing();
+            throw failure;
         }
     }
 

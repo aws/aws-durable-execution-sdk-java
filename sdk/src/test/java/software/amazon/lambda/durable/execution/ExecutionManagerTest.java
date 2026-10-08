@@ -14,10 +14,15 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -370,6 +375,114 @@ class ExecutionManagerTest {
 
         manager.finishCheckpointProcessing();
         assertTrue(manager.isExecutionCompletedExceptionally());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"complete", "register-worker", "fail"})
+    void pollingContinuationRetainsActivityUntilItFinishesDispatch(String outcome) throws Exception {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var caller = Thread.currentThread();
+        var failure = new IllegalStateException("continuation failure");
+        manager.registerActiveThread("root");
+        var completion = manager.runCheckpointContinuation(() -> {
+            assertNotSame(caller, Thread.currentThread());
+            entered.countDown();
+            try {
+                assertTrue(release.await(3, TimeUnit.SECONDS));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(interrupted);
+            }
+            if (outcome.equals("register-worker")) manager.registerActiveThread("next");
+            if (outcome.equals("fail")) throw failure;
+        });
+        try {
+            assertTrue(entered.await(3, TimeUnit.SECONDS));
+            manager.deregisterActiveThread("root");
+            assertFalse(manager.isExecutionCompletedExceptionally());
+            assertFalse(completion.isDone());
+        } finally {
+            release.countDown();
+        }
+        if (outcome.equals("fail")) {
+            assertSame(
+                    failure,
+                    assertThrows(ExecutionException.class, () -> completion.get(3, TimeUnit.SECONDS))
+                            .getCause());
+        } else completion.get(3, TimeUnit.SECONDS);
+        if (outcome.equals("register-worker")) {
+            assertFalse(manager.isExecutionCompletedExceptionally());
+            assertThrows(SuspendExecutionException.class, () -> manager.deregisterActiveThread("next"));
+        }
+        assertTrue(manager.isExecutionCompletedExceptionally());
+        manager.runCheckpointContinuation(() -> fail("No continuation may start after suspension"))
+                .get(3, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void cancellingQueuedContinuationDoesNotSkipItsWorkOrLeakActivity() {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        var queued = new AtomicReference<Runnable>();
+        var calls = new AtomicInteger();
+        manager.registerActiveThread("root");
+        var completion = manager.runCheckpointContinuation(calls::incrementAndGet, queued::set);
+        assertTrue(completion.cancel(false));
+        manager.deregisterActiveThread("root");
+        assertFalse(manager.isExecutionCompletedExceptionally(), "Queued work still owns the activity lease");
+        queued.get().run();
+        assertAll(
+                () -> assertEquals(1, calls.get()),
+                () -> assertTrue(manager.isExecutionCompletedExceptionally(), "The actual runnable releases its lease"),
+                () -> assertTrue(completion.isCancelled()));
+    }
+
+    @Test
+    void cancellingRunningContinuationDoesNotReleaseActivityBeforeItsCleanup() throws Exception {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        var queued = new AtomicReference<Runnable>();
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        manager.registerActiveThread("root");
+        var completion = manager.runCheckpointContinuation(
+                () -> {
+                    entered.countDown();
+                    try {
+                        assertTrue(release.await(3, TimeUnit.SECONDS));
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(interrupted);
+                    }
+                },
+                queued::set);
+        var actualWorker = CompletableFuture.runAsync(queued.get());
+        try {
+            assertTrue(entered.await(3, TimeUnit.SECONDS));
+            assertTrue(completion.cancel(false));
+            manager.deregisterActiveThread("root");
+            assertFalse(manager.isExecutionCompletedExceptionally(), "Cancellation must not release running work");
+        } finally {
+            release.countDown();
+        }
+        actualWorker.get(3, TimeUnit.SECONDS);
+        assertTrue(manager.isExecutionCompletedExceptionally());
+        assertTrue(completion.isCancelled());
+    }
+
+    @Test
+    void rejectedContinuationReleasesActivityAndPreservesTheRejection() {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        var rejection = new RejectedExecutionException("coordinator unavailable");
+        manager.registerActiveThread("root");
+        assertSame(
+                rejection,
+                assertThrows(
+                        RejectedExecutionException.class,
+                        () -> manager.runCheckpointContinuation(() -> fail("Rejected work must not run"), task -> {
+                            throw rejection;
+                        })));
+        assertThrows(SuspendExecutionException.class, () -> manager.deregisterActiveThread("root"));
     }
 
     @Test
