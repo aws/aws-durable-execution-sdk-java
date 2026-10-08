@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -78,6 +79,9 @@ public class ExecutionManager implements SafeCloseable {
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
     // Requests and polling continuations; guarded by activeThreads so admission is atomic with last-thread suspension.
     private int checkpointRequestsInFlight;
+    // Guarded by activeThreads; an observation future can be cancelled independently of its actual task.
+    private final Map<Object, BaseDurableOperation> checkpointContinuations = new HashMap<>();
+    private boolean closing;
 
     /**
      * Per-wait state used to coordinate the caller thread with the future completion callback.
@@ -554,34 +558,85 @@ public class ExecutionManager implements SafeCloseable {
      * @return completion of the continuation, or an already-completed future when execution has stopped
      */
     public CompletableFuture<Void> runCheckpointContinuation(Runnable continuation) {
-        return runCheckpointContinuation(continuation, InternalExecutor.INSTANCE);
+        return runCheckpointContinuation(null, continuation, InternalExecutor.INSTANCE);
+    }
+
+    /** Schedules an operation continuation whose unfinished waiters are stopped during manager cleanup. */
+    public CompletableFuture<Void> runCheckpointContinuation(BaseDurableOperation owner, Runnable continuation) {
+        return runCheckpointContinuation(owner, continuation, InternalExecutor.INSTANCE);
     }
 
     CompletableFuture<Void> runCheckpointContinuation(Runnable continuation, Executor coordinator) {
-        if (!tryStartCheckpointProcessing()) return CompletableFuture.completedFuture(null);
+        return runCheckpointContinuation(null, continuation, coordinator);
+    }
+
+    CompletableFuture<Void> runCheckpointContinuation(
+            BaseDurableOperation owner, Runnable continuation, Executor coordinator) {
+        var registration = registerCheckpointContinuation(owner);
+        if (registration == null) {
+            if (isClosing()) stopContinuationOwner(owner);
+            return CompletableFuture.completedFuture(null);
+        }
         try {
             var completion = new CompletableFuture<Void>();
-            coordinator.execute(() -> {
-                try {
-                    try {
-                        continuation.run();
-                    } finally {
-                        finishCheckpointProcessing();
-                    }
-                    completion.complete(null);
-                } catch (Throwable failure) {
-                    completion.completeExceptionally(failure);
-                }
-            });
+            coordinator.execute(() -> completeCheckpointContinuation(registration, continuation, completion));
             return completion;
         } catch (RuntimeException | Error failure) {
-            finishCheckpointProcessing();
+            finishCheckpointContinuation(registration);
             throw failure;
         }
     }
 
+    private void completeCheckpointContinuation(
+            Object registration, Runnable continuation, CompletableFuture<Void> completion) {
+        try {
+            try {
+                if (!isClosing()) continuation.run();
+            } finally {
+                finishCheckpointContinuation(registration);
+            }
+            completion.complete(null);
+        } catch (Throwable failure) {
+            completion.completeExceptionally(failure);
+        }
+    }
+
+    private Object registerCheckpointContinuation(BaseDurableOperation owner) {
+        synchronized (activeThreads) {
+            if (closing || executionExceptionFuture.isDone()) return null;
+            var registration = new Object();
+            checkpointContinuations.put(registration, owner);
+            checkpointRequestsInFlight++;
+            return registration;
+        }
+    }
+
+    private void finishCheckpointContinuation(Object registration) {
+        synchronized (activeThreads) {
+            checkpointContinuations.remove(registration);
+            try {
+                finishCheckpointProcessing();
+            } finally {
+                activeThreads.notifyAll();
+            }
+        }
+    }
+
+    private boolean isClosing() {
+        synchronized (activeThreads) {
+            return closing;
+        }
+    }
+
+    private static void stopContinuationOwner(BaseDurableOperation owner) {
+        if (owner != null) owner.getCompletionFuture().completeExceptionally(new SuspendExecutionException());
+    }
+
     private boolean shouldSuspendExecution() {
-        return activeThreads.isEmpty() && checkpointRequestsInFlight == 0 && !executionExceptionFuture.isDone();
+        return !closing
+                && activeThreads.isEmpty()
+                && checkpointRequestsInFlight == 0
+                && !executionExceptionFuture.isDone();
     }
 
     private void preSuspendCheck() {
@@ -631,9 +686,32 @@ public class ExecutionManager implements SafeCloseable {
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
+        stopCheckpointContinuations();
         validateRunningThreads();
 
         checkpointManager.shutdown();
+    }
+
+    private void stopCheckpointContinuations() {
+        List<BaseDurableOperation> owners;
+        synchronized (activeThreads) {
+            closing = true;
+            owners = new ArrayList<>(checkpointContinuations.values());
+        }
+        owners.forEach(ExecutionManager::stopContinuationOwner);
+        synchronized (activeThreads) {
+            while (!checkpointContinuations.isEmpty()) {
+                try {
+                    // wait releases this monitor so tasks can finish and release their registrations. No user work
+                    // or future join is performed while holding the coordination monitor.
+                    activeThreads.wait();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(
+                            "Interrupted while waiting for checkpoint continuations", interrupted);
+                }
+            }
+        }
     }
 
     private void validateRunningThreads() {
