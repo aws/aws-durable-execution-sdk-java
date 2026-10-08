@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -587,18 +588,37 @@ public class ExecutionManager implements SafeCloseable {
         }
     }
 
+    @SuppressWarnings("removal")
     private void completeCheckpointContinuation(
             Object registration, Runnable continuation, CompletableFuture<Void> completion) {
         try {
             try {
                 if (!isClosing()) continuation.run();
+            } catch (VirtualMachineError | ThreadDeath fatal) {
+                // Choose retry control flow before releasing the final lease could otherwise select PENDING.
+                signalContinuationFatal(fatal);
+                throw fatal;
             } finally {
                 finishCheckpointContinuation(registration);
             }
             completion.complete(null);
         } catch (Throwable failure) {
             completion.completeExceptionally(failure);
+            // The observation future may be ignored by a polling chain. Never hide a JVM fatal from its worker.
+            if (failure instanceof VirtualMachineError fatal) throw fatal;
+            if (failure instanceof ThreadDeath fatal) throw fatal;
         }
+    }
+
+    private void signalContinuationFatal(Error fatal) {
+        var control = new UnrecoverableDurableExecutionException(
+                ErrorObject.builder()
+                        .errorType(fatal.getClass().getName())
+                        .errorMessage("Fatal error in SDK checkpoint continuation")
+                        .build(),
+                true,
+                fatal);
+        if (executionExceptionFuture.completeExceptionally(control)) stopAllOperations(control);
     }
 
     private Object registerCheckpointContinuation(BaseDurableOperation owner) {
@@ -613,6 +633,8 @@ public class ExecutionManager implements SafeCloseable {
 
     private void finishCheckpointContinuation(Object registration) {
         synchronized (activeThreads) {
+            // An inline coordinator may rethrow after its task already released this registration.
+            if (!checkpointContinuations.containsKey(registration)) return;
             checkpointContinuations.remove(registration);
             try {
                 finishCheckpointProcessing();

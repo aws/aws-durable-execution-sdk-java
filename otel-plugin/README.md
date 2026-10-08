@@ -47,6 +47,13 @@ completes the observation future exceptionally with that same fatal before escap
 body, or end hook runs, and no durable `FAILED` response is produced for that fatal. Ordinary initialization errors
 and handler/body failure classification retain their existing behavior.
 
+A direct `VirtualMachineError` or `ThreadDeath` from an SDK checkpoint continuation selects a retryable invocation
+control failure before the continuation releases its activity lease. The caller receives the original fatal as the
+cause of `UnrecoverableDurableExecutionException`, and started hooks receive `RETRYING`. The continuation's
+observation future settles with the original fatal after lease release and before the fatal escapes its coordinator
+worker. Already selected outcomes retain first-completion precedence. Ordinary continuation, handler/body and
+post-End MDC policies are unchanged; this boundary does not add general wrapped-fatal classification.
+
 SDK inspection of MDC-capture failures reads each visited standard transport cause once and detects identity cycles.
 Cyclic, null, or unreadable leading `CompletionException` chains retain the original wrapper; ordinary initialization
 still reports `FAILED` when its error response can be serialized. This provides cycle safety for finite cause graphs,
