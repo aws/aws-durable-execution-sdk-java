@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.UndeclaredThrowableException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.AbstractExecutorService;
@@ -19,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -26,10 +28,13 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.MDC;
 import org.slf4j.spi.MDCAdapter;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class MdcFatalInitializationTest {
@@ -63,6 +68,120 @@ class MdcFatalInitializationTest {
         runCapture(mode, failure, null);
     }
 
+    @ParameterizedTest
+    @MethodSource("diagnosticCases")
+    @SuppressWarnings("removal")
+    void captureDiagnosticsAreBoundedAndPreserveTheSelectedFailure(String mode, String kind) throws Exception {
+        var abort = new AtomicBoolean();
+        var reads = new ArrayList<AtomicInteger>();
+        var leaf = new IllegalStateException("ordinary capture");
+        Error fatal = kind.equals("getter-death") ? new ThreadDeath() : new InternalError("fatal capture diagnostic");
+        Throwable failure;
+        Throwable expected;
+        if (kind.equals("self")) {
+            var link = new AtomicReference<Throwable>();
+            failure = diagnostic(link::get, abort, reads);
+            link.set(failure);
+            expected = failure;
+        } else if (kind.equals("pair")) {
+            var link = new AtomicReference<Throwable>();
+            var inner = diagnostic(link::get, abort, reads);
+            failure = diagnostic(() -> inner, abort, reads);
+            link.set(failure);
+            expected = failure;
+        } else if (kind.equals("null")) {
+            failure = diagnostic(() -> null, abort, reads);
+            expected = failure;
+        } else if (kind.equals("unreadable")) {
+            failure = diagnostic(
+                    () -> {
+                        throw new IllegalStateException("unreadable cause");
+                    },
+                    abort,
+                    reads);
+            expected = failure;
+        } else if (kind.equals("nested")) {
+            var inner = diagnostic(() -> leaf, abort, reads);
+            failure = diagnostic(() -> inner, abort, reads);
+            expected = leaf;
+        } else if (kind.equals("non-completion")) {
+            var wrapper = new UndeclaredThrowableException(leaf, "ordinary capture");
+            failure = diagnostic(() -> wrapper, abort, reads);
+            expected = wrapper; // Ordinary initialization only unwraps a leading CompletionException chain.
+        } else if (kind.equals("changing")) {
+            var calls = new AtomicInteger();
+            failure = diagnostic(
+                    () -> {
+                        if (calls.incrementAndGet() == 1) return leaf;
+                        throw fatal;
+                    },
+                    abort,
+                    reads);
+            expected = leaf;
+        } else {
+            failure = diagnostic(
+                    () -> {
+                        throw fatal;
+                    },
+                    abort,
+                    reads);
+            expected = failure;
+        }
+        var serialized = new AtomicReference<Throwable>();
+        var safeSerDes = new SerDes() {
+            private final JacksonSerDes delegate = new JacksonSerDes();
+
+            @Override
+            public String serialize(Object value) {
+                if (value instanceof Throwable error) {
+                    serialized.set(error);
+                    // Observe identity without making a customer serializer traverse the malformed cause graph.
+                    return "\"capture failure\"";
+                }
+                return delegate.serialize(value);
+            }
+
+            @Override
+            public <T> T deserialize(String value, TypeToken<T> type) {
+                return delegate.deserialize(value, type);
+            }
+        };
+        var getterFatal = kind.startsWith("getter-");
+        runCapture(mode, failure, getterFatal ? fatal : null, expected, safeSerDes, () -> abort.set(true));
+        if (getterFatal) assertNull(serialized.get());
+        else assertSame(expected, serialized.get(), "initialization must preserve the selected failure identity");
+        reads.forEach(count -> assertEquals(1, count.get(), "read each diagnostic cause once"));
+    }
+
+    private static CompletionException diagnostic(
+            Supplier<Throwable> cause, AtomicBoolean abort, List<AtomicInteger> reads) {
+        var count = new AtomicInteger();
+        reads.add(count);
+        return new CompletionException("ordinary capture", null) {
+            @Override
+            public synchronized Throwable getCause() {
+                if (abort.get()) return null; // Bound negative-control cleanup even when old code loops forever.
+                count.incrementAndGet();
+                return cause.get();
+            }
+        };
+    }
+
+    private static Stream<Arguments> diagnosticCases() {
+        return Stream.of("direct", "async")
+                .flatMap(mode -> Stream.of(
+                                "self",
+                                "pair",
+                                "null",
+                                "unreadable",
+                                "nested",
+                                "non-completion",
+                                "changing",
+                                "getter-vm",
+                                "getter-death")
+                        .map(kind -> Arguments.of(mode, kind)));
+    }
+
     private static Stream<Arguments> fatalCases() {
         return Stream.of("direct", "async", "precompleted")
                 .flatMap(mode -> Stream.of(false, true)
@@ -77,6 +196,17 @@ class MdcFatalInitializationTest {
     }
 
     private static void runCapture(String mode, Throwable failure, Error expectedFatal) throws Exception {
+        runCapture(mode, failure, expectedFatal, failure, null, () -> {});
+    }
+
+    private static void runCapture(
+            String mode,
+            Throwable failure,
+            Error expectedFatal,
+            Throwable expectedOrdinary,
+            SerDes overrideSerDes,
+            Runnable release)
+            throws Exception {
         var originalAdapter = MDC.getMDCAdapter();
         var injected = new AtomicBoolean();
         var starts = new AtomicInteger();
@@ -110,16 +240,16 @@ class MdcFatalInitializationTest {
                     ends.incrementAndGet();
                 }
             };
+            var configuration =
+                    DurableConfig.builder().withExecutorService(workers).withPlugins(plugin);
+            if (overrideSerDes != null) configuration.withSerDes(overrideSerDes);
             var runner = LocalDurableTestRunner.create(
                     String.class,
                     (input, context) -> {
                         bodies.incrementAndGet();
                         return "unreachable";
                     },
-                    DurableConfig.builder()
-                            .withExecutorService(workers)
-                            .withPlugins(plugin)
-                            .build());
+                    configuration.build());
             var response = caller.submit(() -> {
                 callerThread.set(Thread.currentThread());
                 return runner.run("input");
@@ -142,7 +272,7 @@ class MdcFatalInitializationTest {
                 var result = response.get(3, TimeUnit.SECONDS);
                 assertEquals(ExecutionStatus.FAILED, result.getStatus());
                 assertEquals(
-                        failure.getClass().getName(),
+                        expectedOrdinary.getClass().getName(),
                         result.getError().orElseThrow().errorType());
                 assertEquals("ordinary capture", result.getError().orElseThrow().errorMessage());
                 assertNull(workers.escape.get(), "ordinary initialization policy must not be broadened");
@@ -152,6 +282,7 @@ class MdcFatalInitializationTest {
             assertEquals(0, bodies.get());
             assertEquals(0, ends.get());
         } finally {
+            release.run();
             workers.shutdownNow();
             caller.shutdownNow();
             try {

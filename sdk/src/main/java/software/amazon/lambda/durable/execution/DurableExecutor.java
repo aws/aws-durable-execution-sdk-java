@@ -129,7 +129,7 @@ public class DurableExecutor {
             };
             // Cleanup is awaited even without plugins. Keep that path free of plugin MDC handling.
             if (plugins.isEmpty()) return CompletableFuture.supplyAsync(task, config.getExecutorService());
-            return supplyHandler(task, failure -> finishInvocation(null, failure), config.getExecutorService());
+            return supplyHandler(task, this::finishFailure, config.getExecutorService());
         }
 
         private O invokeHandler() {
@@ -257,15 +257,17 @@ public class DurableExecutor {
             try {
                 restore = restoreMdcOnClose();
             } catch (Throwable failure) {
+                Throwable initializationCause;
                 try {
-                    rethrowLifecycleFatal(failure);
+                    initializationCause = normalizeMdcInitializationFailure(failure);
                 } catch (VirtualMachineError | ThreadDeath fatal) {
                     // Wake the invocation caller with the original fatal before it escapes the actual worker.
                     // Throwing first would leave the observation future incomplete on an asynchronous executor.
                     result.completeExceptionally(fatal);
                     throw fatal;
                 }
-                Outcome.capture(() -> initializationFailure.apply(failure)).complete(result);
+                Outcome.capture(() -> initializationFailure.apply(initializationCause))
+                        .complete(result);
                 return;
             }
             var outcome = Outcome.capture(task);
@@ -290,6 +292,43 @@ public class DurableExecutor {
             rethrowLifecycleFatal(dispatchFailure);
         }
         return result;
+    }
+
+    /** Classifies capture failures once, retaining the ordinary policy of unwrapping only a completion prefix. */
+    private static Throwable normalizeMdcInitializationFailure(Throwable failure) {
+        rethrowDirectMdcFatal(failure);
+        var visited = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        var cause = failure;
+        var normalized = failure;
+        var completionPrefix = true;
+        while (visited.add(cause)) {
+            rethrowDirectMdcFatal(cause);
+            if (!(cause instanceof CompletionException)) completionPrefix = false;
+            if (!(cause instanceof CompletionException
+                    || cause instanceof ExecutionException
+                    || cause instanceof InvocationTargetException
+                    || cause instanceof UndeclaredThrowableException)) return normalized;
+            var next = readMdcCause(cause);
+            if (next == null || visited.contains(next)) return completionPrefix ? failure : normalized;
+            if (completionPrefix) normalized = next;
+            cause = next;
+        }
+        return completionPrefix ? failure : normalized;
+    }
+
+    private static Throwable readMdcCause(Throwable failure) {
+        try {
+            return failure.getCause();
+        } catch (Throwable unreadableDiagnostic) {
+            rethrowDirectMdcFatal(unreadableDiagnostic);
+            return null;
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private static void rethrowDirectMdcFatal(Throwable failure) {
+        if (failure instanceof VirtualMachineError fatal) throw fatal;
+        if (failure instanceof ThreadDeath fatal) throw fatal;
     }
 
     /** Inspects only standard transport wrappers at this lifecycle boundary, without trusting diagnostics. */
