@@ -9,6 +9,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -64,6 +65,9 @@ public class ExecutionManager implements SafeCloseable {
 
     // ===== Execution State =====
     private final Map<String, Operation> operationStorage;
+    // Only populated while a continuation failure is synchronously publishing its selected outcome.
+    private final Map<Throwable, Thread> continuationFailurePublishers =
+            Collections.synchronizedMap(new IdentityHashMap<>());
     private final Operation executionOp;
     private final String durableExecutionArn;
     private final Context lambdaContext;
@@ -630,7 +634,22 @@ public class ExecutionManager implements SafeCloseable {
                         .build(),
                 true,
                 failure);
-        if (executionExceptionFuture.completeExceptionally(control)) stopAllOperations(control);
+        continuationFailurePublishers.put(control, Thread.currentThread());
+        try {
+            if (executionExceptionFuture.completeExceptionally(control)) stopAllOperations(control);
+        } finally {
+            continuationFailurePublishers.remove(control);
+        }
+    }
+
+    /**
+     * A legacy outcome observer may run inside completeExceptionally, before its publisher returns to wake waiters. The
+     * outcome is already selected here. Wake those waiters before End can wait for their handler cleanup.
+     */
+    void wakePublishedContinuationWaiters(Throwable selectedFailure) {
+        // A losing completeExceptionally call may drain the winner's callback on the losing publisher's thread.
+        // Match the already-selected control by identity, not the thread currently running the callback.
+        if (continuationFailurePublishers.containsKey(selectedFailure)) stopAllOperations(selectedFailure);
     }
 
     private Object registerCheckpointContinuation(BaseDurableOperation owner) {
