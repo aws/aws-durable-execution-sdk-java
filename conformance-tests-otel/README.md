@@ -64,7 +64,7 @@ the observation-step attempt. This is SDK cloud behavior coverage, not a claim
 that a deployed Lambda exercises the JS local-runner wrapper.
 
 Cases 25–26 use matched shared requirements and workflow pin
-`ad35bd36b67821d52a17db4f9d80d8696694a7f3`. The shared cloud checks establish the
+`1ee7fba34f2b34c8d7fb28b834507a21f1dabf0e`. The shared cloud checks establish the
 service error-payload representation and callback phase gating; local runner
 checks do not establish those service facts.
 
