@@ -210,6 +210,7 @@ public class DurableExecutor {
             Throwable error,
             Object executionInput,
             Object executionResult) {
+        executionManager.beginInvocationEnd();
         if (pluginRunner.isEmpty()) {
             return;
         }

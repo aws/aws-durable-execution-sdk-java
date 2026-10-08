@@ -745,13 +745,18 @@ public class ExecutionManager implements SafeCloseable {
         checkpointManager.shutdown();
     }
 
-    private void stopCheckpointContinuations() {
+    /** Stops continuation admission and signals unfinished owners; explicit task/handler draining stays in close. */
+    void beginInvocationEnd() {
         List<BaseDurableOperation> owners;
         synchronized (activeThreads) {
             closing = true;
             owners = new ArrayList<>(checkpointContinuations.values());
         }
         owners.forEach(ExecutionManager::stopContinuationOwner);
+    }
+
+    private void stopCheckpointContinuations() {
+        beginInvocationEnd();
         synchronized (activeThreads) {
             while (!checkpointContinuations.isEmpty()) {
                 try {

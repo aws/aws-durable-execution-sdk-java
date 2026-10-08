@@ -16,7 +16,8 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * @param durableExecutionArn the durable execution ARN
  * @param isFirstInvocation true if this is the first invocation of the execution
  * @param executionStartTime the stable start timestamp of the durable execution
- * @param operations a snapshot of operations known when the invocation ended, keyed by operation ID
+ * @param operations operations known at invocation End after continuation admission closes, keyed by operation ID;
+ *     already-accepted handlers may finish during later manager cleanup
  * @param invocationStatus the invocation outcome
  * @param executionError non-null if the execution failed; this component is experimental
  * @param executionInput the deserialized execution input; this component is experimental

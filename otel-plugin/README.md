@@ -29,6 +29,12 @@ Ordinary unowned helper failures retain their observation-only behavior. Normal 
 the selected outcome or stop unrelated operations. This boundary does not change handler/predicate failure
 classification, hook threading, trace topology, or add general wrapped-fatal classification.
 
+The invocation End snapshot is taken after closing new checkpoint-continuation admission and signaling unfinished
+owned continuations. Queued work may legitimately remain incomplete after early parallel success. This does not
+join all accepted/running handlers before End: their remaining cleanup/checkpoint completion is still awaited by
+normal manager close afterward, and late end hooks can occur. Await operations that must be included in the selected
+outcome or snapshot. The admission cut does not provide a universal all-work-drained or final-state export guarantee.
+
 ## Installation
 
 ```xml
