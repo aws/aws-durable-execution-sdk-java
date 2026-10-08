@@ -158,9 +158,11 @@ final class OtelPluginSupport {
             }
             return ambientSpan.isRecording() ? SamplingResult.recordOnly() : SamplingResult.drop();
         }
-        // 3. Only the local sampler can consume a full result from this loader's context carrier. A visible foreign
-        // sampler must defer too: the shared-property carrier cannot encode custom attributes or trace-state updates.
-        if (usesLocalDurableSampler(sdkTracerProvider)) {
+        // 3. Resolve a local durable sampler's full result, or a visible replacement's root policy for ancestor flags.
+        // A foreign DurableSampler still resolves in its own loader to retain full attributes and trace state.
+        // A plain replacement receives no carrier; the provider keeps its normal per-span sampling behavior.
+        if (sdkTracerProvider != null
+                && (usesLocalDurableSampler(sdkTracerProvider) || !usesDurableSamplingBridge(sdkTracerProvider))) {
             return sdkTracerProvider
                     .getSampler()
                     .shouldSample(
