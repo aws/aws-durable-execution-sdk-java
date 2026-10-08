@@ -67,3 +67,8 @@ Cases 25–26 use matched shared requirements and workflow pin
 `ad35bd36b67821d52a17db4f9d80d8696694a7f3`. The shared cloud checks establish the
 service error-payload representation and callback phase gating; local runner
 checks do not establish those service facts.
+
+For case 25, Java reports no plugin error details for an entirely empty error
+container. The persisted container, callback failure, and caller error stay
+unchanged. Any present type, message, data, or stack-trace field remains an error
+detail, including an empty string or an explicitly supplied empty stack list.
