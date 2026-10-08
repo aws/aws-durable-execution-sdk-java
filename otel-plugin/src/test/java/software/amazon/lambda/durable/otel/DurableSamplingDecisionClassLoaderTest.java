@@ -11,22 +11,30 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.IdGenerator;
 import io.opentelemetry.sdk.trace.ReadWriteSpan;
 import io.opentelemetry.sdk.trace.ReadableSpan;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SpanProcessor;
+import io.opentelemetry.sdk.trace.data.LinkData;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import io.opentelemetry.sdk.trace.samplers.SamplingDecision;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
@@ -49,6 +57,110 @@ import software.amazon.lambda.durable.plugin.InvocationStatus;
  * then asserts the thread-scoped system-property bridge carries the decision from one loader to the other.
  */
 class DurableSamplingDecisionClassLoaderTest {
+    @ParameterizedTest
+    @CsvSource({
+        "InvocationOtelPlugin,local",
+        "InvocationOtelPlugin,foreign",
+        "InvocationOtelPlugin,opaque",
+        "ExecutionOtelPlugin,local",
+        "ExecutionOtelPlugin,foreign",
+        "ExecutionOtelPlugin,opaque"
+    })
+    void customSamplerMetadataSurvivesProviderOwnershipBoundaries(String pluginName, String topology) throws Exception {
+        var previousHeader = System.getProperty("com.amazonaws.xray.traceHeader");
+        GlobalOpenTelemetry.resetForTest();
+        OtelPluginAutoConfigurationState.markInstalled();
+        System.setProperty("com.amazonaws.xray.traceHeader", "Root=1-6955b900-123456789012345678901234");
+        var evaluations = new AtomicInteger();
+        var key = AttributeKey.stringKey("sampler.extra");
+        var result = new SamplingResult() {
+            public SamplingDecision getDecision() {
+                return SamplingDecision.RECORD_AND_SAMPLE;
+            }
+
+            public Attributes getAttributes() {
+                return Attributes.of(key, "kept");
+            }
+
+            public TraceState getUpdatedTraceState(TraceState parent) {
+                return parent.toBuilder().put("vendor", "kept").build();
+            }
+        };
+        var delegate = new Sampler() {
+            public SamplingResult shouldSample(
+                    Context parent,
+                    String traceId,
+                    String name,
+                    SpanKind kind,
+                    Attributes attributes,
+                    List<LinkData> links) {
+                evaluations.incrementAndGet();
+                return result;
+            }
+
+            public String getDescription() {
+                return "custom-metadata";
+            }
+        };
+        try (var appLoader = pluginClassLoader();
+                var agentLoader = pluginClassLoader();
+                var exporter = InMemorySpanExporter.create()) {
+            var loader = topology.equals("local") ? appLoader : agentLoader;
+            var samplerType = Class.forName(DurableSampler.class.getName(), true, loader);
+            var wrap = samplerType.getDeclaredMethod("wrap", Sampler.class);
+            wrap.setAccessible(true);
+            var idType = Class.forName(DeterministicIdGenerator.class.getName(), true, loader);
+            try (var provider = SdkTracerProvider.builder()
+                    .setSampler((Sampler) wrap.invoke(null, delegate))
+                    .setIdGenerator((IdGenerator) idType.getConstructor().newInstance())
+                    .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+                    .build()) {
+                var hidden = new TracerProvider() {
+                    public Tracer get(String name) {
+                        return provider.get(name);
+                    }
+
+                    public Tracer get(String name, String version) {
+                        return provider.get(name, version);
+                    }
+                };
+                GlobalOpenTelemetry.set(new OpenTelemetry() {
+                    public TracerProvider getTracerProvider() {
+                        return topology.equals("opaque") ? hidden : provider;
+                    }
+
+                    public ContextPropagators getPropagators() {
+                        return ContextPropagators.noop();
+                    }
+                });
+                var plugin = (DurableExecutionPlugin)
+                        Class.forName("software.amazon.lambda.durable.otel." + pluginName, true, appLoader)
+                                .getConstructor()
+                                .newInstance();
+                var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/custom/id";
+                for (var first : new boolean[] {true, false}) {
+                    plugin.onInvocationStart(new InvocationInfo("request", arn, first, Instant.ofEpochSecond(10)));
+                    plugin.onInvocationEnd(
+                            new InvocationEndInfo("request", arn, first, InvocationStatus.PENDING, null));
+                }
+                var spans = exporter.getFinishedSpanItems().stream()
+                        .filter(s ->
+                                s.getName().equals("Invocation") || s.getName().equals("DurableExecutionRoot"))
+                        .toList();
+                assertEquals(4, spans.size());
+                for (var span : spans) {
+                    assertEquals("kept", span.getAttributes().get(key), span.getName());
+                    assertEquals("kept", span.getSpanContext().getTraceState().get("vendor"), span.getName());
+                }
+                assertEquals(topology.equals("local") ? 2 : 1, evaluations.get());
+            }
+        } finally {
+            GlobalOpenTelemetry.resetForTest();
+            OtelPluginAutoConfigurationState.resetInstalledForTest();
+            if (previousHeader == null) System.clearProperty("com.amazonaws.xray.traceHeader");
+            else System.setProperty("com.amazonaws.xray.traceHeader", previousHeader);
+        }
+    }
 
     @AfterEach
     void clearBridge() {

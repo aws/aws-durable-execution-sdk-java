@@ -147,8 +147,9 @@ final class OtelPluginSupport {
             }
             return ambientSpan.isRecording() ? SamplingResult.recordOnly() : SamplingResult.drop();
         }
-        // 3. An application-owned provider exposes the real sampler: evaluate it once, preserving its full result.
-        if (sdkTracerProvider != null) {
+        // 3. Only the local sampler can consume a full result from this loader's context carrier. A visible foreign
+        // sampler must defer too: the shared-property carrier cannot encode custom attributes or trace-state updates.
+        if (usesLocalDurableSampler(sdkTracerProvider)) {
             return sdkTracerProvider
                     .getSampler()
                     .shouldSample(
