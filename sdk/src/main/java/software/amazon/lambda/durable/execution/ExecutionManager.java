@@ -580,24 +580,36 @@ public class ExecutionManager implements SafeCloseable {
         }
         try {
             var completion = new CompletableFuture<Void>();
-            coordinator.execute(() -> completeCheckpointContinuation(registration, continuation, completion));
+            coordinator.execute(() -> completeCheckpointContinuation(owner, registration, continuation, completion));
             return completion;
         } catch (RuntimeException | Error failure) {
-            finishCheckpointContinuation(registration);
+            try {
+                if ((owner != null && !isClosing())
+                        || failure instanceof VirtualMachineError
+                        || failure instanceof ThreadDeath) signalContinuationFailure(failure);
+            } finally {
+                finishCheckpointContinuation(registration);
+            }
             throw failure;
         }
     }
 
     @SuppressWarnings("removal")
     private void completeCheckpointContinuation(
-            Object registration, Runnable continuation, CompletableFuture<Void> completion) {
+            BaseDurableOperation owner,
+            Object registration,
+            Runnable continuation,
+            CompletableFuture<Void> completion) {
         try {
             try {
                 if (!isClosing()) continuation.run();
-            } catch (VirtualMachineError | ThreadDeath fatal) {
-                // Choose retry control flow before releasing the final lease could otherwise select PENDING.
-                signalContinuationFatal(fatal);
-                throw fatal;
+            } catch (Throwable failure) {
+                // An operation polling chain can ignore observation. Select retry control before the final lease
+                // could select PENDING; unowned ordinary helper failures retain their observation-only contract.
+                if ((owner != null && !isClosing())
+                        || failure instanceof VirtualMachineError
+                        || failure instanceof ThreadDeath) signalContinuationFailure(failure);
+                throw failure;
             } finally {
                 finishCheckpointContinuation(registration);
             }
@@ -610,14 +622,14 @@ public class ExecutionManager implements SafeCloseable {
         }
     }
 
-    private void signalContinuationFatal(Error fatal) {
+    private void signalContinuationFailure(Throwable failure) {
         var control = new UnrecoverableDurableExecutionException(
                 ErrorObject.builder()
-                        .errorType(fatal.getClass().getName())
-                        .errorMessage("Fatal error in SDK checkpoint continuation")
+                        .errorType(failure.getClass().getName())
+                        .errorMessage("Error in SDK checkpoint continuation")
                         .build(),
                 true,
-                fatal);
+                failure);
         if (executionExceptionFuture.completeExceptionally(control)) stopAllOperations(control);
     }
 
