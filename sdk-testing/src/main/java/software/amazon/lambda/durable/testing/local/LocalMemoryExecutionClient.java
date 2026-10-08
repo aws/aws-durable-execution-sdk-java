@@ -59,6 +59,9 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
             // updatedOperations was copied into response, so clearing it is safe here
             updatedOperations.clear();
         }
+        if (response.checkpointToken() == null) {
+            updates.forEach(update -> operationIdsUpdatedSinceLastInvocation.add(update.id()));
+        }
         return response;
     }
 
@@ -276,9 +279,9 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
         synchronized (updatedOperations) {
             updatedOperations.put(op.id(), op);
         }
-        // Only track operations updated outside of a checkpoint call (i.e., between invocations)
-        // for the updatedOperationIds field. Operations updated during a checkpoint are already
-        // visible to the SDK via the checkpoint response.
+        // Only track operations updated outside of a checkpoint call (i.e., between invocations) here.
+        // Checkpoint updates are tracked by checkpoint() when its tokenless response ends the invocation
+        // before the SDK can observe the returned state.
         if (!withinCheckpoint) {
             operationIdsUpdatedSinceLastInvocation.add(op.id());
         }

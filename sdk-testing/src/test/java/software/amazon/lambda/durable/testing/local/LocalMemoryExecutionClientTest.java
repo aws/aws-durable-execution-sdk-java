@@ -92,6 +92,7 @@ class LocalMemoryExecutionClientTest {
         assertTrue(client.isPaused());
         assertNull(response.checkpointToken());
         assertNotNull(client.getOperationByName("step-1"));
+        assertEquals(List.of("1"), client.getUpdatedOperationIdsSinceLastInvocation());
     }
 
     @Test
