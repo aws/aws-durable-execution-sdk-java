@@ -30,6 +30,10 @@ correctly; remaining end hooks run even when another hook raises an Error, then 
 Invocations without plugins also wait for handler cleanup before returning the selected suspension or retry outcome.
 Output-delivery failures that escape for a Lambda retry report `RETRYING`, so they do not prematurely end the Workflow
 span. An ordinary MDC-restoration failure on an inline executor does not replace an already selected outcome.
+Before invocation startup, a JVM-fatal error from MDC capture (direct or inside a standard transport wrapper)
+completes the observation future exceptionally with that same fatal before escaping the handler worker. No start,
+body, or end hook runs, and no durable `FAILED` response is produced for that fatal. Ordinary initialization errors
+and handler/body failure classification retain their existing behavior.
 
 This plugin version requires the core's `DurableExecutor.supportsSameThreadInvocationHooks()` capability, introduced
 in the 2.2.2 lifecycle contract (currently `2.2.2-SNAPSHOT`). Upgrade the core together with the plugin layer. Every
