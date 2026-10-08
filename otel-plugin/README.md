@@ -37,14 +37,17 @@ SDK output preparation, including customer `SerDes` calls and durable large-resu
 terminal invocation-end notification. Failures in this preparation report `RETRYING` instead of ending the Workflow
 span. If End also raises an unisolated Error, the preparation failure remains primary with the cleanup error
 suppressed, unless cleanup introduces the first JVM-fatal error. An original JVM-fatal preparation error retains its
-identity. End describes the SDK outcome at that point, not acknowledgment of a response by the Lambda service.
+identity. Retryable control failures follow the same End-error combination: an ordinary End Error is suppressed
+under the retry control, while a direct JVM-fatal End error retains its existing precedence with the control and
+its cause preserved as diagnostics. This does not add arbitrary cause unwrapping to handler failure classification.
+End describes the SDK outcome at that point, not acknowledgment of a response by the Lambda service.
 Caller-side execution-manager cleanup, response-envelope encoding and output-stream writes follow End; runtime
 response transport follows the handler return. Failures at those later boundaries still propagate, without a second
 End dispatch or changing its already reported outcome. A JVM-fatal MDC-restoration failure after End (direct or
 inside a standard transport wrapper) completes the caller's observation exceptionally with the original fatal
 before that fatal escapes the worker, for both asynchronous and inline executors. The End notification remains
 unchanged and is not repeated. An earlier JVM-fatal End/preparation failure remains primary; later restoration
-failures are suppressed. A restoration fatal takes precedence over an earlier non-JVM-fatal delivery/End failure,
+failures are suppressed, with an identity guard when restoration throws the same fatal object. A restoration fatal takes precedence over an earlier non-JVM-fatal delivery/End failure,
 which remains suppressed. Non-JVM-fatal restoration failures, including `AssertionError` and `LinkageError`, retain
 the selected caller outcome.
 Before invocation startup, a JVM-fatal error from MDC capture (direct or inside a standard transport wrapper)

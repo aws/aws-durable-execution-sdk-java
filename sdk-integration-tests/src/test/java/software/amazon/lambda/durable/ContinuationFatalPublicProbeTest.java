@@ -34,6 +34,24 @@ class ContinuationFatalPublicProbeTest {
     @ParameterizedTest
     @CsvSource({"false,false", "false,true", "true,false", "true,true"})
     void readyResumeSerdeFatalDoesNotDisappearIntoPending(boolean death, boolean withPlugin) throws Exception {
+        runFatalWithEndFailure(death, withPlugin, null);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,assertion", "true,assertion", "false,fatal", "true,fatal"})
+    void continuationFatalKeepsDiagnosticsWhenEndAlsoFails(boolean death, String endKind) throws Exception {
+        runFatalWithEndFailure(death, true, endKind);
+    }
+
+    @SuppressWarnings("removal")
+    private static void runFatalWithEndFailure(boolean death, boolean withPlugin, String endKind) throws Exception {
+        Error endFailure = endKind == null
+                ? null
+                : endKind.equals("fatal")
+                        ? (death ? new InternalError("End fatal") : new ThreadDeath())
+                        : new AssertionError("End assertion");
+        var endEscaped = new CountDownLatch(1);
+        var endOwnerFailure = new AtomicReference<Throwable>();
         Error fatal = death ? new ThreadDeath() : new InternalError("resume serde fatal");
         var armed = new AtomicBoolean();
         var injected = new CountDownLatch(1);
@@ -51,6 +69,9 @@ class ContinuationFatalPublicProbeTest {
             if (failure == fatal) {
                 ownerFailure.set(failure);
                 escaped.countDown();
+            } else if (failure == endFailure) {
+                endOwnerFailure.set(failure);
+                endEscaped.countDown();
             } else if (previousHandler != null) previousHandler.uncaughtException(thread, failure);
         });
         var serde = new SerDes() {
@@ -97,6 +118,7 @@ class ContinuationFatalPublicProbeTest {
             builder.withPlugins(new DurableExecutionPlugin() {
                 public void onInvocationEnd(InvocationEndInfo info) {
                     ends.add(info);
+                    if (info.invocationStatus() == InvocationStatus.RETRYING && endFailure != null) throw endFailure;
                 }
             });
         var config = builder.build();
@@ -161,7 +183,18 @@ class ContinuationFatalPublicProbeTest {
             assertTrue(ownerEscaped, "The actual coordinator worker must observe its JVM fatal");
             assertSame(fatal, ownerFailure.get());
             assertNull(output, "A failed coordinator must not return a durable terminal or PENDING response");
-            var retry = assertInstanceOf(UnrecoverableDurableExecutionException.class, callerFailure);
+            UnrecoverableDurableExecutionException retry;
+            if ("fatal".equals(endKind)) {
+                assertSame(endFailure, callerFailure, "Existing Root End JVM-fatal precedence remains");
+                assertTrue(endEscaped.await(3, TimeUnit.SECONDS));
+                assertSame(endFailure, endOwnerFailure.get());
+                assertEquals(1, endFailure.getSuppressed().length);
+                retry = assertInstanceOf(
+                        UnrecoverableDurableExecutionException.class, endFailure.getSuppressed()[0]);
+            } else {
+                retry = assertInstanceOf(UnrecoverableDurableExecutionException.class, callerFailure);
+                if (endFailure != null) assertArrayEquals(new Throwable[] {endFailure}, retry.getSuppressed());
+            }
             assertTrue(retry.isRetryable());
             assertSame(fatal, retry.getCause());
             if (withPlugin) {

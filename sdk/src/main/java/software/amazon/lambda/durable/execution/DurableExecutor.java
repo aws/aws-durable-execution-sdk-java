@@ -183,7 +183,13 @@ public class DurableExecutor {
         private DurableExecutionOutput finishFailure(Throwable cause) {
             var status = failureStatus(cause);
             if (status == InvocationStatus.FAILED) return finishTerminalFailure(cause);
-            fireOnInvocationEnd(status, status == InvocationStatus.PENDING ? null : cause, null);
+            try {
+                fireOnInvocationEnd(status, status == InvocationStatus.PENDING ? null : cause, null);
+            } catch (Error endFailure) {
+                if (status == InvocationStatus.RETRYING)
+                    ExceptionHelper.sneakyThrow(combinePreparationAndEndFailures(cause, endFailure));
+                throw endFailure;
+            }
             if (status == InvocationStatus.PENDING) return DurableExecutionOutput.pending();
             ExceptionHelper.sneakyThrow(cause);
             return null;
@@ -296,12 +302,16 @@ public class DurableExecutor {
             var outcome = Outcome.capture(task);
             var restoringAfterNonfatalOutcome = false;
             try {
-                try (var ignored = restore) {
+                try {
                     // End/delivery failures must also escape their actual worker. Handler-body failures have
                     // already been mapped to their selected durable outcome; this does not reclassify them.
                     rethrowLifecycleFatal(outcome.failure());
-                    restoringAfterNonfatalOutcome = true;
+                } catch (VirtualMachineError | ThreadDeath fatal) {
+                    closeMdcAfterFatal(restore, fatal);
+                    throw fatal;
                 }
+                restoringAfterNonfatalOutcome = true;
+                restore.close();
             } catch (Throwable workerFailure) {
                 try {
                     rethrowLifecycleFatal(workerFailure);
@@ -332,6 +342,15 @@ public class DurableExecutor {
             if (dispatchFailure != classifiedWorkerFailure.get()) rethrowLifecycleFatal(dispatchFailure);
         }
         return result;
+    }
+
+    /** A repeated fatal object must not be replaced by try-with-resources self-suppression failure. */
+    private static void closeMdcAfterFatal(SafeCloseable restore, Error fatal) {
+        try {
+            restore.close();
+        } catch (Throwable restorationFailure) {
+            if (restorationFailure != fatal) fatal.addSuppressed(restorationFailure);
+        }
     }
 
     /** Classifies capture failures once, retaining the ordinary policy of unwrapping only a completion prefix. */

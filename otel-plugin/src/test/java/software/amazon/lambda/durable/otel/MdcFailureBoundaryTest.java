@@ -211,6 +211,25 @@ class MdcFailureBoundaryTest {
         assertArrayEquals(new Throwable[] {restoration}, primary.getSuppressed());
     }
 
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @CsvSource({
+        "false,false,false",
+        "false,false,true",
+        "false,true,false",
+        "false,true,true",
+        "true,false,false",
+        "true,false,true",
+        "true,true,false",
+        "true,true,true"
+    })
+    void sameFatalAtEndAndRestorationRetainsOwnerIdentity(boolean inline, boolean suspend, boolean death)
+            throws Exception {
+        Error fatal = death ? new ThreadDeath() : new InternalError("same End/restore fatal");
+        exercisePostEndFailure(inline, suspend, fatal, fatal, fatal);
+        assertEquals(0, fatal.getSuppressed().length, "Never suppress the fatal onto itself");
+    }
+
     @ParameterizedTest
     @CsvSource({"false,false", "false,true", "true,false", "true,true"})
     void restorationFatalRetainsEarlierNonfatalEndFailure(boolean inline, boolean wrapped) throws Exception {

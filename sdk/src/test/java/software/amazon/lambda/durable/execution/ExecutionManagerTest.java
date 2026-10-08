@@ -604,6 +604,32 @@ class ExecutionManagerTest {
         assertTrue(completion.isCancelled());
     }
 
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void coordinatorAdmissionFatalSelectsRetryBeforeLeaseRelease(boolean death) throws Exception {
+        Error fatal = death ? new ThreadDeath() : new InternalError("coordinator admission fatal");
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        manager.registerActiveThread("root");
+        var owner = mock(BaseDurableOperation.class);
+        when(owner.getCompletionFuture()).thenReturn(new CompletableFuture<>());
+        var selected = manager.runUntilCompleteOrSuspend(new CompletableFuture<>());
+        assertSame(
+                fatal,
+                assertThrows(
+                        Error.class,
+                        () -> manager.runCheckpointContinuation(owner, () -> fail("No accepted task"), task -> {
+                            throw fatal;
+                        })));
+        var retry = assertInstanceOf(
+                UnrecoverableDurableExecutionException.class,
+                assertThrows(ExecutionException.class, () -> selected.get(3, TimeUnit.SECONDS))
+                        .getCause());
+        assertTrue(retry.isRetryable());
+        assertSame(fatal, retry.getCause());
+        CompletableFuture.runAsync(manager::close).get(3, TimeUnit.SECONDS);
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void ownedFailureReachesExecutionDespiteCancelledObservation(boolean cancelled) throws Exception {
