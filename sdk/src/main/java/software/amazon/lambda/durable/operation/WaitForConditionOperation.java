@@ -112,9 +112,10 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
     }
 
     private CompletableFuture<Void> pollReadyAndResumeCheckLoop(Operation existing) {
-        return pollUntilReady().thenAccept(op -> {
-            if (!isOperationCompleted() && op.status() == OperationStatus.READY) resumeCheckLoop(op);
-        });
+        return pollUntilReady()
+                .thenCompose(op -> executionManager.runCheckpointContinuation(() -> {
+                    if (!isOperationCompleted() && op.status() == OperationStatus.READY) resumeCheckLoop(op);
+                }));
     }
 
     private CompletableFuture<Operation> pollUntilReady() {
@@ -195,15 +196,18 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
         var inline = new AtomicReference<Operation>();
         var acceptingInline = new AtomicBoolean(true);
         try {
-            pollUntilReady().thenAccept(op -> {
+            pollUntilReady().thenCompose(op -> {
                 if (Thread.currentThread() == owner && acceptingInline.get()) {
                     inline.set(op);
+                    return CompletableFuture.completedFuture(null);
                 } else {
-                    // A checkpoint callback can observe READY before this attempt's worker exits. Its checkpoint
-                    // processing lease stays active through this handoff, preventing a false quiescence window.
-                    publishedWorker.join().join();
-                    if (!isOperationCompleted() && op.status() == OperationStatus.READY)
-                        executeCheckLogic(nextState, nextAttempt);
+                    // A configured executor may run or wait for the next check inline. Leave the serialized
+                    // checkpoint callback before dispatch, retaining activity through worker publication/registration.
+                    return executionManager.runCheckpointContinuation(() -> {
+                        publishedWorker.join().join();
+                        if (!isOperationCompleted() && op.status() == OperationStatus.READY)
+                            executeCheckLogic(nextState, nextAttempt);
+                    });
                 }
             });
         } finally {
