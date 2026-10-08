@@ -26,6 +26,11 @@ final class OtelPluginSupport {
 
     private OtelPluginSupport() {}
 
+    /** Only the same DurableSampler class copy can consume this loader's parent-context holder. */
+    static boolean usesLocalDurableSampler(SdkTracerProvider provider) {
+        return provider != null && provider.getSampler() instanceof DurableSampler;
+    }
+
     /** Closes the owning thread's scope without hiding a finalization error or a later JVM-fatal cleanup failure. */
     static void runInvocationEnd(Scope scope, Runnable end) {
         Throwable primary = null;
