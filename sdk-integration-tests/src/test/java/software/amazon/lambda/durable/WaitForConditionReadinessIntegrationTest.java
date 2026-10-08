@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.lang.management.ManagementFactory;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -19,6 +21,7 @@ import java.util.concurrent.atomic.*;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.IntFunction;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -36,6 +39,146 @@ import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 
 class WaitForConditionReadinessIntegrationTest {
+    @TempDir
+    Path subprocessLogs;
+
+    @ParameterizedTest
+    @ValueSource(strings = {"async", "direct", "submit-and-wait"})
+    void delayedReadyResumesWithSynchronousOperationExecutors(String mode) throws Exception {
+        var log = subprocessLogs.resolve(mode + ".log");
+        var process = new ProcessBuilder(
+                        Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                        "-cp",
+                        System.getProperty("java.class.path"),
+                        SynchronousProbe.class.getName(),
+                        mode)
+                .redirectErrorStream(true)
+                .redirectOutput(log.toFile())
+                .start();
+        try {
+            assertTrue(process.waitFor(15, TimeUnit.SECONDS), "The isolated READY probe exceeded its cleanup bound");
+            var output = Files.readString(log);
+            System.out.println("SYNC_READY_PROBE mode=" + mode + " exit=" + process.exitValue() + "\n" + output);
+            assertEquals(0, process.exitValue(), output);
+            assertTrue(output.contains("SYNC_READY_SUCCESS checks=2 replayChecks=2"), output);
+        } finally {
+            if (process.isAlive()) process.destroyForcibly();
+            assertTrue(process.waitFor(5, TimeUnit.SECONDS));
+        }
+    }
+
+    /** A separate process bounds cleanup of an old-code deadlock without altering the observed protocol. */
+    public static final class SynchronousProbe {
+        public static void main(String[] args) throws Exception {
+            var gate = new HandoffGate(true, false);
+            var workers = new SynchronousContinuationExecutor(args[0]);
+            var client = new DelayedReadyClient(gate);
+            var run = new Run(client, workers, value -> {
+                if (value == 1) gate.firstWorker.set(Thread.currentThread());
+                return value == 2
+                        ? WaitForConditionResult.stopPolling(value)
+                        : WaitForConditionResult.continuePolling(2);
+            });
+            try (var mdc = new MdcClearGate(gate)) {
+                var first = run.start();
+                await(gate.pollEntered);
+                await(gate.workerExitEntered);
+                assertTrue(client.advanceTime());
+                gate.releaseReadyResponse.countDown();
+                await(gate.readyResponseReturned);
+                gate.releaseWorkerExit.countDown();
+                assertEquals(
+                        ExecutionStatus.SUCCEEDED,
+                        first.get(3, TimeUnit.SECONDS).status());
+                assertEquals(2, run.checks.get());
+                assertEquals(
+                        ExecutionStatus.SUCCEEDED,
+                        run.start().get(3, TimeUnit.SECONDS).status());
+                assertEquals(2, run.checks.get());
+                assertTrue(workers.continuationDispatches.get() > 0);
+                System.out.println("SYNC_READY_SUCCESS checks=2 replayChecks=2 mode=" + args[0]);
+                run.close();
+                gate.shutdownNow();
+            } catch (Throwable failure) {
+                System.out.println("SYNC_READY_BLOCKED mode=" + args[0] + " failure="
+                        + failure.getClass().getName());
+                failure.printStackTrace(System.out);
+                var bean = ManagementFactory.getThreadMXBean();
+                Thread.getAllStackTraces().forEach((thread, stack) -> {
+                    if (!thread.getName().startsWith("durable-sdk-internal")
+                            && !thread.getName().startsWith("sync-ready-worker")) return;
+                    var info = bean.getThreadInfo(new long[] {thread.getId()}, true, true)[0];
+                    System.out.println("THREAD " + thread.getName() + " " + thread.getState() + " monitors="
+                            + (info == null ? "[]" : Arrays.toString(info.getLockedMonitors())));
+                    Arrays.stream(stack).forEach(frame -> System.out.println("  " + frame));
+                });
+                // The probe owns no cloud resources; exiting the child JVM releases only this fixture's blocked
+                // threads.
+                System.exit(2);
+            }
+        }
+    }
+
+    private static final class SynchronousContinuationExecutor extends AbstractExecutorService {
+        private final String mode;
+        private final AtomicInteger submissions = new AtomicInteger();
+        private final AtomicInteger continuationDispatches = new AtomicInteger();
+        private final ExecutorService delegate = Executors.newCachedThreadPool(task -> {
+            var thread = new Thread(task, "sync-ready-worker");
+            thread.setDaemon(true);
+            return thread;
+        });
+
+        private SynchronousContinuationExecutor(String mode) {
+            this.mode = mode;
+        }
+
+        @Override
+        public void execute(Runnable task) {
+            if (submissions.incrementAndGet() <= 2) {
+                delegate.execute(task); // Root handler and first check retain their normal asynchronous setup.
+                return;
+            }
+            continuationDispatches.incrementAndGet();
+            if (mode.equals("direct")) task.run();
+            else if (mode.equals("submit-and-wait")) {
+                try {
+                    delegate.submit(task).get();
+                } catch (InterruptedException failure) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(failure);
+                } catch (ExecutionException failure) {
+                    throw new AssertionError(failure.getCause());
+                }
+            } else delegate.execute(task);
+        }
+
+        @Override
+        public void shutdown() {
+            delegate.shutdown();
+        }
+
+        @Override
+        public List<Runnable> shutdownNow() {
+            return delegate.shutdownNow();
+        }
+
+        @Override
+        public boolean isShutdown() {
+            return delegate.isShutdown();
+        }
+
+        @Override
+        public boolean isTerminated() {
+            return delegate.isTerminated();
+        }
+
+        @Override
+        public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+            return delegate.awaitTermination(timeout, unit);
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(ints = {2, 25})
     void readyInRetryResponseContinuesWithoutSuspensionAndReplaysStoredResult(int threshold) throws Exception {
@@ -155,24 +298,34 @@ class WaitForConditionReadinessIntegrationTest {
     private static void awaitCheckpointHandoff(Thread checkpoint) {
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
         while (System.nanoTime() < deadline) {
-            var stack = checkpoint.getStackTrace();
-            if (checkpoint.getState() == Thread.State.WAITING
-                    && Arrays.stream(stack)
-                            .anyMatch(frame -> frame.getClassName().endsWith("WaitForConditionOperation"))
-                    && Arrays.stream(stack)
-                            .anyMatch(frame -> frame.getClassName().equals(CompletableFuture.class.getName())
-                                    && frame.getMethodName().equals("join"))) {
+            for (var entry : Thread.getAllStackTraces().entrySet()) {
+                var continuation = entry.getKey();
+                var stack = entry.getValue();
+                if (continuation.getState() != Thread.State.WAITING
+                        || !continuation.getName().startsWith("durable-sdk-internal-")
+                        || Arrays.stream(stack)
+                                .noneMatch(frame -> frame.getClassName().endsWith("WaitForConditionOperation"))
+                        || Arrays.stream(stack)
+                                .noneMatch(frame -> frame.getClassName().equals(CompletableFuture.class.getName())
+                                        && frame.getMethodName().equals("join"))) continue;
+                assertNotSame(checkpoint, continuation, "Worker publication must not block the checkpoint callback");
+                assertTrue(Arrays.stream(stack)
+                        .noneMatch(frame -> frame.getClassName().endsWith("ApiRequestDelayedBatcher")));
+                if (Arrays.stream(checkpoint.getStackTrace())
+                        .anyMatch(frame -> frame.getClassName().endsWith("CheckpointManager")
+                                && frame.getMethodName().equals("checkpointBatch"))) continue;
                 var bean = ManagementFactory.getThreadMXBean();
                 if (bean.isObjectMonitorUsageSupported()) {
-                    var info = bean.getThreadInfo(new long[] {checkpoint.getId()}, true, true)[0];
-                    System.out.println(
-                            "READY_HANDOFF checkpoint monitors=" + Arrays.toString(info.getLockedMonitors()));
+                    var info = bean.getThreadInfo(new long[] {continuation.getId()}, true, true)[0];
+                    assertEquals(0, info.getLockedMonitors().length);
+                    System.out.println("READY_HANDOFF continuation=" + continuation.getName() + " checkpoint="
+                            + checkpoint.getName() + " continuationMonitors=[] checkpointBatchReturned=true");
                 }
                 return;
             }
             LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
         }
-        fail("The READY callback did not reach the controlled old-worker handoff window");
+        fail("The independent READY continuation did not reach the controlled old-worker handoff window");
     }
 
     private static void await(CountDownLatch latch) {

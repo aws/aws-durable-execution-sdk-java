@@ -284,6 +284,8 @@ class WaitForConditionOperationTest {
 
     @Test
     void replayPendingPollsAndResumesCheckLoop() throws Exception {
+        when(executionManager.runCheckpointContinuation(any()))
+                .thenAnswer(call -> CompletableFuture.runAsync(call.getArgument(0)));
         var pendingOp = Operation.builder()
                 .id(OPERATION_ID)
                 .name(OPERATION_NAME)
