@@ -31,10 +31,15 @@ unless a later `VirtualMachineError` or `ThreadDeath` takes precedence over a no
 end-hook Errors are retained as suppressed failures. Scope cleanup preserves finalization failures using the same
 JVM-fatal precedence, so an ordinary cleanup exception cannot hide an earlier Error.
 Invocations without plugins also wait for handler cleanup before returning the selected suspension or retry outcome.
-Result and failure-response serialization finish before terminal invocation-end notification. Delivery failures that
-escape for a Lambda retry report `RETRYING`, so they do not prematurely end the Workflow span. Non-JVM-fatal
-MDC-restoration failures on an inline executor, including `AssertionError` and `LinkageError`, do not replace an
-already selected outcome.
+SDK output preparation, including customer `SerDes` calls and durable large-result checkpointing, finishes before
+terminal invocation-end notification. Failures in this preparation report `RETRYING` instead of ending the Workflow
+span. If End also raises an unisolated Error, the preparation failure remains primary with the cleanup error
+suppressed, unless cleanup introduces the first JVM-fatal error. An original JVM-fatal preparation error retains its
+identity. End describes the SDK outcome at that point, not acknowledgment of a response by the Lambda service.
+Caller-side execution-manager cleanup, response-envelope encoding and output-stream writes follow End; runtime
+response transport follows the handler return. Failures at those later boundaries still propagate, without a second
+End dispatch or changing its already reported outcome. Non-JVM-fatal MDC-restoration failures on an inline executor,
+including `AssertionError` and `LinkageError`, likewise do not replace an already selected outcome.
 Before invocation startup, a JVM-fatal error from MDC capture (direct or inside a standard transport wrapper)
 completes the observation future exceptionally with that same fatal before escaping the handler worker. No start,
 body, or end hook runs, and no durable `FAILED` response is produced for that fatal. Ordinary initialization errors

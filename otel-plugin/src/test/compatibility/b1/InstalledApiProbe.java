@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
-import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import io.opentelemetry.api.GlobalOpenTelemetry;
@@ -14,10 +14,10 @@ import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.nio.file.Path;
-import java.util.concurrent.Callable;
 import java.time.Duration;
 import java.util.List;
 import java.util.ServiceLoader;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.model.ExecutionStatus;
