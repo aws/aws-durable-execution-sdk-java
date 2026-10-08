@@ -759,8 +759,9 @@ public class ExecutionManager implements SafeCloseable {
      * @param exception the unrecoverable exception that caused termination
      */
     public void terminateExecution(UnrecoverableDurableExecutionException exception) {
-        stopAllOperations(exception);
+        // Select control flow before waking a handler whose finally block can complete its body future.
         executionExceptionFuture.completeExceptionally(exception);
+        stopAllOperations(exception);
         throw exception;
     }
 
@@ -771,8 +772,8 @@ public class ExecutionManager implements SafeCloseable {
 
     private SuspendExecutionException signalSuspension() {
         var ex = new SuspendExecutionException();
-        stopAllOperations(ex);
         executionExceptionFuture.completeExceptionally(ex);
+        stopAllOperations(ex);
         return ex;
     }
 
