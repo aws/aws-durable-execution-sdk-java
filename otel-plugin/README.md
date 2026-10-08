@@ -279,14 +279,35 @@ Operation and attempt spans link to the Workflow span. `ExecutionOtelPlugin` rev
 
 ### Sampling
 
-The plugin decides sampling once per invocation and applies that single decision to every durable span (Workflow, Invocation, operation, attempt), so the configured sampler is not re-invoked per span and the full decision — including `RECORD_ONLY` — is preserved. The decision follows this precedence, highest first:
+The SDK-wide sampling guarantees below require `DurableSampler` itself to be the final installed sampler. The
+[builder constructors](#configuration) and [ADOT extension setup](#1-adot-lambda-layer) install it automatically;
+configure its delegate through these documented paths and retain `DurableSampler` as the final sampler. An
+unrecognized outer wrapper is treated as a plain replacement. The SDK wrapper applies its sampling intent to every durable
+span (Workflow, Invocation, operation and attempt), preserving the full result, including `RECORD_ONLY`, sampler attributes
+and trace state.
 
-1. **Backend decision** — `Sampled=1` / `Sampled=0` in the propagated header is authoritative and always preserved, regardless of the configured sampler.
-2. **Same-trace ambient span** — when the header carries no usable `Sampled` value but a valid ambient span (for example an auto-instrumentation Lambda handler span) is already on the execution's trace, the plugin follows that span's decision: sampled → sampled; unsampled but still recording → `RECORD_ONLY`; unsampled and not recording → dropped.
-3. **Configured sampler (application-owned provider)** — when you pass a `SdkTracerProvider` to the plugin, its sampler is read directly and evaluated once with the trace ID, span name, and attributes. A trace-ID-ratio sampler therefore produces a stable decision across reinvocations (the trace ID is stable).
-4. **Installed sampler (Java-agent path)** — when the agent owns the provider, it is behind a classloader boundary and its *effective* sampler (which another agent extension may have wrapped or replaced) cannot be reliably read at decision time. Rather than guess, the plugin **defers**: it installs a delegating sampler through the agent's autoconfiguration and lets that wrapper consult the agent's real sampler. The delegate's decision is honored in full — if your configured policy is `always_off`, a rate limiter, or a remote sampler (`xray`, `jaeger_remote`) that returns drop, the durable spans are dropped; they are **not** force-sampled. To avoid consuming a stateful or quota-based sampler once per span, the wrapper consults the delegate once per execution (keyed by trace ID) and reuses that decision for the execution's remaining durable spans within the invocation.
+The supported SDK sampler follows this precedence, highest first:
 
-For precise, provider-independent control, set an explicit `Sampled` value upstream (for example by enabling X-Ray active tracing) — that backend decision takes precedence over everything else.
+1. **Backend decision** — with `DurableSampler` installed, `Sampled=1` / `Sampled=0` in the propagated header is
+   authoritative, regardless of the wrapped delegate's policy.
+2. **Same-trace ambient span** — without an explicit header decision, a valid ambient span already on the execution
+   trace supplies its decision: sampled → sampled; unsampled and recording → `RECORD_ONLY`; unsampled and
+   non-recording → dropped.
+3. **Same-copy durable sampler** — the visible SDK sampler is evaluated against root context once per invocation
+   using the canonical trace ID, span name and attributes. Its complete result is carried in that loader's context.
+4. **Foreign or opaque SDK sampler** — resolution is deferred to the installed wrapper's actual delegate. Its full
+   result is cached by execution ARN and canonical trace ID in a 256-entry LRU cache and reused while resident.
+   Eviction can cause another evaluation. The delegate still receives the canonical trace ID; drop and
+   `RECORD_ONLY` decisions, attributes and updated trace state are retained.
+
+A visible plain replacement sampler supplies its root policy for execution-ancestor flags, then keeps its normal
+per-span sampling behavior. It receives no SDK sampling carrier and does not provide the SDK decision-reuse
+or full-result override guarantees above. Opaque providers cannot expose a later sampler replacement to the
+application, so retain the wrapper through the documented customization setup.
+
+For explicit execution-level control, keep `DurableSampler` as the final installed sampler and set `Sampled` upstream,
+for example through X-Ray
+active tracing. The SDK sampling wrapper preserves that decision.
 
 ## Span Attributes
 
@@ -320,8 +341,6 @@ For precise, provider-independent control, set an explicit `Sampled` value upstr
 | `durable.operation.name` | Parent operation name |
 | `durable.attempt.number` | 1-based attempt number |
 | `durable.attempt.outcome` | SUCCEEDED (span status `OK`), FAILED (`ERROR`), or INCOMPLETE (`UNSET`) |
-
-Deferred sampler results are isolated by execution ARN and canonical trace ID in the existing 256-entry LRU cache. The delegate is reused while an entry is resident; eviction can cause another evaluation. The delegate still receives the canonical trace ID.
 
 ## Log Correlation (MDC)
 
