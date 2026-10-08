@@ -341,7 +341,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
                 durableExecutionArn,
                 executionStartTime,
                 samplingIntent,
-                sdkTracerProvider != null);
+                OtelPluginSupport.usesLocalDurableSampler(sdkTracerProvider));
         workflowSpanContext = null;
         executionAncestor = null;
         executionStartTime = null;
@@ -642,7 +642,9 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
      */
     private Context withDurableDecision(Context context) {
         var intent = samplingIntent;
-        return intent != null && sdkTracerProvider != null ? DurableSamplingDecision.store(context, intent) : context;
+        return intent != null && OtelPluginSupport.usesLocalDurableSampler(sdkTracerProvider)
+                ? DurableSamplingDecision.store(context, intent)
+                : context;
     }
 
     private TraceFlags effectiveTraceFlags() {

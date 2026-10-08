@@ -59,6 +59,11 @@ final class OtelPluginSupport {
 
     private OtelPluginSupport() {}
 
+    /** Only the same DurableSampler class copy can consume this loader's parent-context holder. */
+    static boolean usesLocalDurableSampler(SdkTracerProvider provider) {
+        return provider != null && provider.getSampler() instanceof DurableSampler;
+    }
+
     /** Creates a new DeterministicIdGenerator for the application-side state bridge. */
     static DeterministicIdGenerator createDefaultIdGenerator() {
         return new DeterministicIdGenerator();

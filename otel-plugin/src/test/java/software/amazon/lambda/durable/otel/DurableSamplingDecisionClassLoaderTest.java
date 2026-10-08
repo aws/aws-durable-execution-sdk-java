@@ -7,9 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
@@ -30,7 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -104,8 +106,22 @@ class DurableSamplingDecisionClassLoaderTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"InvocationOtelPlugin", "ExecutionOtelPlugin"})
-    void agentProcessorForwardingParentCannotReuseApplicationSamplingIntent(String pluginName) throws Exception {
+    @CsvSource({
+        "InvocationOtelPlugin,true,false,DurableExecutionRoot",
+        "InvocationOtelPlugin,false,false,DurableExecutionRoot",
+        "InvocationOtelPlugin,false,true,DurableExecutionRoot",
+        "ExecutionOtelPlugin,true,false,DurableExecutionRoot",
+        "ExecutionOtelPlugin,false,false,DurableExecutionRoot",
+        "ExecutionOtelPlugin,false,true,DurableExecutionRoot",
+        "InvocationOtelPlugin,true,false,Invocation",
+        "InvocationOtelPlugin,false,false,Invocation",
+        "InvocationOtelPlugin,false,true,Invocation",
+        "ExecutionOtelPlugin,true,false,Invocation",
+        "ExecutionOtelPlugin,false,false,Invocation",
+        "ExecutionOtelPlugin,false,true,Invocation"
+    })
+    void agentProcessorForwardingParentCannotReuseApplicationSamplingIntent(
+            String pluginName, boolean hideProvider, boolean localSampler, String observedSpan) throws Exception {
         var previousHeader = System.getProperty("com.amazonaws.xray.traceHeader");
         GlobalOpenTelemetry.resetForTest();
         OtelPluginAutoConfigurationState.markInstalled();
@@ -118,6 +134,12 @@ class DurableSamplingDecisionClassLoaderTest {
             var agentSamplerType = Class.forName(DurableSampler.class.getName(), true, agentLoader);
             var agentWrap = agentSamplerType.getDeclaredMethod("wrap", Sampler.class);
             agentWrap.setAccessible(true);
+            var appDecision = Class.forName(DurableSamplingDecision.class.getName(), true, appLoader);
+            var appGet = appDecision.getDeclaredMethod("get", Context.class);
+            appGet.setAccessible(true);
+            var agentDecision = Class.forName(DurableSamplingDecision.class.getName(), true, agentLoader);
+            var agentGet = agentDecision.getDeclaredMethod("get", Context.class);
+            agentGet.setAccessible(true);
             var agentIdType = Class.forName(DeterministicIdGenerator.class.getName(), true, agentLoader);
             var callbacks = new AtomicInteger();
             var leakedSampling = new AtomicBoolean();
@@ -125,13 +147,14 @@ class DurableSamplingDecisionClassLoaderTest {
                             .setSampler((Sampler) appWrap.invoke(null, Sampler.alwaysOff()))
                             .build();
                     var agentProvider = SdkTracerProvider.builder()
-                            .setSampler((Sampler) agentWrap.invoke(null, Sampler.alwaysOff()))
+                            .setSampler(
+                                    (Sampler) (localSampler ? appWrap : agentWrap).invoke(null, Sampler.alwaysOff()))
                             .setIdGenerator(
                                     (IdGenerator) agentIdType.getConstructor().newInstance())
                             .addSpanProcessor(new SpanProcessor() {
                                 @Override
                                 public void onStart(Context parent, ReadWriteSpan span) {
-                                    if (!span.getName().equals("DurableExecutionRoot")) return;
+                                    if (!span.getName().equals(observedSpan)) return;
                                     var unrelated = appProvider
                                             .get("processor")
                                             .spanBuilder("unrelated-forwarded-parent")
@@ -156,6 +179,7 @@ class DurableSamplingDecisionClassLoaderTest {
                                 }
                             })
                             .build()) {
+                assertEquals(localSampler, agentProvider.getSampler().getClass() == appSamplerType);
                 var hiddenAgentProvider = new TracerProvider() {
                     @Override
                     public Tracer get(String name) {
@@ -170,7 +194,7 @@ class DurableSamplingDecisionClassLoaderTest {
                 GlobalOpenTelemetry.set(new OpenTelemetry() {
                     @Override
                     public TracerProvider getTracerProvider() {
-                        return hiddenAgentProvider;
+                        return hideProvider ? hiddenAgentProvider : agentProvider;
                     }
 
                     @Override
@@ -183,12 +207,25 @@ class DurableSamplingDecisionClassLoaderTest {
                                 .getConstructor()
                                 .newInstance();
                 var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/test/id";
-                for (var first : new boolean[] {true, false}) {
-                    plugin.onInvocationStart(new InvocationInfo("request", arn, first, Instant.EPOCH));
-                    plugin.onInvocationEnd(
-                            new InvocationEndInfo("request", arn, first, InvocationStatus.PENDING, null));
+                var previousAmbient = Span.current();
+                var ambient = appProvider
+                        .get("ambient")
+                        .spanBuilder("ambient-control")
+                        .startSpan();
+                try (var ambientScope = ambient.makeCurrent()) {
+                    for (var first : new boolean[] {true, false}) {
+                        plugin.onInvocationStart(new InvocationInfo("request", arn, first, Instant.EPOCH));
+                        plugin.onInvocationEnd(
+                                new InvocationEndInfo("request", arn, first, InvocationStatus.PENDING, null));
+                        assertSame(ambient, Span.current(), "Plugin cleanup must preserve the caller's ambient span");
+                        assertNull(appGet.invoke(null, Context.root()), "Application sampling intent must be cleared");
+                        assertNull(agentGet.invoke(null, Context.root()), "Agent sampling intent must be cleared");
+                    }
+                } finally {
+                    ambient.end();
                 }
-                assertEquals(2, callbacks.get(), "Both invocation roots must reach the real agent-side processor");
+                assertSame(previousAmbient, Span.current());
+                assertEquals(2, callbacks.get(), "The selected span in both invocations must reach the real processor");
                 assertFalse(
                         leakedSampling.get(), "The supplied parent must not override the app provider's DROP policy");
             }
