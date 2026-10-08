@@ -94,12 +94,27 @@ class InvocationOutcomeBoundaryTest {
 
     @SuppressWarnings("removal")
     @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void invocationEndFatalEscapesItsActualWorkerAfterSettlingCaller(boolean death) throws Exception {
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void invocationEndFatalEscapesItsActualWorkerAfterSettlingCaller(boolean death, boolean earlierAssertion)
+            throws Exception {
         Error fatal = death ? new ThreadDeath() : new InternalError("fatal end cleanup");
         var ownerFailure = new AtomicReference<Throwable>();
         var escaped = new CountDownLatch(1);
         var ends = new AtomicInteger();
+        var assertion = new AssertionError("earlier nonfatal cleanup");
+        var fatalPlugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationEnd(InvocationEndInfo info) {
+                ends.incrementAndGet();
+                throw fatal;
+            }
+        };
+        var assertionPlugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationEnd(InvocationEndInfo info) {
+                throw assertion;
+            }
+        };
         var workers = Executors.newSingleThreadExecutor(task -> {
             var worker = new Thread(task, "end-fatal-owner");
             worker.setUncaughtExceptionHandler((thread, failure) -> {
@@ -114,17 +129,15 @@ class InvocationOutcomeBoundaryTest {
                     (input, ctx) -> "done",
                     DurableConfig.builder()
                             .withExecutorService(workers)
-                            .withPlugins(new DurableExecutionPlugin() {
-                                @Override
-                                public void onInvocationEnd(InvocationEndInfo info) {
-                                    ends.incrementAndGet();
-                                    throw fatal;
-                                }
-                            })
+                            .withPlugins(
+                                    earlierAssertion
+                                            ? new DurableExecutionPlugin[] {fatalPlugin, assertionPlugin}
+                                            : new DurableExecutionPlugin[] {fatalPlugin})
                             .build());
             assertSame(fatal, assertThrows(Error.class, () -> runner.run("input")));
             assertTrue(escaped.await(2, TimeUnit.SECONDS), "fatal end cleanup must escape its actual worker");
             assertSame(fatal, ownerFailure.get());
+            assertEquals(earlierAssertion ? List.of(assertion) : List.of(), List.of(fatal.getSuppressed()));
             assertEquals(1, ends.get());
         } finally {
             workers.shutdownNow();

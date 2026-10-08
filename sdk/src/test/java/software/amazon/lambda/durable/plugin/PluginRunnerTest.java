@@ -179,15 +179,17 @@ class PluginRunnerTest {
                     throw firstFailure;
                 }
             };
+            var laterFailure = new AssertionError("later cleanup failure");
             var middle = new TestPlugin("middle", calls) {
                 @Override
                 public void onInvocationEnd(InvocationEndInfo info) {
                     super.onInvocationEnd(info);
-                    throw new AssertionError("later cleanup failure");
+                    throw laterFailure;
                 }
             };
             var runner = new PluginRunner(List.of(new TestPlugin("outer", calls), middle, inner));
             assertSame(firstFailure, assertThrows(Error.class, () -> runner.onInvocationEnd(invocationEndInfo())));
+            assertEquals(List.of(laterFailure), List.of(firstFailure.getSuppressed()));
             assertEquals(List.of("inner:onInvocationEnd", "middle:onInvocationEnd", "outer:onInvocationEnd"), calls);
         }
     }
