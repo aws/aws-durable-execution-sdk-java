@@ -37,7 +37,8 @@ final class OtelPluginSupport {
             String arn,
             Instant start,
             DurableSamplingDecision.Intent intent,
-            boolean useContextCarrier) {
+            boolean useContextCarrier,
+            boolean useThreadCarrier) {
         if (ancestor == null || ancestor.isRemote()) {
             return;
         }
@@ -48,7 +49,11 @@ final class OtelPluginSupport {
                 .setAttribute(DURABLE_EXECUTION_SYNTHETIC_ROOT, true)
                 .setStartTimestamp(start);
         Span root;
-        try (var ignored = DurableSamplingDecision.openScope(intent)) {
+        if (useThreadCarrier) {
+            try (var ignored = DurableSamplingDecision.openScope(intent)) {
+                root = idGenerator.startSpan(builder, ancestor.getTraceId(), ancestor.getSpanId());
+            }
+        } else {
             root = idGenerator.startSpan(builder, ancestor.getTraceId(), ancestor.getSpanId());
         }
         // End processors/exporters may create unrelated spans; they must not inherit this sampling override.
@@ -58,6 +63,12 @@ final class OtelPluginSupport {
     private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);
 
     private OtelPluginSupport() {}
+
+    /** A visible replacement sampler cannot consume our bridge; an opaque agent provider may still need it. */
+    static boolean usesDurableSamplingBridge(SdkTracerProvider provider) {
+        // This identifies only the cross-loader wire consumer; context-key ownership still requires instanceof.
+        return provider == null || provider.getSampler().getClass().getName().equals(DurableSampler.class.getName());
+    }
 
     /** Only the same DurableSampler class copy can consume this loader's parent-context holder. */
     static boolean usesLocalDurableSampler(SdkTracerProvider provider) {

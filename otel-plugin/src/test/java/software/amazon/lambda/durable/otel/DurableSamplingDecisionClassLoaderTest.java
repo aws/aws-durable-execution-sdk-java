@@ -250,10 +250,16 @@ class DurableSamplingDecisionClassLoaderTest {
         "InvocationOtelPlugin,false,true,Invocation",
         "ExecutionOtelPlugin,true,false,Invocation",
         "ExecutionOtelPlugin,false,false,Invocation",
-        "ExecutionOtelPlugin,false,true,Invocation"
+        "ExecutionOtelPlugin,false,true,Invocation",
+        "InvocationOtelPlugin,false,false,PlainInvocation",
+        "ExecutionOtelPlugin,false,false,PlainInvocation",
+        "InvocationOtelPlugin,false,false,PlainDurableExecutionRoot",
+        "ExecutionOtelPlugin,false,false,PlainDurableExecutionRoot"
     })
     void agentProcessorForwardingParentCannotReuseApplicationSamplingIntent(
             String pluginName, boolean hideProvider, boolean localSampler, String observedSpan) throws Exception {
+        var plainSampler = observedSpan.startsWith("Plain");
+        var spanName = plainSampler ? observedSpan.substring("Plain".length()) : observedSpan;
         var previousHeader = System.getProperty("com.amazonaws.xray.traceHeader");
         GlobalOpenTelemetry.resetForTest();
         OtelPluginAutoConfigurationState.markInstalled();
@@ -280,13 +286,16 @@ class DurableSamplingDecisionClassLoaderTest {
                             .build();
                     var agentProvider = SdkTracerProvider.builder()
                             .setSampler(
-                                    (Sampler) (localSampler ? appWrap : agentWrap).invoke(null, Sampler.alwaysOff()))
+                                    plainSampler
+                                            ? Sampler.alwaysOn()
+                                            : (Sampler) (localSampler ? appWrap : agentWrap)
+                                                    .invoke(null, Sampler.alwaysOff()))
                             .setIdGenerator(
                                     (IdGenerator) agentIdType.getConstructor().newInstance())
                             .addSpanProcessor(new SpanProcessor() {
                                 @Override
                                 public void onStart(Context parent, ReadWriteSpan span) {
-                                    if (!span.getName().equals(observedSpan)) return;
+                                    if (!span.getName().equals(spanName)) return;
                                     var unrelated = appProvider
                                             .get("processor")
                                             .spanBuilder("unrelated-forwarded-parent")
