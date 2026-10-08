@@ -13,6 +13,18 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **ADOT Java Agent Integration**: `new InvocationOtelPlugin()` late-binds the ADOT Java agent's global provider with no handler-side OpenTelemetry initialization
 - **Lambda Layer Discovery**: `DURABLE_EXECUTION_PLUGINS` loads either OTel plugin from a JAR under a layer's `java/lib` directory
 
+## Checkpoint continuation failures
+
+An operation's SDK checkpoint continuation reports resumption/deserialization and dispatch failures through
+retryable invocation control before releasing its activity lease. End reports `RETRYING`, the caller receives
+`UnrecoverableDurableExecutionException` with the original cause, and persisted operation state remains available
+for a later invocation. Rejected worker admission releases its activity registration. Direct `VirtualMachineError`
+and `ThreadDeath` also settle the continuation observation before escaping its coordinator worker.
+
+Ordinary unowned helper failures retain their observation-only behavior. Normal manager closing does not replace
+the selected outcome or stop unrelated operations. This boundary does not change handler/predicate failure
+classification, hook threading, trace topology, or add general wrapped-fatal classification.
+
 ## Installation
 
 ```xml
