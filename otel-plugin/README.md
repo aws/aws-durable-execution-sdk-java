@@ -43,6 +43,12 @@ completes the observation future exceptionally with that same fatal before escap
 body, or end hook runs, and no durable `FAILED` response is produced for that fatal. Ordinary initialization errors
 and handler/body failure classification retain their existing behavior.
 
+SDK inspection of MDC-capture failures reads each visited standard transport cause once and detects identity cycles.
+Cyclic, null, or unreadable leading `CompletionException` chains retain the original wrapper; ordinary initialization
+still reports `FAILED` when its error response can be serialized. This provides cycle safety for finite cause graphs,
+not a fixed depth or time limit. Arbitrary custom `getCause`, other `Throwable` accessors, and customer `SerDes`
+behavior remain outside that guarantee.
+
 This plugin version requires the core's `DurableExecutor.supportsSameThreadInvocationHooks()` capability, introduced
 in the 2.2.2 lifecycle contract (currently `2.2.2-SNAPSHOT`). Upgrade the core together with the plugin layer. Every
 plugin constructor checks this capability before building a tracer provider or activating context. A core without
