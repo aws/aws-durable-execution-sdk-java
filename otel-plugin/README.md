@@ -40,12 +40,24 @@ suppressed, unless cleanup introduces the first JVM-fatal error. An original JVM
 identity. End describes the SDK outcome at that point, not acknowledgment of a response by the Lambda service.
 Caller-side execution-manager cleanup, response-envelope encoding and output-stream writes follow End; runtime
 response transport follows the handler return. Failures at those later boundaries still propagate, without a second
-End dispatch or changing its already reported outcome. Non-JVM-fatal MDC-restoration failures on an inline executor,
-including `AssertionError` and `LinkageError`, likewise do not replace an already selected outcome.
+End dispatch or changing its already reported outcome. A JVM-fatal MDC-restoration failure after End (direct or
+inside a standard transport wrapper) completes the caller's observation exceptionally with the original fatal
+before that fatal escapes the worker, for both asynchronous and inline executors. The End notification remains
+unchanged and is not repeated. An earlier JVM-fatal End/preparation failure remains primary; later restoration
+failures are suppressed. A restoration fatal takes precedence over an earlier non-JVM-fatal delivery/End failure,
+which remains suppressed. Non-JVM-fatal restoration failures, including `AssertionError` and `LinkageError`, retain
+the selected caller outcome.
 Before invocation startup, a JVM-fatal error from MDC capture (direct or inside a standard transport wrapper)
 completes the observation future exceptionally with that same fatal before escaping the handler worker. No start,
 body, or end hook runs, and no durable `FAILED` response is produced for that fatal. Ordinary initialization errors
 and handler/body failure classification retain their existing behavior.
+
+A direct `VirtualMachineError` or `ThreadDeath` from an SDK checkpoint continuation selects a retryable invocation
+control failure before the continuation releases its activity lease. The caller receives the original fatal as the
+cause of `UnrecoverableDurableExecutionException`, and started hooks receive `RETRYING`. The continuation's
+observation future settles with the original fatal after lease release and before the fatal escapes its coordinator
+worker. Already selected outcomes retain first-completion precedence. This direct-fatal continuation boundary
+does not add general wrapped-fatal classification or change ordinary continuation and handler/body failures.
 
 SDK inspection of MDC-capture failures reads each visited standard transport cause once and detects identity cycles.
 Cyclic, null, or unreadable leading `CompletionException` chains retain the original wrapper; ordinary initialization

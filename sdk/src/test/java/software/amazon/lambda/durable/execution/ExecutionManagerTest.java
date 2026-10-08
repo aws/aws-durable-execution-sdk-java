@@ -16,13 +16,16 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -85,6 +88,104 @@ class ExecutionManagerTest {
                 assertSame(
                         failure,
                         assertThrows(CompletionException.class, selected::join).getCause());
+        }
+    }
+
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void continuationFatalSettlesOriginalBeforeEscapingWorker(boolean death, boolean rootActive) throws Exception {
+        Error fatal = death ? new ThreadDeath() : new InternalError("coordinator fatal");
+        var escaped = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var ownerFailure = new AtomicReference<Throwable>();
+        var observation = new AtomicReference<CompletableFuture<Void>>();
+        var settledAtEscape = new AtomicBoolean();
+        var executor = Executors.newSingleThreadExecutor(task -> {
+            var thread = new Thread(task, "continuation-fatal-probe");
+            thread.setUncaughtExceptionHandler((owner, failure) -> {
+                ownerFailure.set(failure);
+                settledAtEscape.set(observation.get().isDone());
+                escaped.countDown();
+            });
+            return thread;
+        });
+        try (var manager = createManager(List.of(executionOp(), stepOp("pending", OperationStatus.PENDING)))) {
+            if (rootActive) manager.registerActiveThread("root-probe");
+            var future = manager.runCheckpointContinuation(
+                    () -> {
+                        try {
+                            assertTrue(release.await(3, TimeUnit.SECONDS));
+                        } catch (InterruptedException interrupted) {
+                            throw new AssertionError(interrupted);
+                        }
+                        throw fatal;
+                    },
+                    executor);
+            observation.set(future);
+            var closedFromObserver = new AtomicBoolean();
+            future.whenComplete((ignored, failure) -> {
+                manager.close(); // Must not wait for this callback's own continuation registration.
+                closedFromObserver.set(true);
+            });
+            release.countDown();
+            assertSame(
+                    fatal,
+                    assertThrows(ExecutionException.class, () -> future.get(3, TimeUnit.SECONDS))
+                            .getCause());
+            assertTrue(escaped.await(2, TimeUnit.SECONDS), "Fatal must escape the actual coordinator worker");
+            assertSame(fatal, ownerFailure.get());
+            assertTrue(settledAtEscape.get(), "Observation must settle before worker escape");
+            assertTrue(closedFromObserver.get(), "The activity lease must be released before observer callbacks");
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void inlineFatalContinuationReleasesItsRegistrationOnlyOnce(boolean death) {
+        Error fatal = death ? new ThreadDeath() : new InternalError("inline coordinator fatal");
+        try (var manager = createManager(List.of(executionOp()))) {
+            manager.registerActiveThread("root");
+            assertSame(
+                    fatal,
+                    assertThrows(
+                            Error.class,
+                            () -> manager.runCheckpointContinuation(
+                                    () -> {
+                                        throw fatal;
+                                    },
+                                    Runnable::run)));
+            assertTrue(manager.isExecutionCompletedExceptionally());
+        }
+    }
+
+    @Test
+    void ordinaryContinuationFailureRetainsItsExistingObservationPolicy() throws Exception {
+        var original = new IllegalArgumentException("ordinary continuation");
+        var worker = new AtomicReference<Thread>();
+        var executor = Executors.newSingleThreadExecutor();
+        try (var manager = createManager(List.of(executionOp()))) {
+            manager.registerActiveThread("root");
+            var result = manager.runCheckpointContinuation(
+                    () -> {
+                        worker.set(Thread.currentThread());
+                        throw original;
+                    },
+                    executor);
+            assertSame(
+                    original,
+                    assertThrows(ExecutionException.class, () -> result.get(3, TimeUnit.SECONDS))
+                            .getCause());
+            assertFalse(manager.isExecutionCompletedExceptionally());
+            assertSame(worker.get(), executor.submit(Thread::currentThread).get(3, TimeUnit.SECONDS));
+        } finally {
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
         }
     }
 

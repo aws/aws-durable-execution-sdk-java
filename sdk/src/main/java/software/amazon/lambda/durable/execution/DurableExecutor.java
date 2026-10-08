@@ -13,6 +13,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -273,6 +274,7 @@ public class DurableExecutor {
     private static <T> CompletableFuture<T> supplyHandler(
             Supplier<T> task, Function<Throwable, T> initializationFailure, Executor executor) {
         var result = new CompletableFuture<T>();
+        var classifiedWorkerFailure = new AtomicReference<Throwable>();
         Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
             SafeCloseable restore;
             try {
@@ -292,15 +294,30 @@ public class DurableExecutor {
                 return;
             }
             var outcome = Outcome.capture(task);
+            var restoringAfterNonfatalOutcome = false;
             try {
                 try (var ignored = restore) {
                     // End/delivery failures must also escape their actual worker. Handler-body failures have
                     // already been mapped to their selected durable outcome; this does not reclassify them.
                     rethrowLifecycleFatal(outcome.failure());
+                    restoringAfterNonfatalOutcome = true;
                 }
+            } catch (Throwable workerFailure) {
+                try {
+                    rethrowLifecycleFatal(workerFailure);
+                } catch (VirtualMachineError | ThreadDeath fatal) {
+                    if (restoringAfterNonfatalOutcome && outcome.failure() != null && outcome.failure() != fatal) {
+                        fatal.addSuppressed(outcome.failure());
+                    }
+                    // End describes the already selected SDK outcome, not successful return to the runtime.
+                    // Publish this fatal before throwing it from the worker; do not dispatch End again.
+                    result.completeExceptionally(fatal);
+                    throw fatal;
+                }
+                classifiedWorkerFailure.set(workerFailure);
+                throw workerFailure;
             } finally {
-                // End and worker restoration have run before publishing. A restoration failure still escapes its
-                // owner, without changing the invocation outcome already delivered to the end hooks.
+                // Ordinary restoration failures retain the selected outcome. A fatal has already settled result.
                 outcome.complete(result);
             }
         };
@@ -310,7 +327,9 @@ public class DurableExecutor {
             if (!result.isDone()) throw dispatchFailure;
             // Inline execution can throw from MDC restoration after settling the selected outcome. Preserve that
             // outcome for an ordinary cleanup failure, while a JVM-fatal failure still reaches the caller.
-            rethrowLifecycleFatal(dispatchFailure);
+            // An inline task already inspected this exact ordinary failure. Do not re-read custom diagnostics;
+            // a different failure raised by the executor itself still receives the existing classification.
+            if (dispatchFailure != classifiedWorkerFailure.get()) rethrowLifecycleFatal(dispatchFailure);
         }
         return result;
     }
