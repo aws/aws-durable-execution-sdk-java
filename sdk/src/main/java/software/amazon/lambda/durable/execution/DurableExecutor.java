@@ -236,6 +236,7 @@ public class DurableExecutor {
         }
     }
 
+    @SuppressWarnings("removal")
     private static <T> CompletableFuture<T> supplyHandler(
             Supplier<T> task, Function<Throwable, T> initializationFailure, Executor executor) {
         var result = new CompletableFuture<T>();
@@ -244,6 +245,14 @@ public class DurableExecutor {
             try {
                 restore = restoreMdcOnClose();
             } catch (Throwable failure) {
+                try {
+                    rethrowLifecycleFatal(failure);
+                } catch (VirtualMachineError | ThreadDeath fatal) {
+                    // Wake the invocation caller with the original fatal before it escapes the actual worker.
+                    // Throwing first would leave the observation future incomplete on an asynchronous executor.
+                    result.completeExceptionally(fatal);
+                    throw fatal;
+                }
                 Outcome.capture(() -> initializationFailure.apply(failure)).complete(result);
                 return;
             }
