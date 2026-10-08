@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -579,26 +580,57 @@ public class ExecutionManager implements SafeCloseable {
         }
         try {
             var completion = new CompletableFuture<Void>();
-            coordinator.execute(() -> completeCheckpointContinuation(registration, continuation, completion));
+            coordinator.execute(() -> completeCheckpointContinuation(owner, registration, continuation, completion));
             return completion;
         } catch (RuntimeException | Error failure) {
-            finishCheckpointContinuation(registration);
+            try {
+                if ((owner != null && !isClosing())
+                        || failure instanceof VirtualMachineError
+                        || failure instanceof ThreadDeath) signalContinuationFailure(failure);
+            } finally {
+                finishCheckpointContinuation(registration);
+            }
             throw failure;
         }
     }
 
+    @SuppressWarnings("removal")
     private void completeCheckpointContinuation(
-            Object registration, Runnable continuation, CompletableFuture<Void> completion) {
+            BaseDurableOperation owner,
+            Object registration,
+            Runnable continuation,
+            CompletableFuture<Void> completion) {
         try {
             try {
                 if (!isClosing()) continuation.run();
+            } catch (Throwable failure) {
+                // An operation polling chain can ignore observation. Select retry control before the final lease
+                // could select PENDING; unowned ordinary helper failures retain their observation-only contract.
+                if ((owner != null && !isClosing())
+                        || failure instanceof VirtualMachineError
+                        || failure instanceof ThreadDeath) signalContinuationFailure(failure);
+                throw failure;
             } finally {
                 finishCheckpointContinuation(registration);
             }
             completion.complete(null);
         } catch (Throwable failure) {
             completion.completeExceptionally(failure);
+            // The observation future may be ignored by a polling chain. Never hide a JVM fatal from its worker.
+            if (failure instanceof VirtualMachineError fatal) throw fatal;
+            if (failure instanceof ThreadDeath fatal) throw fatal;
         }
+    }
+
+    private void signalContinuationFailure(Throwable failure) {
+        var control = new UnrecoverableDurableExecutionException(
+                ErrorObject.builder()
+                        .errorType(failure.getClass().getName())
+                        .errorMessage("Error in SDK checkpoint continuation")
+                        .build(),
+                true,
+                failure);
+        if (executionExceptionFuture.completeExceptionally(control)) stopAllOperations(control);
     }
 
     private Object registerCheckpointContinuation(BaseDurableOperation owner) {
@@ -613,6 +645,8 @@ public class ExecutionManager implements SafeCloseable {
 
     private void finishCheckpointContinuation(Object registration) {
         synchronized (activeThreads) {
+            // An inline coordinator may rethrow after its task already released this registration.
+            if (!checkpointContinuations.containsKey(registration)) return;
             checkpointContinuations.remove(registration);
             try {
                 finishCheckpointProcessing();
