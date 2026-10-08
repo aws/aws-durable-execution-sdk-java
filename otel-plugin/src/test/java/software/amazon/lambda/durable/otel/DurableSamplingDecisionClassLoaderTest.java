@@ -59,33 +59,21 @@ import software.amazon.lambda.durable.plugin.InvocationStatus;
 class DurableSamplingDecisionClassLoaderTest {
     @ParameterizedTest
     @CsvSource({
-        "InvocationOtelPlugin,local",
-        "InvocationOtelPlugin,foreign",
-        "InvocationOtelPlugin,opaque",
-        "ExecutionOtelPlugin,local",
-        "ExecutionOtelPlugin,foreign",
-        "ExecutionOtelPlugin,opaque"
+        "InvocationOtelPlugin,local,false", "InvocationOtelPlugin,local,true",
+        "InvocationOtelPlugin,foreign,false", "InvocationOtelPlugin,foreign,true",
+        "InvocationOtelPlugin,opaque,false", "InvocationOtelPlugin,opaque,true",
+        "ExecutionOtelPlugin,local,false", "ExecutionOtelPlugin,local,true",
+        "ExecutionOtelPlugin,foreign,false", "ExecutionOtelPlugin,foreign,true",
+        "ExecutionOtelPlugin,opaque,false", "ExecutionOtelPlugin,opaque,true"
     })
-    void customSamplerMetadataSurvivesProviderOwnershipBoundaries(String pluginName, String topology) throws Exception {
+    void customSamplerMetadataSurvivesProviderOwnershipBoundaries(
+            String pluginName, String topology, boolean sharedTraceExecutions) throws Exception {
         var previousHeader = System.getProperty("com.amazonaws.xray.traceHeader");
         GlobalOpenTelemetry.resetForTest();
         OtelPluginAutoConfigurationState.markInstalled();
         System.setProperty("com.amazonaws.xray.traceHeader", "Root=1-6955b900-123456789012345678901234");
         var evaluations = new AtomicInteger();
         var key = AttributeKey.stringKey("sampler.extra");
-        var result = new SamplingResult() {
-            public SamplingDecision getDecision() {
-                return SamplingDecision.RECORD_AND_SAMPLE;
-            }
-
-            public Attributes getAttributes() {
-                return Attributes.of(key, "kept");
-            }
-
-            public TraceState getUpdatedTraceState(TraceState parent) {
-                return parent.toBuilder().put("vendor", "kept").build();
-            }
-        };
         var delegate = new Sampler() {
             public SamplingResult shouldSample(
                     Context parent,
@@ -95,7 +83,24 @@ class DurableSamplingDecisionClassLoaderTest {
                     Attributes attributes,
                     List<LinkData> links) {
                 evaluations.incrementAndGet();
-                return result;
+                var second =
+                        attributes.get(SpanAttributes.DURABLE_EXECUTION_ARN).contains("/second/");
+                var metadata = sharedTraceExecutions ? (second ? "second" : "first") : "kept";
+                return new SamplingResult() {
+                    public SamplingDecision getDecision() {
+                        return sharedTraceExecutions && !second
+                                ? SamplingDecision.RECORD_ONLY
+                                : SamplingDecision.RECORD_AND_SAMPLE;
+                    }
+
+                    public Attributes getAttributes() {
+                        return Attributes.of(key, metadata);
+                    }
+
+                    public TraceState getUpdatedTraceState(TraceState parentState) {
+                        return parentState.toBuilder().put("vendor", metadata).build();
+                    }
+                };
             }
 
             public String getDescription() {
@@ -113,7 +118,9 @@ class DurableSamplingDecisionClassLoaderTest {
             try (var provider = SdkTracerProvider.builder()
                     .setSampler((Sampler) wrap.invoke(null, delegate))
                     .setIdGenerator((IdGenerator) idType.getConstructor().newInstance())
-                    .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+                    .addSpanProcessor(SimpleSpanProcessor.builder(exporter)
+                            .setExportUnsampledSpans(true)
+                            .build())
                     .build()) {
                 var hidden = new TracerProvider() {
                     public Tracer get(String name) {
@@ -137,22 +144,35 @@ class DurableSamplingDecisionClassLoaderTest {
                         Class.forName("software.amazon.lambda.durable.otel." + pluginName, true, appLoader)
                                 .getConstructor()
                                 .newInstance();
-                var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/custom/id";
-                for (var first : new boolean[] {true, false}) {
-                    plugin.onInvocationStart(new InvocationInfo("request", arn, first, Instant.ofEpochSecond(10)));
-                    plugin.onInvocationEnd(
-                            new InvocationEndInfo("request", arn, first, InvocationStatus.PENDING, null));
+                var executionCount = sharedTraceExecutions ? 2 : 1;
+                for (var index = 0; index < executionCount; index++) {
+                    var executionName = index == 0 ? "first" : "second";
+                    var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/" + executionName
+                            + "/id";
+                    for (var first : new boolean[] {true, false}) {
+                        plugin.onInvocationStart(new InvocationInfo("request", arn, first, Instant.ofEpochSecond(10)));
+                        plugin.onInvocationEnd(
+                                new InvocationEndInfo("request", arn, first, InvocationStatus.PENDING, null));
+                    }
                 }
                 var spans = exporter.getFinishedSpanItems().stream()
                         .filter(s ->
                                 s.getName().equals("Invocation") || s.getName().equals("DurableExecutionRoot"))
                         .toList();
-                assertEquals(4, spans.size());
+                assertEquals(executionCount * 4, spans.size());
                 for (var span : spans) {
-                    assertEquals("kept", span.getAttributes().get(key), span.getName());
-                    assertEquals("kept", span.getSpanContext().getTraceState().get("vendor"), span.getName());
+                    var second = span.getAttributes()
+                            .get(SpanAttributes.DURABLE_EXECUTION_ARN)
+                            .contains("/second/");
+                    var expected = sharedTraceExecutions ? (second ? "second" : "first") : "kept";
+                    assertEquals(expected, span.getAttributes().get(key), span.getName());
+                    assertEquals(expected, span.getSpanContext().getTraceState().get("vendor"), span.getName());
+                    assertEquals(
+                            !sharedTraceExecutions || second,
+                            span.getSpanContext().isSampled());
+                    assertEquals("6955b900123456789012345678901234", span.getTraceId());
                 }
-                assertEquals(topology.equals("local") ? 2 : 1, evaluations.get());
+                assertEquals(executionCount * (topology.equals("local") ? 2 : 1), evaluations.get());
             }
         } finally {
             GlobalOpenTelemetry.resetForTest();

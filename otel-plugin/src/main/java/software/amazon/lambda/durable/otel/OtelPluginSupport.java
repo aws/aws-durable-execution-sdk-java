@@ -96,7 +96,7 @@ final class OtelPluginSupport {
      *       pipeline finally installs, and another extension's customizer can wrap or replace a recognized configured
      *       sampler, so a reconstruction could disagree with the real delegate. Deferring routes the decision to the
      *       agent-installed {@link DurableSampler}, which consults its actual delegate once per execution, caches the
-     *       result by trace ID, and reuses it for the execution's remaining durable spans (see
+     *       result by execution ARN and trace ID, and reuses it for the execution's remaining durable spans (see
      *       {@link DurableSampler#shouldSample}). The delegate's decision is honored in full — including a
      *       {@code DROP}/rate-limited outcome — so durable spans are not force-sampled.
      * </ol>
