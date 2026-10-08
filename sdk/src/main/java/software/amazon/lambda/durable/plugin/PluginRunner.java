@@ -3,7 +3,10 @@
 package software.amazon.lambda.durable.plugin;
 
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,7 +14,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Composes multiple {@link DurableExecutionPlugin} instances into a single dispatcher.
  *
- * <p>Event hooks are fire-and-forget: each plugin is called in order, errors are swallowed.
+ * <p>Event hooks call each plugin in order. Exceptions and nonfatal linkage failures are isolated; other errors,
+ * including fatal JVM failures, retain their existing propagation behavior.
  *
  * <p>{@code onInvocationEnd} is awaited (the SDK blocks until it returns) to allow plugins to flush data before Lambda
  * freezes.
@@ -25,6 +29,38 @@ public class PluginRunner {
 
     public PluginRunner(List<DurableExecutionPlugin> plugins) {
         this.plugins = plugins != null ? List.copyOf(plugins) : Collections.emptyList();
+        validateExclusiveGroups();
+    }
+
+    private void validateExclusiveGroups() {
+        var groups = new HashMap<String, DurableExecutionPlugin>();
+        for (var plugin : plugins) {
+            for (var group : exclusiveGroups(plugin.getClass())) {
+                var previous = groups.putIfAbsent(group, plugin);
+                if (previous != null) {
+                    throw new IllegalStateException(
+                            "Dynamic plugin configuration failed: Conflicting plugins " + pluginName(previous)
+                                    + " and " + pluginName(plugin) + " in exclusive group '" + group
+                                    + "'. Configure only one plugin from this group.");
+                }
+            }
+        }
+    }
+
+    private static String pluginName(DurableExecutionPlugin plugin) {
+        var type = plugin.getClass();
+        return type.getSimpleName().isEmpty() ? type.getName() : type.getSimpleName();
+    }
+
+    private static Set<String> exclusiveGroups(Class<?> pluginType) {
+        var groups = new LinkedHashSet<String>();
+        for (var type = pluginType; type != null; type = type.getSuperclass()) {
+            var metadata = type.getDeclaredAnnotation(ExclusivePluginGroup.class);
+            if (metadata != null) {
+                groups.add(metadata.value());
+            }
+        }
+        return groups;
     }
 
     /** Returns a no-op runner that does nothing. */
@@ -44,13 +80,15 @@ public class PluginRunner {
 
     // ─── Event hooks ─────────────────────────────────────────────────────
 
-    /** Calls a void hook on all plugins, swallowing any errors. */
+    /** Calls a void hook on all plugins, isolating exceptions and incompatible binary dependencies. */
     private void run(Consumer<DurableExecutionPlugin> hook) {
         for (var plugin : plugins) {
             try {
                 hook.accept(plugin);
             } catch (Exception e) {
                 logger.warn("Plugin hook threw exception", e);
+            } catch (LinkageError e) {
+                logger.warn("Plugin hook could not link a dependency; check SDK/plugin dependency compatibility", e);
             }
         }
     }

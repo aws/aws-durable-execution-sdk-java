@@ -94,3 +94,14 @@ public final class AuditPluginProvider implements DurableExecutionPluginProvider
 ```
 
 Provider-specific settings can use namespaced environment variables. If an application shades provider JARs into one artifact, its build must preserve and merge `META-INF/services` entries.
+
+## Filesystem serialization
+
+The SDK includes [Filesystem SerDes](filesystem-serdes.md), which provides
+`ALWAYS` and `OVERFLOW` modes, URI/hash paths, delegate serializers, and previews. Configure it per operation with `serDes(...)`; keep the global serializer
+for normal Lambda input/output. It requires a durable shared mount and external
+file retention.
+
+Custom serializers can override `serialize(value, SerDesContext)` and
+`deserialize(data, typeToken, SerDesContext)` to receive stable execution/entity
+identity. Existing implementations inherit defaults that call the original methods.

@@ -57,9 +57,70 @@ class ExportSchedulerTest {
     }
 
     private static WorkflowInsightRecord record(String status) {
+        return record("arn:exec-a", status);
+    }
+
+    private static WorkflowInsightRecord record(String executionArn, String status) {
         var r = new WorkflowInsightRecord();
+        r.executionArn = executionArn;
         r.status = status;
         return r;
+    }
+
+    @Test
+    void recordsOfDifferentExecutionsNeverDisplaceEachOther() {
+        var executor = new ManualExecutor();
+        var exporter = new CapturingExporter();
+        var scheduler = scheduler(executor, new ArrayList<>(), exporter);
+
+        scheduler.schedule(record("arn:exec-a", "a-final"));
+        scheduler.schedule(record("arn:exec-b", "b-running"));
+        executor.runAll();
+
+        assertEquals(List.of("a-final", "b-running"), statuses(exporter));
+    }
+
+    @Test
+    void coalescingStaysWithinOneExecutionAndExecutionsAreServedInFirstPendingOrder() {
+        var executor = new ManualExecutor();
+        var exporter = new CapturingExporter();
+        var scheduler = scheduler(executor, new ArrayList<>(), exporter);
+
+        scheduler.schedule(record("arn:exec-a", "a1"));
+        scheduler.schedule(record("arn:exec-b", "b1"));
+        scheduler.schedule(record("arn:exec-a", "a2")); // supersedes a1 but keeps a's place ahead of b
+        scheduler.schedule(record("arn:exec-b", "b2"));
+        scheduler.schedule(record("arn:exec-c", "c1"));
+        executor.runAll();
+
+        assertEquals(List.of("a2", "b2", "c1"), statuses(exporter));
+    }
+
+    @Test
+    void anotherExecutionsUpdateWhileAnExportIsInFlightCannotDropAPendingFinalRecord() throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var exporter = new CapturingExporter() {
+            @Override
+            public void export(WorkflowInsightRecord record) {
+                super.export(record);
+                if (records.size() == 1) {
+                    entered.countDown();
+                    await(release);
+                }
+            }
+        };
+        var scheduler = scheduler(sharedWorkers(), new ArrayList<>(), exporter);
+
+        scheduler.schedule(record("arn:exec-a", "a-running"));
+        assertTrue(entered.await(5, TimeUnit.SECONDS), "a's first export is in flight");
+        scheduler.schedule(record("arn:exec-a", "a-final"));
+        scheduler.schedule(record("arn:exec-b", "b-running"));
+        scheduler.schedule(record("arn:exec-b", "b-final"));
+        release.countDown();
+        scheduler.drain();
+
+        assertEquals(List.of("a-running", "a-final", "b-final"), statuses(exporter));
     }
 
     private static ExportScheduler scheduler(

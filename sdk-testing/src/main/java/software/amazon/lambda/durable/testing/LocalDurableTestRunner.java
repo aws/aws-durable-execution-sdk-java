@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.testing;
 
 import com.amazonaws.services.lambda.runtime.Context;
+import java.lang.reflect.InvocationTargetException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,6 +26,7 @@ import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 import software.amazon.lambda.durable.testing.local.OperationResult;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * In-memory test runner for durable Lambda functions. Simulates the Lambda re-invocation loop locally without requiring
@@ -47,6 +49,9 @@ public class LocalDurableTestRunner<I, O> {
     // operation ID stay stable across reinvocations, while only per-invocation values (the checkpoint token) change.
     private final String executionName = UUID.randomUUID().toString();
     private final String executionOperationId = UUID.randomUUID().toString();
+    private final String executionArn = String.format(
+            "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/%s/%s",
+            executionName, executionOperationId);
 
     private LocalDurableTestRunner(
             TypeToken<I> inputType,
@@ -61,16 +66,8 @@ public class LocalDurableTestRunner<I, O> {
         // Create config that uses customer's configuration but overrides the client with in-memory storage
         if (customerConfig != null) {
             // Use customer's config but override the client with our in-memory implementation
-            this.customerConfig = DurableConfig.builder()
+            this.customerConfig = copyConfiguration(customerConfig, DurableConfig.class)
                     .withDurableExecutionClient(storage)
-                    .withSerDes(customerConfig.getSerDes())
-                    .withExecutorService(customerConfig.getExecutorService())
-                    .withPollingStrategy(customerConfig.getPollingStrategy())
-                    .withCheckpointDelay(customerConfig.getCheckpointDelay())
-                    .withLoggerConfig(customerConfig.getLoggerConfig())
-                    // Temporary: remove along with the checkpointEmptyMap flag in a future major version.
-                    .withCheckpointEmptyMap(customerConfig.shouldCheckpointEmptyMap())
-                    .withPlugins(customerConfig.getPluginRunner().getPlugins().toArray(new DurableExecutionPlugin[0]))
                     .build();
         } else {
             // Fallback to default config with in-memory client
@@ -78,6 +75,28 @@ public class LocalDurableTestRunner<I, O> {
                     DurableConfig.builder().withDurableExecutionClient(storage).build();
         }
         this.serDes = this.customerConfig.getSerDes();
+    }
+
+    /** Uses the resolved-list copy capability when present, retaining the prior copy path for older cores. */
+    static DurableConfig.Builder copyConfiguration(DurableConfig config, Class<?> configurationApi) {
+        try {
+            return (DurableConfig.Builder)
+                    configurationApi.getMethod("toBuilder").invoke(config);
+        } catch (NoSuchMethodException olderCore) {
+            return DurableConfig.builder()
+                    .withSerDes(config.getSerDes())
+                    .withExecutorService(config.getExecutorService())
+                    .withPollingStrategy(config.getPollingStrategy())
+                    .withCheckpointDelay(config.getCheckpointDelay())
+                    .withLoggerConfig(config.getLoggerConfig())
+                    .withCheckpointEmptyMap(config.shouldCheckpointEmptyMap())
+                    .withPlugins(config.getPluginRunner().getPlugins().toArray(new DurableExecutionPlugin[0]));
+        } catch (InvocationTargetException failure) {
+            ExceptionHelper.sneakyThrow(failure.getCause());
+            throw new AssertionError("unreachable");
+        } catch (IllegalAccessException failure) {
+            throw new IllegalStateException("Unable to copy durable configuration", failure);
+        }
     }
 
     /**
@@ -246,7 +265,7 @@ public class LocalDurableTestRunner<I, O> {
 
         var output = DurableExecutor.execute(durableInput, mockLambdaContext(), inputType, handler, customerConfig);
 
-        return storage.toTestResult(output, outputType, serDes);
+        return storage.toTestResult(output, outputType, serDes, executionArn);
     }
 
     /**
@@ -285,7 +304,7 @@ public class LocalDurableTestRunner<I, O> {
     /** Returns the {@link TestOperation} for the given operation name, or null if not found. */
     public TestOperation getOperation(String name) {
         var op = storage.getOperationByName(name);
-        return op != null ? new TestOperation(op, serDes) : null;
+        return op != null ? new TestOperation(op, List.of(), serDes, executionArn) : null;
     }
 
     /** Get callback ID for a named callback operation. */
@@ -336,9 +355,6 @@ public class LocalDurableTestRunner<I, O> {
     private DurableExecutionInput createDurableInput(I input) {
         // The last ARN segment must equal the EXECUTION operation ID (ExecutionManager parses the ARN to find it), and
         // both are stable across reinvocations so the execution keeps one identity — and one derived trace ID.
-        var executionArn = String.format(
-                "arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/%s/%s",
-                executionName, executionOperationId);
         var inputJson = serDes.serialize(input);
 
         // The list must contain exactly one EXECUTION operation, matching the backend, which keeps a single EXECUTION

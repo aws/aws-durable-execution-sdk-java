@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.testing;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
 import software.amazon.awssdk.services.lambda.model.ContextDetails;
@@ -19,21 +20,33 @@ import software.amazon.awssdk.services.lambda.model.WaitDetails;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.serde.SerDes;
+import software.amazon.lambda.durable.serde.SerDesContext;
 
 /** Wrapper for AWS SDK Operation providing convenient access methods. */
 public class TestOperation {
     private final Operation operation;
     private final List<Event> events;
     private final SerDes serDes;
+    private final String executionArn;
 
     public TestOperation(Operation operation, SerDes serDes) {
         this(operation, List.of(), serDes);
     }
 
     public TestOperation(Operation operation, List<Event> events, SerDes serDes) {
+        this(operation, events, serDes, null);
+    }
+
+    /**
+     * Creates an operation snapshot with execution identity for context-aware result deserialization.
+     *
+     * @param executionArn the durable execution ARN, or null when unavailable for a manually constructed snapshot
+     */
+    public TestOperation(Operation operation, List<Event> events, SerDes serDes, String executionArn) {
         this.operation = operation;
         this.events = events;
         this.serDes = serDes;
+        this.executionArn = executionArn;
     }
 
     /** Returns the raw history events associated with this operation. */
@@ -115,11 +128,35 @@ public class TestOperation {
 
     /** Deserializes and returns the step result using a TypeToken for generic types. */
     public <T> T getStepResult(TypeToken<T> type) {
+        return getStepResult(type, serDes);
+    }
+
+    /**
+     * Deserializes a step result using its operation-specific serializer. Does not change the runner's serializer for
+     * handler input/output or other operations. Runners supply execution and operation identity automatically.
+     *
+     * <p>Filesystem serializers require the stored payload to be accessible from the test process. They cannot be
+     * inferred from checkpoint data; pass the same serializer configuration used by the step.
+     */
+    public <T> T getStepResult(Class<T> type, SerDes resultSerDes) {
+        return getStepResult(TypeToken.get(type), resultSerDes);
+    }
+
+    /**
+     * Deserializes a generic step result using its operation-specific serializer. Legacy manually constructed snapshots
+     * without an execution ARN use the serializer's context-free method; use the four-argument constructor when the
+     * serializer requires context. Missing results return null without invoking the serializer.
+     */
+    public <T> T getStepResult(TypeToken<T> type, SerDes resultSerDes) {
         var details = operation.stepDetails();
         if (details == null || details.result() == null) {
             return null;
         }
-        return serDes.deserialize(details.result(), type);
+        Objects.requireNonNull(resultSerDes, "resultSerDes");
+        return executionArn == null
+                ? resultSerDes.deserialize(details.result(), type)
+                : resultSerDes.deserialize(
+                        details.result(), type, new SerDesContext(executionArn, "operation/" + getId() + "/result"));
     }
 
     /** Returns the step error, or null if the step succeeded or this is not a step operation. */

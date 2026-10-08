@@ -86,7 +86,7 @@
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
-            <version>1.6.3</version>
+            <version>1.6.5</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -100,6 +100,47 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <releasedTestingSdkJar>${project.build.directory}/compatibility/testing-sdk-2.2.1.jar</releasedTestingSdkJar>
+                    </systemPropertyVariables>
+                    <!--
+                        The X-Ray context extractor falls back to the ambient _X_AMZN_TRACE_ID
+                        environment variable. CI runners on Lambda/CodeBuild compute inject it,
+                        which flips the default-constructor plugins' sampling to NOT_SAMPLED and
+                        drops all spans, breaking hermetic unit tests. Clear it for the forked
+                        test JVM so these tests do not depend on the host environment (no effect
+                        on hosts where the variable is already absent).
+                    -->
+                    <environmentVariables>
+                        <_X_AMZN_TRACE_ID/>
+                    </environmentVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.11.0</version>
+                <executions>
+                    <execution>
+                        <id>copy-released-testing-sdk</id>
+                        <phase>generate-test-resources</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>software.amazon.lambda.durable</groupId>
+                                    <artifactId>aws-durable-execution-sdk-java-testing</artifactId>
+                                    <version>2.2.1</version>
+                                    <outputDirectory>${project.build.directory}/compatibility</outputDirectory>
+                                    <destFileName>testing-sdk-2.2.1.jar</destFileName>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>com.diffplug.spotless</groupId>

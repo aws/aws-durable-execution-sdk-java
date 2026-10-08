@@ -131,9 +131,15 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     /** Build TestResult from current state. */
     public <O> TestResult<O> toTestResult(DurableExecutionOutput output, TypeToken<O> resultType, SerDes serDes) {
+        return toTestResult(output, resultType, serDes, null);
+    }
+
+    /** Build TestResult with the execution identity needed to inspect context-aware operation payloads. */
+    public <O> TestResult<O> toTestResult(
+            DurableExecutionOutput output, TypeToken<O> resultType, SerDes serDes, String executionArn) {
         var testOperations = existingOperations.values().stream()
                 .filter(op -> op.type() != OperationType.EXECUTION)
-                .map(op -> new TestOperation(op, eventProcessor.getEventsForOperation(op.id()), serDes))
+                .map(op -> new TestOperation(op, eventProcessor.getEventsForOperation(op.id()), serDes, executionArn))
                 .toList();
         return new TestResult<>(
                 output.status(),

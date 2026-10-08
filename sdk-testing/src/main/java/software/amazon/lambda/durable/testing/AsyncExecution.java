@@ -195,7 +195,7 @@ public class AsyncExecution<O> {
                     .build();
             var response = lambdaClient.getDurableExecutionHistory(request);
             this.currentHistory = response.events();
-            this.currentResult = processor.processEvents(currentHistory, outputType, serDes);
+            this.currentResult = processor.processEvents(currentHistory, outputType, serDes, executionArn);
         } catch (ResourceNotFoundException e) {
             // Execution doesn't exist yet - this can happen immediately after async invoke
             // Leave currentHistory as null, pollUntil will retry
