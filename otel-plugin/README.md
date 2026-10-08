@@ -21,6 +21,10 @@ retryable invocation control before releasing its activity lease. End reports `R
 for a later invocation. Rejected worker admission releases its activity registration. Direct `VirtualMachineError`
 and `ThreadDeath` also settle the continuation observation before escaping its coordinator worker.
 
+Legacy outcome observers wake waiters for an already-selected continuation failure before invocation End can wait
+for handler cleanup. The existing callback thread is retained, and concurrent publishers use the selected control
+cause. Normal outcome handling and diagnostic inspection are unchanged.
+
 Ordinary unowned helper failures retain their observation-only behavior. Normal manager closing does not replace
 the selected outcome or stop unrelated operations. This boundary does not change handler/predicate failure
 classification, hook threading, trace topology, or add general wrapped-fatal classification.

@@ -127,6 +127,7 @@ public class DurableExecutor {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
                                 Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);
+                                executionManager.wakePublishedContinuationWaiters(cause);
 
                                 // return PENDING if it's SuspendExecutionException
                                 if (cause instanceof SuspendExecutionException) {
