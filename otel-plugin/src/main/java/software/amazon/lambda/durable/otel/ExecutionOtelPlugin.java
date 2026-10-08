@@ -661,7 +661,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
      */
     private Span startDurableSpan(SpanBuilder spanBuilder) {
         var intent = samplingIntent;
-        if (intent == null) {
+        if (intent == null || !OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)) {
             return spanBuilder.startSpan();
         }
         try (var ignored = DurableSamplingDecision.openScope(intent)) {
@@ -672,7 +672,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     /** Starts a durable span with a forced span ID, publishing the sampling intent as in {@link #startDurableSpan}. */
     private Span startDurableSpan(SpanBuilder spanBuilder, String traceId, String spanId) {
         var intent = samplingIntent;
-        if (intent == null) {
+        if (intent == null || !OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)) {
             return idGenerator.startSpan(spanBuilder, traceId, spanId);
         }
         try (var ignored = DurableSamplingDecision.openScope(intent)) {

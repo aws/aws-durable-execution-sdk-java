@@ -310,6 +310,8 @@ For precise, provider-independent control, set an explicit `Sampled` value upstr
 | `durable.attempt.number` | 1-based attempt number |
 | `durable.attempt.outcome` | SUCCEEDED (span status `OK`), FAILED (`ERROR`), or INCOMPLETE (`UNSET`) |
 
+Deferred sampler results are isolated by execution ARN and canonical trace ID in the existing 256-entry LRU cache. The delegate is reused while an entry is resident; eviction can cause another evaluation. The delegate still receives the canonical trace ID.
+
 ## Log Correlation (MDC)
 
 When `enableMdc` is true (default), the plugin injects these fields into SLF4J MDC during user function execution:
