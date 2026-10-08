@@ -485,6 +485,67 @@ class ExecutionManagerTest {
         assertThrows(SuspendExecutionException.class, () -> manager.deregisterActiveThread("root"));
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"queued", "cancelled-observation", "rejected"})
+    void admissionRacingCloseDrainsActualWorkAndPreservesUnrelatedOperations(String mode) throws Exception {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        manager.registerActiveThread("root");
+        var owner = mock(BaseDurableOperation.class);
+        var ownerCompletion = new CompletableFuture<BaseDurableOperation>();
+        when(owner.getCompletionFuture()).thenReturn(ownerCompletion);
+        var unrelated = mock(BaseDurableOperation.class);
+        var unrelatedCompletion = new CompletableFuture<BaseDurableOperation>();
+        when(unrelated.getOperationId()).thenReturn("unrelated");
+        when(unrelated.getCompletionFuture()).thenReturn(unrelatedCompletion);
+        manager.registerOperation(unrelated);
+        var dispatchEntered = new CountDownLatch(1);
+        var releaseDispatch = new CountDownLatch(1);
+        var queued = new AtomicReference<Runnable>();
+        var rejection = new RejectedExecutionException("rejected during close");
+        var admission = CompletableFuture.supplyAsync(() ->
+                manager.runCheckpointContinuation(owner, () -> fail("Closing must stop this admitted body"), task -> {
+                    dispatchEntered.countDown();
+                    try {
+                        assertTrue(releaseDispatch.await(3, TimeUnit.SECONDS));
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(interrupted);
+                    }
+                    if (mode.equals("rejected")) throw rejection;
+                    queued.set(task);
+                }));
+        assertTrue(dispatchEntered.await(3, TimeUnit.SECONDS));
+        var closing = CompletableFuture.runAsync(manager::close);
+        try {
+            assertInstanceOf(
+                    SuspendExecutionException.class,
+                    assertThrows(ExecutionException.class, () -> ownerCompletion.get(3, TimeUnit.SECONDS))
+                            .getCause());
+            assertThrows(TimeoutException.class, () -> closing.get(100, TimeUnit.MILLISECONDS));
+        } finally {
+            releaseDispatch.countDown();
+        }
+        if (mode.equals("rejected")) {
+            assertSame(
+                    rejection,
+                    assertThrows(ExecutionException.class, () -> admission.get(3, TimeUnit.SECONDS))
+                            .getCause());
+        } else {
+            var observation = admission.get(3, TimeUnit.SECONDS);
+            if (mode.equals("cancelled-observation")) assertTrue(observation.cancel(false));
+            assertThrows(TimeoutException.class, () -> closing.get(100, TimeUnit.MILLISECONDS));
+            queued.get().run();
+        }
+        closing.get(3, TimeUnit.SECONDS);
+        assertFalse(unrelatedCompletion.isDone(), "Normal close must not apply global stopAllOperations");
+        assertFalse(manager.isExecutionCompletedExceptionally(), "Cleanup must not replace the selected root outcome");
+        manager.runCheckpointContinuation(
+                        () -> fail("Post-close admission must be rejected"),
+                        task -> fail("Post-close work must not reach the executor"))
+                .get(3, TimeUnit.SECONDS);
+        assertDoesNotThrow(() -> manager.deregisterActiveThread("root"));
+    }
+
     @Test
     void checkpointDeliveryIsAtomicWithOperationRegistration() throws Exception {
         var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));

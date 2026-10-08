@@ -111,7 +111,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
 
     private CompletableFuture<Void> pollReadyAndResumeCheckLoop(Operation existing) {
         return pollUntilReady()
-                .thenCompose(op -> executionManager.runCheckpointContinuation(() -> {
+                .thenCompose(op -> executionManager.runCheckpointContinuation(this, () -> {
                     if (!isOperationCompleted() && op.status() == OperationStatus.READY) resumeCheckLoop(op);
                 }));
     }
@@ -187,7 +187,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
     private void continueAfterCurrentWorker(
             CompletableFuture<CompletableFuture<?>> publishedWorker, T nextState, int nextAttempt) {
         pollUntilReady()
-                .thenCompose(op -> executionManager.runCheckpointContinuation(() -> {
+                .thenCompose(op -> executionManager.runCheckpointContinuation(this, () -> {
                     publishedWorker.join().join();
                     if (!isOperationCompleted() && op.status() == OperationStatus.READY)
                         executeCheckLogic(nextState, nextAttempt);
