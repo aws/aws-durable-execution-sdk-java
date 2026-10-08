@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.BiFunction;
 import java.util.function.IntFunction;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -45,12 +46,22 @@ class WaitForConditionReadinessIntegrationTest {
     @ParameterizedTest
     @ValueSource(strings = {"async", "direct", "submit-and-wait"})
     void delayedReadyResumesWithSynchronousOperationExecutors(String mode) throws Exception {
-        var log = subprocessLogs.resolve(mode + ".log");
+        assertProbe(SynchronousProbe.class, mode, "SYNC_READY_SUCCESS checks=2 replayChecks=2");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"cached", "bounded"})
+    void immediateReadyYieldsToTheSiblingThatUnlocksItsCondition(String mode) throws Exception {
+        assertProbe(FairnessProbe.class, mode, "FAIR_READY_SUCCESS siblingCalls=1 replayStable=true");
+    }
+
+    private void assertProbe(Class<?> probe, String mode, String successMarker) throws Exception {
+        var log = subprocessLogs.resolve(probe.getSimpleName() + "-" + mode + ".log");
         var process = new ProcessBuilder(
                         Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                         "-cp",
                         System.getProperty("java.class.path"),
-                        SynchronousProbe.class.getName(),
+                        probe.getName(),
                         mode)
                 .redirectErrorStream(true)
                 .redirectOutput(log.toFile())
@@ -60,10 +71,70 @@ class WaitForConditionReadinessIntegrationTest {
             var output = Files.readString(log);
             System.out.println("SYNC_READY_PROBE mode=" + mode + " exit=" + process.exitValue() + "\n" + output);
             assertEquals(0, process.exitValue(), output);
-            assertTrue(output.contains("SYNC_READY_SUCCESS checks=2 replayChecks=2"), output);
+            assertTrue(output.contains(successMarker), output);
         } finally {
             if (process.isAlive()) process.destroyForcibly();
             assertTrue(process.waitFor(5, TimeUnit.SECONDS));
+        }
+    }
+
+    public static final class FairnessProbe {
+        public static void main(String[] args) throws Exception {
+            var workers = args[0].equals("bounded") ? Executors.newFixedThreadPool(2) : Executors.newCachedThreadPool();
+            var siblingQueued = new CountDownLatch(1);
+            var unlocked = new AtomicBoolean();
+            var checks = new AtomicInteger();
+            var siblings = new AtomicInteger();
+            var run = new Run(new ImmediateReadyClient(), workers, value -> {
+                throw new AssertionError("The explicit public handler supplies its own condition");
+            });
+            run.customHandler = (input, context) -> {
+                var condition = context.waitForConditionAsync(
+                        "condition",
+                        Integer.class,
+                        (state, step) -> {
+                            checks.incrementAndGet();
+                            await(siblingQueued);
+                            return unlocked.get()
+                                    ? WaitForConditionResult.stopPolling(state)
+                                    : WaitForConditionResult.continuePolling(state + 1);
+                        },
+                        run.wait);
+                var sibling = context.stepAsync("unlock-condition", String.class, step -> {
+                    siblings.incrementAndGet();
+                    unlocked.set(true);
+                    return "unlocked";
+                });
+                siblingQueued.countDown();
+                var result = condition.get();
+                assertEquals("unlocked", sibling.get());
+                return String.valueOf(result);
+            };
+            try {
+                var first = run.start().get(3, TimeUnit.SECONDS);
+                assertEquals(ExecutionStatus.SUCCEEDED, first.status());
+                assertEquals(1, siblings.get());
+                var completedChecks = checks.get();
+                var checkpoints = run.client.getOperationUpdates().size();
+                assertEquals(first, run.start().get(3, TimeUnit.SECONDS));
+                assertEquals(completedChecks, checks.get());
+                assertEquals(1, siblings.get());
+                assertEquals(checkpoints, run.client.getOperationUpdates().size());
+                System.out.println("FAIR_READY_SUCCESS siblingCalls=1 replayStable=true checks=" + completedChecks);
+                run.close();
+            } catch (Throwable failure) {
+                System.out.println("FAIR_READY_FAILURE mode=" + args[0] + " checks=" + checks.get() + " siblingCalls="
+                        + siblings.get() + " queued="
+                        + ((ThreadPoolExecutor) workers).getQueue().size());
+                failure.printStackTrace(System.out);
+                Thread.getAllStackTraces().forEach((thread, stack) -> {
+                    if (!thread.getName().startsWith("durable-sdk-internal")
+                            && !thread.getName().startsWith("pool-")) return;
+                    System.out.println("THREAD " + thread.getName() + " " + thread.getState());
+                    Arrays.stream(stack).forEach(frame -> System.out.println("  " + frame));
+                });
+                System.exit(2);
+            }
         }
     }
 
@@ -533,6 +604,7 @@ class WaitForConditionReadinessIntegrationTest {
             }
         };
         private final IntFunction<WaitForConditionResult<Integer>> check;
+        private BiFunction<String, DurableContext, String> customHandler;
         private final DurableConfig config;
         private final WaitForConditionConfig<Integer> wait = WaitForConditionConfig.<Integer>builder()
                 .initialState(1)
@@ -576,14 +648,16 @@ class WaitForConditionReadinessIntegrationTest {
                     input,
                     null,
                     TypeToken.get(String.class),
-                    (value, ctx) -> String.valueOf(ctx.waitForCondition(
-                            "condition",
-                            Integer.class,
-                            (state, step) -> {
-                                checks.incrementAndGet();
-                                return check.apply(state);
-                            },
-                            wait)),
+                    customHandler != null
+                            ? customHandler
+                            : (value, ctx) -> String.valueOf(ctx.waitForCondition(
+                                    "condition",
+                                    Integer.class,
+                                    (state, step) -> {
+                                        checks.incrementAndGet();
+                                        return check.apply(state);
+                                    },
+                                    wait)),
                     config));
         }
 

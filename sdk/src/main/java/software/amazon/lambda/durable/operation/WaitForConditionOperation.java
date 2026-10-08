@@ -4,8 +4,6 @@ package software.amazon.lambda.durable.operation;
 
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -149,7 +147,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
     }
 
     private void runCheckLoop(T currentState, int attempt, CompletableFuture<CompletableFuture<?>> publishedWorker) {
-        while (!isOperationCompleted()) {
+        if (!isOperationCompleted()) {
             var stepContext = getContext().createStepContext(getOperationId(), getName(), attempt);
             BaseContextImpl.setCurrentContext(stepContext);
             try (var ignored = DurableLogger.attachContext()) {
@@ -175,13 +173,9 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
                             .stepOptions(StepOptions.builder()
                                     .nextAttemptDelaySeconds(Math.toIntExact(delay.toSeconds()))
                                     .build()));
-                    var inlineReady =
-                            continueInlineOrAfterCurrentWorker(publishedWorker, deserializedValue, attempt + 1);
-                    if (inlineReady == null || inlineReady.status() != OperationStatus.READY) return;
-                    // READY can be present in the RETRY response. Keep this worker active and continue without
-                    // recursively starting an overlapping handler or suspending executable work.
-                    currentState = deserializedValue;
-                    attempt++;
+                    // Retire even when READY is already available, so a queued sibling can run on a bounded executor.
+                    // The coordinator owns activity until this worker finishes and the next attempt is registered.
+                    continueAfterCurrentWorker(publishedWorker, deserializedValue, attempt + 1);
                 } catch (Throwable failure) {
                     handleCheckFailure(failure);
                     return;
@@ -190,30 +184,14 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
         }
     }
 
-    private Operation continueInlineOrAfterCurrentWorker(
+    private void continueAfterCurrentWorker(
             CompletableFuture<CompletableFuture<?>> publishedWorker, T nextState, int nextAttempt) {
-        var owner = Thread.currentThread();
-        var inline = new AtomicReference<Operation>();
-        var acceptingInline = new AtomicBoolean(true);
-        try {
-            pollUntilReady().thenCompose(op -> {
-                if (Thread.currentThread() == owner && acceptingInline.get()) {
-                    inline.set(op);
-                    return CompletableFuture.completedFuture(null);
-                } else {
-                    // A configured executor may run or wait for the next check inline. Leave the serialized
-                    // checkpoint callback before dispatch, retaining activity through worker publication/registration.
-                    return executionManager.runCheckpointContinuation(() -> {
-                        publishedWorker.join().join();
-                        if (!isOperationCompleted() && op.status() == OperationStatus.READY)
-                            executeCheckLogic(nextState, nextAttempt);
-                    });
-                }
-            });
-        } finally {
-            acceptingInline.set(false);
-        }
-        return inline.get();
+        pollUntilReady()
+                .thenCompose(op -> executionManager.runCheckpointContinuation(() -> {
+                    publishedWorker.join().join();
+                    if (!isOperationCompleted() && op.status() == OperationStatus.READY)
+                        executeCheckLogic(nextState, nextAttempt);
+                }));
     }
 
     private void handleCheckFailure(Throwable exception) {
