@@ -21,6 +21,7 @@ import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Event;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.lambda.durable.TypeToken;
@@ -818,7 +819,20 @@ class CloudBasedIntegrationTest {
                 lambdaClient);
         var result = runner.run(new ConcurrentWaitForConditionExample.Input(3, 100, 50));
 
-        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        try {
+            assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        } catch (RuntimeException | AssertionError failure) {
+            try {
+                // Preserve the already-fetched service timeline without payloads, callback IDs, or checkpoint tokens.
+                var history = result.getHistoryEvents().stream()
+                        .map(CloudBasedIntegrationTest::historyMetadata)
+                        .toList();
+                System.err.println("Concurrent wait-for-condition history: " + new JacksonSerDes().serialize(history));
+            } catch (RuntimeException diagnosticsFailure) {
+                failure.addSuppressed(diagnosticsFailure);
+            }
+            throw failure;
+        }
 
         // Verify each operation finished with 3 attempts
         var allOperationsOutput = result.getResult();
@@ -838,6 +852,30 @@ class CloudBasedIntegrationTest {
                     "waitForCondition operation took "
                             + waitForConditionResult.getDuration().toSeconds() + "s, expected < 30s");
         }
+    }
+
+    private static Map<String, Object> historyMetadata(Event event) {
+        var row = new HashMap<String, Object>();
+        row.put("eventId", event.eventId());
+        row.put("type", event.eventTypeAsString());
+        row.put("operationId", event.id());
+        row.put("parentId", event.parentId());
+        row.put("name", event.name());
+        row.put("at", String.valueOf(event.eventTimestamp()));
+        var retries = event.stepSucceededDetails() != null
+                ? event.stepSucceededDetails().retryDetails()
+                : event.stepFailedDetails() != null ? event.stepFailedDetails().retryDetails() : null;
+        if (retries != null) {
+            row.put("attempt", retries.currentAttempt());
+            row.put("nextAttemptDelaySeconds", retries.nextAttemptDelaySeconds());
+        }
+        var invocation = event.invocationCompletedDetails();
+        if (invocation != null) {
+            row.put("invocationStart", String.valueOf(invocation.startTimestamp()));
+            row.put("invocationEnd", String.valueOf(invocation.endTimestamp()));
+            row.put("invocationFailed", invocation.error() != null);
+        }
+        return row;
     }
 
     @Test
