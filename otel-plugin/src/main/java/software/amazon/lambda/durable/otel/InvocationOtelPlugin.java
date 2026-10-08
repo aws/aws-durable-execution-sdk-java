@@ -641,6 +641,11 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     private Context resolveParentContext(String parentId) {
         if (parentId != null) {
+            var parentSpan = operationSpans.get(parentId);
+            if (parentSpan != null) {
+                // Retain the provider's live span, including its clock, while this parent is open.
+                return withDurableDecision(Context.current().with(parentSpan));
+            }
             var parentSpanContext = operationContexts.get(parentId);
             if (parentSpanContext != null) {
                 return withDurableDecision(Context.current().with(Span.wrap(parentSpanContext)));
