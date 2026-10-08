@@ -31,6 +31,8 @@ unless a later `VirtualMachineError` or `ThreadDeath` takes precedence over a no
 end-hook Errors are retained as suppressed failures. Scope cleanup preserves finalization failures using the same
 JVM-fatal precedence, so an ordinary cleanup exception cannot hide an earlier Error.
 Invocations without plugins also wait for handler cleanup before returning the selected suspension or retry outcome.
+The manager selects suspension or termination before waking operation waiters, so a later returning or throwing
+handler `finally` cannot replace that selected outcome. A handler outcome that was already selected remains primary.
 SDK output preparation, including customer `SerDes` calls and durable large-result checkpointing, finishes before
 terminal invocation-end notification. Failures in this preparation report `RETRYING` instead of ending the Workflow
 span. If End also raises an unisolated Error, the preparation failure remains primary with the cleanup error

@@ -12,6 +12,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -32,6 +34,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -53,6 +56,36 @@ class ExecutionManagerTest {
                 new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState),
                 DurableConfig.builder().withDurableExecutionClient(client).build(),
                 null);
+    }
+
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @ValueSource(strings = {"success", "ordinary", "vm", "death"})
+    void bodySelectedBeforeManagerTerminationRetainsItsOutcome(String kind) {
+        try (var manager = createManager(List.of(executionOp()))) {
+            var body = new CompletableFuture<String>();
+            var selected = manager.runUntilCompleteOrSuspend(body);
+            Throwable failure =
+                    switch (kind) {
+                        case "ordinary" -> new IllegalArgumentException("body failure");
+                        case "vm" -> new InternalError("body fatal");
+                        case "death" -> new ThreadDeath();
+                        default -> null;
+                    };
+            if (failure == null) body.complete("body success");
+            else body.completeExceptionally(failure);
+            var later = new UnrecoverableDurableExecutionException(
+                    ErrorObject.builder().errorMessage("later manager failure").build(), true);
+            assertSame(
+                    later,
+                    assertThrows(
+                            UnrecoverableDurableExecutionException.class, () -> manager.terminateExecution(later)));
+            if (failure == null) assertEquals("body success", selected.join());
+            else
+                assertSame(
+                        failure,
+                        assertThrows(CompletionException.class, selected::join).getCause());
+        }
     }
 
     private Operation executionOp() {
