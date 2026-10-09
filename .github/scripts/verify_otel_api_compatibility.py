@@ -142,11 +142,14 @@ def run_matrix(args: argparse.Namespace) -> int:
             for view in ("otel-invocation", "otel-execution"):
                 name = f"{label}-api{version}-{view}"
                 negative = label == "old-old" and version == "1.49.0"
+                incompatible_core = label == "old-new"
                 case: dict[str, object] = {"name": name, "expected_negative_control": negative,
+                                          "expected_core_rejection": incompatible_core,
                                           "api": jar_facts(api), "context": jar_facts(context)}
                 command = [args.java, "-cp", os.pathsep.join(map(str, [classes, core, plugin, *dependencies])),
                            PROBE, str(core), str(plugin), str(api), str(context), view,
-                           str(negative).lower(), str(version == "1.66.0").lower()]
+                           str(negative).lower(), str(version == "1.66.0").lower(),
+                           str(incompatible_core).lower()]
                 try:
                     log = output / f"{name}.log"
                     execute(command, log, env=probe_environment(view), timeout=90)
@@ -155,6 +158,8 @@ def run_matrix(args: argparse.Namespace) -> int:
                         raise RuntimeError("Probe did not report successful completion")
                     if negative and "NEGATIVE_CONTROL_REPRODUCED" not in contents:
                         raise RuntimeError("Released negative control did not reproduce the reported failure")
+                    if incompatible_core and "CORE_LIFECYCLE_REJECTION_CONFIRMED" not in contents:
+                        raise RuntimeError("Old core must reject the new plugin before invocation startup")
                     case["passed"] = True
                 except RuntimeError as error:
                     failures += 1

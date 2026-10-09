@@ -23,6 +23,55 @@ class DurableInputOutputSerDesTest {
     }
 
     @Test
+    void callbackCheckpointWirePreservesOmittedAndEmptyErrorShapes() {
+        var template = """
+                {"DurableExecutionArn":"arn:aws:lambda:us-east-1:123456789012:function:test:$LATEST/durable-execution/name/id",
+                 "CheckpointToken":"test-token", "UpdatedOperationIds":["callback"],
+                 "InitialExecutionState":{"Operations":[{"Id":"callback","Type":"CALLBACK","Status":"FAILED",
+                 "CallbackDetails":{"CallbackId":"test-only-token"%s}}]}}
+                """;
+        var absent = serDes.deserialize(template.formatted(""), TypeToken.get(DurableExecutionInput.class));
+        var empty =
+                serDes.deserialize(template.formatted(", \"Error\":{}"), TypeToken.get(DurableExecutionInput.class));
+        var explicitNull =
+                serDes.deserialize(template.formatted(", \"Error\":null"), TypeToken.get(DurableExecutionInput.class));
+        var details = serDes.deserialize(
+                template.formatted(", \"Error\":{\"ErrorMessage\":\"failed\"}"),
+                TypeToken.get(DurableExecutionInput.class));
+        assertNull(absent.initialExecutionState()
+                .operations()
+                .get(0)
+                .callbackDetails()
+                .error());
+        assertNull(explicitNull
+                .initialExecutionState()
+                .operations()
+                .get(0)
+                .callbackDetails()
+                .error());
+        var emptyError = empty.initialExecutionState()
+                .operations()
+                .get(0)
+                .callbackDetails()
+                .error();
+        assertNotNull(emptyError);
+        assertNull(emptyError.errorType());
+        assertNull(emptyError.errorMessage());
+        assertNull(emptyError.errorData());
+        assertFalse(emptyError.hasStackTrace());
+        assertEquals(
+                "failed",
+                details.initialExecutionState()
+                        .operations()
+                        .get(0)
+                        .callbackDetails()
+                        .error()
+                        .errorMessage());
+        assertEquals(List.of("callback"), empty.updatedOperationIds());
+        // These legal wire inputs establish decoder behavior, not which shape the live service supplies.
+    }
+
+    @Test
     void testObjectMapperSerializesPendingOutput() {
         var output = DurableExecutionOutput.pending();
 
