@@ -291,14 +291,15 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         var provider = sdkTracerProvider;
         var shouldFlush = tracingEnabled || root != null;
         executionRootSpan = null; // One-shot release even if an end processor throws or re-enters.
-        OtelPluginSupport.finishWithRootCleanup(() -> finishInvocationEnd(info), () -> {
-            if (root != null) root.end(rootTimestamp);
-            if (shouldFlush && provider != null) {
-                var flushResult = provider.forceFlush().join(5, TimeUnit.SECONDS);
-                if (!flushResult.isSuccess())
-                    logger.warn("OTel span flush failed or timed out — some spans may be lost");
-            }
-        });
+        OtelPluginSupport.finishWithRootCleanup(
+                () -> finishInvocationEnd(info),
+                () -> OtelPluginSupport.endRootAndFlush(root, rootTimestamp, () -> {
+                    if (shouldFlush && provider != null) {
+                        var flushResult = provider.forceFlush().join(5, TimeUnit.SECONDS);
+                        if (!flushResult.isSuccess())
+                            logger.warn("OTel span flush failed or timed out — some spans may be lost");
+                    }
+                }));
     }
 
     private void finishInvocationEnd(InvocationEndInfo info) {

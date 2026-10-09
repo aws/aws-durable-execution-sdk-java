@@ -176,9 +176,38 @@ public class DurableExecutor {
                             }
                             // user handler complete successfully
                             logger.debug("Execution completed");
-                            var outputPayload = config.getSerDes().serialize(result);
-                            var output =
-                                    DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
+                            DurableExecutionOutput output;
+                            try {
+                                var outputPayload = config.getSerDes().serialize(result);
+                                output = DurableExecutionOutput.success(
+                                        handleLargePayload(executionManager, outputPayload));
+                            } catch (Throwable preparationFailure) {
+                                var cause = ExceptionHelper.unwrapCompletableFuture(preparationFailure);
+                                try {
+                                    fireOnInvocationEnd(
+                                            pluginRunner,
+                                            executionManager,
+                                            requestId,
+                                            executionArn,
+                                            isFirstInvocation,
+                                            InvocationStatus.RETRYING,
+                                            cause,
+                                            pluginExecutionInput.get(),
+                                            null);
+                                } catch (Error endFailure) {
+                                    if (endFailure != cause) {
+                                        if (!(cause instanceof VirtualMachineError || cause instanceof ThreadDeath)
+                                                && (endFailure instanceof VirtualMachineError
+                                                        || endFailure instanceof ThreadDeath)) {
+                                            endFailure.addSuppressed(cause);
+                                            throw endFailure;
+                                        }
+                                        cause.addSuppressed(endFailure);
+                                    }
+                                }
+                                ExceptionHelper.sneakyThrow(cause);
+                                return null;
+                            }
                             fireOnInvocationEnd(
                                     pluginRunner,
                                     executionManager,

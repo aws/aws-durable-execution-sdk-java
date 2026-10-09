@@ -21,6 +21,7 @@ import java.time.Instant;
 import java.util.Collections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /** Shared utilities for OTel plugin default constructor support (ADOT Java agent SPI path). */
 final class OtelPluginSupport {
@@ -58,6 +59,17 @@ final class OtelPluginSupport {
             root = idGenerator.startSpan(builder, ancestor.getTraceId(), ancestor.getSpanId());
         }
         return root;
+    }
+
+    /** Flushes completed spans after root end, including failures isolated by the plugin boundary. */
+    static void endRootAndFlush(Span root, Instant timestamp, Runnable flush) {
+        try {
+            if (root != null) root.end(timestamp);
+        } catch (Exception | LinkageError failure) {
+            finishWithRootCleanup(() -> ExceptionHelper.sneakyThrow(failure), flush);
+            return;
+        }
+        flush.run();
     }
 
     /** Always releases an invocation's new root resource without hiding an earlier failure or a later JVM fatal. */

@@ -71,6 +71,14 @@ trace state. It ends at invocation end, before flushing, with the same fixed exe
 deferred sampler, the first actual fallback span is now `DurableExecutionRoot`; custom policies that depend on the
 first span name or attributes can observe that ordering. No arbitrary name/input invariance is promised.
 
+If result serialization or oversized-result checkpointing fails before the SDK output is prepared, End reports
+`RETRYING` on the existing completion thread before the original preparation failure propagates. This closes the
+retained root without changing handler failure classification or claiming coverage of later response-stream writes
+or runtime acknowledgment. A root processor `Exception` or `LinkageError` still permits flushing already completed
+spans before the plugin boundary isolates that error. Unisolated `Error` failures keep their existing escape/skip-flush
+behavior; a failing processor need not have exported the root itself. Cleanup preserves the original preparation
+failure unless it introduces the first direct JVM fatal; an earlier JVM fatal remains primary.
+
 The anchor is marked `durable.execution.synthetic_root=true`. Its trace and span IDs are deterministic and its start
 and end timestamps are the checkpointed execution start. It does not report execution status or duration; `Workflow`
 continues to report those at terminal completion. Complete remote parents remain externally owned and are never exported.

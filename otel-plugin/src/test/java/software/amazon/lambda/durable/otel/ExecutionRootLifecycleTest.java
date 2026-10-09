@@ -3,7 +3,9 @@
 package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
+import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.sdk.common.CompletableResultCode;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
@@ -24,6 +26,7 @@ import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 class ExecutionRootLifecycleTest {
     private static final String ARN = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/root/id";
@@ -150,5 +153,52 @@ class ExecutionRootLifecycleTest {
 
     private static InvocationEndInfo end(boolean first) {
         return new InvocationEndInfo("request", ARN, first, InvocationStatus.PENDING, null);
+    }
+
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @CsvSource({
+        "runtime,ordinary",
+        "runtime,fatal",
+        "linkage,ordinary",
+        "linkage,fatal",
+        "assertion,unused",
+        "vm,unused",
+        "death,unused"
+    })
+    void flushRunsOnlyAfterRootFailuresIsolatedByTheExistingPluginBoundary(String rootKind, String flushKind) {
+        Throwable rootFailure =
+                switch (rootKind) {
+                    case "linkage" -> new LinkageError("root linkage");
+                    case "assertion" -> new AssertionError("root assertion");
+                    case "vm" -> new InternalError("root fatal");
+                    case "death" -> new ThreadDeath();
+                    default -> new IllegalStateException("root ordinary");
+                };
+        Throwable flushFailure = flushKind.equals("fatal")
+                ? new InternalError("flush fatal")
+                : new IllegalArgumentException("flush ordinary");
+        var root = mock(Span.class);
+        doAnswer(call -> {
+                    ExceptionHelper.sneakyThrow(rootFailure);
+                    return null;
+                })
+                .when(root)
+                .end(START);
+        var flushes = new AtomicInteger();
+        var observed = assertThrows(
+                Throwable.class,
+                () -> OtelPluginSupport.endRootAndFlush(root, START, () -> {
+                    flushes.incrementAndGet();
+                    ExceptionHelper.sneakyThrow(flushFailure);
+                }));
+        var isolated = rootKind.equals("runtime") || rootKind.equals("linkage");
+        assertEquals(isolated ? 1 : 0, flushes.get());
+        var expected = isolated && flushKind.equals("fatal") ? flushFailure : rootFailure;
+        assertSame(expected, observed);
+        assertEquals(
+                isolated ? List.of(expected == rootFailure ? flushFailure : rootFailure) : List.of(),
+                List.of(observed.getSuppressed()));
+        verify(root).end(START);
     }
 }
