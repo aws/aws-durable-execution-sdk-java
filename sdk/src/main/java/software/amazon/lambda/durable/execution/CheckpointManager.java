@@ -198,6 +198,11 @@ class CheckpointManager {
 
     private void checkpointBatch(List<OperationUpdate> updates) {
         synchronized (pollingFutures) {
+            // A READY recheck can complete a poll before its scheduled batch. Keep only consumers still waiting.
+            pollingFutures.entrySet().removeIf(entry -> {
+                entry.getValue().removeIf(CompletableFuture::isDone);
+                return entry.getValue().isEmpty();
+            });
             // filter the null values from pollers
             var request = updates.stream().filter(Objects::nonNull).toList();
 
