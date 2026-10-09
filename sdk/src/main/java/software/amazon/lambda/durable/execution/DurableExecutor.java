@@ -176,6 +176,7 @@ public class DurableExecutor {
                             }
                             // user handler complete successfully
                             logger.debug("Execution completed");
+                            executionManager.closeCheckpointContinuationAdmission();
                             DurableExecutionOutput output;
                             try {
                                 var outputPayload = config.getSerDes().serialize(result);

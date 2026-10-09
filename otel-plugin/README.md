@@ -16,9 +16,9 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 ## Checkpoint continuation failures
 
 An operation's SDK checkpoint continuation reports resumption/deserialization and dispatch failures through
-retryable invocation control before releasing its activity lease. End reports `RETRYING`, the caller receives
-`UnrecoverableDurableExecutionException` with the original cause, and persisted operation state remains available
-for a later invocation. Rejected worker admission releases its activity registration. Direct `VirtualMachineError`
+retryable invocation control before releasing its activity lease. When that control wins invocation outcome selection,
+End reports `RETRYING`, the caller receives `UnrecoverableDurableExecutionException` with the original cause, and
+persisted operation state remains available for a later invocation. Rejected worker admission releases its activity registration. Direct `VirtualMachineError`
 and `ThreadDeath` also settle the continuation observation before escaping its coordinator worker.
 
 Legacy outcome observers wake waiters for an already-selected continuation failure before invocation End can wait
@@ -29,8 +29,13 @@ Ordinary unowned helper failures retain their observation-only behavior. Normal 
 the selected outcome or stop unrelated operations. This boundary does not change handler/predicate failure
 classification, hook threading, trace topology, or add general wrapped-fatal classification.
 
-The invocation End snapshot is taken after closing new checkpoint-continuation admission and signaling unfinished
-owned continuations. Queued work may legitimately remain incomplete after early parallel success. This does not
+After a successful root outcome is selected, new checkpoint-continuation admission closes before output serialization
+or oversized-result checkpointing. This early guard does not iterate owners, run their completion callbacks, or join
+cleanup. A subsequent rejected admission retains the existing stop-owner behavior. The selected root outcome is not
+replaced by a later unawaited failure.
+
+The invocation End snapshot is taken after signaling unfinished owned continuations; PENDING and failure paths also
+close admission at that boundary. Queued work may legitimately remain incomplete after early parallel success. This does not
 join all accepted/running handlers before End: their remaining cleanup/checkpoint completion is still awaited by
 normal manager close afterward, and late end hooks can occur. Await operations that must be included in the selected
 outcome or snapshot. The admission cut does not provide a universal all-work-drained or final-state export guarantee.
