@@ -288,12 +288,14 @@ class CheckpointManager {
     }
 
     private void handleMissingToken(List<OperationUpdate> updates) {
+        // Publish before completing pollers, whose dependent stages can run inline.
+        // A terminal execution update was accepted, so only nonterminal requests require suspension.
+        checkpointTokenRevoked = updates.stream().noneMatch(update -> update.type() == OperationType.EXECUTION);
+
         var cause = new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE);
         stopPolling(cause);
         checkpointApiRequestDelayedBatcher.flush();
 
-        // A terminal execution update was accepted, so only nonterminal requests require suspension.
-        checkpointTokenRevoked = updates.stream().noneMatch(update -> update.type() == OperationType.EXECUTION);
         if (checkpointTokenRevoked) {
             logger.warn(
                     "The checkpoint response for durable execution {} did not include a checkpoint token. The SDK will"

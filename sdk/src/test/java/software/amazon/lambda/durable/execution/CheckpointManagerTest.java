@@ -705,6 +705,23 @@ class CheckpointManagerTest {
     }
 
     @Test
+    void checkpointBatch_nonTerminalTokenWithdrawal_publishesRevocationBeforeCompletingPollers() throws Exception {
+        var update = stepUpdate("op-1");
+
+        var poller = batcher.pollForUpdate("op-1", Instant.now().plusSeconds(60));
+        var revocationObservedByPoller = poller.handle((operation, error) -> batcher.isCheckpointTokenRevoked());
+        when(client.checkpoint(any(), any(), any())).thenReturn(missingTokenResponse(update));
+
+        try {
+            assertSuspended(batcher.checkpoint(update));
+            assertSuspended(poller);
+            assertTrue(revocationObservedByPoller.get(1, TimeUnit.SECONDS));
+        } finally {
+            batcher.shutdown();
+        }
+    }
+
+    @Test
     void checkpointBatch_terminalTokenWithdrawal_completesAndRejectsFurtherRequests() throws Exception {
         var signalSuspension = mock(Runnable.class);
         var revocableBatcher = new CheckpointManager(

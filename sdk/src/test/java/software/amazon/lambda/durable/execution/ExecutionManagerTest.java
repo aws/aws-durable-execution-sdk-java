@@ -356,7 +356,9 @@ class ExecutionManagerTest {
         waiter.get(5, TimeUnit.SECONDS);
         checkpoint.get(5, TimeUnit.SECONDS);
         assertDoesNotThrow(() -> manager.deregisterActiveThread(otherThread));
-        assertThrows(SuspendExecutionException.class, () -> manager.deregisterActiveThread(callerThread));
+        var suspension =
+                assertThrows(SuspendExecutionException.class, () -> manager.deregisterActiveThread(callerThread));
+        assertEquals("Execution suspended for wait operation", suspension.getMessage());
     }
 
     @Test
