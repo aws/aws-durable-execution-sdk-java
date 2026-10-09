@@ -141,7 +141,7 @@ class ExecutionOtelPluginTest {
                 new InvocationEndInfo("req-enabled", "arn:enabled", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = globalExporter.getFinishedSpanItems();
-        assertEquals(3, spans.size());
+        assertEquals(4, spans.size());
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("enabled-step")));
         assertFalse(spans.stream().anyMatch(span -> span.getName().equals("disabled-step")));
     }
@@ -178,8 +178,8 @@ class ExecutionOtelPluginTest {
                 new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = globalExporter.getFinishedSpanItems();
-        // Workflow + Invocation + operation = 3
-        assertEquals(3, spans.size());
+        // Workflow + Invocation + operation + DurableExecutionRoot = 4
+        assertEquals(4, spans.size());
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("Workflow")));
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("Invocation")));
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
@@ -206,7 +206,7 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(2, spans.size(), "Terminal invocation should export the Workflow span and the invocation span");
+        assertEquals(3, spans.size(), "Terminal invocation exports Workflow, Invocation, and DurableExecutionRoot");
 
         var workflowSpan = spanByName(spans, "Workflow");
         var invocationSpan = spanByName(spans, "Invocation");
@@ -280,7 +280,9 @@ class ExecutionOtelPluginTest {
     void invocationStart_joinsAmbientTrace_whenAmbientIsOnExecutionTrace() {
         // Drive an invocation to learn the canonical execution trace ID, then start a fresh invocation with an ambient
         // span on that same trace: the Invocation span joins the ambient span directly.
-        plugin.onInvocationStart(new InvocationInfo("req-0", ARN, true, Instant.now()));
+        // The backend execution start is identical across invocations, even when wall time crosses a second.
+        var executionStartTime = Instant.parse("2026-01-01T00:00:00Z");
+        plugin.onInvocationStart(new InvocationInfo("req-0", ARN, true, executionStartTime));
         plugin.onInvocationEnd(new InvocationEndInfo("req-0", ARN, true, InvocationStatus.SUCCEEDED, null));
         var canonicalTraceId =
                 spanByName(spanExporter.getFinishedSpanItems(), "Workflow").getTraceId();
@@ -290,7 +292,7 @@ class ExecutionOtelPluginTest {
         var ambient =
                 SpanContext.create(canonicalTraceId, ambientSpanId, TraceFlags.getSampled(), TraceState.getDefault());
         try (var ignored = Span.wrap(ambient).makeCurrent()) {
-            plugin.onInvocationStart(new InvocationInfo("req-1", ARN, false, Instant.now()));
+            plugin.onInvocationStart(new InvocationInfo("req-1", ARN, false, executionStartTime));
         }
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, false, InvocationStatus.SUCCEEDED, null));
 
@@ -402,8 +404,8 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        // Only the invocation span is exported; the Workflow span is not ended on non-terminal status.
-        assertEquals(1, spans.size());
+        // Invocation and DurableExecutionRoot are exported; Workflow remains deferred until terminal status.
+        assertEquals(2, spans.size());
         assertEquals("Invocation", spans.get(0).getName());
         assertEquals(StatusCode.OK, spans.get(0).getStatus().getStatusCode(), "PENDING invocation span maps to OK");
     }
@@ -449,7 +451,7 @@ class ExecutionOtelPluginTest {
                 "req-1", ARN, true, InvocationStatus.RETRYING, new RuntimeException("transient")));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(1, spans.size(), "RETRYING is non-terminal — Workflow span not exported");
+        assertEquals(2, spans.size(), "RETRYING is non-terminal — Workflow span not exported");
         var invocationSpan = spans.get(0);
         assertEquals("Invocation", invocationSpan.getName());
         assertEquals(
@@ -941,10 +943,11 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        // Only the invocation span is exported. A still-open operation has no recording span (creation is deferred to
+        // Invocation and DurableExecutionRoot are exported. A still-open operation has no recording span (creation is
+        // deferred to
         // onOperationEnd), so there is nothing to abandon, and the Workflow span is not exported on a non-terminal
         // invocation.
-        assertEquals(1, spans.size());
+        assertEquals(2, spans.size());
         assertEquals("Invocation", spans.get(0).getName());
         assertTrue(
                 spans.stream().noneMatch(s -> s.getName().equals("my-wait")),

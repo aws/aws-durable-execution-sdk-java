@@ -70,7 +70,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             case STARTED -> {
                 if (isAtMostOnce()) {
                     // AT_MOST_ONCE: treat as interrupted, go through retry logic
-                    handleStepFailure(new StepInterruptedException(existing), attempt);
+                    handleStepFailure(new StepInterruptedException(existing), attempt, null);
                 } else {
                     // AT_LEAST_ONCE: re-execute the step
                     executeStepLogic(attempt);
@@ -79,7 +79,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             // Step is pending retry - Start polling for PENDING -> READY transition
             case PENDING -> {
                 if (existing.stepDetails() != null && existing.stepDetails().nextAttemptTimestamp() != null) {
-                    pollReadyAndExecuteStepLogic(existing.stepDetails().nextAttemptTimestamp(), attempt);
+                    pollReadyAndExecuteStepLogic(existing.stepDetails().nextAttemptTimestamp(), attempt, null);
                 } else {
                     throw terminateExecutionWithIllegalDurableOperationException(
                             "Unexpected PENDING step without nextAttemptTimestamp: " + getOperationId());
@@ -93,16 +93,24 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         }
     }
 
-    private void pollReadyAndExecuteStepLogic(Instant nextAttemptInstant, int attempt) {
+    private void pollReadyAndExecuteStepLogic(
+            Instant nextAttemptInstant, int attempt, CompletableFuture<CompletableFuture<?>> previousWorker) {
         pollForOperationUpdates(nextAttemptInstant)
                 .thenCompose(op -> op.status() == OperationStatus.READY
                         ? CompletableFuture.completedFuture(op)
                         : pollForOperationUpdates(nextAttemptInstant))
-                .thenRun(() -> executeStepLogic(attempt));
+                .thenCompose(ignored -> executionManager.runCheckpointContinuation(this, () -> {
+                    // Leave the serialized checkpoint callback before dispatching a configured executor. The lease
+                    // spans retirement of the old attempt and registration of its replacement.
+                    if (previousWorker != null) previousWorker.join().join();
+                    if (!isOperationCompleted()) executeStepLogic(attempt);
+                }));
     }
 
     private void executeStepLogic(int attempt) {
+        var publishedWorker = new CompletableFuture<CompletableFuture<?>>();
         Runnable userHandler = () -> {
+            if (isOperationCompleted()) return;
             // use a try-with-resources to
             // - add thread id/type to thread local when the step starts
             // - clear logger properties when the step finishes
@@ -119,13 +127,14 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
                     handleStepSucceeded(result);
                 } catch (Throwable e) {
-                    handleStepFailure(e, attempt);
+                    handleStepFailure(e, attempt, publishedWorker);
                 }
             }
         };
 
         // Execute user provided step code in user-configured executor
         runUserHandler(userHandler, ThreadType.STEP);
+        publishedWorker.complete(getRunningUserHandler());
     }
 
     private void checkpointStarted() {
@@ -156,7 +165,8 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         sendOperationUpdate(successUpdate);
     }
 
-    private void handleStepFailure(Throwable exception, int attempt) {
+    private void handleStepFailure(
+            Throwable exception, int attempt, CompletableFuture<CompletableFuture<?>> publishedWorker) {
         exception = ExceptionHelper.unwrapCompletableFuture(exception);
         if (exception instanceof SuspendExecutionException suspendExecutionException) {
             throw suspendExecutionException;
@@ -189,7 +199,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             sendOperationUpdate(retryUpdate);
 
             // Poll for READY status and then execute the step again
-            pollReadyAndExecuteStepLogic(Instant.now().plusSeconds(retryDelayInSeconds), attempt + 1);
+            pollReadyAndExecuteStepLogic(Instant.now().plusSeconds(retryDelayInSeconds), attempt + 1, publishedWorker);
         } else {
             // Send FAIL - retries exhausted
             var failUpdate =

@@ -13,6 +13,38 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **ADOT Java Agent Integration**: `new InvocationOtelPlugin()` late-binds the ADOT Java agent's global provider with no handler-side OpenTelemetry initialization
 - **Lambda Layer Discovery**: `DURABLE_EXECUTION_PLUGINS` loads either OTel plugin from a JAR under a layer's `java/lib` directory
 
+## Checkpoint continuation failures
+
+An operation's SDK checkpoint continuation reports resumption/deserialization and dispatch failures through
+retryable invocation control before releasing its activity lease. When that control wins invocation outcome selection,
+End reports `RETRYING`, the caller receives `UnrecoverableDurableExecutionException` with the original cause, and
+persisted operation state remains available for a later invocation. Rejected worker admission releases its activity registration. Direct `VirtualMachineError`
+and `ThreadDeath` also settle the continuation observation before escaping its coordinator worker.
+
+Legacy outcome observers wake waiters for an already-selected continuation failure before invocation End can wait
+for handler cleanup. The existing callback thread is retained, and concurrent publishers use the selected control
+cause. Normal outcome handling and diagnostic inspection are unchanged.
+
+Ordinary unowned helper failures retain their observation-only behavior. Normal manager closing does not replace
+the selected outcome or stop unrelated operations. This boundary does not change handler/predicate failure
+classification, hook threading, trace topology, or add general wrapped-fatal classification.
+
+After a successful root outcome is selected, new checkpoint-continuation admission closes before output serialization
+or oversized-result checkpointing. This early guard does not iterate owners, run their completion callbacks, or join
+cleanup. A subsequent rejected admission retains the existing stop-owner behavior. The selected root outcome is not
+replaced by a later unawaited failure.
+
+The invocation End snapshot is taken after signaling unfinished owned continuations; PENDING and failure paths also
+close admission at that boundary. Queued work may legitimately remain incomplete after early parallel success. This does not
+join all accepted/running handlers before End: their remaining cleanup/checkpoint completion is still awaited by
+normal manager close afterward, and late end hooks can occur. Await operations that must be included in the selected
+outcome or snapshot. The admission cut does not provide a universal all-work-drained or final-state export guarantee.
+
+OTel scopes remain with the user-function thread that opened them. Invocation End closes only scopes owned by its
+current thread; a running worker retains its scope until its own UserFunctionEnd, including when tracing has already
+been finalized. Late End performs that scope cleanup before checking tracing state. This restores the worker's
+application context without extending recording-span lifetimes, changing MDC behavior, or moving the End/drain boundary.
+
 ## Installation
 
 ```xml
@@ -40,6 +72,47 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 </dependency>
 ```
 
+## Fallback execution roots
+
+When the backend supplies no complete remote parent, both views export a `DurableExecutionRoot` anchor before the first
+invocation returns, including when it suspends with `PENDING` or fails with `RETRYING`.
+The anchor is started before descendants so their parent context includes its provider-resolved trace flags and
+trace state. It ends at invocation end, before flushing, with the same fixed execution-start timestamp. For a
+deferred sampler, the first actual fallback span is now `DurableExecutionRoot`; custom policies that depend on the
+first span name or attributes can observe that ordering. No arbitrary name/input invariance is promised.
+
+If result serialization or oversized-result checkpointing fails before the SDK output is prepared, End reports
+`RETRYING` on the existing completion thread before the original preparation failure propagates. This closes the
+retained root without changing handler failure classification or claiming coverage of later response-stream writes
+or runtime acknowledgment. A root processor `Exception` or `LinkageError` still permits flushing already completed
+spans before the plugin boundary isolates that error. Unisolated `Error` failures keep their existing escape/skip-flush
+behavior; a failing processor need not have exported the root itself. Cleanup preserves the original preparation
+failure unless it introduces the first direct JVM fatal; an earlier JVM fatal remains primary.
+
+The anchor is marked `durable.execution.synthetic_root=true`. Its trace and span IDs are deterministic and its start
+and end timestamps are the checkpointed execution start. It does not report execution status or duration; `Workflow`
+continues to report those at terminal completion. Complete remote parents remain externally owned and are never exported.
+Java's `InvocationInfo` requires a non-null execution start timestamp from the initial checkpointed execution operation.
+Missing timestamps are rejected before the plugin runs; anchor timestamps never fall back to the current wall clock.
+
+Every invocation may re-export the anchor to recover from an earlier interrupted or lost export. Re-exports retain the
+same span fields under stable sampling. The existing provider resource still applies: if a later invocation runs in another
+execution environment, resource attributes such as `faas.instance` can differ. Backends that deduplicate by span identity
+may retain either copy's resource. Each execution ARN owns its own anchor even when multiple executions share a
+propagated trace ID without a parent; they are not collapsed into one
+execution. With the SDK sampler retained in the provider, upstream sampling and configured fallback sampling apply
+to anchors and their descendants together.
+
+After the first invocation's export and flush succeed, its anchor remains available even if the execution is stopped
+or times out while suspended and never invokes the plugin again. An invocation killed before its end hook or flush can
+still lose its spans; a later invocation, including terminal completion, attempts to export the anchor again. Export
+and flush failures do not provide a delivery guarantee.
+
+For a consistent hierarchy across invocations, preserve an explicit upstream sampling decision or use a deterministic
+sampling policy based on the stable trace ID. A non-deterministic sampler can export an anchor without a Workflow, or
+a Workflow without its anchor. Any sampler-supplied attributes and trace state must also stay stable for identical
+anchor re-exports.
+
 ## Choose one durable OTel view
 
 Configure exactly one of `InvocationOtelPlugin` or `ExecutionOtelPlugin` when enabling durable tracing.
@@ -61,6 +134,13 @@ resolved plugin instances without rediscovery.
 on it replaces the complete plugin list without reading `DURABLE_EXECUTION_PLUGINS` again; `withPlugins()` removes all
 plugins from the copy. Use `DurableConfig.builder()` when creating a fresh configuration that should honor the current
 environment selection.
+
+View exclusivity is declared with inherited `@ExclusivePluginGroup("durable-otel-view")` metadata.
+Configuration reads this explicit opt-in annotation from the entire superclass chain; it does not call application methods
+that happen to be named `getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled
+view restriction. A subclass may add another group, but cannot replace a superclass's group; repeated group names in one
+class hierarchy are checked once.
+Older cores ignore the optional annotation and retain their prior behavior; no provider-version floor is raised.
 
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
@@ -207,14 +287,14 @@ Remote backend server span (Root / Parent)
 When no valid remote parent can be constructed, a synthetic execution root anchors the trace instead and both spans parent onto it:
 
 ```
-Synthetic execution root
+DurableExecutionRoot (materialized and re-exported each invocation)
 ├── Workflow
 ├── Invocation 1
 ├── Invocation 2
 └── Invocation N
 ```
 
-- **Execution ancestor** — the common parent both the Workflow and Invocation spans resolve onto. A valid remote server span (`Root` and `Parent`) is used directly, whether or not `Sampled` is present; only when a valid remote parent cannot be constructed does a synthetic execution root take its place. It is a non-recording context, not an exported span.
+- **Execution ancestor** — the common parent both the Workflow and Invocation spans resolve onto. A valid remote server span (`Root` and `Parent`) is used directly, whether or not `Sampled` is present; only when a valid remote parent cannot be constructed does a synthetic execution root take its place. The remote ancestor is used as a non-recording context; the synthetic ancestor is materialized as `DurableExecutionRoot` and re-exported on each invocation with its stable span ID and execution start time, subject to sampling.
 - **Workflow span** — one logical span per durable execution, joining the execution trace with a stable span ID derived from the ARN. Exported only on the terminal invocation (SUCCEEDED/FAILED).
 - **Invocation span** — one per Lambda invocation, parented to the ambient span only when it is on the execution trace, otherwise to the execution ancestor
 - **Operation span** — one per durable operation, named after your step/wait names
@@ -224,14 +304,39 @@ Operation and attempt spans link to the Workflow span. `ExecutionOtelPlugin` rev
 
 ### Sampling
 
-The plugin decides sampling once per invocation and applies that single decision to every durable span (Workflow, Invocation, operation, attempt), so the configured sampler is not re-invoked per span and the full decision — including `RECORD_ONLY` — is preserved. The decision follows this precedence, highest first:
+The SDK-wide sampling guarantees below require `DurableSampler` itself to be the final installed sampler. The
+[builder constructors](#configuration) and [ADOT extension setup](#1-adot-lambda-layer) install it automatically;
+configure its delegate through these documented paths and retain `DurableSampler` as the final sampler. An
+unrecognized outer wrapper is treated as a plain replacement. The SDK wrapper applies its sampling intent to every durable
+span (DurableExecutionRoot, Workflow, Invocation, operation and attempt), preserving the full result, including `RECORD_ONLY`, sampler attributes
+and trace state.
 
-1. **Backend decision** — `Sampled=1` / `Sampled=0` in the propagated header is authoritative and always preserved, regardless of the configured sampler.
-2. **Same-trace ambient span** — when the header carries no usable `Sampled` value but a valid ambient span (for example an auto-instrumentation Lambda handler span) is already on the execution's trace, the plugin follows that span's decision: sampled → sampled; unsampled but still recording → `RECORD_ONLY`; unsampled and not recording → dropped.
-3. **Configured sampler (application-owned provider)** — when you pass a `SdkTracerProvider` to the plugin, its sampler is read directly and evaluated once with the trace ID, span name, and attributes. A trace-ID-ratio sampler therefore produces a stable decision across reinvocations (the trace ID is stable).
-4. **Installed sampler (Java-agent path)** — when the agent owns the provider, it is behind a classloader boundary and its *effective* sampler (which another agent extension may have wrapped or replaced) cannot be reliably read at decision time. Rather than guess, the plugin **defers**: it installs a delegating sampler through the agent's autoconfiguration and lets that wrapper consult the agent's real sampler. The delegate's decision is honored in full — if your configured policy is `always_off`, a rate limiter, or a remote sampler (`xray`, `jaeger_remote`) that returns drop, the durable spans are dropped; they are **not** force-sampled. To avoid consuming a stateful or quota-based sampler once per span, the wrapper consults the delegate once per execution (keyed by trace ID) and reuses that decision for the execution's remaining durable spans within the invocation.
+The supported SDK sampler follows this precedence, highest first:
 
-For precise, provider-independent control, set an explicit `Sampled` value upstream (for example by enabling X-Ray active tracing) — that backend decision takes precedence over everything else.
+1. **Backend decision** — with `DurableSampler` installed, `Sampled=1` / `Sampled=0` in the propagated header is
+   authoritative, regardless of the wrapped delegate's policy.
+2. **Same-trace ambient span** — without an explicit header decision, a valid ambient span already on the execution
+   trace supplies its decision: sampled → sampled; unsampled and recording → `RECORD_ONLY`; unsampled and
+   non-recording → dropped.
+3. **Same-copy durable sampler** — the visible SDK sampler is evaluated against root context once per invocation
+   using the canonical trace ID, span name and attributes. Its complete result is carried in that loader's context.
+4. **Foreign or opaque SDK sampler** — resolution is deferred to the installed wrapper's actual delegate. Its full
+   result is cached by execution ARN and canonical trace ID in a 256-entry LRU cache and reused while resident.
+   Eviction can cause another evaluation. The delegate still receives the canonical trace ID; drop and
+   `RECORD_ONLY` decisions, attributes and updated trace state are retained.
+
+A visible plain replacement sampler supplies its root policy for execution-ancestor flags, then keeps its normal
+per-span sampling behavior. It receives no SDK sampling carrier and does not provide the SDK decision-reuse
+or full-result override guarantees above. Opaque providers cannot expose a later sampler replacement to the
+application, so retain the wrapper through the documented customization setup.
+
+For explicit execution-level control, keep `DurableSampler` as the final installed sampler and set `Sampled` upstream,
+for example through X-Ray
+active tracing. The SDK sampling wrapper preserves that decision.
+
+Parentless fallback-root exports also use the provider's sampler. If the SDK wrapper is replaced by a plain
+sampler, those anchors can follow its normal root policy independently of the flags used by their descendants;
+full upstream sampling overrides require the installed SDK wrapper.
 
 ## Span Attributes
 
@@ -407,10 +512,3 @@ var otelPlugin = new InvocationOtelPlugin(
 ## License
 
 Apache-2.0
-
-View exclusivity is declared with inherited `@ExclusivePluginGroup("durable-otel-view")` metadata.
-Configuration reads this explicit opt-in annotation from the entire superclass chain; it does not call application methods
-that happen to be named `getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled
-view restriction. A subclass may add another group, but cannot replace a superclass's group; repeated group names in one
-class hierarchy are checked once.
-Older cores ignore the optional annotation and retain their prior behavior; no provider-version floor is raised.

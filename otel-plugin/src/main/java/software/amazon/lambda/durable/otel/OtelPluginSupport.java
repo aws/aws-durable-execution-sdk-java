@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
+import static software.amazon.lambda.durable.otel.SpanAttributes.DURABLE_EXECUTION_ARN;
+import static software.amazon.lambda.durable.otel.SpanAttributes.DURABLE_EXECUTION_SYNTHETIC_ROOT;
+
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
@@ -13,16 +17,106 @@ import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.Collections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /** Shared utilities for OTel plugin default constructor support (ADOT Java agent SPI path). */
 final class OtelPluginSupport {
 
+    /**
+     * Starts the SDK-owned fallback ancestor before descendants so they inherit the provider's actual sampling
+     * metadata. The caller ends this identity anchor at the same checkpointed start timestamp before invocation return.
+     * Recovery re-exports retain identity and timestamps; Workflow carries duration and outcome. Remote parents are
+     * never owned.
+     */
+    static Span startExecutionRoot(
+            Tracer tracer,
+            DeterministicIdGenerator idGenerator,
+            SpanContext ancestor,
+            String arn,
+            Instant start,
+            DurableSamplingDecision.Intent intent,
+            boolean useContextCarrier,
+            boolean useThreadCarrier) {
+        if (ancestor == null || ancestor.isRemote()) {
+            return null;
+        }
+        var builder = tracer.spanBuilder("DurableExecutionRoot")
+                .setSpanKind(SpanKind.INTERNAL)
+                .setParent(useContextCarrier ? DurableSamplingDecision.store(Context.root(), intent) : Context.root())
+                .setAttribute(DURABLE_EXECUTION_ARN, arn)
+                .setAttribute(DURABLE_EXECUTION_SYNTHETIC_ROOT, true)
+                .setStartTimestamp(start);
+        Span root;
+        if (useThreadCarrier) {
+            try (var ignored = DurableSamplingDecision.openScope(intent)) {
+                root = idGenerator.startSpan(builder, ancestor.getTraceId(), ancestor.getSpanId());
+            }
+        } else {
+            root = idGenerator.startSpan(builder, ancestor.getTraceId(), ancestor.getSpanId());
+        }
+        return root;
+    }
+
+    /** Flushes completed spans after root end, including failures isolated by the plugin boundary. */
+    static void endRootAndFlush(Span root, Instant timestamp, Runnable flush) {
+        try {
+            if (root != null) root.end(timestamp);
+        } catch (Exception | LinkageError failure) {
+            finishWithRootCleanup(() -> ExceptionHelper.sneakyThrow(failure), flush);
+            return;
+        }
+        flush.run();
+    }
+
+    /** Always releases an invocation's new root resource without hiding an earlier failure or a later JVM fatal. */
+    static void finishWithRootCleanup(Runnable finish, Runnable cleanup) {
+        Throwable primary = null;
+        try {
+            finish.run();
+        } catch (Throwable failure) {
+            primary = failure;
+            throw failure;
+        } finally {
+            try {
+                cleanup.run();
+            } catch (Throwable failure) {
+                if (primary == null) throw failure;
+                if (primary != failure) {
+                    if (endFailurePriority(failure) > endFailurePriority(primary)) {
+                        failure.addSuppressed(primary);
+                        throw failure;
+                    }
+                    primary.addSuppressed(failure);
+                }
+            }
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private static int endFailurePriority(Throwable failure) {
+        if (failure instanceof VirtualMachineError || failure instanceof ThreadDeath) return 3;
+        if (failure instanceof Error && !(failure instanceof LinkageError)) return 2;
+        return 1;
+    }
+
     private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);
 
     private OtelPluginSupport() {}
+
+    /** A visible replacement sampler cannot consume our bridge; an opaque agent provider may still need it. */
+    static boolean usesDurableSamplingBridge(SdkTracerProvider provider) {
+        // This identifies only the cross-loader wire consumer; context-key ownership still requires instanceof.
+        return provider == null || provider.getSampler().getClass().getName().equals(DurableSampler.class.getName());
+    }
+
+    /** Only the same DurableSampler class copy can consume this loader's parent-context holder. */
+    static boolean usesLocalDurableSampler(SdkTracerProvider provider) {
+        return provider != null && provider.getSampler() instanceof DurableSampler;
+    }
 
     /** Creates a new DeterministicIdGenerator for the application-side state bridge. */
     static DeterministicIdGenerator createDefaultIdGenerator() {
@@ -56,7 +150,7 @@ final class OtelPluginSupport {
      *       pipeline finally installs, and another extension's customizer can wrap or replace a recognized configured
      *       sampler, so a reconstruction could disagree with the real delegate. Deferring routes the decision to the
      *       agent-installed {@link DurableSampler}, which consults its actual delegate once per execution, caches the
-     *       result by trace ID, and reuses it for the execution's remaining durable spans (see
+     *       result by execution ARN and trace ID, and reuses it for the execution's remaining durable spans (see
      *       {@link DurableSampler#shouldSample}). The delegate's decision is honored in full — including a
      *       {@code DROP}/rate-limited outcome — so durable spans are not force-sampled.
      * </ol>
@@ -107,8 +201,11 @@ final class OtelPluginSupport {
             }
             return ambientSpan.isRecording() ? SamplingResult.recordOnly() : SamplingResult.drop();
         }
-        // 3. An application-owned provider exposes the real sampler: evaluate it once, preserving its full result.
-        if (sdkTracerProvider != null) {
+        // 3. Resolve a local durable sampler's full result, or a visible replacement's root policy for ancestor flags.
+        // A foreign DurableSampler still resolves in its own loader to retain full attributes and trace state.
+        // A plain replacement receives no carrier; the provider keeps its normal per-span sampling behavior.
+        if (sdkTracerProvider != null
+                && (usesLocalDurableSampler(sdkTracerProvider) || !usesDurableSamplingBridge(sdkTracerProvider))) {
             return sdkTracerProvider
                     .getSampler()
                     .shouldSample(

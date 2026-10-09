@@ -411,7 +411,7 @@ class DurableExecutionTest {
                 (userInput, ctx) -> ctx.step("test1", String.class, stepCtx -> "Result 1: " + userInput),
                 config);
 
-        assertEquals(ExecutionStatus.SUCCEEDED, output1.status());
+        assertEquals(ExecutionStatus.SUCCEEDED, output1.status(), String.valueOf(output1.error()));
         assertFalse(sharedExecutor.isShutdown(), "Executor should not be shutdown after first execution");
 
         // Create second input with different execution operation
@@ -440,7 +440,7 @@ class DurableExecutionTest {
                 (userInput, ctx) -> ctx.step("test2", String.class, stepCtx -> "Result 2: " + userInput),
                 config);
 
-        assertEquals(ExecutionStatus.SUCCEEDED, output2.status());
+        assertEquals(ExecutionStatus.SUCCEEDED, output2.status(), String.valueOf(output2.error()));
         assertFalse(sharedExecutor.isShutdown(), "Executor should not be shutdown after second execution");
 
         // Verify both executions completed successfully and used the same executor

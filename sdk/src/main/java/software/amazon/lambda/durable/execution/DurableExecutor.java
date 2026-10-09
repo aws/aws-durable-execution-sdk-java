@@ -124,6 +124,7 @@ public class DurableExecutor {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
                                 Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);
+                                executionManager.wakePublishedContinuationWaiters(cause);
 
                                 // return PENDING if it's SuspendExecutionException
                                 if (cause instanceof SuspendExecutionException) {
@@ -175,9 +176,39 @@ public class DurableExecutor {
                             }
                             // user handler complete successfully
                             logger.debug("Execution completed");
-                            var outputPayload = config.getSerDes().serialize(result);
-                            var output =
-                                    DurableExecutionOutput.success(handleLargePayload(executionManager, outputPayload));
+                            executionManager.closeCheckpointContinuationAdmission();
+                            DurableExecutionOutput output;
+                            try {
+                                var outputPayload = config.getSerDes().serialize(result);
+                                output = DurableExecutionOutput.success(
+                                        handleLargePayload(executionManager, outputPayload));
+                            } catch (Throwable preparationFailure) {
+                                var cause = ExceptionHelper.unwrapCompletableFuture(preparationFailure);
+                                try {
+                                    fireOnInvocationEnd(
+                                            pluginRunner,
+                                            executionManager,
+                                            requestId,
+                                            executionArn,
+                                            isFirstInvocation,
+                                            InvocationStatus.RETRYING,
+                                            cause,
+                                            pluginExecutionInput.get(),
+                                            null);
+                                } catch (Error endFailure) {
+                                    if (endFailure != cause) {
+                                        if (!(cause instanceof VirtualMachineError || cause instanceof ThreadDeath)
+                                                && (endFailure instanceof VirtualMachineError
+                                                        || endFailure instanceof ThreadDeath)) {
+                                            endFailure.addSuppressed(cause);
+                                            throw endFailure;
+                                        }
+                                        cause.addSuppressed(endFailure);
+                                    }
+                                }
+                                ExceptionHelper.sneakyThrow(cause);
+                                return null;
+                            }
                             fireOnInvocationEnd(
                                     pluginRunner,
                                     executionManager,
@@ -209,6 +240,7 @@ public class DurableExecutor {
             Throwable error,
             Object executionInput,
             Object executionResult) {
+        executionManager.beginInvocationEnd();
         if (pluginRunner.isEmpty()) {
             return;
         }
