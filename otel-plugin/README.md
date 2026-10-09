@@ -40,6 +40,11 @@ join all accepted/running handlers before End: their remaining cleanup/checkpoin
 normal manager close afterward, and late end hooks can occur. Await operations that must be included in the selected
 outcome or snapshot. The admission cut does not provide a universal all-work-drained or final-state export guarantee.
 
+OTel scopes remain with the user-function thread that opened them. Invocation End closes only scopes owned by its
+current thread; a running worker retains its scope until its own UserFunctionEnd, including when tracing has already
+been finalized. Late End performs that scope cleanup before checking tracing state. This restores the worker's
+application context without extending recording-span lifetimes, changing MDC behavior, or moving the End/drain boundary.
+
 ## Installation
 
 ```xml

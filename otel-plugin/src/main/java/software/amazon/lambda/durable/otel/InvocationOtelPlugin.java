@@ -15,7 +15,6 @@ import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
-import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import java.time.Instant;
@@ -115,7 +114,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     // Thread-safe storage for attempt spans/scopes (keyed by operationId + "-" + attempt)
     private final ConcurrentHashMap<String, Span> attemptSpans = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Scope> attemptScopes = new ConcurrentHashMap<>();
+    private final UserFunctionScopes attemptScopes = new UserFunctionScopes();
 
     // Store operation span contexts for parent resolution (keyed by operationId)
     private final ConcurrentHashMap<String, SpanContext> operationContexts = new ConcurrentHashMap<>();
@@ -553,15 +552,10 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
-        if (!tracingEnabled) return;
-
         var key = attemptKey(info.id(), info.attempt());
-
-        // Close scope first (must happen on same thread as makeCurrent)
-        var scope = attemptScopes.remove(key);
-        if (scope != null) {
-            scope.close();
-        }
+        // A running user function can finish after invocation End; its scope still belongs to this thread.
+        attemptScopes.close(key);
+        if (!tracingEnabled) return;
 
         // Clear span-level MDC after user function completes (keep trace_id for handler-level logs between steps)
         if (enableMdc) {
@@ -620,10 +614,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     private void endOpenSpansChildFirst() {
         // Attempt spans are children of operation spans.
-        for (var scope : attemptScopes.values()) {
-            scope.close();
-        }
-        attemptScopes.clear();
+        attemptScopes.closeCurrentThread();
         for (var span : attemptSpans.values()) {
             span.end();
         }

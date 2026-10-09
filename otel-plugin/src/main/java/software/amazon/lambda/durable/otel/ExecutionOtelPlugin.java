@@ -15,7 +15,6 @@ import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
-import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import java.time.Instant;
@@ -128,7 +127,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     // Thread-safe storage for attempt spans/scopes (keyed by operationId + "-" + attempt)
     private final ConcurrentHashMap<String, Span> attemptSpans = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Scope> attemptScopes = new ConcurrentHashMap<>();
+    private final UserFunctionScopes attemptScopes = new UserFunctionScopes();
 
     // Deterministic operation contexts (keyed by operationId), held between start and end so children and attempts can
     // parent onto an operation whose recording span is not created until onOperationEnd.
@@ -320,12 +319,9 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         operationContexts.clear();
         operationStartTimes.clear();
 
-        // Release OTel context on worker threads, then end any attempt spans still open so no recording span is
-        // abandoned. Attempt spans normally start and end within one user-function call, so this is a safeguard.
-        for (var scope : attemptScopes.values()) {
-            scope.close();
-        }
-        attemptScopes.clear();
+        // End open recording spans now, but leave a running worker's thread-bound scope for its own user-function End.
+        // Only scopes owned by this finalization thread can be closed here.
+        attemptScopes.closeCurrentThread();
         for (var span : attemptSpans.values()) {
             span.end();
         }
@@ -511,15 +507,10 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
-        if (!tracingEnabled) return;
-
         var key = attemptKey(info.id(), info.attempt());
-
-        // Close scope first (must happen on same thread as makeCurrent)
-        var scope = attemptScopes.remove(key);
-        if (scope != null) {
-            scope.close();
-        }
+        // A running user function can finish after invocation End; its scope still belongs to this thread.
+        attemptScopes.close(key);
+        if (!tracingEnabled) return;
 
         // CONTEXT operations don't have attempt spans — scope cleanup is all we need
         if ("CONTEXT".equals(info.type())) {
