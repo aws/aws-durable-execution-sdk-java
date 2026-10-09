@@ -43,8 +43,36 @@ class MdcWorkerReuseBoundaryTest {
         exercise("end", suspend, kind);
     }
 
+    static Stream<Arguments> fatalEndCases() {
+        return Stream.of(false, true)
+                .flatMap(suspend -> Stream.of(false, true)
+                        .flatMap(death -> Stream.of(
+                                        "ok",
+                                        "ordinary",
+                                        "assertion",
+                                        "same",
+                                        "vm",
+                                        "death",
+                                        "wrapped-vm",
+                                        "wrapped-death")
+                                .map(kind -> Arguments.of(suspend, death, kind))));
+    }
+
+    @ParameterizedTest
+    @MethodSource("fatalEndCases")
     @SuppressWarnings("removal")
+    void fatalEndStillClearsOrdinaryRestoreFailureBeforeWorkerReplacement(boolean suspend, boolean death, String kind)
+            throws Exception {
+        exercise("end", suspend, kind, death ? new ThreadDeath() : new InternalError("original End fatal"));
+    }
+
     private static void exercise(String markerPhase, boolean suspend, String kind) throws Exception {
+        exercise(markerPhase, suspend, kind, null);
+    }
+
+    @SuppressWarnings("removal")
+    private static void exercise(String markerPhase, boolean suspend, String kind, Error selectedFatal)
+            throws Exception {
         var original = MDC.getMDCAdapter();
         var basic = new BasicMDCAdapter();
         var ends = new AtomicInteger();
@@ -52,7 +80,7 @@ class MdcWorkerReuseBoundaryTest {
         var failed = new AtomicBoolean();
         var clearTried = new AtomicBoolean();
         var restoreFailure = new IllegalStateException("restore failed");
-        Error expectedFatal =
+        Error clearFatal =
                 switch (kind) {
                     case "vm", "wrapped-vm" -> new InternalError("fallback fatal");
                     case "death", "wrapped-death" -> new ThreadDeath();
@@ -63,10 +91,10 @@ class MdcWorkerReuseBoundaryTest {
                     case "ordinary" -> new IllegalArgumentException("clear failed");
                     case "assertion" -> new AssertionError("clear failed");
                     case "same" -> restoreFailure;
-                    case "wrapped-vm", "wrapped-death" ->
-                        new CompletionException(new ExecutionException(expectedFatal));
-                    default -> expectedFatal;
+                    case "wrapped-vm", "wrapped-death" -> new CompletionException(new ExecutionException(clearFatal));
+                    default -> clearFatal;
                 };
+        Error expectedFatal = selectedFatal != null ? selectedFatal : clearFatal;
         var escaped = new CountDownLatch(1);
         var failedWorker = new AtomicReference<Thread>();
         var ownerFailure = new AtomicReference<Throwable>();
@@ -111,6 +139,7 @@ class MdcWorkerReuseBoundaryTest {
                     if (markerPhase.equals("end")) MDC.put("invocation-marker", "previous-invocation");
                     endStatus.set(info.invocationStatus());
                     ends.incrementAndGet();
+                    if (selectedFatal != null) throw selectedFatal;
                 }
             };
             var runner = LocalDurableTestRunner.create(
@@ -130,10 +159,17 @@ class MdcWorkerReuseBoundaryTest {
                         runner.run("input").getStatus());
             assertTrue(escaped.await(3, TimeUnit.SECONDS));
             assertSame(expectedFatal != null ? expectedFatal : restoreFailure, ownerFailure.get());
-            assertTrue(clearTried.get());
+
             assertEquals(1, ends.get());
             assertEquals(suspend ? InvocationStatus.PENDING : InvocationStatus.SUCCEEDED, endStatus.get());
-            if (expectedFatal != null) assertEquals(List.of(restoreFailure), List.of(expectedFatal.getSuppressed()));
+            if (selectedFatal != null) {
+                assertEquals(
+                        clearFailure != null && clearFailure != restoreFailure
+                                ? List.of(restoreFailure, clearFailure)
+                                : List.of(restoreFailure),
+                        List.of(selectedFatal.getSuppressed()));
+            } else if (expectedFatal != null)
+                assertEquals(List.of(restoreFailure), List.of(expectedFatal.getSuppressed()));
             else
                 assertEquals(
                         clearFailure != null && clearFailure != restoreFailure ? List.of(clearFailure) : List.of(),
@@ -144,6 +180,7 @@ class MdcWorkerReuseBoundaryTest {
             System.out.println("MDC_REUSE_PUBLIC phase=" + markerPhase + " kind=" + kind + " replaced=true oldMarker="
                     + dirtyAtFailure.get() + " inheritedMarker=" + inherited);
             if (clearFailure == null) assertNull(inherited, "Successful fallback clears inheritable invocation state");
+            assertTrue(clearTried.get());
             // An adapter whose clear also fails cannot promise clean replacement state; its failure is exposed.
         } finally {
             workers.shutdownNow();
