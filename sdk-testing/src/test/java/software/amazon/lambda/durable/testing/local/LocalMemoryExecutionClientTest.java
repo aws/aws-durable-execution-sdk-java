@@ -74,4 +74,36 @@ class LocalMemoryExecutionClientTest {
                         "nonexistent-invoke", new OperationResult(OperationStatus.TIMED_OUT, null, null)));
         assertEquals("Operation not found: nonexistent-invoke", exception.getMessage());
     }
+
+    @Test
+    void pausedCheckpointOmitsTheTokenAndStillRecordsTheUpdates() {
+        var client = new LocalMemoryExecutionClient();
+        var update = OperationUpdate.builder()
+                .id("1")
+                .name("step-1")
+                .type(OperationType.STEP)
+                .action(OperationAction.SUCCEED)
+                .payload("\"result1\"")
+                .build();
+
+        client.pause();
+        var response = client.checkpoint("arn", "token", List.of(update));
+
+        assertTrue(client.isPaused());
+        assertNull(response.checkpointToken());
+        assertNotNull(client.getOperationByName("step-1"));
+        assertEquals(List.of("1"), client.getUpdatedOperationIdsSinceLastInvocation());
+    }
+
+    @Test
+    void resumeAnswersCheckpointsWithATokenAgain() {
+        var client = new LocalMemoryExecutionClient();
+        client.pause();
+        assertNull(client.checkpoint("arn", "token", List.of()).checkpointToken());
+
+        client.resume();
+
+        assertFalse(client.isPaused());
+        assertNotNull(client.checkpoint("arn", "token", List.of()).checkpointToken());
+    }
 }

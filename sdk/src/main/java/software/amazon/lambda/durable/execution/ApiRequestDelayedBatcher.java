@@ -104,15 +104,18 @@ public class ApiRequestDelayedBatcher<T> {
 
     /** Flushes pending batch and waits for completion */
     void shutdown() {
+        flush();
+        flushingQueueFuture.join();
+    }
+
+    /** Schedules pending requests immediately without waiting for the current batch. */
+    void flush() {
         synchronized (delayedBatch) {
             // cancel the flush timer if it has not been triggered
             this.delayedBatchFlushTimer.cancel(false);
             // execute the current batch now
             flushDelayedBatch();
         }
-
-        // wait for previous batches to be flushed
-        flushingQueueFuture.join();
     }
 
     /** clear the current batch and creates a new batch */
@@ -146,6 +149,7 @@ public class ApiRequestDelayedBatcher<T> {
         // the new future will just do nothing.
         flushingQueueFuture = flushingQueueFuture.thenRunAsync(this::flushQueue, InternalExecutor.INSTANCE);
     }
+
     /** Call checkpoint API with items in the flushing queue */
     private void flushQueue() {
         // There could be more items to flush because

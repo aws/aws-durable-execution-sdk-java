@@ -31,4 +31,15 @@ class CloudDurableTestRunnerTest {
 
         assertThrows(IllegalStateException.class, () -> runner.getOperation("test"));
     }
+
+    @Test
+    void pauseAndResumeExecutionAreNotSupported() {
+        var mockClient = mock(LambdaClient.class);
+        var runner = CloudDurableTestRunner.create(
+                "arn:aws:lambda:us-east-2:123:function:test", String.class, String.class, mockClient);
+
+        assertThrows(UnsupportedOperationException.class, runner::pauseExecution);
+        assertThrows(UnsupportedOperationException.class, runner::resumeExecution);
+        verifyNoInteractions(mockClient);
+    }
 }

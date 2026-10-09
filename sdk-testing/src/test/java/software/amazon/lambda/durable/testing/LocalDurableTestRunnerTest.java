@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
@@ -113,5 +114,55 @@ class LocalDurableTestRunnerTest {
         assertEquals(2, executionStartTimes.size());
         assertNotNull(executionStartTimes.get(0));
         assertEquals(executionStartTimes.get(0), executionStartTimes.get(1));
+    }
+
+    @Test
+    void pausedExecutionReportsPendingAndFinishesAfterResume() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            ctx.step("only-step", String.class, stepCtx -> "stepped");
+            return "done";
+        });
+
+        runner.pauseExecution();
+        var paused = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.PENDING, paused.getStatus());
+
+        runner.resumeExecution();
+        var resumed = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, resumed.getStatus());
+        assertEquals("done", resumed.getResult(String.class));
+        assertEquals("stepped", runner.getOperation("only-step").getStepResult(String.class));
+    }
+
+    @Test
+    void runUntilCompleteStopsWhilePausedAndFinishesAfterResume() {
+        var stepRuns = new AtomicInteger();
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            ctx.wait("hold", Duration.ofMinutes(5));
+            return ctx.step("after-wait", String.class, stepCtx -> {
+                stepRuns.incrementAndGet();
+                return "done";
+            });
+        });
+        var waiting = runner.run("input");
+
+        assertEquals(ExecutionStatus.PENDING, waiting.getStatus());
+
+        runner.pauseExecution();
+        var paused = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.PENDING, paused.getStatus());
+        // The wait could normally be auto-advanced by runUntilComplete. While paused, runUntilComplete must stop
+        // instead of re-invoking and running after-wait, because any new checkpoint from that work will not be able
+        // to be recorded.
+        assertEquals(0, stepRuns.get());
+
+        runner.resumeExecution();
+        var resumed = runner.runUntilComplete("input");
+
+        assertEquals(ExecutionStatus.SUCCEEDED, resumed.getStatus());
+        assertEquals("done", resumed.getResult(String.class));
     }
 }

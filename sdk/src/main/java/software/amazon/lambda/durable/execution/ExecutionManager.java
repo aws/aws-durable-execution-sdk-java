@@ -109,7 +109,8 @@ public class ExecutionManager implements SafeCloseable {
                 input.checkpointToken(),
                 this::onCheckpointComplete,
                 this::tryStartCheckpointProcessing,
-                this::finishCheckpointProcessing);
+                this::finishCheckpointProcessing,
+                this::signalSuspension);
 
         this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()
                 .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
@@ -595,12 +596,20 @@ public class ExecutionManager implements SafeCloseable {
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-        validateRunningThreads();
+        drainOperations();
+    }
 
+    /**
+     * Settles submitted operation handlers and stops polling before flushing checkpoints. Terminal decisions therefore
+     * observe token withdrawal without allowing later polls to change that decision.
+     */
+    void drainOperations() {
+        waitForRunningUserHandlers();
+        validateExecutorPool();
         checkpointManager.shutdown();
     }
 
-    private void validateRunningThreads() {
+    private void waitForRunningUserHandlers() {
         // This will detect stuck user thread and thread leaks in the thread pool
         for (BaseDurableOperation op : registeredOperations.values()) {
             var userHandlerFuture = op.getRunningUserHandler();
@@ -619,7 +628,9 @@ public class ExecutionManager implements SafeCloseable {
                 }
             }
         }
+    }
 
+    private void validateExecutorPool() {
         // double check if the thread pool is empty
         if (durableConfig.getExecutorService() instanceof ThreadPoolExecutor threadPoolExecutor) {
             var threadCount = threadPoolExecutor.getActiveCount();
@@ -668,6 +679,10 @@ public class ExecutionManager implements SafeCloseable {
      */
     public boolean isExecutionCompletedExceptionally() {
         return executionExceptionFuture.isCompletedExceptionally();
+    }
+
+    public boolean isCheckpointTokenRevoked() {
+        return checkpointManager.isCheckpointTokenRevoked();
     }
 
     private void stopAllOperations(Throwable cause) {

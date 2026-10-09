@@ -4,36 +4,60 @@ package software.amazon.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiFunction;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TestUtils;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationStatus;
 
 class DurableExecutionTest {
 
@@ -106,7 +130,7 @@ class DurableExecutionTest {
                 get(String.class),
                 (userInput, ctx) -> {
                     ctx.step("step1", String.class, stepCtx -> "Done");
-                    ctx.wait(null, java.time.Duration.ofSeconds(60));
+                    ctx.wait(null, Duration.ofSeconds(60));
                     return "Should not reach here";
                 },
                 configWithMockClient());
@@ -446,6 +470,125 @@ class DurableExecutionTest {
         // Verify both executions completed successfully and used the same executor
         assertTrue(output1.result().contains("Result 1: test-input-1"));
         assertTrue(output2.result().contains("Result 2: test-input-2"));
+    }
+
+    private enum OperationKind {
+        STEP,
+        WAIT,
+        CALLBACK,
+        MAP,
+        PARALLEL
+    }
+
+    @ParameterizedTest
+    @EnumSource(OperationKind.class)
+    @Timeout(10)
+    void checkpointTokenRevoked_duringOperation_suspendsExecutionAsPending(OperationKind kind) {
+        var client = mock(DurableExecutionClient.class);
+        var revoked = new AtomicBoolean();
+        when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
+            List<OperationUpdate> updates = invocation.getArgument(2);
+            var revoke = updates.stream().anyMatch(update -> "revoke".equals(update.name()));
+            if (revoke) {
+                revoked.set(true);
+            }
+            return CheckpointDurableExecutionResponse.builder()
+                    .checkpointToken(revoke ? null : "next-token")
+                    .build();
+        });
+
+        var config = DurableConfig.builder().withDurableExecutionClient(client).build();
+        var output = execute(config, (userInput, ctx) -> {
+            executeRevokingOperation(kind, ctx);
+            return "unreachable";
+        });
+
+        assertTrue(revoked.get(), "The selected operation must receive a token-less checkpoint response");
+        assertEquals(ExecutionStatus.PENDING, output.status());
+        assertNull(output.result());
+        assertNull(output.error());
+        verify(client, never()).getExecutionState(any(), any(), any());
+    }
+
+    private void executeRevokingOperation(OperationKind kind, DurableContext ctx) {
+        switch (kind) {
+            case STEP -> ctx.step("revoke", String.class, stepCtx -> "done");
+            case WAIT -> ctx.wait("revoke", Duration.ofSeconds(60));
+            case CALLBACK -> ctx.createCallback("revoke", String.class).get();
+            case MAP ->
+                ctx.map(
+                        "map",
+                        List.of("item"),
+                        String.class,
+                        (item, index, child) -> child.step("revoke", String.class, stepCtx -> "done"));
+            case PARALLEL -> {
+                try (var parallel = ctx.parallel("parallel")) {
+                    parallel.branch(
+                            "branch", String.class, child -> child.step("revoke", String.class, stepCtx -> "done"));
+                    parallel.get();
+                }
+            }
+        }
+    }
+
+    @ParameterizedTest(name = "largeResult={0}")
+    @ValueSource(booleans = {false, true})
+    @Timeout(10)
+    void checkpointTokenRevoked_beforeHandlerReturns_reportsPending(boolean largeResult) throws Exception {
+        var client = mock(DurableExecutionClient.class);
+        when(client.checkpoint(any(), any(), any()))
+                .thenReturn(CheckpointDurableExecutionResponse.builder().build());
+        var plugin = mock(DurableExecutionPlugin.class);
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(client)
+                .withPlugins(plugin)
+                .build();
+
+        var handlerReadyToReturn = new CountDownLatch(1);
+        var output = execute(config, handlerAfterRevocation(largeResult, handlerReadyToReturn));
+
+        assertTrue(handlerReadyToReturn.await(5, TimeUnit.SECONDS), "Handler must observe suspension before returning");
+        assertEquals(ExecutionStatus.PENDING, output.status());
+        assertNull(output.result());
+        assertNull(output.error());
+        verify(client, times(1)).checkpoint(any(), any(), any());
+        verify(plugin, times(1))
+                .onInvocationEnd(argThat(info -> info.invocationStatus() == InvocationStatus.PENDING
+                        && info.executionError() == null
+                        && info.executionResult() == null));
+    }
+
+    private BiFunction<String, DurableContext, String> handlerAfterRevocation(
+            boolean largeResult, CountDownLatch handlerReadyToReturn) {
+        return (userInput, ctx) -> {
+            var manager = ((DurableContextImpl) ctx).getExecutionManager();
+            var checkpoint = manager.sendOperationUpdate(OperationUpdate.builder()
+                    .id("bg-op")
+                    .type(OperationType.STEP)
+                    .action(OperationAction.START)
+                    .build());
+            assertSuspended(checkpoint);
+            assertTrue(manager.isCheckpointTokenRevoked());
+            assertTrue(manager.isExecutionCompletedExceptionally());
+            var result = largeResult ? "x".repeat(7 * 1024 * 1024) : "small-result";
+            handlerReadyToReturn.countDown();
+            return result;
+        };
+    }
+
+    private DurableExecutionOutput execute(DurableConfig config, BiFunction<String, DurableContext, String> handler) {
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(executionOp())
+                        .build());
+        return DurableExecutor.execute(input, null, get(String.class), handler, config);
+    }
+
+    private void assertSuspended(CompletableFuture<?> future) {
+        var error = assertThrows(ExecutionException.class, () -> future.get(5, TimeUnit.SECONDS));
+        assertInstanceOf(SuspendExecutionException.class, error.getCause());
     }
 
     private Operation executionOp() {
