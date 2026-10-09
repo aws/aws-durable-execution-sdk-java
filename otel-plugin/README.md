@@ -13,6 +13,22 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **ADOT Java Agent Integration**: `new InvocationOtelPlugin()` late-binds the ADOT Java agent's global provider with no handler-side OpenTelemetry initialization
 - **Lambda Layer Discovery**: `DURABLE_EXECUTION_PLUGINS` loads either OTel plugin from a JAR under a layer's `java/lib` directory
 
+## Checkpoint continuation failures
+
+An operation's SDK checkpoint continuation reports resumption/deserialization and dispatch failures through
+retryable invocation control before releasing its activity lease. End reports `RETRYING`, the caller receives
+`UnrecoverableDurableExecutionException` with the original cause, and persisted operation state remains available
+for a later invocation. Rejected worker admission releases its activity registration. Direct `VirtualMachineError`
+and `ThreadDeath` also settle the continuation observation before escaping its coordinator worker.
+
+Legacy outcome observers wake waiters for an already-selected continuation failure before invocation End can wait
+for handler cleanup. The existing callback thread is retained, and concurrent publishers use the selected control
+cause. Normal outcome handling and diagnostic inspection are unchanged.
+
+Ordinary unowned helper failures retain their observation-only behavior. Normal manager closing does not replace
+the selected outcome or stop unrelated operations. This boundary does not change handler/predicate failure
+classification, hook threading, trace topology, or add general wrapped-fatal classification.
+
 ## Installation
 
 ```xml
@@ -61,6 +77,13 @@ resolved plugin instances without rediscovery.
 on it replaces the complete plugin list without reading `DURABLE_EXECUTION_PLUGINS` again; `withPlugins()` removes all
 plugins from the copy. Use `DurableConfig.builder()` when creating a fresh configuration that should honor the current
 environment selection.
+
+View exclusivity is declared with inherited `@ExclusivePluginGroup("durable-otel-view")` metadata.
+Configuration reads this explicit opt-in annotation from the entire superclass chain; it does not call application methods
+that happen to be named `getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled
+view restriction. A subclass may add another group, but cannot replace a superclass's group; repeated group names in one
+class hierarchy are checked once.
+Older cores ignore the optional annotation and retain their prior behavior; no provider-version floor is raised.
 
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
@@ -111,6 +134,43 @@ aws lambda update-function-configuration \
 ```
 
 Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar`. Lambda adds JARs in this directory to the Java class path. Set `OTEL_JAVAAGENT_EXTENSIONS` to the deployed JAR so the ADOT Java agent also loads its `AutoConfigurationCustomizerProvider`, and set `DURABLE_EXECUTION_PLUGINS=otel-invocation` so the Durable Execution SDK loads its `InvocationOtelPluginProvider`.
+
+### Invocation-local headers on Lambda Managed Instances
+
+The SDK captures `Context.getXrayTraceId()` before dispatching the handler to a worker thread and stores the immutable
+snapshot in `InvocationInfo.xRayTraceId` when the worker constructs the invocation information. Startup remains `onInvocationStart(InvocationInfo)`; extractors receive the
+same object through `ContextExtractor.extract(InvocationInfo)`. There is no independent header parameter.
+
+The default extractor prefers this field, preserving Root, Parent and Sampled. A null field denotes an unavailable
+runtime carrier (including an inherited neutral Lambda Context default) or a legacy constructor call, and permits
+ordinary Lambda fallback to `com.amazonaws.xray.traceHeader`, then `_X_AMZN_TRACE_ID`. An actual runtime override
+returning null/empty is captured as an empty string and uses deterministic fallback. A non-fatal runtime exception
+while reading the accessor is also captured as an empty string, so a failed read cannot inherit another invocation's
+trace or sampling decision. A captured malformed header is likewise authoritative and never borrows another
+invocation's process-wide header. No global carrier is modified. Capture is skipped when no plugins are registered.
+
+The no-argument `ContextExtractor.extract()` remains the functional method, so existing lambdas and custom extractors
+retain their behavior. `XRayContextExtractor` uses a temporary thread-local scope solely to preserve old no-argument
+subclass overrides, including `super.extract()` delegation; the snapshot itself is stored in the record field. The
+scope is restored in `finally`. A new plugin layer on an older core falls back when the optional field accessor is
+unavailable; provider API and dependency floors are unchanged. Consuming the LMI field requires both updated core and
+plugin. Shared plugin-instance concurrency remains the separate factory-lifetime change.
+
+**Record source compatibility boundary:** `InvocationInfo` now has eight components. Its previous 4-, 5-, 6- and
+7-argument constructors and seven accessors remain; the old constructors set the new field to null. Existing constructor
+source and compiled calls continue to work. Previously compiled seven-component record patterns also continue to run,
+but recompiling that pattern against the new record requires an eighth binding, such as `var xRayTraceId`:
+
+```java
+if (info instanceof InvocationInfo(var request, var arn, var first, var start,
+        var input, var operations, var updated, var xRayTraceId)) {
+    // Read the invocation-local header through the binding or info.xRayTraceId().
+}
+```
+
+Reflection exposes eight record components, and record equality/hash computation now includes the header. This is not
+complete record-shape/source compatibility. InvocationInfo.toString continues to omit payloads, operation snapshots
+and the runtime header. Invocation/checkpoint identities and persisted checkpoint formats do not change.
 
 ### 2. AWS X-Ray Active Tracing
 
@@ -224,14 +284,35 @@ Operation and attempt spans link to the Workflow span. `ExecutionOtelPlugin` rev
 
 ### Sampling
 
-The plugin decides sampling once per invocation and applies that single decision to every durable span (Workflow, Invocation, operation, attempt), so the configured sampler is not re-invoked per span and the full decision — including `RECORD_ONLY` — is preserved. The decision follows this precedence, highest first:
+The SDK-wide sampling guarantees below require `DurableSampler` itself to be the final installed sampler. The
+[builder constructors](#configuration) and [ADOT extension setup](#1-adot-lambda-layer) install it automatically;
+configure its delegate through these documented paths and retain `DurableSampler` as the final sampler. An
+unrecognized outer wrapper is treated as a plain replacement. The SDK wrapper applies its sampling intent to every durable
+span (Workflow, Invocation, operation and attempt), preserving the full result, including `RECORD_ONLY`, sampler attributes
+and trace state.
 
-1. **Backend decision** — `Sampled=1` / `Sampled=0` in the propagated header is authoritative and always preserved, regardless of the configured sampler.
-2. **Same-trace ambient span** — when the header carries no usable `Sampled` value but a valid ambient span (for example an auto-instrumentation Lambda handler span) is already on the execution's trace, the plugin follows that span's decision: sampled → sampled; unsampled but still recording → `RECORD_ONLY`; unsampled and not recording → dropped.
-3. **Configured sampler (application-owned provider)** — when you pass a `SdkTracerProvider` to the plugin, its sampler is read directly and evaluated once with the trace ID, span name, and attributes. A trace-ID-ratio sampler therefore produces a stable decision across reinvocations (the trace ID is stable).
-4. **Installed sampler (Java-agent path)** — when the agent owns the provider, it is behind a classloader boundary and its *effective* sampler (which another agent extension may have wrapped or replaced) cannot be reliably read at decision time. Rather than guess, the plugin **defers**: it installs a delegating sampler through the agent's autoconfiguration and lets that wrapper consult the agent's real sampler. The delegate's decision is honored in full — if your configured policy is `always_off`, a rate limiter, or a remote sampler (`xray`, `jaeger_remote`) that returns drop, the durable spans are dropped; they are **not** force-sampled. To avoid consuming a stateful or quota-based sampler once per span, the wrapper consults the delegate once per execution (keyed by trace ID) and reuses that decision for the execution's remaining durable spans within the invocation.
+The supported SDK sampler follows this precedence, highest first:
 
-For precise, provider-independent control, set an explicit `Sampled` value upstream (for example by enabling X-Ray active tracing) — that backend decision takes precedence over everything else.
+1. **Backend decision** — with `DurableSampler` installed, `Sampled=1` / `Sampled=0` in the propagated header is
+   authoritative, regardless of the wrapped delegate's policy.
+2. **Same-trace ambient span** — without an explicit header decision, a valid ambient span already on the execution
+   trace supplies its decision: sampled → sampled; unsampled and recording → `RECORD_ONLY`; unsampled and
+   non-recording → dropped.
+3. **Same-copy durable sampler** — the visible SDK sampler is evaluated against root context once per invocation
+   using the canonical trace ID, span name and attributes. Its complete result is carried in that loader's context.
+4. **Foreign or opaque SDK sampler** — resolution is deferred to the installed wrapper's actual delegate. Its full
+   result is cached by execution ARN and canonical trace ID in a 256-entry LRU cache and reused while resident.
+   Eviction can cause another evaluation. The delegate still receives the canonical trace ID; drop and
+   `RECORD_ONLY` decisions, attributes and updated trace state are retained.
+
+A visible plain replacement sampler supplies its root policy for execution-ancestor flags, then keeps its normal
+per-span sampling behavior. It receives no SDK sampling carrier and does not provide the SDK decision-reuse
+or full-result override guarantees above. Opaque providers cannot expose a later sampler replacement to the
+application, so retain the wrapper through the documented customization setup.
+
+For explicit execution-level control, keep `DurableSampler` as the final installed sampler and set `Sampled` upstream,
+for example through X-Ray
+active tracing. The SDK sampling wrapper preserves that decision.
 
 ## Span Attributes
 
@@ -408,9 +489,10 @@ var otelPlugin = new InvocationOtelPlugin(
 
 Apache-2.0
 
-View exclusivity is declared with inherited `@ExclusivePluginGroup("durable-otel-view")` metadata.
-Configuration reads this explicit opt-in annotation from the entire superclass chain; it does not call application methods
-that happen to be named `getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled
-view restriction. A subclass may add another group, but cannot replace a superclass's group; repeated group names in one
-class hierarchy are checked once.
-Older cores ignore the optional annotation and retain their prior behavior; no provider-version floor is raised.
+### Installed core/plugin layer compatibility checks
+
+`src/test/compatibility/run_matrix.py` compiles a caller against a supplied released core JAR, then checks old/old,
+old/new, new/old and new/new core/plugin pairs for both views. Plugins load in a separate layer classloader through
+ServiceLoader, and ordinary tracing plus optional new header dispatch are checked. Supply released JARs, built current
+artifacts and an existing dependency classpath file; the check performs no downloads or AWS calls. Older cores retain
+ordinary tracing rather than being rejected for lacking the optional header capability.

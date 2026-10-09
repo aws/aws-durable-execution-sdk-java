@@ -13,6 +13,33 @@ import org.junit.jupiter.api.Test;
 class PluginRunnerTest {
 
     @Test
+    void invocationFieldReachesExistingHookOnce() {
+        var calls = new ArrayList<InvocationInfo>();
+        var legacy = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationStart(InvocationInfo info) {
+                calls.add(info);
+            }
+        };
+        var original = invocationInfo();
+        var info = new InvocationInfo(
+                original.requestId(),
+                original.durableExecutionArn(),
+                original.isFirstInvocation(),
+                original.executionStartTime(),
+                original.executionInput(),
+                original.operations(),
+                original.updatedOperations(),
+                "header");
+        new PluginRunner(List.of(legacy)).onInvocationStart(info);
+        assertEquals(List.of(info), calls);
+        assertEquals("header", calls.get(0).xRayTraceId());
+        assertThrows(
+                NoSuchMethodException.class,
+                () -> DurableExecutionPlugin.class.getMethod("onInvocationStart", InvocationInfo.class, String.class));
+    }
+
+    @Test
     void exclusiveGroupsRejectDifferentImplementationsButAllowUnrelatedPlugins() {
         var exclusive = new ExclusivePlugin();
         var error = assertThrows(

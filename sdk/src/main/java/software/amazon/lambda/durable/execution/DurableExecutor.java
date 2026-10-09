@@ -60,6 +60,8 @@ public class DurableExecutor {
             var isFirstInvocation = !executionManager.isReplaying();
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             var executionArn = input.durableExecutionArn();
+            // Capture on the runtime thread before dispatch: LMI trace carriers can be thread-local.
+            var xRayTraceId = pluginRunner.isEmpty() ? null : RuntimeTraceHeader.capture(lambdaContext);
 
             executionManager.registerActiveThread(null);
             // Captured for onInvocationEnd, which runs outside the handler thread below.
@@ -99,7 +101,8 @@ public class DurableExecutor {
                                             executionManager.getInitialOperationIds()),
                                     PluginInfoConverter.toOperationItemMap(
                                             executionManager.getUpdatedOperationsSnapshot(),
-                                            executionManager.getInitialOperationIds())));
+                                            executionManager.getInitialOperationIds()),
+                                    xRayTraceId));
                         }
                         if (inputFailure != null) {
                             ExceptionHelper.sneakyThrow(inputFailure);
@@ -124,6 +127,7 @@ public class DurableExecutor {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
                                 Throwable cause = ExceptionHelper.unwrapCompletableFuture(ex);
+                                executionManager.wakePublishedContinuationWaiters(cause);
 
                                 // return PENDING if it's SuspendExecutionException
                                 if (cause instanceof SuspendExecutionException) {

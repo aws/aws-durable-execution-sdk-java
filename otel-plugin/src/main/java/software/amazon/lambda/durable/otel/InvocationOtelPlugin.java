@@ -209,7 +209,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
         this.durableExecutionArn = info.durableExecutionArn();
 
-        var extracted = contextExtractor.extract();
+        var extracted = contextExtractor.extract(info);
 
         // Resolve the execution ancestor the Workflow span parents onto so it joins the stable-per-execution trace.
         var canonicalTraceId = ExecutionTraceContext.canonicalTraceId(
@@ -633,6 +633,11 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     private Context resolveParentContext(String parentId) {
         if (parentId != null) {
+            var parentSpan = operationSpans.get(parentId);
+            if (parentSpan != null) {
+                // Retain the provider's live span, including its clock, while this parent is open.
+                return withDurableDecision(Context.current().with(parentSpan));
+            }
             var parentSpanContext = operationContexts.get(parentId);
             if (parentSpanContext != null) {
                 return withDurableDecision(Context.current().with(Span.wrap(parentSpanContext)));
@@ -652,7 +657,9 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      */
     private Context withDurableDecision(Context context) {
         var intent = samplingIntent;
-        return intent != null ? DurableSamplingDecision.store(context, intent) : context;
+        return intent != null && OtelPluginSupport.usesLocalDurableSampler(sdkTracerProvider)
+                ? DurableSamplingDecision.store(context, intent)
+                : context;
     }
 
     /**
@@ -663,7 +670,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      */
     private Span startDurableSpan(SpanBuilder spanBuilder) {
         var intent = samplingIntent;
-        if (intent == null) {
+        if (intent == null || !OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)) {
             return spanBuilder.startSpan();
         }
         try (var ignored = DurableSamplingDecision.openScope(intent)) {
@@ -674,7 +681,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
     /** Starts a durable span with a forced span ID, publishing the sampling intent as in {@link #startDurableSpan}. */
     private Span startDurableSpan(SpanBuilder spanBuilder, String traceId, String spanId) {
         var intent = samplingIntent;
-        if (intent == null) {
+        if (intent == null || !OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)) {
             return idGenerator.startSpan(spanBuilder, traceId, spanId);
         }
         try (var ignored = DurableSamplingDecision.openScope(intent)) {
