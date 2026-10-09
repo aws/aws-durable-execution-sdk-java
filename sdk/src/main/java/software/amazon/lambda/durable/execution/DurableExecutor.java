@@ -213,7 +213,7 @@ public class DurableExecutor {
             try {
                 fireOnInvocationEnd(InvocationStatus.RETRYING, cause, null);
             } catch (Error endFailure) {
-                deliveryFailure = combinePreparationAndEndFailures(deliveryFailure, endFailure);
+                deliveryFailure = combinePreparationAndEndFailures(cause, endFailure);
             }
             ExceptionHelper.sneakyThrow(deliveryFailure);
             return null;
@@ -366,7 +366,17 @@ public class DurableExecutor {
         try {
             restore.close();
         } catch (Throwable restorationFailure) {
-            if (restorationFailure != fatal) fatal.addSuppressed(restorationFailure);
+            if (restorationFailure == fatal) return;
+            fatal.addSuppressed(restorationFailure);
+            try {
+                rethrowLifecycleFatal(restorationFailure);
+                // The first fatal still owns caller/worker propagation. Clear only after an ordinary restore failure
+                // so a ThreadPoolExecutor replacement does not inherit an End hook's invocation-local map.
+                MDC.clear();
+            } catch (Throwable cleanupFailure) {
+                if (cleanupFailure != fatal && cleanupFailure != restorationFailure)
+                    fatal.addSuppressed(cleanupFailure);
+            }
         }
     }
 

@@ -50,9 +50,11 @@ unchanged and is not repeated. An earlier JVM-fatal End/preparation failure rema
 failures are suppressed, with an identity guard when restoration throws the same fatal object. A restoration fatal takes precedence over an earlier non-JVM-fatal delivery/End failure,
 which remains suppressed. Non-JVM-fatal restoration failures, including `AssertionError` and `LinkageError`, retain
 the selected caller outcome. After an ordinary outer restoration failure, the SDK makes one guarded `MDC.clear()`
-attempt before rethrowing the original worker failure. A successful clear prevents inheritable invocation state
-from reaching a replacement pool thread. A failing clear is retained as a suppressed diagnostic, or its JVM fatal
-uses the same caller-settlement-before-worker-throw rule. Clearing can discard ambient MDC that could not be
+attempt before rethrowing the original worker failure. This also applies when an earlier End/preparation JVM fatal
+is already primary: restoration and clear failures remain suppressed under that first fatal. A successful clear
+prevents inheritable invocation state from reaching a replacement pool thread. With no earlier JVM fatal, a failing
+clear is retained as a suppressed diagnostic, or its JVM fatal uses the same caller-settlement-before-worker-throw
+rule. Clearing can discard ambient MDC that could not be
 restored. If the adapter's clear also fails, clean replacement state is not guaranteed; the SDK does not promise
 quarantine for an arbitrary caller-owned executor. Initialization and handler/body policies are unchanged.
 Before invocation startup, a JVM-fatal error from MDC capture (direct or inside a standard transport wrapper)
