@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
-import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import io.opentelemetry.api.GlobalOpenTelemetry;
@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.ServiceLoader;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.model.ExecutionStatus;
@@ -43,7 +44,8 @@ public final class InstalledApiProbe {
         logs.start();
         root.addAppender(logs);
         try {
-            exercise(view, Boolean.parseBoolean(args[5]), Boolean.parseBoolean(args[6]), logs);
+            if (Boolean.parseBoolean(args[7])) assertOldCoreRejected(view);
+            else exercise(view, Boolean.parseBoolean(args[5]), Boolean.parseBoolean(args[6]), logs);
             System.out.println("COMPAT_PASS " + view + " negative=" + args[5] + " api=" + args[2]
                     + " core=" + args[0] + " plugin=" + args[1]);
         } finally {
@@ -64,6 +66,44 @@ public final class InstalledApiProbe {
                 .findFirst().orElseThrow();
         check(provider.getApiVersion() == DurableExecutionPluginProvider.API_VERSION, "released SPI version");
         checkSource(provider.getPluginType(), Path.of(args[1]));
+    }
+
+    private static void assertOldCoreRejected(String view) throws Exception {
+        var provider = ServiceLoader.load(DurableExecutionPluginProvider.class).stream()
+                .map(ServiceLoader.Provider::get).filter(value -> value.getName().equals(view))
+                .findFirst().orElseThrow();
+        expectCoreRejection(provider::createPlugin);
+        var constructors = provider.getPluginType().getConstructors();
+        check(constructors.length == 4, "exercise every published plugin constructor");
+        for (var constructor : constructors) {
+            var types = constructor.getParameterTypes();
+            var parameters = new Object[types.length];
+            for (int i = 0; i < types.length; i++) {
+                parameters[i] = types[i].getName().endsWith("OtelPluginConfig")
+                        ? types[i].getMethod("defaults").invoke(null) : SdkTracerProvider.builder();
+            }
+            expectCoreRejection(() -> constructor.newInstance(parameters));
+        }
+        var handlerCalls = new AtomicInteger();
+        expectCoreRejection(() -> createRunner(handlerCalls, new AtomicInteger()));
+        check(handlerCalls.get() == 0 && HEALTHY_STARTS.get() == 0 && HEALTHY_ENDS.get() == 0,
+                "configuration rejection must precede handler execution and lifecycle hooks");
+        System.out.println("CORE_LIFECYCLE_REJECTION_CONFIRMED " + view);
+    }
+
+    private static void expectCoreRejection(Callable<?> construction) {
+        Throwable rejected = null;
+        try {
+            construction.call();
+        } catch (Throwable failure) {
+            rejected = failure;
+        }
+        check(rejected != null, "new plugin silently accepted the released core without its lifecycle guarantee");
+        for (var failure = rejected; failure != null; failure = failure.getCause()) {
+            if (failure instanceof IllegalStateException && failure.getMessage() != null
+                    && failure.getMessage().contains("requires same-thread invocation hooks")) return;
+        }
+        throw new AssertionError("missing explicit core compatibility diagnostic", rejected);
     }
 
     private static void exercise(String view, boolean negative, boolean compatible, ListAppender<ILoggingEvent> logs) {

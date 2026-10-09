@@ -9,6 +9,7 @@ import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.nio.file.Files;
@@ -16,6 +17,7 @@ import java.nio.file.Path;
 import java.util.Collections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.execution.DurableExecutor;
 
 /** Shared utilities for OTel plugin default constructor support (ADOT Java agent SPI path). */
 final class OtelPluginSupport {
@@ -23,6 +25,59 @@ final class OtelPluginSupport {
     private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);
 
     private OtelPluginSupport() {}
+
+    /** Only the same DurableSampler class copy can consume this loader's parent-context holder. */
+    static boolean usesLocalDurableSampler(SdkTracerProvider provider) {
+        return provider != null && provider.getSampler() instanceof DurableSampler;
+    }
+
+    /** A visible replacement sampler cannot consume our bridge; an opaque agent provider may still need it. */
+    static boolean usesDurableSamplingBridge(SdkTracerProvider provider) {
+        // Class-name matching is only for the cross-loader wire carrier, never for the context-key ownership check.
+        return provider == null || provider.getSampler().getClass().getName().equals(DurableSampler.class.getName());
+    }
+
+    /** Closes the owning thread's scope without hiding a finalization error or a later JVM-fatal cleanup failure. */
+    static void runInvocationEnd(Scope scope, Runnable end) {
+        Throwable primary = null;
+        try {
+            end.run();
+        } catch (Throwable failure) {
+            primary = failure;
+            throw failure;
+        } finally {
+            try {
+                if (scope != null) scope.close();
+            } catch (Throwable cleanup) {
+                if (primary == null) throw cleanup;
+                if (primary != cleanup) {
+                    if (endFailurePriority(cleanup) > endFailurePriority(primary)) {
+                        cleanup.addSuppressed(primary);
+                        throw cleanup;
+                    }
+                    primary.addSuppressed(cleanup);
+                }
+            }
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private static int endFailurePriority(Throwable failure) {
+        if (failure instanceof VirtualMachineError || failure instanceof ThreadDeath) return 3;
+        if (failure instanceof Error && !(failure instanceof LinkageError)) return 2;
+        return 1;
+    }
+
+    /** Rejects an older core before a plugin builds a provider or activates any thread-local context. */
+    static void requireSameThreadInvocationHooks() {
+        var message = "This OpenTelemetry plugin requires same-thread invocation hooks from the Durable Execution"
+                + " core (2.2.2 lifecycle capability). Upgrade the core together with the plugin layer.";
+        try {
+            if (!DurableExecutor.supportsSameThreadInvocationHooks()) throw new IllegalStateException(message);
+        } catch (NoSuchMethodError missingCapability) {
+            throw new IllegalStateException(message, missingCapability);
+        }
+    }
 
     /** Creates a new DeterministicIdGenerator for the application-side state bridge. */
     static DeterministicIdGenerator createDefaultIdGenerator() {
@@ -56,7 +111,7 @@ final class OtelPluginSupport {
      *       pipeline finally installs, and another extension's customizer can wrap or replace a recognized configured
      *       sampler, so a reconstruction could disagree with the real delegate. Deferring routes the decision to the
      *       agent-installed {@link DurableSampler}, which consults its actual delegate once per execution, caches the
-     *       result by trace ID, and reuses it for the execution's remaining durable spans (see
+     *       result by execution ARN and trace ID, and reuses it for the execution's remaining durable spans (see
      *       {@link DurableSampler#shouldSample}). The delegate's decision is honored in full — including a
      *       {@code DROP}/rate-limited outcome — so durable spans are not force-sampled.
      * </ol>
@@ -107,8 +162,11 @@ final class OtelPluginSupport {
             }
             return ambientSpan.isRecording() ? SamplingResult.recordOnly() : SamplingResult.drop();
         }
-        // 3. An application-owned provider exposes the real sampler: evaluate it once, preserving its full result.
-        if (sdkTracerProvider != null) {
+        // 3. Resolve a local durable sampler's full result, or a visible replacement's root policy for ancestor flags.
+        // A foreign DurableSampler still resolves in its own loader to retain full attributes and trace state.
+        // A plain replacement receives no carrier; the provider keeps its normal per-span sampling behavior.
+        if (sdkTracerProvider != null
+                && (usesLocalDurableSampler(sdkTracerProvider) || !usesDurableSamplingBridge(sdkTracerProvider))) {
             return sdkTracerProvider
                     .getSampler()
                     .shouldSample(

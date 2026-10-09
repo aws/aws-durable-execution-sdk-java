@@ -41,7 +41,10 @@ class PluginLinkageErrorTest {
                 plugin(healthyCalls::incrementAndGet)));
 
         assertSame(failure, assertThrows(Error.class, () -> dispatch.accept(runner)));
-        assertEquals(0, healthyCalls.get(), "Fatal and unrelated errors must not be blanket-caught");
+        assertEquals(
+                hook.equals("invocation end") ? 1 : 0,
+                healthyCalls.get(),
+                "Invocation End must finish cleanup before propagating errors; other hooks stop immediately");
     }
 
     static Stream<Arguments> linkageFailures() {
