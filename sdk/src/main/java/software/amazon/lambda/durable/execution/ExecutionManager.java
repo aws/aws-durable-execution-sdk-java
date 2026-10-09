@@ -87,6 +87,8 @@ public class ExecutionManager implements SafeCloseable {
     // Guarded by activeThreads; an observation future can be cancelled independently of its actual task.
     private final Map<Object, BaseDurableOperation> checkpointContinuations = new HashMap<>();
     private boolean closing;
+    // Guarded by activeThreads; selected against normal close before publishing callbacks outside the monitor.
+    private UnrecoverableDurableExecutionException selectedContinuationFailure;
 
     /**
      * Per-wait state used to coordinate the caller thread with the future completion callback.
@@ -634,9 +636,17 @@ public class ExecutionManager implements SafeCloseable {
                         .build(),
                 true,
                 failure);
-        continuationFailurePublishers.put(control, Thread.currentThread());
+        UnrecoverableDurableExecutionException selected;
+        synchronized (activeThreads) {
+            if (closing && !(failure instanceof VirtualMachineError || failure instanceof ThreadDeath)) return;
+            if (selectedContinuationFailure == null) selectedContinuationFailure = control;
+            selected = selectedContinuationFailure;
+            continuationFailurePublishers.put(control, Thread.currentThread());
+        }
+        // A later admitted publisher may drain the winner's callbacks. Keep that CompletableFuture behavior,
+        // but publish/wake using the selected cause, outside the monitor needed by worker cleanup.
         try {
-            if (executionExceptionFuture.completeExceptionally(control)) stopAllOperations(control);
+            if (executionExceptionFuture.completeExceptionally(selected)) stopAllOperations(selected);
         } finally {
             continuationFailurePublishers.remove(control);
         }
