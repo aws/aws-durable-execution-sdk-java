@@ -736,6 +736,13 @@ public class ExecutionManager implements SafeCloseable {
         checkpointManager.shutdown();
     }
 
+    /** Closes new checkpoint-continuation admission without signaling owners or joining their cleanup. */
+    void closeCheckpointContinuationAdmission() {
+        synchronized (activeThreads) {
+            closing = true;
+        }
+    }
+
     private void stopCheckpointContinuations() {
         List<BaseDurableOperation> owners;
         synchronized (activeThreads) {

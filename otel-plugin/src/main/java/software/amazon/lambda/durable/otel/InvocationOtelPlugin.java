@@ -92,7 +92,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
     // Per-invocation state
     private volatile boolean tracingEnabled;
     private volatile Span invocationSpan;
-    // Opened and closed by the invocation hooks on the root handler thread.
+    private volatile Span executionRootSpan;
+    // The root handler opens and closes this context through the base invocation lifecycle.
     private Scope handlerScope;
     private volatile String durableExecutionArn;
     // Trace ID and flags of the execution trace, published together as one snapshot so readers never pair a trace ID
@@ -116,7 +117,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     // Thread-safe storage for attempt spans/scopes (keyed by operationId + "-" + attempt)
     private final ConcurrentHashMap<String, Span> attemptSpans = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Scope> attemptScopes = new ConcurrentHashMap<>();
+    private final UserFunctionScopes attemptScopes = new UserFunctionScopes();
 
     // Store operation span contexts for parent resolution (keyed by operationId)
     private final ConcurrentHashMap<String, SpanContext> operationContexts = new ConcurrentHashMap<>();
@@ -228,17 +229,39 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
                 canonicalTraceId,
                 workflowSpanName,
                 Attributes.of(DURABLE_EXECUTION_ARN, info.durableExecutionArn()));
-        // A null decision is unresolved on the agent path: defer to DurableSampler's own delegate (keyed by trace ID),
-        // rather than fabricating a decision that would bypass an installed drop/rate-limit policy.
+        // An unresolved decision is supplied by the actual fallback root or the agent-side sampler. Do not invent
+        // a decision that bypasses an installed drop/rate-limit policy.
         samplingIntent = decision != null
                 ? DurableSamplingDecision.Intent.resolved(decision)
                 : DurableSamplingDecision.Intent.deferred(canonicalTraceId);
         var sampled = OtelPluginSupport.isSampled(decision);
         var execCtx = ExecutionTraceContext.resolve(
                 extracted, canonicalTraceId, info.durableExecutionArn(), idGenerator, () -> sampled);
+        executionStartTime = info.executionStartTime();
+        var root = DurableExecutionRoot.start(
+                tracer,
+                idGenerator,
+                execCtx.executionAncestor(),
+                info.durableExecutionArn(),
+                executionStartTime,
+                samplingIntent,
+                OtelPluginSupport.usesLocalDurableSampler(sdkTracerProvider),
+                OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider));
+        try {
+            DurableExecutionRoot.end(root, executionStartTime);
+        } finally {
+            // Publish only after end callbacks, so a reentrant End cannot flush from inside root.end().
+            // Retain the ended root as a flush marker even if an onEnd processor throws during Start.
+            executionRootSpan = root;
+        }
+        // An unresolved plain fallback uses the real root's decision; explicit/ambient decisions and the
+        // legacy remote-parent path retain their existing behavior. Plain samplers still own each child decision.
+        if (executionRootSpan != null
+                && (OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider) || decision == null)) {
+            execCtx = new ExecutionTraceContext(executionRootSpan.getSpanContext());
+        }
         executionTrace = new ExecutionTrace(canonicalTraceId, execCtx.traceFlags());
         executionAncestor = execCtx.executionAncestor();
-        executionStartTime = info.executionStartTime();
 
         // Invocation span parent — the same-trace ambient span when available, then the execution ancestor, so the
         // Invocation span stays on the execution trace.
@@ -279,8 +302,6 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         var trace = executionTrace;
         if (!tracingEnabled || trace == null) return null;
         var ambient = Span.current().getSpanContext();
-        // Preserve a compatible ambient Lambda span. An absent or unrelated ambient span must not leave
-        // handler instrumentation outside the durable execution's canonical trace.
         if (ambient.isValid() && trace.traceId().equals(ambient.getTraceId())) return Scope.noop();
         return invocationSpan.makeCurrent();
     }
@@ -293,6 +314,20 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
     }
 
     private void endInvocation(InvocationEndInfo info) {
+        var root = executionRootSpan;
+        var provider = sdkTracerProvider;
+        var shouldFlush = tracingEnabled || root != null;
+        executionRootSpan = null; // The anchor already ended at Start; flush this invocation only once.
+        OtelPluginSupport.finishWithRootCleanup(() -> finishInvocationEnd(info), () -> {
+            if (shouldFlush && provider != null) {
+                var flushResult = provider.forceFlush().join(5, TimeUnit.SECONDS);
+                if (!flushResult.isSuccess())
+                    logger.warn("OTel span flush failed or timed out — some spans may be lost");
+            }
+        });
+    }
+
+    private void finishInvocationEnd(InvocationEndInfo info) {
         if (!tracingEnabled) {
             return;
         }
@@ -365,14 +400,6 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         executionAncestor = null;
         executionStartTime = null;
         samplingIntent = null;
-
-        if (sdkTracerProvider != null) {
-            // Flush spans before Lambda freezes
-            var flushResult = sdkTracerProvider.forceFlush().join(5, TimeUnit.SECONDS);
-            if (!flushResult.isSuccess()) {
-                logger.warn("OTel span flush failed or timed out — some spans may be lost");
-            }
-        }
     }
 
     // ─── Operation hooks ─────────────────────────────────────────────────
@@ -551,15 +578,10 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     @Override
     public void onUserFunctionEnd(UserFunctionEndInfo info) {
-        if (!tracingEnabled) return;
-
         var key = attemptKey(info.id(), info.attempt());
-
-        // Close scope first (must happen on same thread as makeCurrent)
-        var scope = attemptScopes.remove(key);
-        if (scope != null) {
-            scope.close();
-        }
+        // A running user function can finish after invocation End; its scope still belongs to this thread.
+        attemptScopes.close(key);
+        if (!tracingEnabled) return;
 
         // Clear span-level MDC after user function completes (keep trace_id for handler-level logs between steps)
         if (enableMdc) {
@@ -618,10 +640,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
 
     private void endOpenSpansChildFirst() {
         // Attempt spans are children of operation spans.
-        for (var scope : attemptScopes.values()) {
-            scope.close();
-        }
-        attemptScopes.clear();
+        attemptScopes.closeCurrentThread();
         for (var span : attemptSpans.values()) {
             span.end();
         }

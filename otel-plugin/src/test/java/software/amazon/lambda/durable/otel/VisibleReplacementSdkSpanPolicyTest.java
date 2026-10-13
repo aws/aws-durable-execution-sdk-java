@@ -41,6 +41,7 @@ class VisibleReplacementSdkSpanPolicyTest {
             String view, boolean rootSamples, String upstream, boolean expectedSampled) {
         var oldHeader = System.getProperty("com.amazonaws.xray.traceHeader");
         var rootPolicySnapshots = new AtomicInteger();
+        var actualRootEvaluations = new AtomicInteger();
         var invocations = new AtomicInteger();
         var sideEffects = new AtomicInteger();
         var header = "Root=1-6955b900-123456789012345678901234";
@@ -55,8 +56,9 @@ class VisibleReplacementSdkSpanPolicyTest {
                     Attributes attributes,
                     List<LinkData> links) {
                 assertFalse(Span.fromContext(parent).getSpanContext().isValid());
-                // Count the SDK's root-policy snapshot, excluding normal provider sampling for a real synthetic-root
-                // export on branches that implement it. No exactly-once promise is made for a plain provider.
+                // A real fallback root performs the provider's root evaluation; no preliminary Workflow probe
+                // should consume a second decision. Descendant policy and explicit header controls stay below.
+                if (name.equals("DurableExecutionRoot")) actualRootEvaluations.incrementAndGet();
                 if (!name.equals("DurableExecutionRoot")
                         && attributes.get(AttributeKey.stringKey("durable.execution.arn")) != null) {
                     rootPolicySnapshots.incrementAndGet();
@@ -107,13 +109,17 @@ class VisibleReplacementSdkSpanPolicyTest {
             var sdkSpans = exporter.getFinishedSpanItems().stream()
                     .filter(span ->
                             span.getInstrumentationScopeInfo().getName().equals("aws-durable-execution-sdk-java"))
+                    // A plain provider keeps its native policy for parentless synthetic-root exports. Full SDK
+                    // sampling overrides require DurableSampler; this regression concerns regular SDK descendants.
+                    .filter(span -> !span.getName().equals("DurableExecutionRoot"))
                     .toList();
             if (expectedSampled) {
                 assertFalse(sdkSpans.isEmpty());
                 assertTrue(
                         sdkSpans.stream().allMatch(span -> span.getSpanContext().isSampled()));
             } else assertTrue(sdkSpans.isEmpty(), sdkSpans.toString());
-            assertEquals(upstream.equals("root") ? invocations.get() : 0, rootPolicySnapshots.get());
+            assertEquals(0, rootPolicySnapshots.get());
+            assertEquals(invocations.get(), actualRootEvaluations.get());
             assertEquals(1, sideEffects.get());
         } finally {
             GlobalOpenTelemetry.resetForTest();
