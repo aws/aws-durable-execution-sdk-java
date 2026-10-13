@@ -612,6 +612,11 @@ Apache-2.0
 
 `src/test/compatibility/run_matrix.py` compiles a caller against a supplied released core JAR, then checks old/old,
 old/new, new/old and new/new core/plugin pairs for both views. Plugins load in a separate layer classloader through
-ServiceLoader, and ordinary tracing plus optional new header dispatch are checked. Supply released JARs, built current
-artifacts and an existing dependency classpath file; the check performs no downloads or AWS calls. Older cores retain
-ordinary tracing rather than being rejected for lacking the optional header capability.
+ServiceLoader, with core/plugin code-source checks. The current plugin requires same-thread invocation hooks: a core
+without that capability must reject construction with the exact upgrade diagnostic. The check reads the loaded core's
+capability rather than treating the "old" label as unsupported, verifies expected rejections, and continues all eight
+pair/view cases. Supported pairs check exact span names, trace IDs and parentage; the current plugin also checks the
+zero-duration synthetic root and sampled/unsampled runtime-header overrides. Released plugins retain their legacy
+carrier behavior. Supply released JARs, built current artifacts and an existing dependency classpath file; the check
+performs no downloads or AWS calls. Small runner/probe controls reject unrelated constructor failures, wrong diagnostics
+and unexpected construction success. These checks do not make an older core without the lifecycle capability supported.
