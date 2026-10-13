@@ -96,22 +96,17 @@ class MdcFailureBoundaryTest {
 
     @ParameterizedTest
     @CsvSource({"false,false", "true,false", "false,true", "true,true"})
-    void failedBodyRetainsPrimaryFailureAndSuppressedRestoration(boolean direct, boolean bodyFatal) throws Exception {
+    void restorationFatalIsReportedAfterFailedBodyWithoutReplacingEarlierFatal(boolean direct, boolean bodyFatal)
+            throws Exception {
         Throwable primary = bodyFatal ? new InternalError("primary body") : new IllegalStateException("primary body");
-        var secondary = new InternalError("suppressed restoration");
+        var secondary = new InternalError("restoration fatal");
         var observed = runOuterFailure(direct, primary, secondary);
-        if (bodyFatal) assertSame(primary, observed.failure());
-        else {
-            assertNull(observed.failure());
-            assertEquals(ExecutionStatus.FAILED, observed.status());
-            assertEquals("primary body", observed.errorMessage());
-        }
+        var selected = bodyFatal ? primary : secondary;
+        assertSame(selected, observed.failure());
         assertEquals(1, observed.ends());
-        assertSame(primary, observed.end().executionError());
-        assertEquals(
-                bodyFatal ? InvocationStatus.RETRYING : InvocationStatus.FAILED,
-                observed.end().invocationStatus());
-        assertTrue(Arrays.asList(primary.getSuppressed()).contains(secondary));
+        assertSame(selected, observed.end().executionError());
+        assertEquals(InvocationStatus.RETRYING, observed.end().invocationStatus());
+        assertTrue(Arrays.asList(selected.getSuppressed()).contains(bodyFatal ? secondary : primary));
     }
 
     @ParameterizedTest
@@ -184,8 +179,9 @@ class MdcFailureBoundaryTest {
 
     @SuppressWarnings("removal")
     @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void postDispatchWorkerFatalEscapesOwnerWithoutRepeatingEnd(boolean threadDeath) throws Exception {
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void postDispatchWorkerFatalEscapesOwnerWithoutRepeatingEnd(boolean threadDeath, boolean failedBody)
+            throws Exception {
         var original = MDC.getMDCAdapter();
         var callerBefore = MDC.getCopyOfContextMap();
         var startEntered = new CountDownLatch(1);
@@ -196,6 +192,7 @@ class MdcFailureBoundaryTest {
         var ownerFailure = new AtomicReference<Throwable>();
         var callerThread = new AtomicReference<Thread>();
         var ended = new AtomicInteger();
+        var bodyFailure = new IllegalStateException("ordinary body before late restoration");
         var injected = new AtomicBoolean();
         Error fatal = threadDeath ? new ThreadDeath() : new InternalError("late outer restore");
         var worker = Executors.newSingleThreadExecutor(task -> {
@@ -220,7 +217,9 @@ class MdcFailureBoundaryTest {
 
             @Override
             public void onInvocationEnd(InvocationEndInfo info) {
-                assertEquals(InvocationStatus.SUCCEEDED, info.invocationStatus());
+                assertEquals(
+                        failedBody ? InvocationStatus.FAILED : InvocationStatus.SUCCEEDED, info.invocationStatus());
+                assertSame(failedBody ? bodyFailure : null, info.executionError());
                 ended.incrementAndGet();
             }
         };
@@ -235,7 +234,10 @@ class MdcFailureBoundaryTest {
             }));
             var runner = LocalDurableTestRunner.create(
                     String.class,
-                    (input, context) -> "done",
+                    (input, context) -> {
+                        if (failedBody) throw bodyFailure;
+                        return "done";
+                    },
                     DurableConfig.builder()
                             .withExecutorService(worker)
                             .withPlugins(info -> plugin)
@@ -246,7 +248,8 @@ class MdcFailureBoundaryTest {
             releaseStart.countDown();
             awaitGate(restoreEntered);
             assertEquals(
-                    ExecutionStatus.SUCCEEDED, result.get(2, TimeUnit.SECONDS).getStatus());
+                    failedBody ? ExecutionStatus.FAILED : ExecutionStatus.SUCCEEDED,
+                    result.get(2, TimeUnit.SECONDS).getStatus());
             assertEquals(1, ended.get());
             releaseRestore.countDown();
             awaitGate(ownerObserved);

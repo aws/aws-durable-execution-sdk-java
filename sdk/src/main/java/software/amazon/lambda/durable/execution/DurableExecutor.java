@@ -300,48 +300,102 @@ public class DurableExecutor {
         var result = new CompletableFuture<T>();
         var caller = Thread.currentThread();
         Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
+            if (preservePluginMdc) {
+                completeWithPluginMdc(task, result, caller, onPostCompletionFatal);
+                return;
+            }
             try {
-                if (!preservePluginMdc) {
-                    T value;
-                    try (SafeCloseable ignored = MDC::clear) {
-                        value = task.get();
-                    }
-                    result.complete(value);
-                    return;
+                T value;
+                try (SafeCloseable ignored = MDC::clear) {
+                    value = task.get();
                 }
-                // Preserve worker MDC through plugin startup, handler work, and completion callbacks.
-                try (SafeCloseable ignored = restoreMdcOnClose()) {
-                    try {
-                        result.complete(task.get());
-                    } catch (Throwable failure) {
-                        // End hooks triggered by this completion must observe the task's MDC before restoration.
-                        result.completeExceptionally(failure);
-                        throw failure;
-                    }
-                }
+                result.complete(value);
             } catch (Throwable failure) {
-                var settled = result.completeExceptionally(failure);
-                Throwable normalizedFailure = null;
-                if (preservePluginMdc && !settled && !result.isCompletedExceptionally()) {
-                    // Worker restoration follows completion callbacks. Report a fatal that follows a successful
-                    // result through the existing owner-cleanup boundary: before end dispatch it changes the
-                    // invocation outcome; after dispatch it only escapes the owner. An already-failed task retains
-                    // its primary failure and normal try-with-resources suppression.
-                    normalizedFailure = ExceptionHelper.unwrapAsyncFailure(failure);
-                    if (isFatal(normalizedFailure)) onPostCompletionFatal.accept((Error) normalizedFailure);
-                }
-                // A direct executor is already on the invocation caller; its fatal result is rethrown below after
-                // finalization. On an asynchronous executor it must also escape the runnable so the worker terminates.
-                if (Thread.currentThread() != caller) {
-                    rethrowFatal(
-                            normalizedFailure != null
-                                    ? normalizedFailure
-                                    : ExceptionHelper.unwrapAsyncFailure(failure));
-                }
+                result.completeExceptionally(failure);
+                if (Thread.currentThread() != caller) rethrowFatal(ExceptionHelper.unwrapAsyncFailure(failure));
             }
         };
         executor.execute(work);
         return result;
+    }
+
+    private static <T> void completeWithPluginMdc(
+            Supplier<T> task, CompletableFuture<T> result, Thread caller, Consumer<Error> onPostCompletionFatal) {
+        SafeCloseable restore;
+        try {
+            restore = restoreMdcOnClose();
+        } catch (Throwable failure) {
+            result.completeExceptionally(failure);
+            if (Thread.currentThread() != caller) rethrowFatal(ExceptionHelper.unwrapAsyncFailure(failure));
+            return;
+        }
+        Throwable bodyFailure = null;
+        try {
+            // Completion callbacks, including End, retain their existing task MDC and dispatch order.
+            result.complete(task.get());
+        } catch (Throwable failure) {
+            bodyFailure = failure;
+            result.completeExceptionally(failure);
+        }
+        try {
+            restore.close();
+        } catch (Throwable cleanupFailure) {
+            finishWorkerMdcCleanup(bodyFailure, cleanupFailure, caller, onPostCompletionFatal);
+            return;
+        }
+        if (Thread.currentThread() != caller) rethrowFatal(ExceptionHelper.unwrapAsyncFailure(bodyFailure));
+    }
+
+    private static void finishWorkerMdcCleanup(
+            Throwable bodyFailure, Throwable cleanupFailure, Thread caller, Consumer<Error> onPostCompletionFatal) {
+        var cleanup = clearAfterMdcFailure(cleanupFailure);
+        var body = ExceptionHelper.unwrapAsyncFailure(bodyFailure);
+        var selected = isFatal(body) ? body : isFatal(cleanup) || bodyFailure == null ? cleanup : bodyFailure;
+        // When both phases report the same fatal, do not attach its own body transport wrapper back onto it.
+        suppressDistinct(selected, isFatal(body) || selected != cleanup ? cleanup : bodyFailure);
+        if (isFatal(cleanup)) {
+            // Report cleanup itself even when the observation already contains an ordinary body failure.
+            // The existing reporter freezes the caller outcome at End; late reports only escape the owner.
+            try {
+                onPostCompletionFatal.accept((Error) selected);
+            } catch (Throwable reportingFailure) {
+                suppressDistinct(selected, reportingFailure);
+            }
+        }
+        // Inline cleanup must return to the caller's existing finalizer. An asynchronous owner must not silently
+        // reuse dirty state: expose ordinary restoration failures too, after one guarded clear attempt.
+        if (Thread.currentThread() != caller) ExceptionHelper.sneakyThrow(selected);
+    }
+
+    private static Throwable clearAfterMdcFailure(Throwable failure) {
+        var selected = normalizeMdcCleanupFailure(failure);
+        if (isFatal(selected)) return selected;
+        try {
+            MDC.clear();
+        } catch (Throwable clearFailure) {
+            if (clearFailure == failure) return selected;
+            var cleanup = normalizeMdcCleanupFailure(clearFailure);
+            if (isFatal(cleanup)) {
+                suppressDistinct(cleanup, selected);
+                return cleanup;
+            }
+            suppressDistinct(selected, cleanup);
+        }
+        return selected;
+    }
+
+    @SuppressWarnings("removal")
+    private static Throwable normalizeMdcCleanupFailure(Throwable failure) {
+        try {
+            throwIfMdcFatal(failure);
+            return failure;
+        } catch (VirtualMachineError | ThreadDeath fatal) {
+            return fatal;
+        }
+    }
+
+    private static void suppressDistinct(Throwable primary, Throwable secondary) {
+        if (secondary != null && secondary != primary) primary.addSuppressed(secondary);
     }
 
     private static Throwable normalizeInvocationFailure(Throwable failure) {

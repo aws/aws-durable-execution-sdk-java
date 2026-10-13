@@ -350,6 +350,20 @@ When `enableMdc` is true (default), the plugin injects these fields into SLF4J M
 
 The `traceId` is also injected at invocation start so handler-level logs (between steps) include it.
 
+The core preserves worker MDC through handler-result completion and its invocation-end callbacks, then restores the
+previous worker map. A restoration `VirtualMachineError` or `ThreadDeath`, including one inside a standard completion,
+execution, reflection, or proxy wrapper, is reported through the existing owner-cleanup fatal channel even if the handler
+already failed ordinarily. An earlier handler JVM fatal remains primary. Before invocation-end dispatch, the caller
+receives that selected fatal and End receives `RETRYING`. Once End has begun, its outcome remains frozen: a later cleanup
+fatal escapes the actual asynchronous worker without a second End notification or rewriting an already returned result.
+
+After an ordinary outer restoration failure, the core attempts `MDC.clear()` once and exposes the cleanup failure on the
+asynchronous worker while retaining the selected ordinary caller outcome. This also applies when an earlier handler fatal
+remains primary. With a standard `ThreadPoolExecutor`, the escaped failure retires that worker; a successful clear keeps
+invocation MDC from being inherited by its replacement. Clearing can discard ambient MDC that could not be restored.
+A caller-owned executor may intercept failures, and an adapter that rejects clear cannot guarantee a clean replacement.
+Factory APIs, handler-body classification, and the no-plugin MDC behavior are unchanged.
+
 Configure your logging framework (e.g., Log4j2) to include MDC fields in the output. For example, using `JsonLayout`:
 
 ```xml
