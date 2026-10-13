@@ -8,6 +8,7 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import io.opentelemetry.sdk.trace.data.LinkData;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
+import io.opentelemetry.sdk.trace.samplers.SamplingDecision;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -21,7 +22,7 @@ import java.util.Map;
  * <p>The durable plugins decide sampling for the whole execution exactly once per invocation and attach the resulting
  * {@link SamplingResult} to the {@link Context} used as the parent of each durable span (via
  * {@link DurableSamplingDecision}). When {@code shouldSample} sees that decision on the parent context it returns it
- * verbatim, so:
+ * verbatim for descendants. Re-exported execution anchors use only the sampled decision and stable SDK identity, so:
  *
  * <ul>
  *   <li>the wrapped (customer-configured or ADOT/community default) sampler is invoked at most once per invocation for
@@ -120,17 +121,22 @@ final class DurableSampler implements Sampler {
             // Not a durable span: the customer's sampler governs it unchanged.
             return delegate.shouldSample(parentContext, traceId, name, spanKind, attributes, parentLinks);
         }
-        if (!intent.isDeferred()) {
-            // A resolved decision (explicit upstream, same-trace ambient, or a locally reproduced sampler): return it
-            // verbatim, preserving RECORD_ONLY and never re-invoking the delegate.
-            return intent.resolved();
+        var result = intent.isDeferred()
+                ? deferredDecisions.computeIfAbsent(
+                        new ExecutionKey(
+                                intent.deferredTraceId(), attributes.get(SpanAttributes.DURABLE_EXECUTION_ARN)),
+                        key -> delegate.shouldSample(
+                                Context.root(), key.traceId(), name, spanKind, attributes, Collections.emptyList()))
+                : intent.resolved();
+        if (name.equals("DurableExecutionRoot")
+                && Boolean.TRUE.equals(attributes.get(SpanAttributes.DURABLE_EXECUTION_SYNTHETIC_ROOT))) {
+            // Re-exported anchors carry only SDK identity and the sampled decision. Per-invocation sampler
+            // metadata remains on descendants; recording-only executions do not materialize an anchor.
+            return result.getDecision() == SamplingDecision.RECORD_AND_SAMPLE
+                    ? SamplingResult.recordAndSample()
+                    : SamplingResult.drop();
         }
-        // Deferred (agent path, real sampler not reproducible here): evaluate the actual delegate once per execution
-        // and reuse it, so an installed drop/rate-limit policy is honored and consulted only once.
-        return deferredDecisions.computeIfAbsent(
-                new ExecutionKey(intent.deferredTraceId(), attributes.get(SpanAttributes.DURABLE_EXECUTION_ARN)),
-                key -> delegate.shouldSample(
-                        Context.root(), key.traceId(), name, spanKind, attributes, Collections.emptyList()));
+        return result;
     }
 
     @Override

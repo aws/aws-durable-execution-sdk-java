@@ -239,7 +239,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         var sampled = OtelPluginSupport.isSampled(decision);
         var execCtx = ExecutionTraceContext.resolve(extracted, canonicalTraceId, arn(), idGenerator, () -> sampled);
         executionStartTime = info.executionStartTime();
-        executionRootSpan = OtelPluginSupport.startExecutionRoot(
+        var root = DurableExecutionRoot.start(
                 tracer,
                 idGenerator,
                 execCtx.executionAncestor(),
@@ -248,6 +248,13 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
                 samplingIntent,
                 OtelPluginSupport.usesLocalDurableSampler(sdkTracerProvider),
                 OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider));
+        try {
+            DurableExecutionRoot.end(root, executionStartTime);
+        } finally {
+            // Publish only after end callbacks, so a reentrant End cannot flush from inside root.end().
+            // Retain the ended root as a flush marker even if an onEnd processor throws during Start.
+            executionRootSpan = root;
+        }
         // A visible plain replacement keeps its documented ancestor-flag fallback, without SDK-wide overrides.
         if (executionRootSpan != null && OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)) {
             execCtx = new ExecutionTraceContext(executionRootSpan.getSpanContext());
@@ -289,19 +296,16 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
         var root = executionRootSpan;
-        var rootTimestamp = executionStartTime;
         var provider = sdkTracerProvider;
         var shouldFlush = tracingEnabled || root != null;
-        executionRootSpan = null; // One-shot release even if an end processor throws or re-enters.
-        OtelPluginSupport.finishWithRootCleanup(
-                () -> finishInvocationEnd(info),
-                () -> OtelPluginSupport.endRootAndFlush(root, rootTimestamp, () -> {
-                    if (shouldFlush && provider != null) {
-                        var flushResult = provider.forceFlush().join(5, TimeUnit.SECONDS);
-                        if (!flushResult.isSuccess())
-                            logger.warn("OTel span flush failed or timed out — some spans may be lost");
-                    }
-                }));
+        executionRootSpan = null; // The anchor already ended at Start; flush this invocation only once.
+        OtelPluginSupport.finishWithRootCleanup(() -> finishInvocationEnd(info), () -> {
+            if (shouldFlush && provider != null) {
+                var flushResult = provider.forceFlush().join(5, TimeUnit.SECONDS);
+                if (!flushResult.isSuccess())
+                    logger.warn("OTel span flush failed or timed out — some spans may be lost");
+            }
+        });
     }
 
     private void finishInvocationEnd(InvocationEndInfo info) {

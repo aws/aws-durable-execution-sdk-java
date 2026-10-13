@@ -100,20 +100,6 @@ final class DurableSamplingDecision {
         };
     }
 
-    /**
-     * Inspects the unconsumed durable sampling intent for a span, or {@code null} when none is present. Prefers the
-     * full-fidelity context key (same class loader) and falls back to the thread-scoped system property (cross class
-     * loader).
-     */
-    static Intent get(Context context) {
-        var holder = context.get(KEY);
-        var fromContext = holder != null ? holder.get() : null;
-        if (fromContext != null) {
-            return fromContext;
-        }
-        return fromScopedProperty();
-    }
-
     /** Consumes both carriers before callbacks can reuse the parent context or cross-loader bridge. */
     static Intent consume(Context context) {
         try {

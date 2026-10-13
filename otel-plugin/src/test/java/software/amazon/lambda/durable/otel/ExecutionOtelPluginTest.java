@@ -406,8 +406,11 @@ class ExecutionOtelPluginTest {
         var spans = spanExporter.getFinishedSpanItems();
         // Invocation and DurableExecutionRoot are exported; Workflow remains deferred until terminal status.
         assertEquals(2, spans.size());
-        assertEquals("Invocation", spans.get(0).getName());
-        assertEquals(StatusCode.OK, spans.get(0).getStatus().getStatusCode(), "PENDING invocation span maps to OK");
+        assertEquals("Invocation", spanByName(spans, "Invocation").getName());
+        assertEquals(
+                StatusCode.OK,
+                spanByName(spans, "Invocation").getStatus().getStatusCode(),
+                "PENDING invocation span maps to OK");
     }
 
     @Test
@@ -452,7 +455,7 @@ class ExecutionOtelPluginTest {
 
         var spans = spanExporter.getFinishedSpanItems();
         assertEquals(2, spans.size(), "RETRYING is non-terminal — Workflow span not exported");
-        var invocationSpan = spans.get(0);
+        var invocationSpan = spanByName(spans, "Invocation");
         assertEquals("Invocation", invocationSpan.getName());
         assertEquals(
                 StatusCode.UNSET,
@@ -943,12 +946,11 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        // Invocation and DurableExecutionRoot are exported. A still-open operation has no recording span (creation is
-        // deferred to
-        // onOperationEnd), so there is nothing to abandon, and the Workflow span is not exported on a non-terminal
-        // invocation.
+        // Invocation and DurableExecutionRoot are exported. A still-open operation has no recording span
+        // (creation is deferred to onOperationEnd), so there is nothing to abandon, and the Workflow span is not
+        // exported on a non-terminal invocation.
         assertEquals(2, spans.size());
-        assertEquals("Invocation", spans.get(0).getName());
+        assertEquals("Invocation", spanByName(spans, "Invocation").getName());
         assertTrue(
                 spans.stream().noneMatch(s -> s.getName().equals("my-wait")),
                 "An operation still open at invocation end must not be ended/exported in onInvocationEnd");

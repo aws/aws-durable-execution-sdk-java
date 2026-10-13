@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.OpenTelemetry;
@@ -66,8 +67,8 @@ class DurableSamplingDecisionClassLoaderTest {
         "ExecutionOtelPlugin,foreign,false", "ExecutionOtelPlugin,foreign,true",
         "ExecutionOtelPlugin,opaque,false", "ExecutionOtelPlugin,opaque,true"
     })
-    void materializedRootSuppliesParentSamplingMetadata(String pluginName, String topology, boolean recordOnly)
-            throws Exception {
+    void managedAnchorKeepsStableIdentityAndChildrenRetainSamplerMetadata(
+            String pluginName, String topology, boolean recordOnly) throws Exception {
         var previousHeader = System.getProperty("com.amazonaws.xray.traceHeader");
         GlobalOpenTelemetry.resetForTest();
         OtelPluginAutoConfigurationState.markInstalled();
@@ -158,16 +159,22 @@ class DurableSamplingDecisionClassLoaderTest {
                 var roots = spans.stream()
                         .filter(span -> span.getName().equals("DurableExecutionRoot"))
                         .toList();
-                assertEquals(2, roots.size());
-                var rootContext = roots.get(0).getSpanContext();
+                assertEquals(recordOnly ? 0 : 2, roots.size());
+                var rootContext = spans.stream()
+                        .filter(span -> span.getName().equals("Invocation"))
+                        .findFirst()
+                        .orElseThrow()
+                        .getParentSpanContext();
+                assertEquals(TraceState.getDefault(), rootContext.getTraceState());
                 for (var anchor : roots) {
                     assertEquals(
                             rootContext, anchor.getSpanContext(), "Re-export keeps the complete stable root context");
                     assertEquals(10_000_000_000L, anchor.getStartEpochNanos());
                     assertEquals(anchor.getStartEpochNanos(), anchor.getEndEpochNanos());
-                    assertEquals("1", anchor.getSpanContext().getTraceState().get("depth"));
-                    assertEquals(!recordOnly, anchor.getSpanContext().isSampled());
-                    assertEquals("kept", anchor.getAttributes().get(key));
+                    assertEquals(
+                            TraceState.getDefault(), anchor.getSpanContext().getTraceState());
+                    assertTrue(anchor.getSpanContext().isSampled());
+                    assertNull(anchor.getAttributes().get(key));
                 }
                 var descendants = spans.stream()
                         .filter(span -> span.getName().equals("Invocation")
@@ -179,7 +186,7 @@ class DurableSamplingDecisionClassLoaderTest {
                             rootContext,
                             child.getParentSpanContext(),
                             "A child must record the materialized parent's flags and trace state: " + child.getName());
-                    assertEquals("2", child.getSpanContext().getTraceState().get("depth"));
+                    assertEquals("1", child.getSpanContext().getTraceState().get("depth"));
                     assertEquals("kept", child.getAttributes().get(key));
                 }
                 assertEquals(topology.equals("local") ? 2 : 1, evaluations.get());
@@ -291,10 +298,19 @@ class DurableSamplingDecisionClassLoaderTest {
                     }
                 }
                 var spans = exporter.getFinishedSpanItems().stream()
-                        .filter(s ->
-                                s.getName().equals("Invocation") || s.getName().equals("DurableExecutionRoot"))
+                        .filter(s -> s.getName().equals("Invocation"))
                         .toList();
-                assertEquals(executionCount * 4, spans.size());
+                assertEquals(executionCount * 2, spans.size());
+                var anchors = exporter.getFinishedSpanItems().stream()
+                        .filter(s -> s.getName().equals("DurableExecutionRoot"))
+                        .toList();
+                assertEquals(2, anchors.size(), "Only sampled executions export anchors, twice across resume");
+                for (var anchor : anchors) {
+                    assertTrue(anchor.getSpanContext().isSampled());
+                    assertNull(anchor.getAttributes().get(key));
+                    assertEquals(
+                            TraceState.getDefault(), anchor.getSpanContext().getTraceState());
+                }
                 for (var span : spans) {
                     var second = span.getAttributes()
                             .get(SpanAttributes.DURABLE_EXECUTION_ARN)
@@ -341,7 +357,7 @@ class DurableSamplingDecisionClassLoaderTest {
 
             var openScope = appDecision.getDeclaredMethod("openScope", appIntentClass);
             openScope.setAccessible(true);
-            var get = agentDecision.getDeclaredMethod("get", Context.class);
+            var get = agentDecision.getDeclaredMethod("consume", Context.class);
             get.setAccessible(true);
             var consume = agentDecision.getDeclaredMethod("consume", Context.class);
             consume.setAccessible(true);
@@ -408,10 +424,10 @@ class DurableSamplingDecisionClassLoaderTest {
             var agentWrap = agentSamplerType.getDeclaredMethod("wrap", Sampler.class);
             agentWrap.setAccessible(true);
             var appDecision = Class.forName(DurableSamplingDecision.class.getName(), true, appLoader);
-            var appGet = appDecision.getDeclaredMethod("get", Context.class);
+            var appGet = appDecision.getDeclaredMethod("consume", Context.class);
             appGet.setAccessible(true);
             var agentDecision = Class.forName(DurableSamplingDecision.class.getName(), true, agentLoader);
-            var agentGet = agentDecision.getDeclaredMethod("get", Context.class);
+            var agentGet = agentDecision.getDeclaredMethod("consume", Context.class);
             agentGet.setAccessible(true);
             var agentIdType = Class.forName(DeterministicIdGenerator.class.getName(), true, agentLoader);
             var callbacks = new AtomicInteger();

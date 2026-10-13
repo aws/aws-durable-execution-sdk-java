@@ -3,9 +3,7 @@
 package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
 
-import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.sdk.common.CompletableResultCode;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
@@ -69,9 +67,6 @@ class ExecutionRootLifecycleTest {
                         && mode.contains("failure")
                         && !mode.equals("start-failure")
                         && failOnce.compareAndSet(true, false)) throw primary;
-                if (span.getName().equals("Invocation")
-                        && mode.equals("fatal-root-cleanup")
-                        && failOnce.compareAndSet(true, false)) throw primary;
                 if (!span.getName().equals("DurableExecutionRoot")) return;
                 rootsEnded.incrementAndGet();
                 inRootCallback.set(true);
@@ -111,25 +106,24 @@ class ExecutionRootLifecycleTest {
                 assertSame(
                         primary,
                         assertThrows(AssertionError.class, () -> plugin.get().onInvocationStart(first)));
+            else if (mode.equals("fatal-root-cleanup"))
+                assertSame(
+                        cleanupFatal,
+                        assertThrows(InternalError.class, () -> plugin.get().onInvocationStart(first)));
             else plugin.get().onInvocationStart(first);
             assertEquals("DurableExecutionRoot", starts.get(0));
-            assertTrue(roots.get(0).isRecording(), "The root is retained until invocation end");
+            assertFalse(roots.get(0).isRecording(), "The anchor ended before the Start hook returned or failed");
             if (mode.equals("end-failure"))
                 assertSame(
                         primary,
                         assertThrows(AssertionError.class, () -> plugin.get().onInvocationEnd(end(true))));
-            else if (mode.equals("fatal-root-cleanup")) {
-                assertSame(
-                        cleanupFatal,
-                        assertThrows(InternalError.class, () -> plugin.get().onInvocationEnd(end(true))));
-                assertEquals(List.of(primary), List.of(cleanupFatal.getSuppressed()));
-            } else plugin.get().onInvocationEnd(end(true));
+            else plugin.get().onInvocationEnd(end(true));
             assertEquals(1, rootsEnded.get());
             assertFalse(roots.get(0).isRecording());
             assertEquals(
-                    mode.equals("fatal-root-cleanup") ? 0 : 1,
+                    1,
                     flushes.get(),
-                    "Normal and partial-start cleanup flush only after the root ends; fatal root cleanup escapes");
+                    "End flushes completed spans, including cleanup after a partially completed Start");
             var beforeDuplicateEnd = flushes.get();
             plugin.get().onInvocationEnd(end(true));
             assertEquals(beforeDuplicateEnd, flushes.get());
@@ -162,11 +156,11 @@ class ExecutionRootLifecycleTest {
         "runtime,fatal",
         "linkage,ordinary",
         "linkage,fatal",
-        "assertion,unused",
-        "vm,unused",
-        "death,unused"
+        "assertion,ordinary",
+        "vm,ordinary",
+        "death,ordinary"
     })
-    void flushRunsOnlyAfterRootFailuresIsolatedByTheExistingPluginBoundary(String rootKind, String flushKind) {
+    void flushPreservesTheExistingEndFailurePriority(String rootKind, String flushKind) {
         Throwable rootFailure =
                 switch (rootKind) {
                     case "linkage" -> new LinkageError("root linkage");
@@ -178,27 +172,17 @@ class ExecutionRootLifecycleTest {
         Throwable flushFailure = flushKind.equals("fatal")
                 ? new InternalError("flush fatal")
                 : new IllegalArgumentException("flush ordinary");
-        var root = mock(Span.class);
-        doAnswer(call -> {
-                    ExceptionHelper.sneakyThrow(rootFailure);
-                    return null;
-                })
-                .when(root)
-                .end(START);
         var flushes = new AtomicInteger();
         var observed = assertThrows(
                 Throwable.class,
-                () -> OtelPluginSupport.endRootAndFlush(root, START, () -> {
+                () -> OtelPluginSupport.finishWithRootCleanup(() -> ExceptionHelper.sneakyThrow(rootFailure), () -> {
                     flushes.incrementAndGet();
                     ExceptionHelper.sneakyThrow(flushFailure);
                 }));
         var isolated = rootKind.equals("runtime") || rootKind.equals("linkage");
-        assertEquals(isolated ? 1 : 0, flushes.get());
+        assertEquals(1, flushes.get());
         var expected = isolated && flushKind.equals("fatal") ? flushFailure : rootFailure;
         assertSame(expected, observed);
-        assertEquals(
-                isolated ? List.of(expected == rootFailure ? flushFailure : rootFailure) : List.of(),
-                List.of(observed.getSuppressed()));
-        verify(root).end(START);
+        assertEquals(List.of(expected == rootFailure ? flushFailure : rootFailure), List.of(observed.getSuppressed()));
     }
 }

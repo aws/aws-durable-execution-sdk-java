@@ -332,7 +332,7 @@ class InvocationOtelPluginTest {
         var spans = spanExporter.getFinishedSpanItems();
         assertEquals(3, spans.size()); // invocation + Workflow + DurableExecutionRoot
 
-        var span = spans.get(0);
+        var span = spanByName("Invocation");
         assertEquals("Invocation", span.getName());
         assertEquals(StatusCode.OK, span.getStatus().getStatusCode());
     }
@@ -418,7 +418,7 @@ class InvocationOtelPluginTest {
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
-        var span = spanExporter.getFinishedSpanItems().get(0);
+        var span = spanByName("Invocation");
         assertEquals(SpanKind.INTERNAL, span.getKind(), "Invocation span must be INTERNAL kind");
     }
 
@@ -583,7 +583,7 @@ class InvocationOtelPluginTest {
 
         var spans = spanExporter.getFinishedSpanItems();
         assertEquals(3, spans.size()); // invocation + Workflow + DurableExecutionRoot
-        assertEquals(StatusCode.ERROR, spans.get(0).getStatus().getStatusCode());
+        assertEquals(StatusCode.ERROR, spanByName("Invocation").getStatus().getStatusCode());
     }
 
     @Test
@@ -596,7 +596,7 @@ class InvocationOtelPluginTest {
         assertEquals(2, spans.size());
         assertEquals(
                 StatusCode.UNSET,
-                spans.get(0).getStatus().getStatusCode(),
+                spanByName("Invocation").getStatus().getStatusCode(),
                 "RETRYING invocation span is UNSET (interface cannot distinguish STOPPED/TIMED_OUT)");
     }
 

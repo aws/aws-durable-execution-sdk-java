@@ -74,24 +74,28 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 
 ## Fallback execution roots
 
-When the backend supplies no complete remote parent, both views export a `DurableExecutionRoot` anchor before the first
-invocation returns, including when it suspends with `PENDING` or fails with `RETRYING`.
-The anchor is started before descendants so their parent context includes its provider-resolved trace flags and
-trace state. It ends at invocation end, before flushing, with the same fixed execution-start timestamp. For a
+When the backend supplies no complete remote parent and the installed SDK sampler selects `RECORD_AND_SAMPLE`,
+both views export a `DurableExecutionRoot` anchor during the invocation Start hook, including invocations that later
+suspend with `PENDING` or fail with `RETRYING`. The anchor starts before descendants and ends immediately with the
+same checkpointed execution-start timestamp. It is zero-duration: descendants can end after it, and its ended span
+context remains a valid parent. Trace viewers that enforce parent/child time containment may flag this shape. For a
 deferred sampler, the first actual fallback span is now `DurableExecutionRoot`; custom policies that depend on the
 first span name or attributes can observe that ordering. No arbitrary name/input invariance is promised.
 
 If result serialization or oversized-result checkpointing fails before the SDK output is prepared, End reports
-`RETRYING` on the existing completion thread before the original preparation failure propagates. This closes the
-retained root without changing handler failure classification or claiming coverage of later response-stream writes
-or runtime acknowledgment. A root processor `Exception` or `LinkageError` still permits flushing already completed
-spans before the plugin boundary isolates that error. Unisolated `Error` failures keep their existing escape/skip-flush
-behavior; a failing processor need not have exported the root itself. Cleanup preserves the original preparation
-failure unless it introduces the first direct JVM fatal; an earlier JVM fatal remains primary.
+`RETRYING` on the existing completion thread before the original preparation failure propagates. End flushes completed
+spans without changing handler failure classification or claiming coverage of later response-stream writes or runtime
+acknowledgment. A root end processor's `Exception` or `LinkageError` is logged without suppressing descendant telemetry
+or the End flush. Other `Error` failures still escape the Start hook; if invocation cleanup does not run, a batch
+processor may not flush. A failing processor need not have exported the root itself. Existing End cleanup failure
+priority remains unchanged.
 
 The anchor is marked `durable.execution.synthetic_root=true`. Its trace and span IDs are deterministic and its start
 and end timestamps are the checkpointed execution start. It does not report execution status or duration; `Workflow`
-continues to report those at terminal completion. Complete remote parents remain externally owned and are never exported.
+continues to report those at terminal completion. With the SDK sampler installed, the anchor carries only the two SDK
+identity attributes and the sampled decision, excluding sampler-added attributes and updated trace state. `RECORD_ONLY`
+and `DROP` do not export an anchor; descendants retain their full sampling result, including `RECORD_ONLY`, attributes,
+and trace state. Complete remote parents remain externally owned and are never exported.
 Java's `InvocationInfo` requires a non-null execution start timestamp from the initial checkpointed execution operation.
 Missing timestamps are rejected before the plugin runs; anchor timestamps never fall back to the current wall clock.
 
@@ -104,14 +108,15 @@ execution. With the SDK sampler retained in the provider, upstream sampling and 
 to anchors and their descendants together.
 
 After the first invocation's export and flush succeed, its anchor remains available even if the execution is stopped
-or times out while suspended and never invokes the plugin again. An invocation killed before its end hook or flush can
-still lose its spans; a later invocation, including terminal completion, attempts to export the anchor again. Export
+or times out while suspended and never invokes the plugin again. Ending the anchor during Start also lets batch
+processors export it while customer code runs. An invocation killed before an export or flush can still lose spans;
+a later sampled invocation, including terminal completion, attempts to export the anchor again. Export
 and flush failures do not provide a delivery guarantee.
 
 For a consistent hierarchy across invocations, preserve an explicit upstream sampling decision or use a deterministic
 sampling policy based on the stable trace ID. A non-deterministic sampler can export an anchor without a Workflow, or
-a Workflow without its anchor. Any sampler-supplied attributes and trace state must also stay stable for identical
-anchor re-exports.
+a Workflow without its anchor. Sampler metadata on descendants remains provider-owned; it does not change the SDK
+anchor's body. Provider resources and custom span processors can still change exported data.
 
 ## Choose one durable OTel view
 
@@ -308,8 +313,9 @@ The SDK-wide sampling guarantees below require `DurableSampler` itself to be the
 [builder constructors](#configuration) and [ADOT extension setup](#1-adot-lambda-layer) install it automatically;
 configure its delegate through these documented paths and retain `DurableSampler` as the final sampler. An
 unrecognized outer wrapper is treated as a plain replacement. The SDK wrapper applies its sampling intent to every durable
-span (DurableExecutionRoot, Workflow, Invocation, operation and attempt), preserving the full result, including `RECORD_ONLY`, sampler attributes
-and trace state.
+span. Workflow, Invocation, operation and attempt spans preserve the full result, including `RECORD_ONLY`, sampler
+attributes and trace state. The re-exported `DurableExecutionRoot` is the narrow exception described above: it uses only
+the sampled decision and stable SDK identity, and is omitted for `RECORD_ONLY` or `DROP`.
 
 The supported SDK sampler follows this precedence, highest first:
 
@@ -336,7 +342,11 @@ active tracing. The SDK sampling wrapper preserves that decision.
 
 Parentless fallback-root exports also use the provider's sampler. If the SDK wrapper is replaced by a plain
 sampler, those anchors can follow its normal root policy independently of the flags used by their descendants;
-full upstream sampling overrides require the installed SDK wrapper.
+full upstream sampling overrides require the installed SDK wrapper. For example, a sampler that selects spans by name
+can export only the anchor or only its Invocation child. This behavior is covered for both views by
+`ExecutionRootParityTest.plainReplacementRetainsIndependentPerSpanSampling`; installing `DurableSampler` restores the
+shared decision. Merely delaying anchor creation until terminal completion would not make an arbitrary replacement
+sampler consistent across spans.
 
 ## Span Attributes
 

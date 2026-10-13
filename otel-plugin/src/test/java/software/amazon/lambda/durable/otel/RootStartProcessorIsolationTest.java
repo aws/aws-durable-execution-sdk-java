@@ -45,13 +45,13 @@ class RootStartProcessorIsolationTest {
 
     @ParameterizedTest
     @MethodSource("cases")
-    void rootStartCallbacksRetainTheirOwnSamplingAndRandomIds(
+    void durableStartCallbacksRetainTheirOwnSamplingAndRandomIds(
             boolean executionView,
             boolean sampled,
             boolean sharedGenerator,
             boolean rootRecordOnly,
             boolean forwardParent) {
-        var observer = new StartObserver(forwardParent);
+        var observer = new StartObserver(forwardParent, rootRecordOnly ? "Invocation" : "DurableExecutionRoot");
         var policy = sampled ? Sampler.alwaysOn() : Sampler.alwaysOff();
         var builder = SdkTracerProvider.builder()
                 .setSampler(rootSampler(rootRecordOnly, policy))
@@ -80,7 +80,7 @@ class RootStartProcessorIsolationTest {
             invoke(plugin, false);
             assertControl(observer.tracer, sampled);
             assertSame(original, Context.current());
-            assertObservations(observer, sampled);
+            assertObservations(observer, sampled, rootRecordOnly);
         }
     }
 
@@ -96,21 +96,29 @@ class RootStartProcessorIsolationTest {
         span.end();
     }
 
-    private static void assertObservations(StartObserver observer, boolean sampled) {
+    private static void assertObservations(StartObserver observer, boolean sampled, boolean recordOnly) {
         assertEquals(2, observer.roots.size());
-        assertEquals(observer.roots.get(0), observer.roots.get(1));
         var root = observer.roots.get(0);
-        assertEquals(new DeterministicIdGenerator().generateExecutionRootSpanId(ARN), root.getSpanId());
+        assertEquals(recordOnly ? 0 : 2, observer.anchorStarts, "RECORD_ONLY has no anchor processor callback");
+        if (!recordOnly) {
+            assertEquals(observer.roots.get(0), observer.roots.get(1));
+            assertEquals(new DeterministicIdGenerator().generateExecutionRootSpanId(ARN), root.getSpanId());
+        }
         assertEquals(2, observer.callbacks.size());
         assertEquals(List.of(sampled, sampled), observer.recording);
         for (var callback : observer.callbacks) {
             assertEquals(sampled, callback.isSampled());
             assertTrue(callback.isValid());
-            assertNotEquals(root.getTraceId(), callback.getTraceId());
+            if (recordOnly && observer.forwardParent) {
+                // An Invocation has a real execution ancestor; explicitly forwarding it preserves that trace.
+                assertEquals(root.getTraceId(), callback.getTraceId());
+            } else {
+                assertNotEquals(root.getTraceId(), callback.getTraceId());
+            }
             assertNotEquals(root.getSpanId(), callback.getSpanId());
         }
         assertEquals(
-                2,
+                recordOnly && observer.forwardParent ? 1 : 2,
                 observer.callbacks.stream()
                         .map(SpanContext::getTraceId)
                         .distinct()
@@ -149,9 +157,12 @@ class RootStartProcessorIsolationTest {
     private static final class StartObserver implements SpanProcessor {
         private Tracer tracer;
         private final boolean forwardParent;
+        private final String observedName;
+        private int anchorStarts;
 
-        private StartObserver(boolean forwardParent) {
+        private StartObserver(boolean forwardParent, String observedName) {
             this.forwardParent = forwardParent;
+            this.observedName = observedName;
         }
 
         private final List<SpanContext> roots = new ArrayList<>();
@@ -160,8 +171,10 @@ class RootStartProcessorIsolationTest {
 
         @Override
         public void onStart(Context parent, ReadWriteSpan span) {
-            // The name guard permits exactly one unrelated span per root and prevents processor recursion.
-            if (!span.getName().equals("DurableExecutionRoot")) return;
+            if (span.getName().equals("DurableExecutionRoot")) anchorStarts++;
+            // Observe the recording Invocation for RECORD_ONLY, which intentionally has no recording anchor.
+            // The name guard permits one unrelated span per observation and prevents processor recursion.
+            if (!span.getName().equals(observedName)) return;
             roots.add(span.getSpanContext());
             var builder = tracer.spanBuilder("unrelated-onStart");
             var callback = (forwardParent ? builder.setParent(parent) : builder.setNoParent()).startSpan();
