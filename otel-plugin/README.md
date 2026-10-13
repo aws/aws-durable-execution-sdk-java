@@ -408,7 +408,8 @@ A failed operation can have an absent or fully empty backend error container. It
 `FAILED`, `TIMED_OUT`, or `STOPPED`, while the OTel span stays `UNSET` and has no exception event when no details
 were supplied. An explicitly present empty string or stack-trace list still counts as supplied error details.
 Virtual (FLAT) contexts can have no terminal status; a non-null failure still prevents `OK`, even when its backend
-error container supplies no details.
+error container supplies no details. An exception's own message (including an empty string), cause, suppressed failures,
+or explicit stack trace still supplies diagnostic information and retains `ERROR` and its exception event.
 
 This telemetry decision does not remove the SDK's failure notification: a present `ErrorObject`, including `{}`,
 remains a `DurableOperationException` in operation hooks and snapshots. An absent container retains its existing

@@ -96,7 +96,11 @@ final class OtelPluginSupport {
                 return details.errorType() != null
                         || details.errorMessage() != null
                         || details.errorData() != null
-                        || details.hasStackTrace();
+                        || details.hasStackTrace()
+                        || error.getMessage() != null
+                        || error.getCause() != null
+                        || error.getSuppressed().length > 0
+                        || error.getStackTrace().length > 0;
             }
         }
         // Preserve ordinary/custom Throwable behavior, including wrappers without an ErrorObject.

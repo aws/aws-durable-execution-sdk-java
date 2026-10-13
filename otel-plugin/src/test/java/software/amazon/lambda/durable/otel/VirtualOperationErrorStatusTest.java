@@ -5,9 +5,11 @@ package software.amazon.lambda.durable.otel;
 import static org.junit.jupiter.api.Assertions.*;
 import static software.amazon.lambda.durable.otel.SpanAttributes.DURABLE_OPERATION_NAME;
 
+import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.data.EventData;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Duration;
 import java.time.Instant;
@@ -39,6 +41,11 @@ class VirtualOperationErrorStatusTest {
         "false,empty", "true,empty",
         "false,without-container", "true,without-container",
         "false,ordinary", "true,ordinary",
+        "false,explicit-message", "true,explicit-message",
+        "false,empty-message", "true,empty-message",
+        "false,explicit-cause", "true,explicit-cause",
+        "false,explicit-suppressed", "true,explicit-suppressed",
+        "false,explicit-stack", "true,explicit-stack",
         "false,success", "true,success"
     })
     void publicVirtualChildKeepsFailureStatusAcrossReplay(boolean executionView, String outcome) {
@@ -114,13 +121,25 @@ class VirtualOperationErrorStatusTest {
                 assertEquals(
                         status(outcome) == StatusCode.ERROR ? 1 : 0,
                         span.getEvents().size());
+                if (status(outcome) == StatusCode.ERROR)
+                    assertDiagnostics(span.getEvents().get(0), failure, outcome);
             });
             assertEquals(1, sideEffects.get(), "Completed durable work is skipped on replay");
         }
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"empty", "ordinary", "success"})
+    @ValueSource(
+            strings = {
+                "empty",
+                "ordinary",
+                "success",
+                "explicit-message",
+                "empty-message",
+                "explicit-cause",
+                "explicit-suppressed",
+                "explicit-stack"
+            })
     void missingStartInvocationSegmentRetainsVirtualFailure(String outcome) {
         try (var exporter = InMemorySpanExporter.create()) {
             var plugin = plugin(false, exporter);
@@ -148,6 +167,8 @@ class VirtualOperationErrorStatusTest {
             assertEquals(
                     status(outcome) == StatusCode.ERROR ? 1 : 0,
                     spans.get(0).getEvents().size());
+            if (status(outcome) == StatusCode.ERROR)
+                assertDiagnostics(spans.get(0).getEvents().get(0), failure(outcome), outcome);
         }
     }
 
@@ -170,10 +191,46 @@ class VirtualOperationErrorStatusTest {
             case "empty" ->
                 new DurableOperationException(operation, ErrorObject.builder().build());
             case "without-container" -> new DurableOperationException(operation, null, "explicit failure");
+            case "explicit-message" ->
+                new DurableOperationException(operation, ErrorObject.builder().build(), "diagnostic-message");
+            case "empty-message" ->
+                new DurableOperationException(operation, ErrorObject.builder().build(), "");
+            case "explicit-cause" ->
+                new DurableOperationException(
+                        operation,
+                        ErrorObject.builder().build(),
+                        null,
+                        new IllegalArgumentException("diagnostic-cause"));
+            case "explicit-suppressed" -> {
+                var failure = new DurableOperationException(
+                        operation, ErrorObject.builder().build());
+                failure.addSuppressed(new IllegalStateException("diagnostic-suppressed"));
+                yield failure;
+            }
+            case "explicit-stack" ->
+                new DurableOperationException(
+                        operation,
+                        ErrorObject.builder().build(),
+                        null,
+                        new StackTraceElement[] {new StackTraceElement("example.Virtual", "fail", "Virtual.java", 7)},
+                        null);
             case "ordinary" -> new IllegalStateException("ordinary failure");
             case "success" -> null;
             default -> throw new IllegalArgumentException(outcome);
         };
+    }
+
+    private static void assertDiagnostics(EventData event, RuntimeException failure, String outcome) {
+        if (failure.getMessage() != null) {
+            assertEquals(failure.getMessage(), event.getAttributes().get(AttributeKey.stringKey("exception.message")));
+        }
+        var stack = event.getAttributes().get(AttributeKey.stringKey("exception.stacktrace"));
+        switch (outcome) {
+            case "explicit-cause" -> assertTrue(stack.contains("diagnostic-cause"));
+            case "explicit-suppressed" -> assertTrue(stack.contains("diagnostic-suppressed"));
+            case "explicit-stack" -> assertTrue(stack.contains("example.Virtual.fail(Virtual.java:7)"));
+            default -> {}
+        }
     }
 
     private static StatusCode status(String outcome) {
