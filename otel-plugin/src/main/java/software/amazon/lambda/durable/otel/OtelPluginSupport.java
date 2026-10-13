@@ -19,43 +19,28 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 
-/** Shared utilities for OTel plugin default constructor support (ADOT Java agent SPI path). */
+/** Shared provider setup, sampling resolution, and invocation cleanup support. */
 final class OtelPluginSupport {
 
-    private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);
-
-    private OtelPluginSupport() {}
-
-    /** Only the same DurableSampler class copy can consume this loader's parent-context holder. */
-    static boolean usesLocalDurableSampler(SdkTracerProvider provider) {
-        return provider != null && provider.getSampler() instanceof DurableSampler;
-    }
-
-    /** A visible replacement sampler cannot consume our bridge; an opaque agent provider may still need it. */
-    static boolean usesDurableSamplingBridge(SdkTracerProvider provider) {
-        // Class-name matching is only for the cross-loader wire carrier, never for the context-key ownership check.
-        return provider == null || provider.getSampler().getClass().getName().equals(DurableSampler.class.getName());
-    }
-
-    /** Closes the owning thread's scope without hiding a finalization error or a later JVM-fatal cleanup failure. */
-    static void runInvocationEnd(Scope scope, Runnable end) {
+    /** Always runs invocation cleanup without hiding an earlier failure or a later JVM fatal. */
+    static void finishWithRootCleanup(Runnable finish, Runnable cleanup) {
         Throwable primary = null;
         try {
-            end.run();
+            finish.run();
         } catch (Throwable failure) {
             primary = failure;
             throw failure;
         } finally {
             try {
-                if (scope != null) scope.close();
-            } catch (Throwable cleanup) {
-                if (primary == null) throw cleanup;
-                if (primary != cleanup) {
-                    if (endFailurePriority(cleanup) > endFailurePriority(primary)) {
-                        cleanup.addSuppressed(primary);
-                        throw cleanup;
+                cleanup.run();
+            } catch (Throwable failure) {
+                if (primary == null) throw failure;
+                if (primary != failure) {
+                    if (endFailurePriority(failure) > endFailurePriority(primary)) {
+                        failure.addSuppressed(primary);
+                        throw failure;
                     }
-                    primary.addSuppressed(cleanup);
+                    primary.addSuppressed(failure);
                 }
             }
         }
@@ -68,7 +53,14 @@ final class OtelPluginSupport {
         return 1;
     }
 
-    /** Rejects an older core before a plugin builds a provider or activates any thread-local context. */
+    /** Applies the base lifecycle's scope restoration with the same cleanup failure precedence. */
+    static void runInvocationEnd(Scope scope, Runnable end) {
+        finishWithRootCleanup(end, () -> {
+            if (scope != null) scope.close();
+        });
+    }
+
+    /** Rejects an older core before a plugin builds a provider or activates thread-local context. */
     static void requireSameThreadInvocationHooks() {
         var message = "This OpenTelemetry plugin requires same-thread invocation hooks from the Durable Execution"
                 + " core (2.2.2 lifecycle capability). Upgrade the core together with the plugin layer.";
@@ -77,6 +69,21 @@ final class OtelPluginSupport {
         } catch (NoSuchMethodError missingCapability) {
             throw new IllegalStateException(message, missingCapability);
         }
+    }
+
+    private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);
+
+    private OtelPluginSupport() {}
+
+    /** A visible replacement sampler cannot consume our bridge; an opaque agent provider may still need it. */
+    static boolean usesDurableSamplingBridge(SdkTracerProvider provider) {
+        // This identifies only the cross-loader wire consumer; context-key ownership still requires instanceof.
+        return provider == null || provider.getSampler().getClass().getName().equals(DurableSampler.class.getName());
+    }
+
+    /** Only the same DurableSampler class copy can consume this loader's parent-context holder. */
+    static boolean usesLocalDurableSampler(SdkTracerProvider provider) {
+        return provider != null && provider.getSampler() instanceof DurableSampler;
     }
 
     /** Creates a new DeterministicIdGenerator for the application-side state bridge. */

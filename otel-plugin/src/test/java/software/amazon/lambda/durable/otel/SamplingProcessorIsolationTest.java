@@ -78,10 +78,10 @@ class SamplingProcessorIsolationTest {
             var agentWrap = agentSamplerType.getDeclaredMethod("wrap", Sampler.class);
             agentWrap.setAccessible(true);
             var appDecision = Class.forName(DurableSamplingDecision.class.getName(), true, appLoader);
-            var appGet = appDecision.getDeclaredMethod("get", Context.class);
+            var appGet = appDecision.getDeclaredMethod("consume", Context.class);
             appGet.setAccessible(true);
             var agentDecision = Class.forName(DurableSamplingDecision.class.getName(), true, agentLoader);
-            var agentGet = agentDecision.getDeclaredMethod("get", Context.class);
+            var agentGet = agentDecision.getDeclaredMethod("consume", Context.class);
             agentGet.setAccessible(true);
             var agentIdType = Class.forName(DeterministicIdGenerator.class.getName(), true, agentLoader);
             var callbacks = new AtomicInteger();
