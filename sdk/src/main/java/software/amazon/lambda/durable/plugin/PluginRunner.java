@@ -251,12 +251,13 @@ public class PluginRunner {
 
     /** Reports fatal errors from scope callbacks; retains the existing standalone runner body policy. */
     public <T> T runHandler(Supplier<T> handler, Runnable onScopeOpened, Consumer<Error> onScopeFatal) {
-        return runHandler(handler, onScopeOpened, onScopeFatal, fatal -> null);
+        return runHandler(handler, onScopeOpened, onScopeFatal, null);
     }
 
     /**
      * Publishes an existing-classifier body fatal before owned cleanup only if the invocation still accepts it. The
-     * publisher returns the winning fatal, or null when earlier invocation control already won.
+     * publisher returns the winning fatal, or null when earlier invocation control already won. A null publisher
+     * retains the standalone body path without classifying its failures.
      */
     @SuppressWarnings("removal")
     public <T> T runHandler(
@@ -278,7 +279,7 @@ public class PluginRunner {
                     reportHandlerScopeFailure("Plugin handler scope threw exception", e, onScopeFatal);
                 }
             }
-            if (scopes.isEmpty()) return handler.get();
+            if (scopes.isEmpty() || publishBodyFatal == null) return handler.get();
             try {
                 return handler.get();
             } catch (Throwable failure) {

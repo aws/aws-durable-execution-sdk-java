@@ -301,10 +301,7 @@ class CheckpointManager {
                         }
                         if (pollers != null) {
                             completedFutures += pollers.size();
-                            pollers.forEach(poller -> {
-                                rethrowFatalIfAborted();
-                                poller.complete(operation);
-                            });
+                            completePollers(pollers, operation);
                         }
                     }
                     logger.debug(
@@ -318,6 +315,21 @@ class CheckpointManager {
             } finally {
                 finishCheckpointProcessing.run();
             }
+        }
+    }
+
+    private void completePollers(List<CompletableFuture<Operation>> pollers, Operation operation) {
+        for (int index = 0; index < pollers.size(); index++) {
+            var fatal = checkpointApiRequestDelayedBatcher.getFatalFailure();
+            if (fatal != null) {
+                // These observers are detached from the registry. An earlier completion callback can abort the
+                // invocation, so settle every undelivered observer before leaving this batch with the same fatal.
+                for (int remaining = index; remaining < pollers.size(); remaining++) {
+                    pollers.get(remaining).completeExceptionally(fatal);
+                }
+                throw fatal;
+            }
+            pollers.get(index).complete(operation);
         }
     }
 

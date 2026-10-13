@@ -10,12 +10,16 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.http.SdkHttpResponse;
@@ -178,6 +182,81 @@ class CheckpointManagerTest {
         assertEquals(operation, result1);
         assertEquals(operation, result2);
         assertEquals(operation, result3);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,true", "true,true", "true,false"})
+    void detachedPollersSettleAfterFirstObserverAborts(boolean earlierPollFailure, boolean abortOnFirst)
+            throws Exception {
+        var operation = Operation.builder()
+                .id("op-1")
+                .type(OperationType.STEP)
+                .status(OperationStatus.SUCCEEDED)
+                .build();
+        var update = OperationUpdate.builder()
+                .id("trigger")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build();
+        var fatal = new InternalError("first observer abort");
+        var response = CheckpointDurableExecutionResponse.builder()
+                .checkpointToken("token-2")
+                .newExecutionState(CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(operation))
+                        .build())
+                .build();
+        var ordinary = new IllegalStateException("ordinary polling transport failure");
+        when(client.checkpoint(anyString(), anyString(), anyList())).thenReturn(response);
+        // Delayed polls are batched with the explicit checkpoint, without a timing-dependent background request.
+        var first = batcher.pollForUpdate("op-1", Instant.now().plusSeconds(60));
+        var second = batcher.pollForUpdate("op-1", Instant.now().plusSeconds(60));
+        try {
+            if (earlierPollFailure) {
+                // An ordinary failed polling request leaves its observation future registered for a later response.
+                // Put the explicit request last, so its failure observes completion of both preceding poll requests.
+                doThrow(ordinary).when(client).checkpoint(anyString(), anyString(), anyList());
+                var failedBatch = batcher.checkpoint(update);
+                assertSame(
+                        ordinary,
+                        assertThrows(ExecutionException.class, () -> failedBatch.get(2, TimeUnit.SECONDS))
+                                .getCause());
+                assertFalse(first.isDone());
+                assertFalse(second.isDone());
+                doReturn(response).when(client).checkpoint(anyString(), anyString(), anyList());
+            }
+            var firstCallback = first.thenAccept(observed -> {
+                assertEquals(operation, observed);
+                if (abortOnFirst) batcher.abortPending(fatal);
+            });
+            var checkpoint = batcher.checkpoint(update);
+            assertEquals(operation, first.get(2, TimeUnit.SECONDS));
+            firstCallback.get(2, TimeUnit.SECONDS);
+            if (abortOnFirst) {
+                assertSame(
+                        fatal,
+                        assertThrows(ExecutionException.class, () -> checkpoint.get(2, TimeUnit.SECONDS))
+                                .getCause());
+                assertSame(
+                        fatal,
+                        assertThrows(ExecutionException.class, () -> second.get(2, TimeUnit.SECONDS))
+                                .getCause());
+                assertEquals(operation, first.join(), "abort must retain an already delivered outcome");
+            } else {
+                checkpoint.get(2, TimeUnit.SECONDS);
+                assertEquals(operation, second.get(2, TimeUnit.SECONDS));
+            }
+            assertEquals(List.of(operation), callbackOperations);
+            verify(client, times(earlierPollFailure ? 2 : 1)).checkpoint(anyString(), anyString(), anyList());
+        } finally {
+            if (abortOnFirst) {
+                assertSame(
+                        fatal,
+                        assertThrows(CompletionException.class, batcher::shutdown)
+                                .getCause());
+            } else {
+                batcher.shutdown();
+            }
+        }
     }
 
     @Test

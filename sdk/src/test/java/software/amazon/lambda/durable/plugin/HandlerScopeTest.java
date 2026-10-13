@@ -8,7 +8,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -45,6 +47,51 @@ class HandlerScopeTest {
                             })));
         }
         assertEquals(List.of("open-a", "open-b", "handler", "close-b", "close-a"), calls);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"1,false", "2,false", "3,false", "1,true", "2,true", "3,true"})
+    void legacyOverloadsDoNotInspectBodyFailureAndStillCloseScopes(int overload, boolean executionWrapper) {
+        var diagnosticReads = new AtomicInteger();
+        var cause = new InternalError("body fatal remains inside the original standalone wrapper");
+        Throwable failure = executionWrapper
+                ? new ExecutionException("body", cause) {
+                    @Override
+                    public synchronized Throwable getCause() {
+                        diagnosticReads.incrementAndGet();
+                        return super.getCause();
+                    }
+                }
+                : new CompletionException("body", cause) {
+                    @Override
+                    public synchronized Throwable getCause() {
+                        diagnosticReads.incrementAndGet();
+                        return super.getCause();
+                    }
+                };
+        var calls = new ArrayList<String>();
+        var owner = Thread.currentThread();
+        var runner = startedRunner(List.of(scope("a", calls, owner), scope("b", calls, owner)));
+        var scopeOpens = new AtomicInteger();
+        var scopeFatal = new AtomicReference<Error>();
+        Supplier<String> body = () -> {
+            calls.add("handler");
+            ExceptionHelper.sneakyThrow(failure);
+            return null;
+        };
+        var escaped = assertThrows(Throwable.class, () -> {
+            switch (overload) {
+                case 1 -> runner.runHandler(body);
+                case 2 -> runner.runHandler(body, scopeOpens::incrementAndGet);
+                case 3 -> runner.runHandler(body, scopeOpens::incrementAndGet, scopeFatal::set);
+                default -> fail("unknown overload");
+            }
+        });
+        assertSame(failure, escaped);
+        assertEquals(List.of("open-a", "open-b", "handler", "close-b", "close-a"), calls);
+        assertEquals(overload == 1 ? 0 : 2, scopeOpens.get());
+        assertNull(scopeFatal.get(), "body failures are not scope callback failures");
+        assertEquals(0, diagnosticReads.get(), "standalone body failures must not be classified");
     }
 
     @Test

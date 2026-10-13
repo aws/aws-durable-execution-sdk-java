@@ -51,9 +51,11 @@ budget. A body fatal observed after End starts stays on the frozen late-failure 
 handlers without an owned scope retain their existing behavior.
 
 After a fatal abort, checkpoint and state-page responses are checked before local state/callback/poller publication.
-Late responses do not update that failed invocation; persisted backend state remains available for normal replay.
-The transport and poller locks are unchanged. This does not revoke callbacks already executing before the fatal was
-observed, interrupt the transport, or create a new caller-outcome policy.
+A response that observes the fatal at a guard stops publication; persisted backend state remains available for normal
+replay. These guards are not atomic cancellation: work already past a check can race with abort and finish, including
+callbacks and poller completion. If a poller callback aborts the invocation, the remaining detached observers settle
+with that fatal while earlier delivered outcomes remain unchanged. The transport and poller locks are unchanged;
+these checks do not interrupt the transport or create a new caller-outcome policy.
 
 Successful-output preparation closes new checkpoint-continuation admission before serialization. It does not revoke
 user workers already admitted to their executor, and End does not mean all unawaited work has finished. The separate
