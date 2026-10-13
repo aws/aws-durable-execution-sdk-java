@@ -13,6 +13,79 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **ADOT Java Agent Integration**: `new InvocationOtelPlugin()` late-binds the ADOT Java agent's global provider with no handler-side OpenTelemetry initialization
 - **Lambda Layer Discovery**: `DURABLE_EXECUTION_PLUGINS` loads either OTel plugin from a JAR under a layer's `java/lib` directory
 
+## Root handler context
+
+User instrumentation in the root handler joins its canonical execution trace. A valid same-trace ambient Lambda
+span stays current. If ambient context is absent or belongs to another trace, invocation view activates `Invocation`;
+execution view activates the deterministic `Workflow` context, including its unsampled non-recording form.
+Nested operations retain their existing contexts.
+
+The plugin activates the context in `onInvocationStart` and restores the previous context in `onInvocationEnd`.
+The core calls both hooks on the root handler thread and waits for `onInvocationEnd` to finish before returning,
+including when execution suspends or terminates. Handler `finally` blocks must finish before invocation-end hooks
+can run; a blocked handler cleanup therefore also blocks the invocation response. Context restoration still runs
+when span finalization or flushing fails. Ordinary exceptions and nonfatal linkage errors retain the existing
+plugin-hook isolation behavior. Invocation-end hooks run in reverse registration order so nested scopes unwind
+correctly; remaining end hooks run even when another hook raises an Error. The first unisolated Error propagates,
+unless a later `VirtualMachineError` or `ThreadDeath` takes precedence over a non-JVM-fatal Error; other distinct
+end-hook Errors are retained as suppressed failures. Scope cleanup preserves finalization failures using the same
+JVM-fatal precedence, so an ordinary cleanup exception cannot hide an earlier Error.
+Invocations without plugins also wait for handler cleanup before returning the selected suspension or retry outcome.
+The manager selects suspension or termination before waking operation waiters, so a later returning or throwing
+handler `finally` cannot replace that selected outcome. A handler outcome that was already selected remains primary.
+SDK output preparation, including customer `SerDes` calls and durable large-result checkpointing, finishes before
+terminal invocation-end notification. Failures in this preparation report `RETRYING` instead of ending the Workflow
+span. If End also raises an unisolated Error, the preparation failure remains primary with the cleanup error
+suppressed, unless cleanup introduces the first JVM-fatal error. An original JVM-fatal preparation error retains its
+identity. Retryable control failures follow the same End-error combination: an ordinary End Error is suppressed
+under the retry control, while a direct JVM-fatal End error retains its existing precedence with the control and
+its cause preserved as diagnostics. This does not add arbitrary cause unwrapping to handler failure classification.
+End describes the SDK outcome at that point, not acknowledgment of a response by the Lambda service.
+Caller-side execution-manager cleanup, response-envelope encoding and output-stream writes follow End; runtime
+response transport follows the handler return. Failures at those later boundaries still propagate, without a second
+End dispatch or changing its already reported outcome. A JVM-fatal MDC-restoration failure after End (direct or
+inside a standard transport wrapper) completes the caller's observation exceptionally with the original fatal
+before that fatal escapes the worker, for both asynchronous and inline executors. The End notification remains
+unchanged and is not repeated. An earlier JVM-fatal End/preparation failure remains primary; later restoration
+failures are suppressed, with an identity guard when restoration throws the same fatal object. A restoration fatal takes precedence over an earlier non-JVM-fatal delivery/End failure,
+which remains suppressed. Non-JVM-fatal restoration failures, including `AssertionError` and `LinkageError`, retain
+the selected caller outcome. After an ordinary outer restoration failure, the SDK makes one guarded `MDC.clear()`
+attempt before rethrowing the original worker failure. This also applies when an earlier End/preparation JVM fatal
+is already primary: restoration and clear failures remain suppressed under that first fatal. A successful clear
+prevents inheritable invocation state from reaching a replacement pool thread. With no earlier JVM fatal, a failing
+clear is retained as a suppressed diagnostic, or its JVM fatal uses the same caller-settlement-before-worker-throw
+rule. Clearing can discard ambient MDC that could not be
+restored. If the adapter's clear also fails, clean replacement state is not guaranteed; the SDK does not promise
+quarantine for an arbitrary caller-owned executor. Initialization and handler/body policies are unchanged.
+Before invocation startup, a JVM-fatal error from MDC capture (direct or inside a standard transport wrapper)
+completes the observation future exceptionally with that same fatal before escaping the handler worker. No start,
+body, or end hook runs, and no durable `FAILED` response is produced for that fatal. Ordinary initialization errors
+and handler/body failure classification retain their existing behavior.
+
+An SDK checkpoint continuation owned by an operation reports resumption/deserialization and dispatch failures
+through retryable manager control before releasing its activity lease. The caller receives the original failure as
+the cause of `UnrecoverableDurableExecutionException`, and started End hooks receive `RETRYING`; persisted operation
+state is unchanged for the next invocation. A rejected user-worker dispatch rolls back its activity registration.
+Ordinary failures during normal manager closing do not replace the selected outcome or stop unrelated operations.
+Unowned ordinary helper failures retain their observation-only behavior. Direct `VirtualMachineError` or
+`ThreadDeath` failures also settle their observation future after lease release and before escaping the coordinator
+worker. Observation cancellation cannot skip the actual task or discard its operation failure. This boundary does
+not reclassify handler/predicate failures or add general wrapped-fatal classification.
+
+SDK inspection of MDC-capture failures reads each visited standard transport cause once and detects identity cycles.
+Cyclic, null, or unreadable leading `CompletionException` chains retain the original wrapper; ordinary initialization
+still reports `FAILED` when its error response can be serialized. This provides cycle safety for finite cause graphs,
+not a fixed depth or time limit. Arbitrary custom `getCause`, other `Throwable` accessors, and customer `SerDes`
+behavior remain outside that guarantee.
+
+This plugin version requires the core's `DurableExecutor.supportsSameThreadInvocationHooks()` capability, introduced
+in the 2.2.2 lifecycle contract (currently `2.2.2-SNAPSHOT`). Upgrade the core together with the plugin layer. Every
+plugin constructor checks this capability before building a tracer provider or activating context. A core without
+it, including released 2.2.1, is rejected with an explicit configuration error. Older cores may call
+`onInvocationEnd` on another thread and are not supported with this plugin version. Existing plugin binaries remain
+usable with the updated core; their invocation-end hooks now follow the same-thread, reverse-registration-order
+contract described above.
+
 ## Installation
 
 ```xml
@@ -61,6 +134,13 @@ resolved plugin instances without rediscovery.
 on it replaces the complete plugin list without reading `DURABLE_EXECUTION_PLUGINS` again; `withPlugins()` removes all
 plugins from the copy. Use `DurableConfig.builder()` when creating a fresh configuration that should honor the current
 environment selection.
+
+View exclusivity is declared with inherited `@ExclusivePluginGroup("durable-otel-view")` metadata.
+Configuration reads this explicit opt-in annotation from the entire superclass chain; it does not call application methods
+that happen to be named `getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled
+view restriction. A subclass may add another group, but cannot replace a superclass's group; repeated group names in one
+class hierarchy are checked once.
+The exclusivity annotation does not change the provider registration API; the same-thread core requirement above still applies.
 
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
@@ -224,14 +304,35 @@ Operation and attempt spans link to the Workflow span. `ExecutionOtelPlugin` rev
 
 ### Sampling
 
-The plugin decides sampling once per invocation and applies that single decision to every durable span (Workflow, Invocation, operation, attempt), so the configured sampler is not re-invoked per span and the full decision — including `RECORD_ONLY` — is preserved. The decision follows this precedence, highest first:
+The SDK-wide sampling guarantees below require `DurableSampler` itself to be the final installed sampler. The
+[builder constructors](#configuration) and [ADOT extension setup](#1-adot-lambda-layer) install it automatically;
+configure its delegate through these documented paths and retain `DurableSampler` as the final sampler. An
+unrecognized outer wrapper is treated as a plain replacement. The SDK wrapper applies its sampling intent to every durable
+span (Workflow, Invocation, operation and attempt), preserving the full result, including `RECORD_ONLY`, sampler attributes
+and trace state.
 
-1. **Backend decision** — `Sampled=1` / `Sampled=0` in the propagated header is authoritative and always preserved, regardless of the configured sampler.
-2. **Same-trace ambient span** — when the header carries no usable `Sampled` value but a valid ambient span (for example an auto-instrumentation Lambda handler span) is already on the execution's trace, the plugin follows that span's decision: sampled → sampled; unsampled but still recording → `RECORD_ONLY`; unsampled and not recording → dropped.
-3. **Configured sampler (application-owned provider)** — when you pass a `SdkTracerProvider` to the plugin, its sampler is read directly and evaluated once with the trace ID, span name, and attributes. A trace-ID-ratio sampler therefore produces a stable decision across reinvocations (the trace ID is stable).
-4. **Installed sampler (Java-agent path)** — when the agent owns the provider, it is behind a classloader boundary and its *effective* sampler (which another agent extension may have wrapped or replaced) cannot be reliably read at decision time. Rather than guess, the plugin **defers**: it installs a delegating sampler through the agent's autoconfiguration and lets that wrapper consult the agent's real sampler. The delegate's decision is honored in full — if your configured policy is `always_off`, a rate limiter, or a remote sampler (`xray`, `jaeger_remote`) that returns drop, the durable spans are dropped; they are **not** force-sampled. To avoid consuming a stateful or quota-based sampler once per span, the wrapper consults the delegate once per execution (keyed by trace ID) and reuses that decision for the execution's remaining durable spans within the invocation.
+The supported SDK sampler follows this precedence, highest first:
 
-For precise, provider-independent control, set an explicit `Sampled` value upstream (for example by enabling X-Ray active tracing) — that backend decision takes precedence over everything else.
+1. **Backend decision** — with `DurableSampler` installed, `Sampled=1` / `Sampled=0` in the propagated header is
+   authoritative, regardless of the wrapped delegate's policy.
+2. **Same-trace ambient span** — without an explicit header decision, a valid ambient span already on the execution
+   trace supplies its decision: sampled → sampled; unsampled and recording → `RECORD_ONLY`; unsampled and
+   non-recording → dropped.
+3. **Same-copy durable sampler** — the visible SDK sampler is evaluated against root context once per invocation
+   using the canonical trace ID, span name and attributes. Its complete result is carried in that loader's context.
+4. **Foreign or opaque SDK sampler** — resolution is deferred to the installed wrapper's actual delegate. Its full
+   result is cached by execution ARN and canonical trace ID in a 256-entry LRU cache and reused while resident.
+   Eviction can cause another evaluation. The delegate still receives the canonical trace ID; drop and
+   `RECORD_ONLY` decisions, attributes and updated trace state are retained.
+
+A visible plain replacement sampler supplies its root policy for execution-ancestor flags, then keeps its normal
+per-span sampling behavior. It receives no SDK sampling carrier and does not provide the SDK decision-reuse
+or full-result override guarantees above. Opaque providers cannot expose a later sampler replacement to the
+application, so retain the wrapper through the documented customization setup.
+
+For explicit execution-level control, keep `DurableSampler` as the final installed sampler and set `Sampled` upstream,
+for example through X-Ray
+active tracing. The SDK sampling wrapper preserves that decision.
 
 ## Span Attributes
 
@@ -400,17 +501,10 @@ var otelPlugin = new InvocationOtelPlugin(
 ## Requirements
 
 - Java 17+
-- AWS Durable Execution SDK for Java 2.0.0+
+- AWS Durable Execution SDK for Java with same-thread invocation hooks (use the core shipped with this plugin release or newer)
 - OpenTelemetry SDK 1.65.0+ (only for custom TracerProvider path)
 - ADOT Lambda Layer `AWSOpenTelemetryDistroJava` (for the no-arg constructor path)
 
 ## License
 
 Apache-2.0
-
-View exclusivity is declared with inherited `@ExclusivePluginGroup("durable-otel-view")` metadata.
-Configuration reads this explicit opt-in annotation from the entire superclass chain; it does not call application methods
-that happen to be named `getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled
-view restriction. A subclass may add another group, but cannot replace a superclass's group; repeated group names in one
-class hierarchy are checked once.
-Older cores ignore the optional annotation and retain their prior behavior; no provider-version floor is raised.
