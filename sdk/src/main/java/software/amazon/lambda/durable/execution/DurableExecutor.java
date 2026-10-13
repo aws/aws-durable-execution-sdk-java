@@ -182,6 +182,10 @@ public class DurableExecutor {
         }
 
         private DurableExecutionOutput finishFailure(Throwable cause) {
+            if (cause instanceof SuspendExecutionException) {
+                var invalidSuspension = manager.getInvalidSuspensionException();
+                if (invalidSuspension != null) cause = invalidSuspension;
+            }
             var status = failureStatus(cause);
             if (status == InvocationStatus.FAILED) return finishTerminalFailure(cause);
             try {
