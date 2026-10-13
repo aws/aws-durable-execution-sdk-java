@@ -384,7 +384,9 @@ uses the provider's actual root sampling result for its parent context. It does 
 creating that root. Descendants still use the provider's own per-span sampling, so a stateful policy can select them
 differently. Explicit and ambient decisions retain their existing context behavior. The legacy complete-remote-parent
 path still evaluates root policy before span creation when sampling is undecided; a stateful replacement can observe
-that additional query. A plain replacement receives no SDK sampling carrier and does not provide SDK-wide decision
+that additional query. The query resolves the remote parent's otherwise-unknown sampled flag from the configured
+root policy; omitting it can bypass `ParentBased(alwaysOff)`. Supply an explicit upstream decision or retain
+`DurableSampler` when a policy result must be reused authoritatively. A plain replacement receives no SDK sampling carrier and does not provide SDK-wide decision
 reuse or full-result overrides. Opaque providers cannot expose a later sampler replacement to the
 application, so retain the wrapper through the documented customization setup.
 
@@ -399,6 +401,16 @@ can export only the anchor or only its Invocation child. This behavior is covere
 `ExecutionRootParityTest.plainReplacementRetainsIndependentPerSpanSampling`; installing `DurableSampler` restores the
 shared decision. Merely delaying anchor creation until terminal completion would not make an arbitrary replacement
 sampler consistent across spans.
+
+### Operation error details
+
+A failed operation can have an absent or fully empty backend error container. Its operation status remains
+`FAILED`, `TIMED_OUT`, or `STOPPED`, while the OTel span stays `UNSET` and has no exception event when no details
+were supplied. An explicitly present empty string or stack-trace list still counts as supplied error details.
+
+This telemetry decision does not remove the SDK's failure notification: a present `ErrorObject`, including `{}`,
+remains a `DurableOperationException` in operation hooks and snapshots. An absent container retains its existing
+null metadata behavior. Persisted errors, caller failures, replay, and user-function error handling are unchanged.
 
 ## Span Attributes
 

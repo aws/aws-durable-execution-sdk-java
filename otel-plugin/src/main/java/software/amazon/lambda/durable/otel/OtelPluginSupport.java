@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.Collections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 
 /** Shared provider setup, sampling resolution, and invocation cleanup support. */
@@ -84,6 +85,22 @@ final class OtelPluginSupport {
     /** Only the same DurableSampler class copy can consume this loader's parent-context holder. */
     static boolean usesLocalDurableSampler(SdkTracerProvider provider) {
         return provider != null && provider.getSampler() instanceof DurableSampler;
+    }
+
+    /** Distinguishes operation telemetry details without changing the SDK's failure notification object. */
+    static boolean hasOperationErrorDetails(Throwable error) {
+        if (error == null) return false;
+        if (error instanceof DurableOperationException failure) {
+            var details = failure.getErrorObject();
+            if (details != null) {
+                return details.errorType() != null
+                        || details.errorMessage() != null
+                        || details.errorData() != null
+                        || details.hasStackTrace();
+            }
+        }
+        // Preserve ordinary/custom Throwable behavior, including wrappers without an ErrorObject.
+        return true;
     }
 
     /** Creates a new DeterministicIdGenerator for the application-side state bridge. */

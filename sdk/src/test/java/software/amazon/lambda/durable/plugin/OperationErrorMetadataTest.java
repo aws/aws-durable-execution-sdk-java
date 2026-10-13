@@ -33,7 +33,7 @@ class OperationErrorMetadataTest {
                                         status,
                                         "empty",
                                         ErrorObject.builder().build(),
-                                        false),
+                                        true),
                                 Arguments.of(
                                         type,
                                         status,
@@ -47,7 +47,7 @@ class OperationErrorMetadataTest {
     @ParameterizedTest(name = "{0}/{1}/{2}")
     @MethodSource("terminalErrors")
     void snapshotMetadataDoesNotMutateStoredFailure(
-            OperationType type, OperationStatus status, String label, ErrorObject error, boolean hasDetails) {
+            OperationType type, OperationStatus status, String label, ErrorObject error, boolean hasErrorContainer) {
         var operation = operation(type, status, error);
         var saved = operation.toBuilder().build();
         var info = PluginInfoConverter.toOperationItemMap(List.of(operation), Set.of(operation.id()))
@@ -55,12 +55,12 @@ class OperationErrorMetadataTest {
         assertEquals(status, info.status());
         assertTrue(info.isReplay());
         assertNull(info.result());
-        if (hasDetails) {
+        if (hasErrorContainer) {
             var failure = assertInstanceOf(DurableOperationException.class, info.error());
             assertSame(error, failure.getErrorObject());
             assertSame(operation, failure.getOperation());
         } else {
-            assertNull(info.error(), "an omitted or zero-member error container supplies no error details");
+            assertNull(info.error(), "an omitted error container retains the existing null metadata behavior");
         }
         assertSame(error, BaseDurableOperation.getErrorObject(operation));
         assertEquals(saved, operation, "metadata conversion must not rewrite the operation or its persisted error");

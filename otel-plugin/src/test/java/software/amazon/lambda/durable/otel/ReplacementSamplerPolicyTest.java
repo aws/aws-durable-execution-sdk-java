@@ -35,6 +35,8 @@ class ReplacementSamplerPolicyTest {
         "invocation,true,root,true,plain", "execution,true,root,true,plain",
         "invocation,false,sampled,true,plain", "execution,false,sampled,true,plain",
         "invocation,true,unsampled,false,plain", "execution,true,unsampled,false,plain",
+        "invocation,false,remote,false,plain", "execution,false,remote,false,plain",
+        "invocation,true,remote,true,plain", "execution,true,remote,true,plain",
         "invocation,false,root,false,local", "execution,false,root,false,local",
         "invocation,false,root,false,opaque", "execution,false,root,false,opaque"
     })
@@ -45,6 +47,7 @@ class ReplacementSamplerPolicyTest {
         var sideEffects = new AtomicInteger();
         var decisions = new CopyOnWriteArrayList<Boolean>();
         var header = "Root=1-6955b900-123456789012345678901234";
+        if (upstream.equals("remote")) header += ";Parent=1234567890123456";
         if (upstream.equals("sampled")) header += ";Sampled=1";
         else if (upstream.equals("unsampled")) header += ";Sampled=0";
         var root = new Sampler() {
@@ -112,12 +115,14 @@ class ReplacementSamplerPolicyTest {
                     ExecutionStatus.SUCCEEDED, runner.runUntilComplete("input").getStatus());
             assertTrue(decisions.size() >= 2, "Initial invocation and actual replay must both execute the handler");
             assertTrue(decisions.stream().allMatch(decision -> decision == expectedSampled), decisions.toString());
-            assertEquals(
-                    topology.equals("plain")
-                            ? decisions.size()
-                            : upstream.equals("root") ? (topology.equals("opaque") ? 1 : decisions.size()) : 0,
-                    evaluations.get(),
-                    "A plain provider evaluates its actual fallback root once per invocation");
+            if (!upstream.equals("remote")) {
+                assertEquals(
+                        topology.equals("plain")
+                                ? decisions.size()
+                                : upstream.equals("root") ? (topology.equals("opaque") ? 1 : decisions.size()) : 0,
+                        evaluations.get(),
+                        "A plain provider evaluates its actual fallback root once per invocation");
+            }
             assertEquals(1, sideEffects.get());
         } finally {
             GlobalOpenTelemetry.resetForTest();

@@ -457,14 +457,13 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         if (info.attempt() != null) {
             span.setAttribute(DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
         }
-        if (info.error() != null) {
+        if (OtelPluginSupport.hasOperationErrorDetails(info.error())) {
             span.setStatus(StatusCode.ERROR, info.error().getMessage());
             span.recordException(info.error());
         } else if ("SUCCEEDED".equals(info.status()) || info.status() == null) {
-            // Only stamp OK on genuine success. onOperationEnd fires for every terminal status, and
-            // extractErrorFromOperation returns null for CANCELLED (always) and for FAILED/TIMED_OUT/STOPPED with no
-            // attached error object — those carry a non-null, non-SUCCEEDED status and must stay UNSET. A null status
-            // is a successful statusless virtual (FLAT CONTEXT) operation, which is OK.
+            // Only genuine success is OK. Non-success statuses with absent or empty backend error details stay
+            // UNSET, even when the SDK retains an empty failure container for other plugins. A null status denotes
+            // a successful statusless virtual (FLAT CONTEXT) operation.
             span.setStatus(StatusCode.OK);
         }
 

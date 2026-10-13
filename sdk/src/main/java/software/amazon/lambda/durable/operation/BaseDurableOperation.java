@@ -570,8 +570,8 @@ public abstract class BaseDurableOperation {
     }
 
     /**
-     * Extracts the error for plugin metadata from a terminal operation. Returns null if the operation succeeded or has
-     * no error details, including an empty error container. The stored error and caller failure are unchanged.
+     * Extracts an error for plugin metadata from a failed, timed-out, or stopped operation. Other statuses and an
+     * absent error container return null. A present container remains represented even when it has no members.
      */
     public static Throwable extractErrorFromOperation(Operation operation) {
         if (operation.status() != OperationStatus.FAILED
@@ -580,11 +580,7 @@ public abstract class BaseDurableOperation {
             return null;
         }
         var errorObject = getErrorObject(operation);
-        if (errorObject == null
-                || (errorObject.errorType() == null
-                        && errorObject.errorMessage() == null
-                        && errorObject.errorData() == null
-                        && !errorObject.hasStackTrace())) {
+        if (errorObject == null) {
             return null;
         }
         return new DurableOperationException(operation, errorObject);

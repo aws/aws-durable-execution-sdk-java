@@ -153,18 +153,19 @@ class CallbackErrorMetadataTest {
                     callerError.getClass().getSimpleName());
             assertEquals(error, callerError.getErrorObject());
             assertEquals(
-                    hasDetails, starts.get(1).operations().get(stored.getId()).error() != null);
+                    error != null,
+                    starts.get(1).operations().get(stored.getId()).error() != null);
             assertEquals(
-                    hasDetails,
+                    error != null,
                     starts.get(1).updatedOperations().get(stored.getId()).error() != null);
             assertEquals(
-                    hasDetails, ends.get(1).operations().get(stored.getId()).error() != null);
+                    error != null, ends.get(1).operations().get(stored.getId()).error() != null);
             var callbackEnds = operationEnds.stream()
                     .filter(info -> CALLBACK.equals(info.name()))
                     .toList();
             assertEquals(1, callbackEnds.size());
             assertEquals(terminal, callbackEnds.get(0).status());
-            assertEquals(hasDetails, callbackEnds.get(0).error() != null);
+            assertEquals(error != null, callbackEnds.get(0).error() != null);
             var terminalSpans = exporter.getFinishedSpanItems().stream()
                     .filter(span -> CALLBACK.equals(span.getAttributes().get(DURABLE_OPERATION_NAME)))
                     .filter(span -> terminal.equals(span.getAttributes().get(DURABLE_OPERATION_STATUS)))
