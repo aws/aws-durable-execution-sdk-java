@@ -172,6 +172,10 @@ public class DurableExecutor {
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
                                 Throwable cause = normalizeInvocationFailure(ex);
+                                if (cause instanceof SuspendExecutionException) {
+                                    var invalidSuspension = executionManager.getInvalidSuspensionException();
+                                    if (invalidSuspension != null) cause = invalidSuspension;
+                                }
 
                                 if (isFatal(cause)) {
                                     try {

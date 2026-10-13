@@ -96,6 +96,7 @@ public class ExecutionManager implements SafeCloseable {
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
     // Requests and polling continuations; guarded by activeThreads so admission is atomic with last-thread suspension.
     private int checkpointRequestsInFlight;
+    private volatile IllegalDurableOperationException invalidSuspensionException;
     // Guarded by activeThreads; an observation future can be cancelled independently of its actual task.
     private final Map<Object, BaseDurableOperation> checkpointContinuations = new HashMap<>();
     private boolean closing;
@@ -741,8 +742,18 @@ public class ExecutionManager implements SafeCloseable {
             default -> false;
         });
 
-        if (!hasAnyPendingOperation) {
-            logger.warn("Invalid suspension. No operation is pending");
+        if (!hasAnyPendingOperation && !isCheckpointTokenRevoked()) {
+            var waitingOperations = registeredOperations.values().stream()
+                    .filter(op -> !op.getCompletionFuture().isDone())
+                    .map(op -> String.format(
+                            "%s (id=%s)", Objects.toString(op.getName(), "<unnamed>"), op.getOperationId()))
+                    .distinct()
+                    .toList();
+
+            var errorMessage = "Invalid suspension. No operation is pending. Suspended threads were waiting for: "
+                    + waitingOperations;
+            logger.error(errorMessage);
+            this.invalidSuspensionException = new IllegalDurableOperationException(errorMessage, true);
         }
     }
 
@@ -1013,6 +1024,14 @@ public class ExecutionManager implements SafeCloseable {
     public void rethrowPluginFatalIfPresent() {
         var fatal = pluginFatal.get();
         if (fatal != null) throw fatal;
+    }
+
+    public IllegalDurableOperationException getInvalidSuspensionException() {
+        return invalidSuspensionException;
+    }
+
+    public boolean isCheckpointTokenRevoked() {
+        return checkpointManager.isCheckpointTokenRevoked();
     }
 
     private void stopAllOperations(Throwable cause) {
