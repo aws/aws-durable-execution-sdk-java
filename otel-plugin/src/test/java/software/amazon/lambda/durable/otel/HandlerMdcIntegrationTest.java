@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -45,13 +47,73 @@ class HandlerMdcIntegrationTest {
             executor.submit(() -> MDC.setContextMap(workerMdc)).get(5, TimeUnit.SECONDS);
             MDC.setContextMap(callerMdc);
             runWithoutPlugins(executor, outcome);
-            // The existing factory worker always clears MDC, including startup/input failures.
-            var expectedWorker = Map.<String, String>of();
+            // No-plugin setup does not own MDC before the durable logger scope is established.
+            var expectedWorker = outcome.equals("inputFailure") ? workerMdc : Map.<String, String>of();
             assertRestored(executor, expectedWorker, callerMdc);
         } finally {
             executor.shutdownNow();
             if (callerBefore == null) MDC.clear();
             else MDC.setContextMap(callerBefore);
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void noPluginInputFailurePreservesAmbientMdcBeforeLoggerScope(boolean direct, boolean ambient) throws Exception {
+        var delegate = Executors.newSingleThreadExecutor();
+        var executor = new AbstractExecutorService() {
+            public void execute(Runnable task) {
+                if (direct) task.run();
+                else delegate.execute(task);
+            }
+
+            public void shutdown() {
+                delegate.shutdown();
+            }
+
+            public List<Runnable> shutdownNow() {
+                return delegate.shutdownNow();
+            }
+
+            public boolean isShutdown() {
+                return delegate.isShutdown();
+            }
+
+            public boolean isTerminated() {
+                return delegate.isTerminated();
+            }
+
+            public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+                return delegate.awaitTermination(timeout, unit);
+            }
+        };
+        var previous = MDC.getCopyOfContextMap();
+        var workerMap = ambient ? ambientMdc() : Map.<String, String>of();
+        var callerMap = direct ? workerMap : Map.of("caller", "retained");
+        var bodies = new AtomicInteger();
+        try {
+            executor.submit(() -> MDC.setContextMap(workerMap)).get(3, TimeUnit.SECONDS);
+            MDC.setContextMap(callerMap);
+            var config = DurableConfig.builder()
+                    .withExecutorService(executor)
+                    .withSerDes(failingInputSerDes())
+                    .build();
+            assertTrue(config.getPluginFactories().isEmpty());
+            var runner = LocalDurableTestRunner.create(
+                    String.class,
+                    (input, context) -> {
+                        bodies.incrementAndGet();
+                        return "unreachable";
+                    },
+                    config);
+            assertEquals(ExecutionStatus.FAILED, runner.run("input").getStatus());
+            assertEquals(0, bodies.get());
+            assertRestored(executor, workerMap, callerMap);
+        } finally {
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(3, TimeUnit.SECONDS));
+            if (previous == null) MDC.clear();
+            else MDC.setContextMap(previous);
         }
     }
 

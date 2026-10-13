@@ -429,7 +429,8 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
                 durableExecutionArn,
                 executionStartTime,
                 samplingIntent,
-                sdkTracerProvider != null);
+                OtelPluginSupport.usesLocalDurableSampler(sdkTracerProvider),
+                OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider));
 
         // Flush spans before Lambda freezes
         if (sdkTracerProvider != null) {
@@ -719,7 +720,9 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
      */
     private Context withDurableDecision(Context context) {
         var intent = samplingIntent;
-        return intent != null && sdkTracerProvider != null ? DurableSamplingDecision.store(context, intent) : context;
+        return intent != null && OtelPluginSupport.usesLocalDurableSampler(sdkTracerProvider)
+                ? DurableSamplingDecision.store(context, intent)
+                : context;
     }
 
     private TraceFlags effectiveTraceFlags() {
@@ -738,7 +741,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
      */
     private Span startDurableSpan(SpanBuilder spanBuilder) {
         var intent = samplingIntent;
-        if (intent == null) {
+        if (intent == null || !OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)) {
             return spanBuilder.startSpan();
         }
         try (var ignored = DurableSamplingDecision.openScope(intent)) {
@@ -749,7 +752,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
     /** Starts a durable span with a forced span ID, publishing the sampling intent as in {@link #startDurableSpan}. */
     private Span startDurableSpan(SpanBuilder spanBuilder, String traceId, String spanId) {
         var intent = samplingIntent;
-        if (intent == null) {
+        if (intent == null || !OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)) {
             return idGenerator.startSpan(spanBuilder, traceId, spanId);
         }
         try (var ignored = DurableSamplingDecision.openScope(intent)) {

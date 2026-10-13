@@ -38,7 +38,8 @@ final class OtelPluginSupport {
             String arn,
             Instant start,
             DurableSamplingDecision.Intent intent,
-            boolean useContextCarrier) {
+            boolean useContextCarrier,
+            boolean useSamplingBridge) {
         if (ancestor == null || ancestor.isRemote()) {
             return;
         }
@@ -49,9 +50,11 @@ final class OtelPluginSupport {
                 .setAttribute(DURABLE_EXECUTION_SYNTHETIC_ROOT, true)
                 .setStartTimestamp(start);
         Span root;
-        try (var ignored = DurableSamplingDecision.openScope(intent)) {
-            root = idGenerator.startSpan(builder, ancestor.getTraceId(), ancestor.getSpanId());
-        }
+        if (useSamplingBridge) {
+            try (var ignored = DurableSamplingDecision.openScope(intent)) {
+                root = idGenerator.startSpan(builder, ancestor.getTraceId(), ancestor.getSpanId());
+            }
+        } else root = idGenerator.startSpan(builder, ancestor.getTraceId(), ancestor.getSpanId());
         // End processors/exporters may create unrelated spans; they must not inherit this sampling override.
         root.end(start);
     }
@@ -74,6 +77,16 @@ final class OtelPluginSupport {
                 scope.close();
             }
         };
+    }
+
+    /** Only the same DurableSampler class copy can consume this loader's parent-context holder. */
+    static boolean usesLocalDurableSampler(SdkTracerProvider provider) {
+        return provider != null && provider.getSampler() instanceof DurableSampler;
+    }
+
+    /** A visible replacement sampler cannot consume our bridge; an opaque agent provider may still need it. */
+    static boolean usesDurableSamplingBridge(SdkTracerProvider provider) {
+        return provider == null || provider.getSampler().getClass().getName().equals(DurableSampler.class.getName());
     }
 
     /** Creates a new DeterministicIdGenerator for the application-side state bridge. */
@@ -108,7 +121,7 @@ final class OtelPluginSupport {
      *       pipeline finally installs, and another extension's customizer can wrap or replace a recognized configured
      *       sampler, so a reconstruction could disagree with the real delegate. Deferring routes the decision to the
      *       agent-installed {@link DurableSampler}, which consults its actual delegate once per execution, caches the
-     *       result by trace ID, and reuses it for the execution's remaining durable spans (see
+     *       result by execution ARN and trace ID, and reuses it for the execution's remaining durable spans (see
      *       {@link DurableSampler#shouldSample}). The delegate's decision is honored in full — including a
      *       {@code DROP}/rate-limited outcome — so durable spans are not force-sampled.
      * </ol>
@@ -159,8 +172,11 @@ final class OtelPluginSupport {
             }
             return ambientSpan.isRecording() ? SamplingResult.recordOnly() : SamplingResult.drop();
         }
-        // 3. An application-owned provider exposes the real sampler: evaluate it once, preserving its full result.
-        if (sdkTracerProvider != null) {
+        // 3. Resolve a local durable sampler's full result, or a visible replacement's root policy for ancestor flags.
+        // A foreign DurableSampler still resolves in its own loader to retain full attributes and trace state.
+        // A plain replacement receives no carrier; the provider keeps its normal per-span sampling behavior.
+        if (sdkTracerProvider != null
+                && (usesLocalDurableSampler(sdkTracerProvider) || !usesDurableSamplingBridge(sdkTracerProvider))) {
             return sdkTracerProvider
                     .getSampler()
                     .shouldSample(

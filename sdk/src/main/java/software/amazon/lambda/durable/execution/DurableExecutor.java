@@ -88,6 +88,7 @@ public class DurableExecutor {
             // Captured for onInvocationEnd, which runs outside the handler thread below.
             var pluginExecutionInput = new AtomicReference<>();
             var hasHandlerScope = new AtomicBoolean();
+            var mdcInitializationFailure = new AtomicReference<Throwable>();
             var handlerFuture = supplyAsync(
                     () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
@@ -143,7 +144,8 @@ public class DurableExecutor {
                     },
                     config.getExecutorService(),
                     !pluginRunner.isEmpty(),
-                    pluginRunner.isEmpty() ? null : executionManager::recordHandlerScopeFatal);
+                    pluginRunner.isEmpty() ? null : executionManager::recordHandlerScopeFatal,
+                    mdcInitializationFailure::set);
 
             // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
             // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
@@ -158,6 +160,14 @@ public class DurableExecutor {
                         pluginFatal,
                         executionManager,
                         (result, ex) -> {
+                            var captureFailure = mdcInitializationFailure.get();
+                            if (captureFailure != null) {
+                                // No factory or hook started. Use the boundary's classified outcome without
+                                // traversing an unreadable/cyclic diagnostic again in ordinary body normalization.
+                                rethrowFatal(captureFailure);
+                                return DurableExecutionOutput.failure(
+                                        buildErrorObject(captureFailure, config.getSerDes()));
+                            }
                             if (ex != null) {
                                 // an exception thrown from handlerFuture or suspension/termination occurred
                                 Throwable cause = normalizeInvocationFailure(ex);
@@ -200,6 +210,33 @@ public class DurableExecutor {
                                                 UnrecoverableDurableExecutionException
                                                         unrecoverableDurableExecutionException
                                         && unrecoverableDurableExecutionException.isRetryable()) {
+                                    try {
+                                        fireOnInvocationEnd(
+                                                pluginRunner,
+                                                executionManager,
+                                                requestId,
+                                                executionArn,
+                                                isFirstInvocation,
+                                                InvocationStatus.RETRYING,
+                                                cause,
+                                                pluginExecutionInput.get(),
+                                                null);
+                                    } catch (Throwable endFailure) {
+                                        // Keep the major's selected End failure, retaining the earlier retry cause.
+                                        suppressDistinct(endFailure, cause);
+                                        ExceptionHelper.sneakyThrow(endFailure);
+                                    }
+                                    throw unrecoverableDurableExecutionException;
+                                }
+
+                                // Prepare the terminal failure before telling plugins the execution is finished.
+                                logger.debug("Execution failed: {}", cause.getMessage());
+                                DurableExecutionOutput failedOutput;
+                                try {
+                                    failedOutput =
+                                            DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
+                                } catch (Throwable deliveryFailure) {
+                                    var deliveryCause = normalizeInvocationFailure(deliveryFailure);
                                     fireOnInvocationEnd(
                                             pluginRunner,
                                             executionManager,
@@ -207,14 +244,12 @@ public class DurableExecutor {
                                             executionArn,
                                             isFirstInvocation,
                                             InvocationStatus.RETRYING,
-                                            cause,
+                                            deliveryCause,
                                             pluginExecutionInput.get(),
                                             null);
-                                    throw unrecoverableDurableExecutionException;
+                                    ExceptionHelper.sneakyThrow(deliveryCause);
+                                    return null;
                                 }
-
-                                // fail the execution otherwise
-                                logger.debug("Execution failed: {}", cause.getMessage());
                                 fireOnInvocationEnd(
                                         pluginRunner,
                                         executionManager,
@@ -225,7 +260,7 @@ public class DurableExecutor {
                                         cause,
                                         pluginExecutionInput.get(),
                                         null);
-                                return DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
+                                return failedOutput;
                             }
                             // user handler complete successfully
                             logger.debug("Execution completed");
@@ -296,20 +331,21 @@ public class DurableExecutor {
 
     /** Completes the observation future without absorbing fatal failures on an executor worker. */
     private static <T> CompletableFuture<T> supplyAsync(
-            Supplier<T> task, Executor executor, boolean preservePluginMdc, Consumer<Error> onPostCompletionFatal) {
+            Supplier<T> task,
+            Executor executor,
+            boolean preservePluginMdc,
+            Consumer<Error> onPostCompletionFatal,
+            Consumer<Throwable> onInitializationFailure) {
         var result = new CompletableFuture<T>();
         var caller = Thread.currentThread();
         Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
             if (preservePluginMdc) {
-                completeWithPluginMdc(task, result, caller, onPostCompletionFatal);
+                completeWithPluginMdc(task, result, caller, onPostCompletionFatal, onInitializationFailure);
                 return;
             }
             try {
-                T value;
-                try (SafeCloseable ignored = MDC::clear) {
-                    value = task.get();
-                }
-                result.complete(value);
+                // No plugin owns MDC here. In particular, input failure precedes the durable logger's scope.
+                result.complete(task.get());
             } catch (Throwable failure) {
                 result.completeExceptionally(failure);
                 if (Thread.currentThread() != caller) rethrowFatal(ExceptionHelper.unwrapAsyncFailure(failure));
@@ -320,13 +356,26 @@ public class DurableExecutor {
     }
 
     private static <T> void completeWithPluginMdc(
-            Supplier<T> task, CompletableFuture<T> result, Thread caller, Consumer<Error> onPostCompletionFatal) {
+            Supplier<T> task,
+            CompletableFuture<T> result,
+            Thread caller,
+            Consumer<Error> onPostCompletionFatal,
+            Consumer<Throwable> onInitializationFailure) {
         SafeCloseable restore;
         try {
             restore = restoreMdcOnClose();
         } catch (Throwable failure) {
-            result.completeExceptionally(failure);
-            if (Thread.currentThread() != caller) rethrowFatal(ExceptionHelper.unwrapAsyncFailure(failure));
+            Throwable initializationCause;
+            try {
+                initializationCause = normalizeMdcInitializationFailure(failure);
+            } catch (VirtualMachineError | ThreadDeath fatal) {
+                // No factories or hooks have started; settle observation before this original fatal escapes.
+                onInitializationFailure.accept(fatal);
+                result.completeExceptionally(fatal);
+                throw fatal;
+            }
+            onInitializationFailure.accept(initializationCause);
+            result.completeExceptionally(initializationCause);
             return;
         }
         Throwable bodyFailure = null;
@@ -396,6 +445,43 @@ public class DurableExecutor {
 
     private static void suppressDistinct(Throwable primary, Throwable secondary) {
         if (secondary != null && secondary != primary) primary.addSuppressed(secondary);
+    }
+
+    /** Classifies capture failures once, retaining the ordinary policy of unwrapping only a completion prefix. */
+    private static Throwable normalizeMdcInitializationFailure(Throwable failure) {
+        rethrowDirectMdcFatal(failure);
+        var visited = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        var cause = failure;
+        var normalized = failure;
+        var completionPrefix = true;
+        while (visited.add(cause)) {
+            rethrowDirectMdcFatal(cause);
+            if (!(cause instanceof CompletionException)) completionPrefix = false;
+            if (!(cause instanceof CompletionException
+                    || cause instanceof ExecutionException
+                    || cause instanceof InvocationTargetException
+                    || cause instanceof UndeclaredThrowableException)) return normalized;
+            var next = readMdcCause(cause);
+            if (next == null || visited.contains(next)) return completionPrefix ? failure : normalized;
+            if (completionPrefix) normalized = next;
+            cause = next;
+        }
+        return completionPrefix ? failure : normalized;
+    }
+
+    private static Throwable readMdcCause(Throwable failure) {
+        try {
+            return failure.getCause();
+        } catch (Throwable unreadableDiagnostic) {
+            rethrowDirectMdcFatal(unreadableDiagnostic);
+            return null;
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private static void rethrowDirectMdcFatal(Throwable failure) {
+        if (failure instanceof VirtualMachineError fatal) throw fatal;
+        if (failure instanceof ThreadDeath fatal) throw fatal;
     }
 
     private static Throwable normalizeInvocationFailure(Throwable failure) {

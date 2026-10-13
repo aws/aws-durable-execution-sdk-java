@@ -34,9 +34,9 @@ This is a best-effort reserve, not a total deadline bound: existing plugin callb
 If cleanup is blocked, the SDK logs the timeout and preserves the original PENDING/RETRYING outcome.
 An observed `VirtualMachineError` or `ThreadDeath` from the new scope callbacks instead escapes the invocation caller.
 When observed before invocation finalization, the3.x lifecycle first calls invocation-end hooks once with RETRYING.
-A fatal arriving during resource shutdown is checked after closure without repeating already completed end hooks;
-ordinary cleanup failures and legacy body failures retain the original outcome. Fatals reported only after the response
-cannot retroactively change it. The scope still
+The caller's snapshot freezes when invocation-end dispatch begins. Later scope fatals escape their owner thread but
+do not replace that frozen outcome or dispatch End again, including during resource shutdown. Ordinary cleanup failures
+and legacy body failures retain their existing classification. A response already returned cannot be rewritten. The scope still
 closes on its owning thread when the handler eventually exits; late cleanup telemetry is best effort. A compatible
 ambient span uses a no-op scope and participates in the same bounded handoff. Invocation-end hooks can execute on a
 different thread and do not own this scope. The explicit JDK-only opener requires explicit `@HandlerScoped` opt-in;
@@ -112,6 +112,13 @@ inspect arbitrary methods on the plugin instances or construct them during valid
 that complete list, and `withPlugins()` removes every factory. Use a fresh `DurableConfig.builder()` to read the
 current environment selection. The 3.x testing SDK uses this copy path; the 2.x instance-registration/testing SDK
 compatibility path is outside this major-version migration.
+
+View exclusivity is declared with inherited `@ExclusivePluginGroup("durable-otel-view")` metadata.
+Configuration reads this explicit opt-in annotation from the entire superclass chain; it does not call application methods
+that happen to be named `getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled
+view restriction. A subclass may add another group, but cannot replace a superclass's group; repeated group names in one
+class hierarchy are checked once.
+The exclusivity annotation does not change the provider registration API; the same-thread core requirement above still applies.
 
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
@@ -303,7 +310,26 @@ The plugin decides sampling once per invocation and applies that single decision
 3. **Configured sampler (application-owned provider)** — when you pass a `SdkTracerProviderBuilder` to `factory(...)`, the sampler of the provider it builds is read directly and evaluated once with the trace ID, span name, and attributes. A trace-ID-ratio sampler therefore produces a stable decision across reinvocations (the trace ID is stable).
 4. **Installed sampler (Java-agent path)** — when the agent owns the provider, it is behind a classloader boundary and its *effective* sampler (which another agent extension may have wrapped or replaced) cannot be reliably read at decision time. Rather than guess, the plugin **defers**: it installs a delegating sampler through the agent's autoconfiguration and lets that wrapper consult the agent's real sampler. The delegate's decision is honored in full — if your configured policy is `always_off`, a rate limiter, or a remote sampler (`xray`, `jaeger_remote`) that returns drop, the durable spans are dropped; they are **not** force-sampled. To avoid consuming a stateful or quota-based sampler once per span, the wrapper consults the delegate once per execution (keyed by trace ID) and reuses that decision for the execution's remaining durable spans within the invocation.
 
-For precise, provider-independent control, set an explicit `Sampled` value upstream (for example by enabling X-Ray active tracing) — that backend decision takes precedence over everything else.
+1. **Backend decision** — with `DurableSampler` installed, `Sampled=1` / `Sampled=0` in the propagated header is
+   authoritative, regardless of the wrapped delegate's policy.
+2. **Same-trace ambient span** — without an explicit header decision, a valid ambient span already on the execution
+   trace supplies its decision: sampled → sampled; unsampled and recording → `RECORD_ONLY`; unsampled and
+   non-recording → dropped.
+3. **Same-copy durable sampler** — the visible SDK sampler is evaluated against root context once per invocation
+   using the canonical trace ID, span name and attributes. Its complete result is carried in that loader's context.
+4. **Foreign or opaque SDK sampler** — resolution is deferred to the installed wrapper's actual delegate. Its full
+   result is cached by execution ARN and canonical trace ID in a 256-entry LRU cache and reused while resident.
+   Eviction can cause another evaluation. The delegate still receives the canonical trace ID; drop and
+   `RECORD_ONLY` decisions, attributes and updated trace state are retained.
+
+A visible plain replacement sampler supplies its root policy for execution-ancestor flags, then keeps its normal
+per-span sampling behavior. It receives no SDK sampling carrier and does not provide the SDK decision-reuse
+or full-result override guarantees above. Opaque providers cannot expose a later sampler replacement to the
+application, so retain the wrapper through the documented customization setup.
+
+For explicit execution-level control, keep `DurableSampler` as the final installed sampler and set `Sampled` upstream,
+for example through X-Ray
+active tracing. The SDK sampling wrapper preserves that decision.
 
 ## Span Attributes
 
@@ -362,7 +388,11 @@ asynchronous worker while retaining the selected ordinary caller outcome. This a
 remains primary. With a standard `ThreadPoolExecutor`, the escaped failure retires that worker; a successful clear keeps
 invocation MDC from being inherited by its replacement. Clearing can discard ambient MDC that could not be restored.
 A caller-owned executor may intercept failures, and an adapter that rejects clear cannot guarantee a clean replacement.
-Factory APIs, handler-body classification, and the no-plugin MDC behavior are unchanged.
+Factory APIs and handler-body classification are unchanged. With no plugins, the outer worker does not capture or clear
+MDC; input failure before the durable logger scope leaves application-owned MDC untouched. Once that logger scope starts,
+its existing cleanup behavior still applies. Pre-start plugin MDC capture uses bounded standard-wrapper fatal detection,
+settles observation before throwing the original fatal, and creates no plugin or hook. Ordinary capture failures retain
+their existing classification. Terminal failure payloads are prepared before End; an encoding failure reports RETRYING.
 
 Configure your logging framework (e.g., Log4j2) to include MDC fields in the output. For example, using `JsonLayout`:
 
@@ -492,7 +522,7 @@ var otelPluginFactory = InvocationOtelPlugin.factory(
 ## Requirements
 
 - Java 17+
-- AWS Durable Execution SDK for Java 2.0.0+
+- AWS Durable Execution SDK for Java 3.x and plugin factory API 2
 - OpenTelemetry SDK 1.65.0+ (only for custom TracerProvider path)
 - ADOT Lambda Layer `AWSOpenTelemetryDistroJava` (for the agent path, `factory()` without a builder)
 

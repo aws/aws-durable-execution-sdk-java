@@ -236,6 +236,13 @@ class CheckpointManager {
     private void checkpointBatch(List<OperationUpdate> updates) {
         // Backend serialization must not hold the poller registry lock needed by terminal shutdown.
         synchronized (checkpointLock) {
+            synchronized (pollingFutures) {
+                // READY rechecks can satisfy a poll before its batch. Preserve the major's separate transport lock.
+                pollingFutures.entrySet().removeIf(entry -> {
+                    entry.getValue().removeIf(CompletableFuture::isDone);
+                    return entry.getValue().isEmpty();
+                });
+            }
             // filter the null values from pollers
             var request = updates.stream().filter(Objects::nonNull).toList();
 
