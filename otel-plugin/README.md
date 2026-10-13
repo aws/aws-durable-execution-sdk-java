@@ -13,21 +13,78 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **ADOT Java Agent Integration**: `new InvocationOtelPlugin()` late-binds the ADOT Java agent's global provider with no handler-side OpenTelemetry initialization
 - **Lambda Layer Discovery**: `DURABLE_EXECUTION_PLUGINS` loads either OTel plugin from a JAR under a layer's `java/lib` directory
 
-## Checkpoint continuation failures
+## Root handler context
 
-An operation's SDK checkpoint continuation reports resumption/deserialization and dispatch failures through
-retryable invocation control before releasing its activity lease. End reports `RETRYING`, the caller receives
-`UnrecoverableDurableExecutionException` with the original cause, and persisted operation state remains available
-for a later invocation. Rejected worker admission releases its activity registration. Direct `VirtualMachineError`
-and `ThreadDeath` also settle the continuation observation before escaping its coordinator worker.
+User instrumentation in the root handler joins its canonical execution trace. A valid same-trace ambient Lambda
+span stays current. If ambient context is absent or belongs to another trace, invocation view activates `Invocation`;
+execution view activates the deterministic `Workflow` context, including its unsampled non-recording form.
+Nested operations retain their existing contexts.
 
-Legacy outcome observers wake waiters for an already-selected continuation failure before invocation End can wait
-for handler cleanup. The existing callback thread is retained, and concurrent publishers use the selected control
-cause. Normal outcome handling and diagnostic inspection are unchanged.
+The plugin activates the context in `onInvocationStart` and restores the previous context in `onInvocationEnd`.
+The core calls both hooks on the root handler thread and waits for `onInvocationEnd` to finish before returning,
+including when execution suspends or terminates. Handler `finally` blocks must finish before invocation-end hooks
+can run; a blocked handler cleanup therefore also blocks the invocation response. Context restoration still runs
+when span finalization or flushing fails. Ordinary exceptions and nonfatal linkage errors retain the existing
+plugin-hook isolation behavior. Invocation-end hooks run in reverse registration order so nested scopes unwind
+correctly; remaining end hooks run even when another hook raises an Error. The first unisolated Error propagates,
+unless a later `VirtualMachineError` or `ThreadDeath` takes precedence over a non-JVM-fatal Error; other distinct
+end-hook Errors are retained as suppressed failures. Scope cleanup preserves finalization failures using the same
+JVM-fatal precedence, so an ordinary cleanup exception cannot hide an earlier Error.
+Invocations without plugins also wait for handler cleanup before returning the selected suspension or retry outcome.
+The manager selects suspension or termination before waking operation waiters, so a later returning or throwing
+handler `finally` cannot replace that selected outcome. A handler outcome that was already selected remains primary.
+SDK output preparation, including customer `SerDes` calls and durable large-result checkpointing, finishes before
+terminal invocation-end notification. Failures in this preparation report `RETRYING` instead of ending the Workflow
+span. If End also raises an unisolated Error, the preparation failure remains primary with the cleanup error
+suppressed, unless cleanup introduces the first JVM-fatal error. An original JVM-fatal preparation error retains its
+identity. Retryable control failures follow the same End-error combination: an ordinary End Error is suppressed
+under the retry control, while a direct JVM-fatal End error retains its existing precedence with the control and
+its cause preserved as diagnostics. This does not add arbitrary cause unwrapping to handler failure classification.
+End describes the SDK outcome at that point, not acknowledgment of a response by the Lambda service.
+Caller-side execution-manager cleanup, response-envelope encoding and output-stream writes follow End; runtime
+response transport follows the handler return. Failures at those later boundaries still propagate, without a second
+End dispatch or changing its already reported outcome. A JVM-fatal MDC-restoration failure after End (direct or
+inside a standard transport wrapper) completes the caller's observation exceptionally with the original fatal
+before that fatal escapes the worker, for both asynchronous and inline executors. The End notification remains
+unchanged and is not repeated. An earlier JVM-fatal End/preparation failure remains primary; later restoration
+failures are suppressed, with an identity guard when restoration throws the same fatal object. A restoration fatal takes precedence over an earlier non-JVM-fatal delivery/End failure,
+which remains suppressed. Non-JVM-fatal restoration failures, including `AssertionError` and `LinkageError`, retain
+the selected caller outcome. After an ordinary outer restoration failure, the SDK makes one guarded `MDC.clear()`
+attempt before rethrowing the original worker failure. This also applies when an earlier End/preparation JVM fatal
+is already primary: restoration and clear failures remain suppressed under that first fatal. A successful clear
+prevents inheritable invocation state from reaching a replacement pool thread. With no earlier JVM fatal, a failing
+clear is retained as a suppressed diagnostic, or its JVM fatal uses the same caller-settlement-before-worker-throw
+rule. Clearing can discard ambient MDC that could not be
+restored. If the adapter's clear also fails, clean replacement state is not guaranteed; the SDK does not promise
+quarantine for an arbitrary caller-owned executor. Initialization and handler/body policies are unchanged.
+Before invocation startup, a JVM-fatal error from MDC capture (direct or inside a standard transport wrapper)
+completes the observation future exceptionally with that same fatal before escaping the handler worker. No start,
+body, or end hook runs, and no durable `FAILED` response is produced for that fatal. Ordinary initialization errors
+and handler/body failure classification retain their existing behavior.
 
-Ordinary unowned helper failures retain their observation-only behavior. Normal manager closing does not replace
-the selected outcome or stop unrelated operations. This boundary does not change handler/predicate failure
-classification, hook threading, trace topology, or add general wrapped-fatal classification.
+An SDK checkpoint continuation owned by an operation reports resumption/deserialization and dispatch failures
+through retryable manager control before releasing its activity lease. The caller receives the original failure as
+the cause of `UnrecoverableDurableExecutionException`, and started End hooks receive `RETRYING`; persisted operation
+state is unchanged for the next invocation. A rejected user-worker dispatch rolls back its activity registration.
+Ordinary failures during normal manager closing do not replace the selected outcome or stop unrelated operations.
+Unowned ordinary helper failures retain their observation-only behavior. Direct `VirtualMachineError` or
+`ThreadDeath` failures also settle their observation future after lease release and before escaping the coordinator
+worker. Observation cancellation cannot skip the actual task or discard its operation failure. This boundary does
+not reclassify handler/predicate failures or add general wrapped-fatal classification.
+
+SDK inspection of MDC-capture failures reads each visited standard transport cause once and detects identity cycles.
+Cyclic, null, or unreadable leading `CompletionException` chains retain the original wrapper; ordinary initialization
+still reports `FAILED` when its error response can be serialized. This provides cycle safety for finite cause graphs,
+not a fixed depth or time limit. Arbitrary custom `getCause`, other `Throwable` accessors, and customer `SerDes`
+behavior remain outside that guarantee.
+
+This plugin version requires the core's `DurableExecutor.supportsSameThreadInvocationHooks()` capability, introduced
+in the 2.2.2 lifecycle contract (currently `2.2.2-SNAPSHOT`). Upgrade the core together with the plugin layer. Every
+plugin constructor checks this capability before building a tracer provider or activating context. A core without
+it, including released 2.2.1, is rejected with an explicit configuration error. Older cores may call
+`onInvocationEnd` on another thread and are not supported with this plugin version. Existing plugin binaries remain
+usable with the updated core; their invocation-end hooks now follow the same-thread, reverse-registration-order
+contract described above.
 
 ## Installation
 
@@ -83,7 +140,7 @@ Configuration reads this explicit opt-in annotation from the entire superclass c
 that happen to be named `getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled
 view restriction. A subclass may add another group, but cannot replace a superclass's group; repeated group names in one
 class hierarchy are checked once.
-Older cores ignore the optional annotation and retain their prior behavior; no provider-version floor is raised.
+The exclusivity annotation does not change the provider registration API; the same-thread core requirement above still applies.
 
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
@@ -152,9 +209,9 @@ invocation's process-wide header. No global carrier is modified. Capture is skip
 The no-argument `ContextExtractor.extract()` remains the functional method, so existing lambdas and custom extractors
 retain their behavior. `XRayContextExtractor` uses a temporary thread-local scope solely to preserve old no-argument
 subclass overrides, including `super.extract()` delegation; the snapshot itself is stored in the record field. The
-scope is restored in `finally`. A new plugin layer on an older core falls back when the optional field accessor is
-unavailable; provider API and dependency floors are unchanged. Consuming the LMI field requires both updated core and
-plugin. Shared plugin-instance concurrency remains the separate factory-lifetime change.
+scope is restored in `finally`. On a core that satisfies the same-thread lifecycle requirement above but lacks the optional header accessor,
+the plugin retains the legacy carrier fallback. Header support adds no further provider API or dependency requirement;
+consuming the LMI field requires both updated core and plugin. Shared plugin-instance concurrency remains the separate factory-lifetime change.
 
 **Record source compatibility boundary:** `InvocationInfo` now has eight components. Its previous 4-, 5-, 6- and
 7-argument constructors and seven accessors remain; the old constructors set the new field to null. Existing constructor
@@ -481,7 +538,7 @@ var otelPlugin = new InvocationOtelPlugin(
 ## Requirements
 
 - Java 17+
-- AWS Durable Execution SDK for Java 2.0.0+
+- AWS Durable Execution SDK for Java with same-thread invocation hooks (use the core shipped with this plugin release or newer)
 - OpenTelemetry SDK 1.65.0+ (only for custom TracerProvider path)
 - ADOT Lambda Layer `AWSOpenTelemetryDistroJava` (for the no-arg constructor path)
 

@@ -105,6 +105,8 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
     // Per-invocation state
     private volatile boolean tracingEnabled;
     private volatile Span invocationSpan;
+    // Opened and closed by the invocation hooks on the root handler thread.
+    private Scope handlerScope;
     private volatile String durableExecutionArn;
 
     // Trace ID and flags of the execution trace, published together as one snapshot so readers never pair a trace ID
@@ -177,6 +179,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
      * @param config the plugin configuration
      */
     public ExecutionOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, OtelPluginConfig config) {
+        OtelPluginSupport.requireSameThreadInvocationHooks();
         this.idGenerator = DeterministicIdGenerator.installOn(tracerProviderBuilder);
         // Wrap the configured sampler so durable spans use the execution's single precomputed decision.
         DurableSampler.installOn(tracerProviderBuilder);
@@ -198,6 +201,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
      * @param config the plugin configuration
      */
     public ExecutionOtelPlugin(OtelPluginConfig config) {
+        OtelPluginSupport.requireSameThreadInvocationHooks();
         this.contextExtractor = config.contextExtractor();
         this.enableMdc = config.enableMdc();
         this.workflowSpanName = config.workflowSpanName();
@@ -271,10 +275,27 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
                     invocationSpan.getSpanContext().getTraceId());
         }
         tracingEnabled = true;
+        handlerScope = activateHandlerContext();
+    }
+
+    private Scope activateHandlerContext() {
+        var trace = executionTrace;
+        if (!tracingEnabled || trace == null) return null;
+        var ambient = Span.current().getSpanContext();
+        // Preserve a compatible ambient Lambda span. An absent or unrelated ambient span must not leave
+        // handler instrumentation outside the durable execution's canonical trace.
+        if (ambient.isValid() && trace.traceId().equals(ambient.getTraceId())) return Scope.noop();
+        return Span.wrap(workflowSpanContext).makeCurrent();
     }
 
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
+        var scope = handlerScope;
+        handlerScope = null;
+        OtelPluginSupport.runInvocationEnd(scope, () -> endInvocation(info));
+    }
+
+    private void endInvocation(InvocationEndInfo info) {
         if (!tracingEnabled) {
             return;
         }

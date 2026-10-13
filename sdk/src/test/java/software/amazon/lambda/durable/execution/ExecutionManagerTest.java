@@ -28,6 +28,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -41,7 +42,6 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
-import software.amazon.lambda.durable.util.ExceptionHelper;
 
 class ExecutionManagerTest {
     private static final String EXECUTION_OP_ID = "01234567-0123-0123-0123-012345678901";
@@ -59,6 +59,36 @@ class ExecutionManagerTest {
                 new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState),
                 DurableConfig.builder().withDurableExecutionClient(client).build(),
                 null);
+    }
+
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @ValueSource(strings = {"success", "ordinary", "vm", "death"})
+    void bodySelectedBeforeManagerTerminationRetainsItsOutcome(String kind) {
+        try (var manager = createManager(List.of(executionOp()))) {
+            var body = new CompletableFuture<String>();
+            var selected = manager.runUntilCompleteOrSuspend(body);
+            Throwable failure =
+                    switch (kind) {
+                        case "ordinary" -> new IllegalArgumentException("body failure");
+                        case "vm" -> new InternalError("body fatal");
+                        case "death" -> new ThreadDeath();
+                        default -> null;
+                    };
+            if (failure == null) body.complete("body success");
+            else body.completeExceptionally(failure);
+            var later = new UnrecoverableDurableExecutionException(
+                    ErrorObject.builder().errorMessage("later manager failure").build(), true);
+            assertSame(
+                    later,
+                    assertThrows(
+                            UnrecoverableDurableExecutionException.class, () -> manager.terminateExecution(later)));
+            if (failure == null) assertEquals("body success", selected.join());
+            else
+                assertSame(
+                        failure,
+                        assertThrows(CompletionException.class, selected::join).getCause());
+        }
     }
 
     @SuppressWarnings("removal")
@@ -156,219 +186,6 @@ class ExecutionManagerTest {
         } finally {
             executor.shutdownNow();
             assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
-        }
-    }
-
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void ownedFailureReachesExecutionDespiteCancelledObservation(boolean cancelled) throws Exception {
-        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
-        manager.registerActiveThread("root");
-        var owner = mock(BaseDurableOperation.class);
-        when(owner.getCompletionFuture()).thenReturn(new CompletableFuture<>());
-        var queued = new AtomicReference<Runnable>();
-        var failure = new IllegalArgumentException("owned continuation failure");
-        var selected = manager.runUntilCompleteOrSuspend(new CompletableFuture<>());
-        var observation = manager.runCheckpointContinuation(
-                owner,
-                () -> {
-                    throw failure;
-                },
-                queued::set);
-        if (cancelled) assertTrue(observation.cancel(false));
-        queued.get().run();
-        var control = assertInstanceOf(
-                UnrecoverableDurableExecutionException.class,
-                assertThrows(ExecutionException.class, () -> selected.get(3, TimeUnit.SECONDS))
-                        .getCause());
-        assertTrue(control.isRetryable());
-        assertSame(failure, control.getCause());
-        if (cancelled) assertTrue(observation.isCancelled());
-        else
-            assertSame(
-                    failure,
-                    assertThrows(ExecutionException.class, () -> observation.get(3, TimeUnit.SECONDS))
-                            .getCause());
-        CompletableFuture.runAsync(manager::close).get(3, TimeUnit.SECONDS);
-    }
-
-    @Test
-    void ownedCoordinatorRejectionSettlesExecutionAndReleasesAdmission() throws Exception {
-        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
-        manager.registerActiveThread("root");
-        var owner = mock(BaseDurableOperation.class);
-        when(owner.getCompletionFuture()).thenReturn(new CompletableFuture<>());
-        var selected = manager.runUntilCompleteOrSuspend(new CompletableFuture<>());
-        var rejection = new RejectedExecutionException("coordinator admission rejected");
-        assertSame(
-                rejection,
-                assertThrows(
-                        RejectedExecutionException.class,
-                        () -> manager.runCheckpointContinuation(owner, () -> fail("not admitted"), task -> {
-                            throw rejection;
-                        })));
-        var control = assertInstanceOf(
-                UnrecoverableDurableExecutionException.class,
-                assertThrows(ExecutionException.class, () -> selected.get(3, TimeUnit.SECONDS))
-                        .getCause());
-        assertTrue(control.isRetryable());
-        assertSame(rejection, control.getCause());
-        CompletableFuture.runAsync(manager::close).get(3, TimeUnit.SECONDS);
-    }
-
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void legacyOutcomeObserverWakesItsOwnerAndClearsPublisherAfterReentry(boolean observerThrows) throws Exception {
-        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
-        manager.registerActiveThread("root");
-        var owner = mock(BaseDurableOperation.class);
-        var ownerCompletion = new CompletableFuture<BaseDurableOperation>();
-        when(owner.getOperationId()).thenReturn("owner");
-        when(owner.getCompletionFuture()).thenReturn(ownerCompletion);
-        manager.registerOperation(owner);
-        var failure = new IllegalArgumentException("continuation");
-        var observerFailure = new AssertionError("observer failure");
-        var selectedControl = new AtomicReference<Throwable>();
-        var publisher = Thread.currentThread();
-        var selected = manager.runUntilCompleteOrSuspend(new CompletableFuture<>())
-                .handle((value, error) -> {
-                    assertSame(publisher, Thread.currentThread(), "No finalizer thread change");
-                    manager.runCheckpointContinuation(() -> fail("No post-selection reentrant work"), Runnable::run)
-                            .join();
-                    selectedControl.set(ExceptionHelper.unwrapCompletableFuture(error));
-                    manager.wakePublishedContinuationWaiters(selectedControl.get());
-                    var control = assertInstanceOf(
-                            UnrecoverableDurableExecutionException.class,
-                            assertThrows(CompletionException.class, ownerCompletion::join)
-                                    .getCause());
-                    assertSame(failure, control.getCause());
-                    if (observerThrows) throw observerFailure;
-                    return "observed";
-                });
-        var observation = manager.runCheckpointContinuation(
-                owner,
-                () -> {
-                    throw failure;
-                },
-                Runnable::run);
-        assertSame(
-                failure,
-                assertThrows(CompletionException.class, observation::join).getCause());
-        if (observerThrows)
-            assertSame(
-                    observerFailure,
-                    assertThrows(CompletionException.class, selected::join).getCause());
-        else assertEquals("observed", selected.join());
-        var unrelated = mock(BaseDurableOperation.class);
-        var unrelatedCompletion = new CompletableFuture<BaseDurableOperation>();
-        when(unrelated.getOperationId()).thenReturn("later");
-        when(unrelated.getCompletionFuture()).thenReturn(unrelatedCompletion);
-        manager.registerOperation(unrelated);
-        manager.wakePublishedContinuationWaiters(selectedControl.get());
-        assertFalse(unrelatedCompletion.isDone(), "A retained publisher marker would spuriously stop later work");
-        manager.close();
-    }
-
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void losingPublisherMustWakeTheSelectedWinnerCause(boolean winnerFatal) throws Exception {
-        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
-        manager.registerActiveThread("root");
-        var owner = mock(BaseDurableOperation.class);
-        var ownerCompletion = new CompletableFuture<BaseDurableOperation>();
-        when(owner.getOperationId()).thenReturn("owner");
-        when(owner.getCompletionFuture()).thenReturn(ownerCompletion);
-        manager.registerOperation(owner);
-        Throwable first = winnerFatal ? new InternalError("winner") : new IllegalArgumentException("winner");
-        Throwable second = winnerFatal ? new IllegalArgumentException("loser") : new InternalError("loser");
-        var queued = new ArrayList<Runnable>();
-        var winnerSelected = new CountDownLatch(1);
-        var releaseWinner = new CountDownLatch(1);
-        var endSeen = new CountDownLatch(1);
-        var observedCause = new AtomicReference<Throwable>();
-        var awakenedCause = new AtomicReference<Throwable>();
-        var observerThread = new AtomicReference<Thread>();
-        var loserThread = new AtomicReference<Thread>();
-        manager.runUntilCompleteOrSuspend(new CompletableFuture<>()).handle((value, error) -> {
-            observerThread.set(Thread.currentThread());
-            observedCause.set(ExceptionHelper.unwrapCompletableFuture(error));
-            manager.wakePublishedContinuationWaiters(observedCause.get());
-            awakenedCause.set(
-                    ownerCompletion.handle((ignored, failure) -> failure).join());
-            endSeen.countDown();
-            return null;
-        });
-        var field = ExecutionManager.class.getDeclaredField("executionExceptionFuture");
-        field.setAccessible(true);
-        var channel = (CompletableFuture<?>) field.get(manager);
-        // Gate after the winner's CAS but before the older outcome callback is drained. A scheduler pause can
-        // create the same window with a single production observer; the gate makes it deterministic here.
-        channel.whenComplete((value, failure) -> {
-            winnerSelected.countDown();
-            try {
-                assertTrue(releaseWinner.await(3, TimeUnit.SECONDS));
-            } catch (InterruptedException interrupted) {
-                throw new AssertionError(interrupted);
-            }
-        });
-        var firstObservation = manager.runCheckpointContinuation(
-                owner,
-                () -> {
-                    if (first instanceof Error fatal) throw fatal;
-                    throw (RuntimeException) first;
-                },
-                queued::add);
-        var secondObservation = manager.runCheckpointContinuation(
-                owner,
-                () -> {
-                    if (second instanceof Error fatal) throw fatal;
-                    throw (RuntimeException) second;
-                },
-                queued::add);
-        var workers = Executors.newFixedThreadPool(2);
-        var winnerTask = workers.submit(queued.get(0));
-        try {
-            assertTrue(winnerSelected.await(3, TimeUnit.SECONDS));
-            var winner = assertThrows(CompletionException.class, channel::join).getCause();
-            var loserTask = workers.submit(() -> {
-                loserThread.set(Thread.currentThread());
-                queued.get(1).run();
-            });
-            assertTrue(endSeen.await(3, TimeUnit.SECONDS));
-            if (second instanceof Error)
-                assertSame(
-                        second,
-                        assertThrows(ExecutionException.class, () -> loserTask.get(3, TimeUnit.SECONDS))
-                                .getCause());
-            else loserTask.get(3, TimeUnit.SECONDS);
-            assertSame(
-                    loserThread.get(),
-                    observerThread.get(),
-                    "The losing completeExceptionally drains the winner callback");
-            assertSame(winner, observedCause.get());
-            assertSame(
-                    winner,
-                    awakenedCause.get(),
-                    "Waiters must receive the already-selected control, never the losing publisher");
-        } finally {
-            releaseWinner.countDown();
-            if (first instanceof Error)
-                assertSame(
-                        first,
-                        assertThrows(ExecutionException.class, () -> winnerTask.get(3, TimeUnit.SECONDS))
-                                .getCause());
-            else winnerTask.get(3, TimeUnit.SECONDS);
-            assertSame(
-                    first,
-                    assertThrows(CompletionException.class, firstObservation::join)
-                            .getCause());
-            assertSame(
-                    second,
-                    assertThrows(CompletionException.class, secondObservation::join)
-                            .getCause());
-            workers.shutdownNow();
-            assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS));
-            manager.close();
         }
     }
 
@@ -785,6 +602,89 @@ class ExecutionManagerTest {
         actualWorker.get(3, TimeUnit.SECONDS);
         assertTrue(manager.isExecutionCompletedExceptionally());
         assertTrue(completion.isCancelled());
+    }
+
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void coordinatorAdmissionFatalSelectsRetryBeforeLeaseRelease(boolean death) throws Exception {
+        Error fatal = death ? new ThreadDeath() : new InternalError("coordinator admission fatal");
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        manager.registerActiveThread("root");
+        var owner = mock(BaseDurableOperation.class);
+        when(owner.getCompletionFuture()).thenReturn(new CompletableFuture<>());
+        var selected = manager.runUntilCompleteOrSuspend(new CompletableFuture<>());
+        assertSame(
+                fatal,
+                assertThrows(
+                        Error.class,
+                        () -> manager.runCheckpointContinuation(owner, () -> fail("No accepted task"), task -> {
+                            throw fatal;
+                        })));
+        var retry = assertInstanceOf(
+                UnrecoverableDurableExecutionException.class,
+                assertThrows(ExecutionException.class, () -> selected.get(3, TimeUnit.SECONDS))
+                        .getCause());
+        assertTrue(retry.isRetryable());
+        assertSame(fatal, retry.getCause());
+        CompletableFuture.runAsync(manager::close).get(3, TimeUnit.SECONDS);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void ownedFailureReachesExecutionDespiteCancelledObservation(boolean cancelled) throws Exception {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        manager.registerActiveThread("root");
+        var owner = mock(BaseDurableOperation.class);
+        when(owner.getCompletionFuture()).thenReturn(new CompletableFuture<>());
+        var queued = new AtomicReference<Runnable>();
+        var failure = new IllegalArgumentException("owned continuation failure");
+        var selected = manager.runUntilCompleteOrSuspend(new CompletableFuture<>());
+        var observation = manager.runCheckpointContinuation(
+                owner,
+                () -> {
+                    throw failure;
+                },
+                queued::set);
+        if (cancelled) assertTrue(observation.cancel(false));
+        queued.get().run();
+        var control = assertInstanceOf(
+                UnrecoverableDurableExecutionException.class,
+                assertThrows(ExecutionException.class, () -> selected.get(3, TimeUnit.SECONDS))
+                        .getCause());
+        assertTrue(control.isRetryable());
+        assertSame(failure, control.getCause());
+        if (cancelled) assertTrue(observation.isCancelled());
+        else
+            assertSame(
+                    failure,
+                    assertThrows(ExecutionException.class, () -> observation.get(3, TimeUnit.SECONDS))
+                            .getCause());
+        CompletableFuture.runAsync(manager::close).get(3, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void ownedCoordinatorRejectionSettlesExecutionAndReleasesAdmission() throws Exception {
+        var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
+        manager.registerActiveThread("root");
+        var owner = mock(BaseDurableOperation.class);
+        when(owner.getCompletionFuture()).thenReturn(new CompletableFuture<>());
+        var selected = manager.runUntilCompleteOrSuspend(new CompletableFuture<>());
+        var rejection = new RejectedExecutionException("coordinator admission rejected");
+        assertSame(
+                rejection,
+                assertThrows(
+                        RejectedExecutionException.class,
+                        () -> manager.runCheckpointContinuation(owner, () -> fail("not admitted"), task -> {
+                            throw rejection;
+                        })));
+        var control = assertInstanceOf(
+                UnrecoverableDurableExecutionException.class,
+                assertThrows(ExecutionException.class, () -> selected.get(3, TimeUnit.SECONDS))
+                        .getCause());
+        assertTrue(control.isRetryable());
+        assertSame(rejection, control.getCause());
+        CompletableFuture.runAsync(manager::close).get(3, TimeUnit.SECONDS);
     }
 
     @Test

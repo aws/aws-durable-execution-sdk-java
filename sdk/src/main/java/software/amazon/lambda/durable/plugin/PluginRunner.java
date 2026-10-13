@@ -14,8 +14,9 @@ import org.slf4j.LoggerFactory;
 /**
  * Composes multiple {@link DurableExecutionPlugin} instances into a single dispatcher.
  *
- * <p>Event hooks call each plugin in order. Exceptions and nonfatal linkage failures are isolated; other errors,
- * including fatal JVM failures, retain their existing propagation behavior.
+ * <p>Event hooks call each plugin in registration order, except invocation end, which unwinds in reverse order.
+ * Exceptions and nonfatal linkage failures are isolated; other errors propagate. Invocation end finishes the remaining
+ * cleanup hooks before propagating the first error.
  *
  * <p>{@code onInvocationEnd} is awaited (the SDK blocks until it returns) to allow plugins to flush data before Lambda
  * freezes.
@@ -82,14 +83,16 @@ public class PluginRunner {
 
     /** Calls a void hook on all plugins, isolating exceptions and incompatible binary dependencies. */
     private void run(Consumer<DurableExecutionPlugin> hook) {
-        for (var plugin : plugins) {
-            try {
-                hook.accept(plugin);
-            } catch (Exception e) {
-                logger.warn("Plugin hook threw exception", e);
-            } catch (LinkageError e) {
-                logger.warn("Plugin hook could not link a dependency; check SDK/plugin dependency compatibility", e);
-            }
+        for (var plugin : plugins) runHook(plugin, hook);
+    }
+
+    private void runHook(DurableExecutionPlugin plugin, Consumer<DurableExecutionPlugin> hook) {
+        try {
+            hook.accept(plugin);
+        } catch (Exception e) {
+            logger.warn("Plugin hook threw exception", e);
+        } catch (LinkageError e) {
+            logger.warn("Plugin hook could not link a dependency; check SDK/plugin dependency compatibility", e);
         }
     }
 
@@ -98,11 +101,35 @@ public class PluginRunner {
     }
 
     /**
-     * Called at the end of each invocation. Awaited — the SDK blocks until all plugins return, allowing plugins to
-     * flush spans/metrics before Lambda freezes.
+     * Called in reverse registration order on the root handler thread after it unwinds. Awaited — the SDK blocks until
+     * all plugins return, including during suspension or termination, allowing plugins to flush spans/metrics before
+     * Lambda freezes.
      */
     public void onInvocationEnd(InvocationEndInfo info) {
-        run(p -> p.onInvocationEnd(info));
+        Error firstError = null;
+        for (var index = plugins.size() - 1; index >= 0; index--) {
+            try {
+                runHook(plugins.get(index), p -> p.onInvocationEnd(info));
+            } catch (Error failure) {
+                // Finish unwinding earlier plugins' thread-local scopes before propagating an end-hook error.
+                if (firstError == null) {
+                    firstError = failure;
+                } else if (firstError != failure) {
+                    if (isJvmFatal(failure) && !isJvmFatal(firstError)) {
+                        failure.addSuppressed(firstError);
+                        firstError = failure;
+                    } else {
+                        firstError.addSuppressed(failure);
+                    }
+                }
+            }
+        }
+        if (firstError != null) throw firstError;
+    }
+
+    @SuppressWarnings("removal")
+    private static boolean isJvmFatal(Error failure) {
+        return failure instanceof VirtualMachineError || failure instanceof ThreadDeath;
     }
 
     public void onOperationStart(OperationInfo info) {

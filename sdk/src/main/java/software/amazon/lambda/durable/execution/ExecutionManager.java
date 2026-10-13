@@ -9,7 +9,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -65,9 +64,6 @@ public class ExecutionManager implements SafeCloseable {
 
     // ===== Execution State =====
     private final Map<String, Operation> operationStorage;
-    // Only populated while a continuation failure is synchronously publishing its selected outcome.
-    private final Map<Throwable, Thread> continuationFailurePublishers =
-            Collections.synchronizedMap(new IdentityHashMap<>());
     private final Operation executionOp;
     private final String durableExecutionArn;
     private final Context lambdaContext;
@@ -641,25 +637,10 @@ public class ExecutionManager implements SafeCloseable {
             if (closing && !(failure instanceof VirtualMachineError || failure instanceof ThreadDeath)) return;
             if (selectedContinuationFailure == null) selectedContinuationFailure = control;
             selected = selectedContinuationFailure;
-            continuationFailurePublishers.put(control, Thread.currentThread());
         }
         // A later admitted publisher may drain the winner's callbacks. Keep that CompletableFuture behavior,
         // but publish/wake using the selected cause, outside the monitor needed by worker cleanup.
-        try {
-            if (executionExceptionFuture.completeExceptionally(selected)) stopAllOperations(selected);
-        } finally {
-            continuationFailurePublishers.remove(control);
-        }
-    }
-
-    /**
-     * A legacy outcome observer may run inside completeExceptionally, before its publisher returns to wake waiters. The
-     * outcome is already selected here. Wake those waiters before End can wait for their handler cleanup.
-     */
-    void wakePublishedContinuationWaiters(Throwable selectedFailure) {
-        // A losing completeExceptionally call may drain the winner's callback on the losing publisher's thread.
-        // Match the already-selected control by identity, not the thread currently running the callback.
-        if (continuationFailurePublishers.containsKey(selectedFailure)) stopAllOperations(selectedFailure);
+        if (executionExceptionFuture.completeExceptionally(selected)) stopAllOperations(selected);
     }
 
     private Object registerCheckpointContinuation(BaseDurableOperation owner) {
@@ -822,8 +803,9 @@ public class ExecutionManager implements SafeCloseable {
      * @param exception the unrecoverable exception that caused termination
      */
     public void terminateExecution(UnrecoverableDurableExecutionException exception) {
-        stopAllOperations(exception);
+        // Select control flow before waking a handler whose finally block can complete its body future.
         executionExceptionFuture.completeExceptionally(exception);
+        stopAllOperations(exception);
         throw exception;
     }
 
@@ -834,8 +816,8 @@ public class ExecutionManager implements SafeCloseable {
 
     private SuspendExecutionException signalSuspension() {
         var ex = new SuspendExecutionException();
-        stopAllOperations(ex);
         executionExceptionFuture.completeExceptionally(ex);
+        stopAllOperations(ex);
         return ex;
     }
 
