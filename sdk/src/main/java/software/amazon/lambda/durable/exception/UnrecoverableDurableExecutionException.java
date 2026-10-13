@@ -10,7 +10,12 @@ public class UnrecoverableDurableExecutionException extends DurableExecutionExce
     private final boolean retryable;
 
     public UnrecoverableDurableExecutionException(ErrorObject errorObject, boolean retryable) {
-        super(errorObject.errorMessage());
+        this(errorObject, retryable, null);
+    }
+
+    /** Creates an invocation control failure while retaining its original in-process cause. */
+    public UnrecoverableDurableExecutionException(ErrorObject errorObject, boolean retryable, Throwable cause) {
+        super(errorObject.errorMessage(), cause);
         this.errorObject = errorObject;
         this.retryable = retryable;
     }

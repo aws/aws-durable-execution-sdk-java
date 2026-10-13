@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -48,7 +49,9 @@ class ReplayValidationTest {
                 null);
         var context = DurableContextImpl.createRootContext(
                 executionManager, DurableConfig.builder().build(), null);
-        executionManager.setCurrentThreadContext(new ThreadContext(EXECUTION_OP_ID + "-execution", ThreadType.CONTEXT));
+        // Mirror DurableExecutor: the caller must stay active if a worker finishes before step().get() waits.
+        executionManager.registerActiveThread(null);
+        executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
 
         return context;
     }
@@ -59,7 +62,7 @@ class ReplayValidationTest {
         var context = createTestContext(List.of());
 
         // When & Then: Should not throw
-        assertDoesNotThrow(() -> context.step("test", String.class, stepCtx -> "result"));
+        assertEquals("result", context.step("test", String.class, stepCtx -> "result"));
     }
 
     @Test

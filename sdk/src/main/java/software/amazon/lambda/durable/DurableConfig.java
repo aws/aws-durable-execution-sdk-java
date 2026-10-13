@@ -497,8 +497,9 @@ public final class DurableConfig {
          * constructed again when its exact concrete type is already explicitly configured. Unrelated plugins retain
          * their existing registration behavior.
          *
-         * <p>Calling this method replaces any previously registered plugins. Plugins are called in registration order.
-         * A fresh builder combines this explicit list with environment-selected plugins. On a builder returned by
+         * <p>Calling this method replaces any previously registered plugins. Hooks use registration order, except
+         * invocation end, which uses reverse order under the 2.2.2 same-thread lifecycle contract. A fresh builder
+         * combines this explicit list with environment-selected plugins. On a builder returned by
          * {@link DurableConfig#toBuilder()}, this method replaces the complete resolved list and dynamic discovery
          * remains disabled, including when the replacement list is empty.
          *

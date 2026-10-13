@@ -321,8 +321,21 @@ public abstract class BaseDurableOperation {
         // registerActiveThread is idempotent (no-op if already registered).
         registerActiveThread(operationId);
 
-        runningUserHandler.set(CompletableFuture.runAsync(
-                wrapped, getContext().getDurableConfig().getExecutorService()));
+        try {
+            runningUserHandler.set(CompletableFuture.runAsync(
+                    wrapped, getContext().getDurableConfig().getExecutorService()));
+        } catch (RuntimeException | Error dispatchFailure) {
+            // Admission failed, so no worker will execute its deregistration finally block. The submitting
+            // coordinator need not have a user ThreadContext; undo the registration directly on the manager.
+            if (operationId != null) {
+                try {
+                    executionManager.deregisterActiveThread(operationId);
+                } catch (SuspendExecutionException ignored) {
+                    // Preserve the dispatch failure; any suspension was already signaled by deregistration.
+                }
+            }
+            throw dispatchFailure;
+        }
     }
 
     /**
