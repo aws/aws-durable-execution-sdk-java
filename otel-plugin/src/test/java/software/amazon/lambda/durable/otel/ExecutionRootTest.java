@@ -252,10 +252,10 @@ class ExecutionRootTest {
                     .enableMdc(false)
                     .contextExtractor(() -> new ExtractedContext(TRACE, null, ExtractedContext.Sampling.SAMPLED))
                     .build();
-            DurableExecutionPluginFactory plugin = executionView
+            DurableExecutionPluginFactory factory = executionView
                     ? ExecutionOtelPlugin.factory(builder, config)
                     : InvocationOtelPlugin.factory(builder, config);
-            invoke(plugin, ARN, true, InvocationStatus.PENDING);
+            invoke(factory, ARN, true, InvocationStatus.PENDING);
             assertTrue(named(exporter.getFinishedSpanItems(), "DurableExecutionRoot")
                     .getSpanContext()
                     .isSampled());
@@ -332,14 +332,16 @@ class ExecutionRootTest {
     }
 
     private static void invoke(
-            DurableExecutionPluginFactory plugin, String arn, boolean first, InvocationStatus status) {
-        invoke(plugin, arn, first, status, START);
+            DurableExecutionPluginFactory factory, String arn, boolean first, InvocationStatus status) {
+        invoke(factory, arn, first, status, START);
     }
 
     private static void invoke(
-            DurableExecutionPluginFactory plugin, String arn, boolean first, InvocationStatus status, Instant start) {
-        var instance = plugin.createPlugin(new InvocationInfo("request", arn, first, start));
-        instance.onInvocationEnd(new InvocationEndInfo("request", arn, first, status, null));
+            DurableExecutionPluginFactory factory, String arn, boolean first, InvocationStatus status, Instant start) {
+        var info = new InvocationInfo("request", arn, first, start);
+        var plugin = factory.createPlugin(info);
+        plugin.onInvocationStart(info);
+        plugin.onInvocationEnd(new InvocationEndInfo("request", arn, first, status, null));
     }
 
     private static DurableExecutionPluginFactory plugin(

@@ -139,7 +139,8 @@ public class DurableExecutor {
                             return pluginRunner.runHandler(
                                     () -> handler.apply(handlerInput, context),
                                     () -> hasHandlerScope.set(true),
-                                    executionManager::recordHandlerScopeFatal);
+                                    executionManager::recordHandlerScopeFatal,
+                                    executionManager::recordRootHandlerFatal);
                         }
                     },
                     config.getExecutorService(),
@@ -264,6 +265,7 @@ public class DurableExecutor {
                             }
                             // user handler complete successfully
                             logger.debug("Execution completed");
+                            executionManager.closeCheckpointContinuationAdmission();
                             // Serializing the result and checkpointing an oversized one can both fail, and this
                             // invocation ends either way. The end hook is the only point at which a plugin can finish:
                             // releasePlugins() calls nothing on the instances it drops and the contract has no close(),

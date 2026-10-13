@@ -249,10 +249,23 @@ public class PluginRunner {
         return runHandler(handler, onScopeOpened, fatal -> {});
     }
 
-    /** Reports fatal errors originating only in scope callbacks, before rethrowing on the owner thread. */
-    @SuppressWarnings("removal")
+    /** Reports fatal errors from scope callbacks; retains the existing standalone runner body policy. */
     public <T> T runHandler(Supplier<T> handler, Runnable onScopeOpened, Consumer<Error> onScopeFatal) {
+        return runHandler(handler, onScopeOpened, onScopeFatal, fatal -> null);
+    }
+
+    /**
+     * Publishes an existing-classifier body fatal before owned cleanup only if the invocation still accepts it. The
+     * publisher returns the winning fatal, or null when earlier invocation control already won.
+     */
+    @SuppressWarnings("removal")
+    public <T> T runHandler(
+            Supplier<T> handler,
+            Runnable onScopeOpened,
+            Consumer<Error> onScopeFatal,
+            Function<Error, Error> publishBodyFatal) {
         var scopes = new ArrayDeque<AutoCloseable>();
+        Error bodyFatal = null;
         try {
             for (var plugin : plugins) {
                 try {
@@ -265,9 +278,20 @@ public class PluginRunner {
                     reportHandlerScopeFailure("Plugin handler scope threw exception", e, onScopeFatal);
                 }
             }
-            return handler.get();
+            if (scopes.isEmpty()) return handler.get();
+            try {
+                return handler.get();
+            } catch (Throwable failure) {
+                // Match the existing invocation body classifier, not the broader plugin/MDC wrapper policy.
+                var classified = ExceptionHelper.unwrapInvocationFailure(failure);
+                if (classified instanceof VirtualMachineError || classified instanceof ThreadDeath) {
+                    bodyFatal = publishBodyFatal.apply((Error) classified);
+                }
+                ExceptionHelper.sneakyThrow(failure);
+                return null;
+            }
         } finally {
-            closeHandlerScopes(scopes, onScopeFatal);
+            closeHandlerScopes(scopes, onScopeFatal, bodyFatal);
         }
     }
 
@@ -290,8 +314,9 @@ public class PluginRunner {
     }
 
     @SuppressWarnings("removal")
-    private static void closeHandlerScopes(ArrayDeque<AutoCloseable> scopes, Consumer<Error> onScopeFatal) {
-        Error firstFatal = null;
+    private static void closeHandlerScopes(
+            ArrayDeque<AutoCloseable> scopes, Consumer<Error> onScopeFatal, Error bodyFatal) {
+        Error firstFatal = bodyFatal;
         while (!scopes.isEmpty()) {
             try {
                 scopes.pop().close();
@@ -300,6 +325,7 @@ public class PluginRunner {
                     reportHandlerScopeFailure("Plugin handler scope cleanup threw exception", e, onScopeFatal);
                 } catch (VirtualMachineError | ThreadDeath fatal) {
                     if (firstFatal == null) firstFatal = fatal;
+                    else if (firstFatal != fatal) firstFatal.addSuppressed(fatal);
                 }
             }
         }

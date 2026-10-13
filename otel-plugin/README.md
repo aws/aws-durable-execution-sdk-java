@@ -45,6 +45,21 @@ Root-handler context requires the updated core/plugin pair. The new scope bounda
 errors during open and close, continues earlier scope cleanup, and preserves the handler outcome. JVM fatal errors
 remain outside that containment, including when wrapped by asynchronous completion/future exceptions.
 
+Root-handler JVM fatals recognized by the existing body classifier are reported before owned handler scopes close.
+The first body fatal remains primary if close blocks or raises another fatal, using the same existing fatal handoff
+budget. A body fatal observed after End starts stays on the frozen late-failure path. Ordinary body classification and
+handlers without an owned scope retain their existing behavior.
+
+After a fatal abort, checkpoint and state-page responses are checked before local state/callback/poller publication.
+Late responses do not update that failed invocation; persisted backend state remains available for normal replay.
+The transport and poller locks are unchanged. This does not revoke callbacks already executing before the fatal was
+observed, interrupt the transport, or create a new caller-outcome policy.
+
+Successful-output preparation closes new checkpoint-continuation admission before serialization. It does not revoke
+user workers already admitted to their executor, and End does not mean all unawaited work has finished. The separate
+late-worker and mandatory large-result acknowledgment boundaries in [#787](https://github.com/aws/aws-durable-execution-sdk-java/issues/787)
+remain outside this change.
+
 ## Installation
 
 ```xml
@@ -74,30 +89,22 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 
 ## Fallback execution roots
 
-When the backend supplies no complete remote parent, both views export a `DurableExecutionRoot` anchor before the first
-invocation returns, including when it suspends with `PENDING` or fails with `RETRYING`.
-The anchor is marked `durable.execution.synthetic_root=true`. Its trace and span IDs are deterministic and its start
-and end timestamps are the checkpointed execution start. It does not report execution status or duration; `Workflow`
-continues to report those at terminal completion. Complete remote parents remain externally owned and are never exported.
-Java's `InvocationInfo` requires a non-null execution start timestamp from the initial checkpointed execution operation.
-Missing timestamps are rejected before the plugin runs; anchor timestamps never fall back to the current wall clock.
+When the backend supplies no complete remote parent, both views create and immediately end a `DurableExecutionRoot`
+anchor during per-invocation factory creation, before descendant spans and customer code. Its trace and span IDs are
+deterministic; both timestamps are the checkpointed execution start. The anchor has
+`durable.execution.synthetic_root=true` and carries identity, not execution duration or outcome. Workflow remains the
+terminal summary. Complete remote parents are externally owned and are never exported by the SDK.
 
-Every invocation may re-export the anchor to recover from an earlier interrupted or lost export. Re-exports retain the
-same span fields under stable sampling. The existing provider resource still applies: if a later invocation runs in another
-execution environment, resource attributes such as `faas.instance` can differ. Backends that deduplicate by span identity
-may retain either copy's resource. Each execution ARN owns its own anchor even when multiple executions share a
-propagated trace ID without a parent; they are not collapsed into one
-execution. Upstream sampling and configured fallback sampling apply to anchors and their descendants together.
+With the managed `DurableSampler`, anchors use only the sampled decision and stable SDK identity. Custom sampler
+attributes and trace state remain on Workflow, Invocation, operation and attempt descendants; they are not copied to
+re-exported anchors. `RECORD_ONLY` still records descendants but produces no anchor, and `DROP` produces neither.
+Visible plain replacement providers retain their documented independent per-span policy described below.
 
-After the first invocation's export and flush succeed, its anchor remains available even if the execution is stopped
-or times out while suspended and never invokes the plugin again. An invocation killed before its end hook or flush can
-still lose its spans; a later invocation, including terminal completion, attempts to export the anchor again. Export
-and flush failures do not provide a delivery guarantee.
-
-For a consistent hierarchy across invocations, preserve an explicit upstream sampling decision or use a deterministic
-sampling policy based on the stable trace ID. A non-deterministic sampler can export an anchor without a Workflow, or
-a Workflow without its anchor. Any sampler-supplied attributes and trace state must also stay stable for identical
-anchor re-exports.
+Each invocation may re-export the zero-duration anchor to recover an earlier lost export. Managed sampled re-exports
+keep identity, timestamps and SDK span fields stable. Provider resources still apply and may differ between execution
+environments. No export or flush failure can guarantee delivery. Invocation End attempts one flush even if span
+finalization fails. A factory that fails before returning an instance keeps the major's existing containment/skipping
+contract; the SDK does not publish a partially constructed plugin just to give it an End callback.
 
 ## Choose one durable OTel view
 
@@ -303,12 +310,15 @@ Operation and attempt spans link to the Workflow span. `ExecutionOtelPlugin` rev
 
 ### Sampling
 
-The plugin decides sampling once per invocation and applies that single decision to every durable span (DurableExecutionRoot, Workflow, Invocation, operation, attempt), so the configured sampler is not re-invoked per span and the full decision — including `RECORD_ONLY` — is preserved. The decision follows this precedence, highest first:
+The SDK-wide sampling guarantees below require `DurableSampler` itself to be the final installed sampler. The
+[builder constructors](#configuration) and [ADOT extension setup](#1-adot-lambda-layer) install it automatically;
+configure its delegate through these documented paths and retain `DurableSampler` as the final sampler. An
+unrecognized outer wrapper is treated as a plain replacement. The SDK wrapper applies its sampling intent to every durable
+span. Workflow, Invocation, operation and attempt spans preserve the full result, including `RECORD_ONLY`, sampler
+attributes and trace state. The re-exported `DurableExecutionRoot` is the narrow exception described above: it uses only
+the sampled decision and stable SDK identity, and is omitted for `RECORD_ONLY` or `DROP`.
 
-1. **Backend decision** — `Sampled=1` / `Sampled=0` in the propagated header is authoritative and always preserved, regardless of the configured sampler.
-2. **Same-trace ambient span** — when the header carries no usable `Sampled` value but a valid ambient span (for example an auto-instrumentation Lambda handler span) is already on the execution's trace, the plugin follows that span's decision: sampled → sampled; unsampled but still recording → `RECORD_ONLY`; unsampled and not recording → dropped.
-3. **Configured sampler (application-owned provider)** — when you pass a `SdkTracerProviderBuilder` to `factory(...)`, the sampler of the provider it builds is read directly and evaluated once with the trace ID, span name, and attributes. A trace-ID-ratio sampler therefore produces a stable decision across reinvocations (the trace ID is stable).
-4. **Installed sampler (Java-agent path)** — when the agent owns the provider, it is behind a classloader boundary and its *effective* sampler (which another agent extension may have wrapped or replaced) cannot be reliably read at decision time. Rather than guess, the plugin **defers**: it installs a delegating sampler through the agent's autoconfiguration and lets that wrapper consult the agent's real sampler. The delegate's decision is honored in full — if your configured policy is `always_off`, a rate limiter, or a remote sampler (`xray`, `jaeger_remote`) that returns drop, the durable spans are dropped; they are **not** force-sampled. To avoid consuming a stateful or quota-based sampler once per span, the wrapper consults the delegate once per execution (keyed by trace ID) and reuses that decision for the execution's remaining durable spans within the invocation.
+The supported SDK sampler follows this precedence, highest first:
 
 1. **Backend decision** — with `DurableSampler` installed, `Sampled=1` / `Sampled=0` in the propagated header is
    authoritative, regardless of the wrapped delegate's policy.
@@ -330,6 +340,14 @@ application, so retain the wrapper through the documented customization setup.
 For explicit execution-level control, keep `DurableSampler` as the final installed sampler and set `Sampled` upstream,
 for example through X-Ray
 active tracing. The SDK sampling wrapper preserves that decision.
+
+Parentless fallback-root exports also use the provider's sampler. If the SDK wrapper is replaced by a plain
+sampler, those anchors can follow its normal root policy independently of the flags used by their descendants;
+full upstream sampling overrides require the installed SDK wrapper. For example, a sampler that selects spans by name
+can export only the anchor or only its Invocation child. This behavior is covered for both views by
+`ExecutionRootParityTest.plainReplacementRetainsIndependentPerSpanSampling`; installing `DurableSampler` restores the
+shared decision. Merely delaying anchor creation until terminal completion would not make an arbitrary replacement
+sampler consistent across spans.
 
 ## Span Attributes
 

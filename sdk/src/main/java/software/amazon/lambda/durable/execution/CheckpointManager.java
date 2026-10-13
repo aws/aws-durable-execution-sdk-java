@@ -207,6 +207,7 @@ class CheckpointManager {
      * nextMarker)
      */
     List<Operation> fetchAllPages(CheckpointUpdatedExecutionState checkpointUpdatedExecutionState) {
+        rethrowFatalIfAborted();
         List<Operation> operations = new ArrayList<>();
         if (checkpointUpdatedExecutionState == null) {
             return operations;
@@ -216,10 +217,12 @@ class CheckpointManager {
         }
         var nextMarker = checkpointUpdatedExecutionState.nextMarker();
         while (nextMarker != null && !nextMarker.isEmpty()) {
+            rethrowFatalIfAborted();
             var startTime = System.nanoTime();
             try {
                 var response = config.getDurableExecutionClient()
                         .getExecutionState(durableExecutionArn, checkpointToken, nextMarker);
+                rethrowFatalIfAborted();
                 logger.debug(
                         "Durable getExecutionState API called (latency={}ns): {}.",
                         System.nanoTime() - startTime,
@@ -269,10 +272,12 @@ class CheckpointManager {
             try {
                 var response =
                         config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);
+                rethrowFatalIfAborted();
                 logger.debug(
                         "Durable checkpoint API called (latency={}ns): {}.", System.nanoTime() - startTime, response);
 
                 // Notify callback of completion
+                rethrowFatalIfAborted();
                 checkpointToken = response.checkpointToken();
                 if (response.newExecutionState() != null) {
                     // fetch all pages of operations
@@ -282,18 +287,24 @@ class CheckpointManager {
                     int completedFutures = 0;
                     logger.debug(
                             "Processing {} operations. ({} pending pollers)", operations.size(), pollingFutures.size());
-                    // call the callback
+                    // A response may outlive fatal finalization. Leave persisted state for the next invocation.
+                    rethrowFatalIfAborted();
                     callback.accept(operations);
+                    rethrowFatalIfAborted();
 
                     // complete the registered pollingFutures
                     for (var operation : operations) {
+                        rethrowFatalIfAborted();
                         List<CompletableFuture<Operation>> pollers;
                         synchronized (pollingFutures) {
                             pollers = pollingFutures.remove(operation.id());
                         }
                         if (pollers != null) {
                             completedFutures += pollers.size();
-                            pollers.forEach(poller -> poller.complete(operation));
+                            pollers.forEach(poller -> {
+                                rethrowFatalIfAborted();
+                                poller.complete(operation);
+                            });
                         }
                     }
                     logger.debug(
@@ -308,6 +319,12 @@ class CheckpointManager {
                 finishCheckpointProcessing.run();
             }
         }
+    }
+
+    /** Checks the existing abort signal without acquiring the transport or poller locks. */
+    private void rethrowFatalIfAborted() {
+        var fatal = checkpointApiRequestDelayedBatcher.getFatalFailure();
+        if (fatal != null) throw fatal;
     }
 
     private static int estimateSize(OperationUpdate update) {

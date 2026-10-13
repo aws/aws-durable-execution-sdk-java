@@ -801,6 +801,13 @@ public class ExecutionManager implements SafeCloseable {
         }
     }
 
+    /** Closes new checkpoint-continuation admission without signaling owners or joining their cleanup. */
+    void closeCheckpointContinuationAdmission() {
+        synchronized (activeThreads) {
+            closing = true;
+        }
+    }
+
     private void stopCheckpointContinuations() {
         List<BaseDurableOperation> owners;
         synchronized (activeThreads) {
@@ -952,6 +959,16 @@ public class ExecutionManager implements SafeCloseable {
         executionExceptionFuture.completeExceptionally(original);
         stopAllOperations(original);
         checkpointManager.abortPending(original);
+    }
+
+    /** Reports a root body fatal before owned cleanup without replacing already-selected suspension/retry control. */
+    Error recordRootHandlerFatal(Error fatal) {
+        // Reuse the existing first-completion channel. A losing body-finally failure is not an instrumentation fatal.
+        if (!executionExceptionFuture.completeExceptionally(fatal)) return null;
+        var original = recordPluginFatal(fatal, true);
+        stopAllOperations(original);
+        checkpointManager.abortPending(original);
+        return original;
     }
 
     /** Stops pending work while leaving the root worker responsible for completing its scope cleanup. */
