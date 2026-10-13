@@ -113,7 +113,9 @@ class ReplacementSamplerPolicyTest {
             assertTrue(decisions.size() >= 2, "Initial invocation and actual replay must both execute the handler");
             assertTrue(decisions.stream().allMatch(decision -> decision == expectedSampled), decisions.toString());
             assertEquals(
-                    upstream.equals("root") ? (topology.equals("opaque") ? 1 : decisions.size()) : 0,
+                    topology.equals("plain")
+                            ? decisions.size() * (upstream.equals("root") ? 2 : 1)
+                            : upstream.equals("root") ? (topology.equals("opaque") ? 1 : decisions.size()) : 0,
                     evaluations.get());
             assertEquals(1, sideEffects.get());
         } finally {

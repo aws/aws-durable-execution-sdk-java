@@ -169,6 +169,7 @@ public class DurableExecutor {
 
         private DurableExecutionOutput finishInvocation(O value, Throwable failure) {
             if (failure != null) return finishFailure(ExceptionHelper.unwrapCompletableFuture(failure));
+            manager.closeCheckpointContinuationAdmission();
             DurableExecutionOutput output;
             try {
                 var payload = config.getSerDes().serialize(value);
