@@ -9,6 +9,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.*;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -16,6 +18,52 @@ import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class FailureDeliveryFinalizationTest {
+    @Test
+    @Timeout(10)
+    void throwingDiagnosticStillFinalizesOnceAndReplaysSavedWork() {
+        assertFalse(LoggerFactory.getLogger(DurableExecutor.class).isDebugEnabled());
+        var rejectMessage = new AtomicBoolean(true);
+        var effects = new AtomicInteger();
+        var ends = new CopyOnWriteArrayList<InvocationEndInfo>();
+        var diagnostic = new IllegalStateException("diagnostic getter failed");
+        var failure = new IllegalArgumentException("handler failure") {
+            public String getMessage() {
+                if (rejectMessage.get()) throw diagnostic;
+                return super.getMessage();
+            }
+
+            public String toString() {
+                return "application exception with a safe toString";
+            }
+        };
+        var config = DurableConfig.builder()
+                .withPlugins(info -> new DurableExecutionPlugin() {
+                    public void onInvocationEnd(InvocationEndInfo end) {
+                        ends.add(end);
+                    }
+                })
+                .build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    context.step("saved", String.class, step -> {
+                        effects.incrementAndGet();
+                        return "saved";
+                    });
+                    throw failure;
+                },
+                config);
+        assertSame(diagnostic, assertThrows(IllegalStateException.class, () -> runner.run("input")));
+        assertEquals(1, ends.size());
+        assertEquals(InvocationStatus.RETRYING, ends.get(0).invocationStatus());
+        assertSame(diagnostic, ends.get(0).executionError());
+        rejectMessage.set(false);
+        assertEquals(ExecutionStatus.FAILED, runner.run("input").getStatus());
+        assertEquals(2, ends.size());
+        assertEquals(InvocationStatus.FAILED, ends.get(1).invocationStatus());
+        assertEquals(1, effects.get());
+    }
+
     @Test
     @Timeout(10)
     void failedResponseMustBePreparedBeforeTerminalEndAndReplaysSavedWork() {

@@ -89,7 +89,12 @@ public class DurableExecutor {
             var pluginExecutionInput = new AtomicReference<>();
             var hasHandlerScope = new AtomicBoolean();
             var mdcInitializationFailure = new AtomicReference<Throwable>();
-            var handlerFuture = supplyAsync(
+            var handlerFuture = new CompletableFuture<O>();
+            // Observe control flow before dispatch: an inline or fast handler can finish its finally before execute
+            // returns.
+            var executionFuture = executionManager.runUntilCompleteOrSuspend(handlerFuture);
+            supplyAsync(
+                    handlerFuture,
                     () -> {
                         executionManager.setCurrentThreadContext(new ThreadContext(null, ThreadType.CONTEXT));
 
@@ -148,12 +153,10 @@ public class DurableExecutor {
                     pluginRunner.isEmpty() ? null : executionManager::recordHandlerScopeFatal,
                     mdcInitializationFailure::set);
 
-            // Execute the handlerFuture in ExecutionManager. If it completes successfully, the output of user function
-            // will be returned. Otherwise, it will complete exceptionally with a SuspendExecutionException or a
-            // failure.
+            // Finalize the already-observed handler or manager outcome after dispatch, respecting owned scopes.
             try {
                 return finalizeAfterHandlerScopes(
-                        executionManager.runUntilCompleteOrSuspend(handlerFuture),
+                        executionFuture,
                         handlerFuture,
                         hasHandlerScope,
                         lambdaContext,
@@ -235,9 +238,9 @@ public class DurableExecutor {
                                 }
 
                                 // Prepare the terminal failure before telling plugins the execution is finished.
-                                logger.debug("Execution failed: {}", cause.getMessage());
                                 DurableExecutionOutput failedOutput;
                                 try {
+                                    logger.debug("Execution failed: {}", cause.getMessage());
                                     failedOutput =
                                             DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
                                 } catch (Throwable deliveryFailure) {
@@ -336,13 +339,13 @@ public class DurableExecutor {
     }
 
     /** Completes the observation future without absorbing fatal failures on an executor worker. */
-    private static <T> CompletableFuture<T> supplyAsync(
+    private static <T> void supplyAsync(
+            CompletableFuture<T> result,
             Supplier<T> task,
             Executor executor,
             boolean preservePluginMdc,
             Consumer<Error> onPostCompletionFatal,
             Consumer<Throwable> onInitializationFailure) {
-        var result = new CompletableFuture<T>();
         var caller = Thread.currentThread();
         Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
             if (preservePluginMdc) {
@@ -358,7 +361,6 @@ public class DurableExecutor {
             }
         };
         executor.execute(work);
-        return result;
     }
 
     private static <T> void completeWithPluginMdc(

@@ -45,6 +45,11 @@ Root-handler context requires the updated core/plugin pair. The new scope bounda
 errors during open and close, continues earlier scope cleanup, and preserves the handler outcome. JVM fatal errors
 remain outside that containment, including when wrapped by asynchronous completion/future exceptions.
 
+The core observes the handler and manager outcomes before executor dispatch. A later ordinary `finally` return or
+failure does not replace an already selected suspension or retry. Diagnostics during ordinary failure-response
+preparation share its existing guard: if diagnostic access fails, started plugins receive one RETRYING End before
+that preparation failure propagates.
+
 Root-handler JVM fatals recognized by the existing body classifier are reported before owned handler scopes close.
 The first body fatal remains primary if close blocks or raises another fatal, using the same existing fatal handoff
 budget. A body fatal observed after End starts stays on the frozen late-failure path. Ordinary body classification and
