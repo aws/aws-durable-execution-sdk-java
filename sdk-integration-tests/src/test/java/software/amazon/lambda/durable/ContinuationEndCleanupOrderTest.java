@@ -56,6 +56,7 @@ class ContinuationEndCleanupOrderTest {
                     default -> new IllegalArgumentException("resumed state cannot deserialize");
                 };
         var injectionThread = new AtomicReference<Thread>();
+        var handlerThread = new AtomicReference<Thread>();
         var callerThread = new AtomicReference<Thread>();
         var escaped = new CountDownLatch(1);
         var escapedFailure = new AtomicReference<Throwable>();
@@ -141,9 +142,9 @@ class ContinuationEndCleanupOrderTest {
                     ends.add(info);
                     if (info.invocationStatus() == InvocationStatus.RETRYING) {
                         assertSame(
-                                mode.equals("async") ? injectionThread.get() : callerThread.get(),
+                                handlerThread.get(),
                                 Thread.currentThread(),
-                                "The repair must preserve the legacy End completion thread");
+                                "The merged lifecycle runs End on the handler owner after its finally block");
                         cleanupOrder.add("end-enter");
                         try {
                             boolean finished = bodyFinally.await(2, TimeUnit.SECONDS);
@@ -162,6 +163,7 @@ class ContinuationEndCleanupOrderTest {
                 .waitStrategy((state, attempt) -> Duration.ofSeconds(1))
                 .build();
         BiFunction<String, DurableContext, String> handler = (input, context) -> {
+            handlerThread.set(Thread.currentThread());
             managerForCleanup.set(((BaseContextImpl) context).getExecutionManager());
             var waiting = context.waitForConditionAsync(
                     "condition",
@@ -282,7 +284,7 @@ class ContinuationEndCleanupOrderTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"async", "inline-root", "submit-root"})
-    void ordinaryCompletionKeepsItsExistingEndThread(String mode) throws Exception {
+    void ordinaryCompletionEndsOnItsHandlerOwner(String mode) throws Exception {
         var releaseBody = new CountDownLatch(1);
         var entered = new CountDownLatch(1);
         var callerThread = new AtomicReference<Thread>();
@@ -326,7 +328,7 @@ class ContinuationEndCleanupOrderTest {
             releaseBody.countDown();
             assertEquals(
                     ExecutionStatus.SUCCEEDED, call.get(3, TimeUnit.SECONDS).status());
-            assertSame(mode.equals("async") ? bodyThread.get() : callerThread.get(), endThread.get());
+            assertSame(bodyThread.get(), endThread.get());
         } finally {
             releaseBody.countDown();
             caller.shutdownNow();

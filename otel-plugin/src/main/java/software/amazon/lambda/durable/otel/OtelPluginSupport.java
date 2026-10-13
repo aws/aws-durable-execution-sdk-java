@@ -9,6 +9,7 @@ import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.nio.file.Files;
@@ -16,6 +17,7 @@ import java.nio.file.Path;
 import java.util.Collections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.execution.DurableExecutor;
 
 /** Shared provider setup, sampling resolution, and invocation cleanup support. */
 final class OtelPluginSupport {
@@ -49,6 +51,24 @@ final class OtelPluginSupport {
         if (failure instanceof VirtualMachineError || failure instanceof ThreadDeath) return 3;
         if (failure instanceof Error && !(failure instanceof LinkageError)) return 2;
         return 1;
+    }
+
+    /** Applies the base lifecycle's scope restoration with the same cleanup failure precedence. */
+    static void runInvocationEnd(Scope scope, Runnable end) {
+        finishWithRootCleanup(end, () -> {
+            if (scope != null) scope.close();
+        });
+    }
+
+    /** Rejects an older core before a plugin builds a provider or activates thread-local context. */
+    static void requireSameThreadInvocationHooks() {
+        var message = "This OpenTelemetry plugin requires same-thread invocation hooks from the Durable Execution"
+                + " core (2.2.2 lifecycle capability). Upgrade the core together with the plugin layer.";
+        try {
+            if (!DurableExecutor.supportsSameThreadInvocationHooks()) throw new IllegalStateException(message);
+        } catch (NoSuchMethodError missingCapability) {
+            throw new IllegalStateException(message, missingCapability);
+        }
     }
 
     private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);

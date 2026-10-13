@@ -15,6 +15,7 @@ import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import java.time.Instant;
@@ -92,6 +93,8 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
     private volatile boolean tracingEnabled;
     private volatile Span invocationSpan;
     private volatile Span executionRootSpan;
+    // The root handler opens and closes this context through the base invocation lifecycle.
+    private Scope handlerScope;
     private volatile String durableExecutionArn;
     // Trace ID and flags of the execution trace, published together as one snapshot so readers never pair a trace ID
     // with mismatched flags.
@@ -170,6 +173,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      * @param config the plugin configuration
      */
     public InvocationOtelPlugin(SdkTracerProviderBuilder tracerProviderBuilder, OtelPluginConfig config) {
+        OtelPluginSupport.requireSameThreadInvocationHooks();
         this.idGenerator = DeterministicIdGenerator.installOn(tracerProviderBuilder);
         // Wrap the configured sampler so durable spans use the execution's single precomputed decision.
         DurableSampler.installOn(tracerProviderBuilder);
@@ -191,6 +195,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
      * @param config the plugin configuration
      */
     public InvocationOtelPlugin(OtelPluginConfig config) {
+        OtelPluginSupport.requireSameThreadInvocationHooks();
         this.contextExtractor = config.contextExtractor();
         this.enableMdc = config.enableMdc();
         this.workflowSpanName = config.workflowSpanName();
@@ -288,10 +293,25 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
                     invocationSpan.getSpanContext().getTraceId());
         }
         tracingEnabled = true;
+        handlerScope = activateHandlerContext();
+    }
+
+    private Scope activateHandlerContext() {
+        var trace = executionTrace;
+        if (!tracingEnabled || trace == null) return null;
+        var ambient = Span.current().getSpanContext();
+        if (ambient.isValid() && trace.traceId().equals(ambient.getTraceId())) return Scope.noop();
+        return invocationSpan.makeCurrent();
     }
 
     @Override
     public void onInvocationEnd(InvocationEndInfo info) {
+        var scope = handlerScope;
+        handlerScope = null;
+        OtelPluginSupport.runInvocationEnd(scope, () -> endInvocation(info));
+    }
+
+    private void endInvocation(InvocationEndInfo info) {
         var root = executionRootSpan;
         var provider = sdkTracerProvider;
         var shouldFlush = tracingEnabled || root != null;

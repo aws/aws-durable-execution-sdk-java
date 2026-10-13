@@ -13,37 +13,85 @@ OpenTelemetry instrumentation plugin for the AWS Lambda Durable Execution SDK fo
 - **ADOT Java Agent Integration**: `new InvocationOtelPlugin()` late-binds the ADOT Java agent's global provider with no handler-side OpenTelemetry initialization
 - **Lambda Layer Discovery**: `DURABLE_EXECUTION_PLUGINS` loads either OTel plugin from a JAR under a layer's `java/lib` directory
 
-## Checkpoint continuation failures
+## Root handler context
 
-An operation's SDK checkpoint continuation reports resumption/deserialization and dispatch failures through
-retryable invocation control before releasing its activity lease. When that control wins invocation outcome selection,
-End reports `RETRYING`, the caller receives `UnrecoverableDurableExecutionException` with the original cause, and
-persisted operation state remains available for a later invocation. Rejected worker admission releases its activity registration. Direct `VirtualMachineError`
-and `ThreadDeath` also settle the continuation observation before escaping its coordinator worker.
+User instrumentation in the root handler joins its canonical execution trace. A valid same-trace ambient Lambda
+span stays current. If ambient context is absent or belongs to another trace, invocation view activates `Invocation`;
+execution view activates the deterministic `Workflow` context, including its unsampled non-recording form.
+Nested operations retain their existing contexts.
 
-Legacy outcome observers wake waiters for an already-selected continuation failure before invocation End can wait
-for handler cleanup. The existing callback thread is retained, and concurrent publishers use the selected control
-cause. Normal outcome handling and diagnostic inspection are unchanged.
+The plugin activates the context in `onInvocationStart` and restores the previous context in `onInvocationEnd`.
+The core calls both hooks on the root handler thread and waits for `onInvocationEnd` to finish before returning,
+including when execution suspends or terminates. Handler `finally` blocks must finish before invocation-end hooks
+can run; a blocked handler cleanup therefore also blocks the invocation response. Context restoration still runs
+when span finalization or flushing fails. Ordinary exceptions and nonfatal linkage errors retain the existing
+plugin-hook isolation behavior. Invocation-end hooks run in reverse registration order so nested scopes unwind
+correctly; remaining end hooks run even when another hook raises an Error. The first unisolated Error propagates,
+unless a later `VirtualMachineError` or `ThreadDeath` takes precedence over a non-JVM-fatal Error; other distinct
+end-hook Errors are retained as suppressed failures. Scope cleanup preserves finalization failures using the same
+JVM-fatal precedence, so an ordinary cleanup exception cannot hide an earlier Error.
+Invocations without plugins also wait for handler cleanup before returning the selected suspension or retry outcome.
+The manager selects suspension or termination before waking operation waiters, so a later returning or throwing
+handler `finally` cannot replace that selected outcome. A handler outcome that was already selected remains primary.
+SDK output preparation, including customer `SerDes` calls and durable large-result checkpointing, finishes before
+terminal invocation-end notification. Failures in this preparation report `RETRYING` instead of ending the Workflow
+span. If End also raises an unisolated Error, the preparation failure remains primary with the cleanup error
+suppressed, unless cleanup introduces the first JVM-fatal error. An original JVM-fatal preparation error retains its
+identity. Retryable control failures follow the same End-error combination: an ordinary End Error is suppressed
+under the retry control, while a direct JVM-fatal End error retains its existing precedence with the control and
+its cause preserved as diagnostics. This does not add arbitrary cause unwrapping to handler failure classification.
+End describes the SDK outcome at that point, not acknowledgment of a response by the Lambda service.
+Caller-side execution-manager cleanup, response-envelope encoding and output-stream writes follow End; runtime
+response transport follows the handler return. Failures at those later boundaries still propagate, without a second
+End dispatch or changing its already reported outcome. A JVM-fatal MDC-restoration failure after End (direct or
+inside a standard transport wrapper) completes the caller's observation exceptionally with the original fatal
+before that fatal escapes the worker, for both asynchronous and inline executors. The End notification remains
+unchanged and is not repeated. An earlier JVM-fatal End/preparation failure remains primary; later restoration
+failures are suppressed, with an identity guard when restoration throws the same fatal object. A restoration fatal takes precedence over an earlier non-JVM-fatal delivery/End failure,
+which remains suppressed. Non-JVM-fatal restoration failures, including `AssertionError` and `LinkageError`, retain
+the selected caller outcome. After an ordinary outer restoration failure, the SDK makes one guarded `MDC.clear()`
+attempt before rethrowing the original worker failure. This also applies when an earlier End/preparation JVM fatal
+is already primary: restoration and clear failures remain suppressed under that first fatal. A successful clear
+prevents inheritable invocation state from reaching a replacement pool thread. With no earlier JVM fatal, a failing
+clear is retained as a suppressed diagnostic, or its JVM fatal uses the same caller-settlement-before-worker-throw
+rule. Clearing can discard ambient MDC that could not be
+restored. If the adapter's clear also fails, clean replacement state is not guaranteed; the SDK does not promise
+quarantine for an arbitrary caller-owned executor. Initialization and handler/body policies are unchanged.
+Before invocation startup, a JVM-fatal error from MDC capture (direct or inside a standard transport wrapper)
+completes the observation future exceptionally with that same fatal before escaping the handler worker. No start,
+body, or end hook runs, and no durable `FAILED` response is produced for that fatal. Ordinary initialization errors
+and handler/body failure classification retain their existing behavior.
 
-Ordinary unowned helper failures retain their observation-only behavior. Normal manager closing does not replace
-the selected outcome or stop unrelated operations. This boundary does not change handler/predicate failure
-classification, hook threading, trace topology, or add general wrapped-fatal classification.
+An SDK checkpoint continuation owned by an operation reports resumption/deserialization and dispatch failures
+through retryable manager control before releasing its activity lease. The caller receives the original failure as
+the cause of `UnrecoverableDurableExecutionException`, and started End hooks receive `RETRYING`; persisted operation
+state is unchanged for the next invocation. A rejected user-worker dispatch rolls back its activity registration.
+Ordinary failures during normal manager closing do not replace the selected outcome or stop unrelated operations.
+Unowned ordinary helper failures retain their observation-only behavior. Direct `VirtualMachineError` or
+`ThreadDeath` failures also settle their observation future after lease release and before escaping the coordinator
+worker. Observation cancellation cannot skip the actual task or discard its operation failure. This boundary does
+not reclassify handler/predicate failures or add general wrapped-fatal classification.
 
-After a successful root outcome is selected, new checkpoint-continuation admission closes before output serialization
-or oversized-result checkpointing. This early guard does not iterate owners, run their completion callbacks, or join
-cleanup. A subsequent rejected admission retains the existing stop-owner behavior. The selected root outcome is not
-replaced by a later unawaited failure.
+Successful-output preparation closes new checkpoint-continuation admission before serialization. This does not
+revoke a user worker already admitted to the configured executor: such a worker can begin after invocation End,
+and already-running unawaited work can also finish afterward. End therefore does not guarantee that all operation
+work or its telemetry is complete. Caller-side manager cleanup retains the core lifecycle above. The remaining
+worker-start and mandatory large-result checkpoint acknowledgment boundaries are tracked in
+[issue #787](https://github.com/aws/aws-durable-execution-sdk-java/issues/787).
 
-The invocation End snapshot is taken after signaling unfinished owned continuations; PENDING and failure paths also
-close admission at that boundary. Queued work may legitimately remain incomplete after early parallel success. This does not
-join all accepted/running handlers before End: their remaining cleanup/checkpoint completion is still awaited by
-normal manager close afterward, and late end hooks can occur. Await operations that must be included in the selected
-outcome or snapshot. The admission cut does not provide a universal all-work-drained or final-state export guarantee.
+SDK inspection of MDC-capture failures reads each visited standard transport cause once and detects identity cycles.
+Cyclic, null, or unreadable leading `CompletionException` chains retain the original wrapper; ordinary initialization
+still reports `FAILED` when its error response can be serialized. This provides cycle safety for finite cause graphs,
+not a fixed depth or time limit. Arbitrary custom `getCause`, other `Throwable` accessors, and customer `SerDes`
+behavior remain outside that guarantee.
 
-OTel scopes remain with the user-function thread that opened them. Invocation End closes only scopes owned by its
-current thread; a running worker retains its scope until its own UserFunctionEnd, including when tracing has already
-been finalized. Late End performs that scope cleanup before checking tracing state. This restores the worker's
-application context without extending recording-span lifetimes, changing MDC behavior, or moving the End/drain boundary.
+This plugin version requires the core's `DurableExecutor.supportsSameThreadInvocationHooks()` capability, introduced
+in the 2.2.2 lifecycle contract (currently `2.2.2-SNAPSHOT`). Upgrade the core together with the plugin layer. Every
+plugin constructor checks this capability before building a tracer provider or activating context. A core without
+it, including released 2.2.1, is rejected with an explicit configuration error. Older cores may call
+`onInvocationEnd` on another thread and are not supported with this plugin version. Existing plugin binaries remain
+usable with the updated core; their invocation-end hooks now follow the same-thread, reverse-registration-order
+contract described above.
 
 ## Installation
 
@@ -83,7 +131,7 @@ deferred sampler, the first actual fallback span is now `DurableExecutionRoot`; 
 first span name or attributes can observe that ordering. No arbitrary name/input invariance is promised.
 
 If result serialization or oversized-result checkpointing fails before the SDK output is prepared, End reports
-`RETRYING` on the existing completion thread before the original preparation failure propagates. End flushes completed
+`RETRYING` on the handler worker before the original preparation failure propagates. End flushes completed
 spans without changing handler failure classification or claiming coverage of later response-stream writes or runtime
 acknowledgment. A root end processor's `Exception` or `LinkageError` is logged without suppressing descendant telemetry
 or the End flush. Other `Error` failures still escape the Start hook; if invocation cleanup does not run, a batch
@@ -145,7 +193,7 @@ Configuration reads this explicit opt-in annotation from the entire superclass c
 that happen to be named `getExclusiveGroup`. Existing subclasses retain their own methods while inheriting the bundled
 view restriction. A subclass may add another group, but cannot replace a superclass's group; repeated group names in one
 class hierarchy are checked once.
-Older cores ignore the optional annotation and retain their prior behavior; no provider-version floor is raised.
+The exclusivity annotation does not change the provider registration API; the same-thread core requirement above still applies.
 
 ## Quick Start using X-Ray/CloudWatch Tracing (ADOT Java Agent)
 
@@ -292,14 +340,14 @@ Remote backend server span (Root / Parent)
 When no valid remote parent can be constructed, a synthetic execution root anchors the trace instead and both spans parent onto it:
 
 ```
-DurableExecutionRoot (materialized and re-exported each invocation)
+Synthetic execution root
 ├── Workflow
 ├── Invocation 1
 ├── Invocation 2
 └── Invocation N
 ```
 
-- **Execution ancestor** — the common parent both the Workflow and Invocation spans resolve onto. A valid remote server span (`Root` and `Parent`) is used directly, whether or not `Sampled` is present; only when a valid remote parent cannot be constructed does a synthetic execution root take its place. The remote ancestor is used as a non-recording context; the synthetic ancestor is materialized as `DurableExecutionRoot` and re-exported on each invocation with its stable span ID and execution start time, subject to sampling.
+- **Execution ancestor** — the common parent both the Workflow and Invocation spans resolve onto. A valid remote server span (`Root` and `Parent`) is used directly, whether or not `Sampled` is present; only when a valid remote parent cannot be constructed does a synthetic execution root take its place. It is a non-recording context, not an exported span.
 - **Workflow span** — one logical span per durable execution, joining the execution trace with a stable span ID derived from the ARN. Exported only on the terminal invocation (SUCCEEDED/FAILED).
 - **Invocation span** — one per Lambda invocation, parented to the ambient span only when it is on the execution trace, otherwise to the execution ancestor
 - **Operation span** — one per durable operation, named after your step/wait names
@@ -515,7 +563,7 @@ var otelPlugin = new InvocationOtelPlugin(
 ## Requirements
 
 - Java 17+
-- AWS Durable Execution SDK for Java 2.0.0+
+- AWS Durable Execution SDK for Java with same-thread invocation hooks (use the core shipped with this plugin release or newer)
 - OpenTelemetry SDK 1.65.0+ (only for custom TracerProvider path)
 - ADOT Lambda Layer `AWSOpenTelemetryDistroJava` (for the no-arg constructor path)
 
