@@ -981,9 +981,12 @@ class PluginIntegrationTest {
 
         var runner = LocalDurableTestRunner.create(
                 String.class,
-                (input, context) -> context.step("wrapped-suspension", String.class, step -> {
-                    throw new CompletionException(suspension);
-                }),
+                (input, context) -> {
+                    context.waitAsync("hold", Duration.ofMinutes(5));
+                    return context.step("wrapped-suspension", String.class, step -> {
+                        throw new CompletionException(suspension);
+                    });
+                },
                 config);
 
         var result = runner.run("input");
