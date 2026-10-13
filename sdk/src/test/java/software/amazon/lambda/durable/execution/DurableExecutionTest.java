@@ -6,8 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -23,16 +25,21 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
@@ -40,7 +47,9 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.plugin.InvocationStatus;
 
 class DurableExecutionTest {
 
@@ -555,6 +564,133 @@ class DurableExecutionTest {
         @Override
         public String getXrayTraceId() {
             return null;
+        }
+    }
+
+    @Test
+    void invalidSuspensionThrowsIllegalDurableOperationExceptionAndNotifiesPluginsAsRetrying() {
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp()))
+                        .build());
+
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withPlugins(plugin)
+                .build();
+
+        var exception = assertThrows(
+                IllegalDurableOperationException.class,
+                () -> DurableExecutor.execute(
+                        input,
+                        null,
+                        get(String.class),
+                        (userInput, ctx) -> {
+                            var durableContext = (DurableContextImpl) ctx;
+                            class WaitingOperation extends BaseDurableOperation {
+                                WaitingOperation() {
+                                    super(
+                                            OperationIdentifier.of(
+                                                    "my-waiting-op", "my-waiting-op", OperationSubType.STEP),
+                                            durableContext,
+                                            null);
+                                }
+
+                                @Override
+                                protected void start() {}
+
+                                @Override
+                                protected void replay(Operation existing) {}
+
+                                void await() {
+                                    waitForOperationCompletion();
+                                }
+                            }
+                            var op = new WaitingOperation();
+                            op.await();
+                            return "should-not-reach";
+                        },
+                        config));
+
+        assertTrue(exception.isRetryable());
+        assertTrue(exception.getMessage().contains("Invalid suspension. No operation is pending."));
+        assertTrue(exception.getMessage().contains("my-waiting-op"));
+        assertEquals(InvocationStatus.RETRYING, plugin.invocationStatus);
+        assertEquals(exception, plugin.invocationError);
+        assertNotNull(plugin.startThread);
+        assertSame(plugin.startThread, plugin.endThread);
+        assertEquals(1, plugin.endCalls);
+    }
+
+    @Test
+    void revokedCheckpointTokenDoesNotRecordInvalidSuspension() {
+        var mockClient = mock(DurableExecutionClient.class);
+        when(mockClient.checkpoint(any(), any(), any()))
+                .thenReturn(CheckpointDurableExecutionResponse.builder()
+                        .checkpointToken(null)
+                        .build());
+
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token1",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(List.of(executionOp()))
+                        .build());
+
+        var plugin = new RecordingPlugin();
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withPlugins(plugin)
+                .build();
+
+        var output = DurableExecutor.execute(
+                input,
+                null,
+                get(String.class),
+                (userInput, ctx) -> {
+                    var durableContext = (DurableContextImpl) ctx;
+                    durableContext
+                            .getExecutionManager()
+                            .sendOperationUpdate(OperationUpdate.builder()
+                                    .id("dummy")
+                                    .type(OperationType.STEP)
+                                    .action(OperationAction.START)
+                                    .build())
+                            .join();
+                    durableContext.getExecutionManager().suspendExecution();
+                    return "should-not-reach";
+                },
+                config);
+
+        assertEquals(ExecutionStatus.PENDING, output.status());
+        assertEquals(InvocationStatus.PENDING, plugin.invocationStatus);
+        assertNull(plugin.invocationError);
+        assertNotNull(plugin.startThread);
+        assertSame(plugin.startThread, plugin.endThread);
+        assertEquals(1, plugin.endCalls);
+    }
+
+    private static class RecordingPlugin implements DurableExecutionPlugin {
+        private InvocationStatus invocationStatus;
+        private Throwable invocationError;
+        private Thread startThread;
+        private Thread endThread;
+        private int endCalls;
+
+        @Override
+        public void onInvocationStart(InvocationInfo info) {
+            startThread = Thread.currentThread();
+        }
+
+        @Override
+        public void onInvocationEnd(InvocationEndInfo info) {
+            endThread = Thread.currentThread();
+            endCalls++;
+            this.invocationStatus = info.invocationStatus();
+            this.invocationError = info.executionError();
         }
     }
 
