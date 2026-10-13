@@ -7,11 +7,14 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.amazonaws.services.lambda.runtime.Context;
+import io.opentelemetry.api.trace.SpanId;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CyclicBarrier;
@@ -81,7 +84,7 @@ class InvocationHeaderTest {
                     : new InvocationOtelPlugin(builder, config);
             executeWithThrowingRuntimeOverride(plugin, accessorFailure(failureKind));
             var spans = exporter.getFinishedSpanItems();
-            assertEquals(2, spans.size(), "a failed invocation accessor must not inherit stale sampling");
+            assertHeaderlessSpans(spans);
             assertTrue(
                     spans.stream().allMatch(span -> !"6955b900aaaaaaaaaaaaaaaaaaaaaaaa".equals(span.getTraceId())),
                     "a failed invocation accessor must not inherit another request's trace");
@@ -90,6 +93,21 @@ class InvocationHeaderTest {
             if (previous == null) System.clearProperty(property);
             else System.setProperty(property, previous);
         }
+    }
+
+    private static void assertHeaderlessSpans(List<SpanData> spans) {
+        assertEquals(
+                List.of("DurableExecutionRoot", "Invocation", "Workflow"),
+                spans.stream().map(SpanData::getName).sorted().toList(),
+                "The headerless invocation exports its fallback anchor and both sampled descendants");
+        var root = spans.stream()
+                .filter(span -> span.getName().equals("DurableExecutionRoot"))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(SpanId.getInvalid(), root.getParentSpanId());
+        assertTrue(spans.stream()
+                .filter(span -> !span.getName().equals("DurableExecutionRoot"))
+                .allMatch(span -> root.getSpanId().equals(span.getParentSpanId())));
     }
 
     private static void executeWithThrowingRuntimeOverride(DurableExecutionPlugin plugin, Throwable failure) {
@@ -187,7 +205,7 @@ class InvocationHeaderTest {
         plugin.onInvocationStart(info); // An ordinary direct call must not retain the previous invocation's header.
         plugin.onInvocationEnd(new InvocationEndInfo("request", "arn", true, InvocationStatus.SUCCEEDED, null));
         assertEquals(2, calls.get());
-        assertEquals(2, exporter.getFinishedSpanItems().size());
+        assertHeaderlessSpans(exporter.getFinishedSpanItems());
     }
 
     @ParameterizedTest
@@ -218,7 +236,7 @@ class InvocationHeaderTest {
                 plugin.onInvocationEnd(
                         new InvocationEndInfo("missing", "arn:missing", true, InvocationStatus.SUCCEEDED, null));
                 var spans = exporter.getFinishedSpanItems();
-                assertEquals(2, spans.size(), "global Sampled=0 must not suppress this headerless invocation");
+                assertHeaderlessSpans(spans);
                 assertTrue(spans.stream().allMatch(span -> !conflictingTrace.equals(span.getTraceId())));
             });
             var present = CompletableFuture.runAsync(() -> {

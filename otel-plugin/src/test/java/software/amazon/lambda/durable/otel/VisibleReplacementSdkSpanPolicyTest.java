@@ -107,6 +107,9 @@ class VisibleReplacementSdkSpanPolicyTest {
             var sdkSpans = exporter.getFinishedSpanItems().stream()
                     .filter(span ->
                             span.getInstrumentationScopeInfo().getName().equals("aws-durable-execution-sdk-java"))
+                    // A plain provider keeps its native policy for parentless synthetic-root exports. Full SDK
+                    // sampling overrides require DurableSampler; this regression concerns regular SDK descendants.
+                    .filter(span -> !span.getName().equals("DurableExecutionRoot"))
                     .toList();
             if (expectedSampled) {
                 assertFalse(sdkSpans.isEmpty());

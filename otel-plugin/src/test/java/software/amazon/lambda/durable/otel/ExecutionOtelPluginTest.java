@@ -141,7 +141,7 @@ class ExecutionOtelPluginTest {
                 new InvocationEndInfo("req-enabled", "arn:enabled", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = globalExporter.getFinishedSpanItems();
-        assertEquals(3, spans.size());
+        assertEquals(4, spans.size());
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("enabled-step")));
         assertFalse(spans.stream().anyMatch(span -> span.getName().equals("disabled-step")));
     }
@@ -178,8 +178,8 @@ class ExecutionOtelPluginTest {
                 new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.SUCCEEDED, null));
 
         var spans = globalExporter.getFinishedSpanItems();
-        // Workflow + Invocation + operation = 3
-        assertEquals(3, spans.size());
+        // Workflow + Invocation + operation + DurableExecutionRoot = 4
+        assertEquals(4, spans.size());
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("Workflow")));
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("Invocation")));
         assertTrue(spans.stream().anyMatch(span -> span.getName().equals("step")));
@@ -206,7 +206,7 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(2, spans.size(), "Terminal invocation should export the Workflow span and the invocation span");
+        assertEquals(3, spans.size(), "Terminal invocation exports Workflow, Invocation, and DurableExecutionRoot");
 
         var workflowSpan = spanByName(spans, "Workflow");
         var invocationSpan = spanByName(spans, "Invocation");
@@ -404,10 +404,13 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        // Only the invocation span is exported; the Workflow span is not ended on non-terminal status.
-        assertEquals(1, spans.size());
-        assertEquals("Invocation", spans.get(0).getName());
-        assertEquals(StatusCode.OK, spans.get(0).getStatus().getStatusCode(), "PENDING invocation span maps to OK");
+        // Invocation and DurableExecutionRoot are exported; Workflow remains deferred until terminal status.
+        assertEquals(2, spans.size());
+        assertEquals("Invocation", spanByName(spans, "Invocation").getName());
+        assertEquals(
+                StatusCode.OK,
+                spanByName(spans, "Invocation").getStatus().getStatusCode(),
+                "PENDING invocation span maps to OK");
     }
 
     @Test
@@ -451,8 +454,8 @@ class ExecutionOtelPluginTest {
                 "req-1", ARN, true, InvocationStatus.RETRYING, new RuntimeException("transient")));
 
         var spans = spanExporter.getFinishedSpanItems();
-        assertEquals(1, spans.size(), "RETRYING is non-terminal — Workflow span not exported");
-        var invocationSpan = spans.get(0);
+        assertEquals(2, spans.size(), "RETRYING is non-terminal — Workflow span not exported");
+        var invocationSpan = spanByName(spans, "Invocation");
         assertEquals("Invocation", invocationSpan.getName());
         assertEquals(
                 StatusCode.UNSET,
@@ -943,11 +946,11 @@ class ExecutionOtelPluginTest {
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
 
         var spans = spanExporter.getFinishedSpanItems();
-        // Only the invocation span is exported. A still-open operation has no recording span (creation is deferred to
-        // onOperationEnd), so there is nothing to abandon, and the Workflow span is not exported on a non-terminal
-        // invocation.
-        assertEquals(1, spans.size());
-        assertEquals("Invocation", spans.get(0).getName());
+        // Invocation and DurableExecutionRoot are exported. A still-open operation has no recording span
+        // (creation is deferred to onOperationEnd), so there is nothing to abandon, and the Workflow span is not
+        // exported on a non-terminal invocation.
+        assertEquals(2, spans.size());
+        assertEquals("Invocation", spanByName(spans, "Invocation").getName());
         assertTrue(
                 spans.stream().noneMatch(s -> s.getName().equals("my-wait")),
                 "An operation still open at invocation end must not be ended/exported in onInvocationEnd");
