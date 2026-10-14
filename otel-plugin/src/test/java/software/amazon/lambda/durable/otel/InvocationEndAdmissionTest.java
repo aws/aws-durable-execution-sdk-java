@@ -25,9 +25,11 @@ import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.execution.DurableExecutor;
+import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.*;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 
@@ -38,7 +40,7 @@ class InvocationEndAdmissionTest {
         boolean awaitResult = mode.equals("awaited");
         boolean alreadyRunning = mode.equals("already-running");
         var runningEntered = new CountDownLatch(1);
-        var resumedPredicate = new CountDownLatch(1);
+        var conditionStopped = new CountDownLatch(1);
         var releaseRunning = new CountDownLatch(1);
         var nextDispatch = new CountDownLatch(1);
         var releaseDispatch = new CountDownLatch(1);
@@ -117,8 +119,8 @@ class InvocationEndAdmissionTest {
             }
         };
         // The merged lifecycle unwinds End in reverse order, so OTel must be registered after the gate.
-        // This fixture parks inside Executor.execute AFTER SDK admission. The remaining worker-start boundary
-        // is tracked in #787; new registration during preparation is covered separately without weakening that gate.
+        // This fixture pauses a continuation after admission. Draining must stop its owner and join the
+        // continuation before End. A predicate that already started must finish its checkpoint first.
         var config = DurableConfig.builder()
                 .withExecutorService(workers)
                 .withDurableExecutionClient(client)
@@ -133,25 +135,31 @@ class InvocationEndAdmissionTest {
                     null,
                     TypeToken.get(String.class),
                     (value, context) -> {
-                        Function<DurableContext, DurableFuture<Integer>> startCondition =
-                                branch -> branch.waitForConditionAsync(
-                                        "condition",
-                                        Integer.class,
-                                        (state, step) -> {
-                                            predicates.incrementAndGet();
-                                            if (state == 2) resumedPredicate.countDown();
-                                            if (alreadyRunning && state == 2) {
-                                                runningEntered.countDown();
-                                                await(releaseRunning);
-                                            }
-                                            return state == 1
-                                                    ? WaitForConditionResult.continuePolling(2)
-                                                    : WaitForConditionResult.stopPolling(state);
-                                        },
-                                        WaitForConditionConfig.<Integer>builder()
-                                                .initialState(1)
-                                                .waitStrategy((state, attempt) -> Duration.ofSeconds(1))
-                                                .build());
+                        Function<DurableContext, DurableFuture<Integer>> startCondition = branch -> {
+                            var condition = branch.waitForConditionAsync(
+                                    "condition",
+                                    Integer.class,
+                                    (state, step) -> {
+                                        predicates.incrementAndGet();
+                                        if (alreadyRunning && state == 2) {
+                                            runningEntered.countDown();
+                                            await(releaseRunning);
+                                        }
+                                        return state == 1
+                                                ? WaitForConditionResult.continuePolling(2)
+                                                : WaitForConditionResult.stopPolling(state);
+                                    },
+                                    WaitForConditionConfig.<Integer>builder()
+                                            .initialState(1)
+                                            .waitStrategy((state, attempt) -> Duration.ofSeconds(1))
+                                            .build());
+                            ((BaseDurableOperation) condition)
+                                    .getCompletionFuture()
+                                    .whenComplete((result, failure) -> {
+                                        if (failure instanceof SuspendExecutionException) conditionStopped.countDown();
+                                    });
+                            return condition;
+                        };
                         if (mode.equals("early-parallel")) {
                             var parallel = context.parallel(
                                     "early",
@@ -182,17 +190,19 @@ class InvocationEndAdmissionTest {
             if (alreadyRunning) {
                 releaseDispatch.countDown();
                 assertTrue(runningEntered.await(3, TimeUnit.SECONDS));
-                assertTrue(endEntered.await(3, TimeUnit.SECONDS), "End does not join already-running predicates");
-                releaseEnd.countDown();
+                assertEquals(1, endEntered.getCount(), "End must wait for the running predicate");
                 assertThrows(
                         TimeoutException.class,
                         () -> call.get(100, TimeUnit.MILLISECONDS),
-                        "Normal close still waits for the real handler");
+                        "Draining waits for the real handler before End");
                 releaseRunning.countDown();
-            } else if (!awaitResult) assertTrue(endEntered.await(3, TimeUnit.SECONDS));
+            } else if (!awaitResult) {
+                assertThrows(TimeoutException.class, () -> call.get(100, TimeUnit.MILLISECONDS));
+                assertEquals(1, endEntered.getCount(), "End must join the admitted continuation");
+                assertTrue(conditionStopped.await(3, TimeUnit.SECONDS), "Draining must release the condition owner");
+            }
             releaseDispatch.countDown();
-            if (!awaitResult && !alreadyRunning) assertTrue(resumedPredicate.await(3, TimeUnit.SECONDS));
-            assertTrue(terminal.await(3, TimeUnit.SECONDS));
+            if (awaitResult || alreadyRunning) assertTrue(terminal.await(3, TimeUnit.SECONDS));
             assertTrue(endEntered.await(3, TimeUnit.SECONDS));
             releaseEnd.countDown();
             assertEquals(
@@ -205,23 +215,14 @@ class InvocationEndAdmissionTest {
             System.out.println("END_SNAPSHOT_PUBLIC mode=" + mode + " snapshot=" + snapshotStatus.get()
                     + " backend=" + client.getOperationByName("condition").status() + " predicates=" + predicates.get()
                     + " lateHooks=" + lateHooks.get() + " lateStarts=" + lateStarts.get() + " operationSpans=" + spans);
+            assertEquals(0, lateStarts.get(), "Drained continuations must not start user functions after End");
+            assertEquals(0, lateHooks.get());
+            assertEquals(awaitResult || alreadyRunning ? 2 : 1, predicates.get());
             assertEquals(
-                    awaitResult || alreadyRunning ? 0 : 1,
-                    lateStarts.get(),
-                    "Already-admitted workers may start after End; this is not a new-registration guarantee");
-            assertEquals(2, predicates.get());
-            if (alreadyRunning) {
-                assertNotEquals(
-                        OperationStatus.SUCCEEDED, snapshotStatus.get(), "The existing snapshot boundary is retained");
-                assertEquals(
-                        OperationStatus.SUCCEEDED,
-                        client.getOperationByName("condition").status());
-            } else {
-                assertEquals(awaitResult ? OperationStatus.SUCCEEDED : OperationStatus.READY, snapshotStatus.get());
-                assertEquals(
-                        OperationStatus.SUCCEEDED,
-                        client.getOperationByName("condition").status());
-            }
+                    awaitResult || alreadyRunning ? OperationStatus.SUCCEEDED : OperationStatus.READY,
+                    snapshotStatus.get());
+            assertEquals(
+                    snapshotStatus.get(), client.getOperationByName("condition").status());
         } finally {
             releaseRunning.countDown();
             releaseDispatch.countDown();

@@ -52,6 +52,8 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  */
 public class DurableExecutor {
     private static final String ROOT_THREAD_ID = null;
+    private static final String REVOKED_CHECKPOINT_TOKEN_MESSAGE =
+            "The checkpoint response did not include a checkpoint token";
     private static final Logger logger = LoggerFactory.getLogger(DurableExecutor.class);
 
     // Lambda response size limit is 6MB minus small epsilon for envelope
@@ -126,6 +128,18 @@ public class DurableExecutor {
             Supplier<DurableExecutionOutput> task = () -> {
                 Outcome.capture(this::invokeHandler).complete(body);
                 var selected = outcome.join();
+                // The handler has settled, but its operations may still be running or still have checkpoints queued.
+                // Drain them here so every checkpoint response, including one that withdraws the token, is observed
+                // before the terminal decision below. Later polls therefore cannot change that decision.
+                try {
+                    manager.drainOperations();
+                } catch (RuntimeException drainFailure) {
+                    // The drain throws only when this thread is interrupted or an operation future is cancelled.
+                    // No terminal response exists yet, so the service must retry this invocation. Plugins still
+                    // need their end hook. Classifying this as a handler failure would mark the execution FAILED,
+                    // so it is reported as a delivery failure: RETRYING, then the original exception is rethrown.
+                    return failDelivery(drainFailure);
+                }
                 return finishInvocation(selected.value(), selected.failure());
             };
             // Cleanup is awaited even without plugins. Keep that path free of plugin MDC handling.
@@ -168,13 +182,21 @@ public class DurableExecutor {
         }
 
         private DurableExecutionOutput finishInvocation(O value, Throwable failure) {
+            // A withdrawn token means this invocation must stop and report PENDING. That overrides a handler success,
+            // a handler failure, and a retryable failure, so it is checked before any of them.
+            if (manager.isCheckpointTokenRevoked())
+                return finishFailure(new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE));
             if (failure != null) return finishFailure(ExceptionHelper.unwrapCompletableFuture(failure));
-            manager.closeCheckpointContinuationAdmission();
             DurableExecutionOutput output;
             try {
                 var payload = config.getSerDes().serialize(value);
                 output = DurableExecutionOutput.success(handleLargePayload(manager, payload));
             } catch (Throwable deliveryFailure) {
+                // Checkpointing a large result fails with SuspendExecutionException when the token is already gone.
+                // That is a suspension, not a delivery error, so it reports PENDING rather than RETRYING.
+                if (ExceptionHelper.unwrapCompletableFuture(deliveryFailure) instanceof SuspendExecutionException) {
+                    return finishFailure(new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE));
+                }
                 return failDelivery(deliveryFailure);
             }
             fireOnInvocationEnd(InvocationStatus.SUCCEEDED, null, value);
