@@ -91,13 +91,12 @@ class MdcFailureBoundaryTest {
         var original = MDC.getMDCAdapter();
         var injected = new AtomicBoolean();
         var plugin = new RecordingPlugin();
-        Throwable failure =
-                switch (failureKind) {
-                    case "fatal" -> new InternalError("worker MDC restoration failed");
-                    case "assertion" -> new AssertionError("worker MDC restoration failed");
-                    case "linkage" -> new NoClassDefFoundError("worker MDC restoration failed");
-                    default -> new IllegalStateException("worker MDC restoration failed");
-                };
+        Throwable failure = switch (failureKind) {
+            case "fatal" -> new InternalError("worker MDC restoration failed");
+            case "assertion" -> new AssertionError("worker MDC restoration failed");
+            case "linkage" -> new NoClassDefFoundError("worker MDC restoration failed");
+            default -> new IllegalStateException("worker MDC restoration failed");
+        };
         var ownerFailure = new AtomicReference<Throwable>();
         var observed = new CountDownLatch(1);
         var workers = Executors.newSingleThreadExecutor(task -> {
@@ -164,14 +163,13 @@ class MdcFailureBoundaryTest {
     void postEndFatalReachesCallerAndWorkerWithoutChangingEnd(
             boolean inline, boolean suspend, boolean death, String wrapper) throws Exception {
         Error fatal = death ? new ThreadDeath() : new InternalError("post-End restore fatal");
-        Throwable failure =
-                switch (wrapper) {
-                    case "completion" -> new CompletionException(fatal);
-                    case "execution" -> new ExecutionException(fatal);
-                    case "reflection" -> new InvocationTargetException(fatal);
-                    case "proxy" -> new UndeclaredThrowableException(fatal);
-                    default -> fatal;
-                };
+        Throwable failure = switch (wrapper) {
+            case "completion" -> new CompletionException(fatal);
+            case "execution" -> new ExecutionException(fatal);
+            case "reflection" -> new InvocationTargetException(fatal);
+            case "proxy" -> new UndeclaredThrowableException(fatal);
+            default -> fatal;
+        };
         exercisePostEndFailure(inline, suspend, failure, fatal, null);
     }
 

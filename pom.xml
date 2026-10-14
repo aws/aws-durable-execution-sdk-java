@@ -60,7 +60,6 @@
         <mockito.version>5.24.0</mockito.version>
         <jacoco.version>0.8.15</jacoco.version>
         <spotless.version>3.10.4</spotless.version>
-        <palantir-java-format.version>2.98.0</palantir-java-format.version>
     </properties>
 
     <dependencyManagement>
@@ -142,7 +141,6 @@
                     <configuration>
                         <java>
                             <palantirJavaFormat>
-                                <version>${palantir-java-format.version}</version>
                                 <formatJavadoc>true</formatJavadoc>
                             </palantirJavaFormat>
                             <formatAnnotations />
@@ -230,19 +228,6 @@
     </build>
 
     <profiles>
-        <!-- Dependabot scans this inactive profile and updates the property used by Spotless. -->
-        <profile>
-            <id>palantir-java-format-dependabot</id>
-            <dependencyManagement>
-                <dependencies>
-                    <dependency>
-                        <groupId>com.palantir.javaformat</groupId>
-                        <artifactId>palantir-java-format</artifactId>
-                        <version>${palantir-java-format.version}</version>
-                    </dependency>
-                </dependencies>
-            </dependencyManagement>
-        </profile>
         <profile>
             <id>publishing</id>
             <build>
