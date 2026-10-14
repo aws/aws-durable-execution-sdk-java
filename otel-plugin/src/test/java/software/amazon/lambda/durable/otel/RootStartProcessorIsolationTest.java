@@ -14,6 +14,8 @@ import io.opentelemetry.sdk.trace.ReadableSpan;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SpanProcessor;
 import io.opentelemetry.sdk.trace.data.LinkData;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import io.opentelemetry.sdk.trace.export.SpanExporter;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.time.Instant;
@@ -73,6 +75,7 @@ class RootStartProcessorIsolationTest {
                 : SdkTracerProvider.builder()
                         .setSampler(DurableSampler.wrap(policy))
                         .setIdGenerator(new DeterministicIdGenerator())
+                        .addSpanProcessor(SimpleSpanProcessor.create(SpanExporter.noop()))
                         .build()) {
             observer.tracer = unrelated.get("processor");
             var original = Context.current();
