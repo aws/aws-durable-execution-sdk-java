@@ -30,7 +30,7 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.*;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 
-/** Diagnostic for the pre-existing End/close flush boundary; no proposed production policy in this class. */
+/** Verifies worker context restoration and export when operations drain before invocation End. */
 class InvocationWorkerContextCleanupProbeTest {
     @ParameterizedTest
     @CsvSource({
@@ -41,7 +41,7 @@ class InvocationWorkerContextCleanupProbeTest {
         "early-parallel,true",
         "awaited,true"
     })
-    void alreadyRunningStepCompletesAfterEnd(String mode, boolean executionView) throws Exception {
+    void alreadyRunningStepCompletesBeforeEnd(String mode, boolean executionView) throws Exception {
         boolean earlyParallel = mode.equals("early-parallel");
         boolean awaited = mode.equals("awaited");
         var running = new CountDownLatch(1);
@@ -138,13 +138,11 @@ class InvocationWorkerContextCleanupProbeTest {
                             return "root-success";
                         },
                         config));
-                if (awaited) {
-                    assertTrue(running.await(5, TimeUnit.SECONDS));
-                    release.countDown();
-                }
-                assertTrue(ended.await(5, TimeUnit.SECONDS));
-                if (!awaited) assertThrows(TimeoutException.class, () -> call.get(100, TimeUnit.MILLISECONDS));
+                assertTrue(running.await(5, TimeUnit.SECONDS));
+                assertThrows(TimeoutException.class, () -> call.get(100, TimeUnit.MILLISECONDS));
+                assertEquals(1, ended.getCount(), "End must wait for the running step");
                 release.countDown();
+                assertTrue(ended.await(5, TimeUnit.SECONDS));
                 assertEquals(
                         ExecutionStatus.SUCCEEDED, call.get(5, TimeUnit.SECONDS).status());
                 assertEquals(
@@ -164,9 +162,9 @@ class InvocationWorkerContextCleanupProbeTest {
                 System.out.println("LATE_FLUSH_PUBLIC earlyParallel=" + earlyParallel + " backend=SUCCEEDED bodyCalls="
                         + bodyCalls.get() + " lateOperationEnds=" + lateOperationEnds.get() + " beforeManualFlush="
                         + before + " afterManualFlush=" + after);
-                if (!awaited)
-                    assertTrue(
-                            lateOperationEnds.get() > 0, "Existing public operation-end occurs after invocation End");
+                assertEquals(0, lateOperationEnds.get(), "Operation End must precede invocation End");
+                assertEquals(List.of("SUCCEEDED"), before, "Invocation End must flush the completed step");
+                assertEquals(before, after, "Manual flush must not reveal an unexported step");
                 System.out.println("WORKER_CONTEXT_PUBLIC executionView=" + executionView + " mode=" + mode
                         + " restored=" + (initial.get(owner.get()) == workerContext.get()) + " remainingSpan="
                         + Span.fromContext(workerContext.get()).getSpanContext());
@@ -174,7 +172,6 @@ class InvocationWorkerContextCleanupProbeTest {
                         initial.get(owner.get()),
                         workerContext.get(),
                         "Real worker ambient Context restored after its task finishes");
-                // This diagnostic records actual export behavior; it does not redefine which outcome wins.
             } finally {
                 release.countDown();
                 caller.shutdownNow();
@@ -297,8 +294,11 @@ class InvocationWorkerContextCleanupProbeTest {
                                 return "root-success";
                             },
                             config));
-                    assertTrue(ended.await(5, TimeUnit.SECONDS));
+                    assertTrue(running.await(5, TimeUnit.SECONDS));
+                    assertThrows(TimeoutException.class, () -> call.get(100, TimeUnit.MILLISECONDS));
+                    assertEquals(1, ended.getCount(), "End must wait for the running step");
                     release.countDown();
+                    assertTrue(ended.await(5, TimeUnit.SECONDS));
                     assertEquals(
                             ExecutionStatus.SUCCEEDED,
                             call.get(5, TimeUnit.SECONDS).status());

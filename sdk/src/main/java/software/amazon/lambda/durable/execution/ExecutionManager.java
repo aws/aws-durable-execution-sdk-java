@@ -118,7 +118,8 @@ public class ExecutionManager implements SafeCloseable {
                 input.checkpointToken(),
                 this::onCheckpointComplete,
                 this::tryStartCheckpointProcessing,
-                this::finishCheckpointProcessing);
+                this::finishCheckpointProcessing,
+                this::signalSuspension);
 
         this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()
                 .collect(Collectors.toConcurrentMap(Operation::id, op -> op));
@@ -230,6 +231,11 @@ public class ExecutionManager implements SafeCloseable {
                 : completionLockFor(completionLockParent);
         operationCompletionLocks.put(operationId, completionLock);
         registeredOperations.put(operationId, operation);
+        // Revocation is published before existing operations are suspended. Check after insertion so an
+        // operation registered too late for that notification still releases its waiters.
+        if (isCheckpointTokenRevoked()) {
+            operation.getCompletionFuture().completeExceptionally(new SuspendExecutionException());
+        }
     }
 
     // ===== Checkpoint Completion Handler =====
@@ -741,17 +747,21 @@ public class ExecutionManager implements SafeCloseable {
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-        stopCheckpointContinuations();
-        validateRunningThreads();
-
-        checkpointManager.shutdown();
+        drainOperations();
     }
 
-    /** Closes new checkpoint-continuation admission without signaling owners or joining their cleanup. */
-    void closeCheckpointContinuationAdmission() {
-        synchronized (activeThreads) {
-            closing = true;
-        }
+    /**
+     * Settles submitted operation handlers and stops polling before flushing checkpoints. Terminal decisions therefore
+     * observe token withdrawal without allowing later polls to change that decision. Safe to call more than once: a
+     * second call finds no running handlers and an already-stopped batcher.
+     */
+    void drainOperations() {
+        // Closing admission can skip queued continuations. Stop their owners before joining user handlers,
+        // or a child waiting on a skipped continuation would prevent the drain from completing.
+        stopCheckpointContinuations();
+        waitForRunningUserHandlers();
+        validateExecutorPool();
+        checkpointManager.shutdown();
     }
 
     private void stopCheckpointContinuations() {
@@ -776,7 +786,7 @@ public class ExecutionManager implements SafeCloseable {
         }
     }
 
-    private void validateRunningThreads() {
+    private void waitForRunningUserHandlers() {
         // This will detect stuck user thread and thread leaks in the thread pool
         for (BaseDurableOperation op : registeredOperations.values()) {
             var userHandlerFuture = op.getRunningUserHandler();
@@ -795,7 +805,9 @@ public class ExecutionManager implements SafeCloseable {
                 }
             }
         }
+    }
 
+    private void validateExecutorPool() {
         // double check if the thread pool is empty
         if (durableConfig.getExecutorService() instanceof ThreadPoolExecutor threadPoolExecutor) {
             var threadCount = threadPoolExecutor.getActiveCount();

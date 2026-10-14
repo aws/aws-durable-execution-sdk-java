@@ -38,7 +38,8 @@ class CompletedPollBatchTest {
                     starts.incrementAndGet();
                     return true;
                 },
-                finishes::incrementAndGet);
+                finishes::incrementAndGet,
+                () -> {});
         var ready = Operation.builder()
                 .id("watched")
                 .type(OperationType.STEP)

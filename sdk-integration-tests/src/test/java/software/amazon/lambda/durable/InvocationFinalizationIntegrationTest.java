@@ -164,6 +164,8 @@ class InvocationFinalizationIntegrationTest {
         var workers = new OutcomeExecutor(mode);
         var releaseOperation = new CountDownLatch(mode.equals("submit-wait") ? 0 : 1);
         var aboutToWait = new CountDownLatch(1);
+        var handlerFinished = new CountDownLatch(1);
+        var controlSelectedBeforeCallback = new AtomicBoolean();
         var completedStepCalls = new AtomicInteger();
         var targetCalls = new AtomicInteger();
         var throwFinally = new AtomicBoolean(true);
@@ -209,19 +211,22 @@ class InvocationFinalizationIntegrationTest {
                                         .retryStrategy(RetryStrategies.fixedDelay(2, Duration.ofSeconds(1)))
                                         .build());
                     }
-                    // This schedules the existing completion window; suspension/termination is triggered only by the
-                    // real
-                    // operation. The root's dependent wait is registered later and wakes before this earlier callback
-                    // drains.
+                    var manager = ((DurableContextImpl) context).getExecutionManager();
+                    // The manager must select suspension or termination before waking operation waiters.
+                    // Observe that ordering directly, before the handler's finally block can change the outcome.
+                    // Wait for the handler body, not its SDK task: the SDK task drains this callback before returning.
                     ((BaseDurableOperation) future).getCompletionFuture().whenComplete((value, failure) -> {
-                        if (failure != null && !mode.equals("submit-wait") && throwFinally.get())
-                            await(workers.rootReturned);
+                        if (failure != null && throwFinally.get()) {
+                            controlSelectedBeforeCallback.set(manager.isExecutionCompletedExceptionally());
+                            if (!mode.equals("submit-wait")) await(handlerFinished);
+                        }
                     });
                     try {
                         aboutToWait.countDown();
                         future.get();
                         return "done";
                     } finally {
+                        handlerFinished.countDown();
                         if (throwFinally.get()) throw new IllegalStateException("fast handler finally");
                     }
                 },
@@ -254,6 +259,7 @@ class InvocationFinalizationIntegrationTest {
                         ExecutionStatus.PENDING,
                         response.get(5, TimeUnit.SECONDS).getStatus());
             }
+            assertTrue(controlSelectedBeforeCallback.get(), "Manager control must be selected before waking waiters");
             if (withPlugin)
                 assertPaired(plugin, kind.equals("termination") ? InvocationStatus.RETRYING : InvocationStatus.PENDING);
             throwFinally.set(false);
@@ -262,7 +268,7 @@ class InvocationFinalizationIntegrationTest {
             assertEquals(1, completedStepCalls.get(), "The completed step must replay without another side effect");
         } finally {
             releaseOperation.countDown();
-            workers.rootReturned.countDown();
+            handlerFinished.countDown();
             stop(caller);
             stop(workers);
         }
@@ -273,7 +279,6 @@ class InvocationFinalizationIntegrationTest {
         private final ExecutorService delegate = Executors.newCachedThreadPool();
         private final AtomicBoolean first = new AtomicBoolean(true);
         private final AtomicReference<Thread> rootOwner = new AtomicReference<>();
-        private final CountDownLatch rootReturned = new CountDownLatch(1);
 
         private OutcomeExecutor(String mode) {
             this.mode = mode;
@@ -283,11 +288,7 @@ class InvocationFinalizationIntegrationTest {
             var root = first.getAndSet(false);
             Runnable wrapped = () -> {
                 if (root) rootOwner.set(Thread.currentThread());
-                try {
-                    task.run();
-                } finally {
-                    if (root) rootReturned.countDown();
-                }
+                task.run();
             };
             if (root && mode.equals("inline-root")) wrapped.run();
             else if (mode.equals("submit-wait")) {
