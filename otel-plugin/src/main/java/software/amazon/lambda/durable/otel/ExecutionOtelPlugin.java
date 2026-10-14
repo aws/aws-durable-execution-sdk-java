@@ -398,7 +398,9 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         if (!tracingEnabled || !executionArn.equals(durableExecutionArn)) return null;
         var trace = executionTrace;
         if (trace == null) return null;
-        // An observed operation's actual context is authoritative, including invocation-view continuation segments.
+        // These contexts are deferred placeholders, not sampled operation spans. A replacement sampler may decide
+        // differently for Invocation and invoke; an opaque provider does not expose its effective policy.
+        if (sdkTracerProvider == null || !OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)) return null;
         var context = operationContexts.get(operationId);
         if (context == null) {
             // Before a new operation starts, use the same deterministic ID its initial span will receive.

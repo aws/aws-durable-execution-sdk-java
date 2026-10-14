@@ -16,8 +16,9 @@ execution-global or HTTP-request trace header can substitute for those distinct 
 and `targetFunctionName`. `PropagationMetadata` is an immutable SDK-owned contribution with optional `xAmznTraceId`.
 Both types use only Java strings; generated Lambda and OTel model types do not enter the plugin interface.
 The typed default hook adapts a String-only producer overload, so bundled plugin layers do not reference newly added
-core classes. Older cores continue to load those layers and retain their original behavior. New collection requires
-an updated core; registration/provider API versions and existing hooks are unchanged.
+core classes. This does not remove the bundled plugins' existing requirement for the same-thread invocation-hook
+capability: cores without it, including released 2.2.1, are rejected at construction. Collection also requires a core
+that implements this hook; registration/provider API versions and existing hooks are unchanged.
 
 The optional synchronous `providePropagationMetadata` default method returns null. The dispatcher supplies the same
 immutable snapshot in configured order. The first non-null supported member wins; equal values do not conflict.
@@ -34,6 +35,14 @@ Both OTel views encode the resolved canonical trace ID, actual calling-operation
 create a span or sample again, and retains the configured provider/resource and upstream-parent behavior. Explicit
 upstream `Sampled=0` is preserved. The producer can derive an initial operation ID before a start hook, but the real
 invoke path collects after that hook and therefore uses the operation context it already established.
+
+The invocation view can read the sampling flags from an operation span that has already started. The execution view
+defers that span until completion, so its placeholder does not establish a per-span sampling decision. It contributes
+metadata only when the visible provider uses `DurableSampler`, including the application-owned builder setup. It
+abstains for replacement samplers and opaque providers whose effective sampler cannot be verified, including opaque
+agent facades. In those cases the backend's omitted-header fallback applies; no new invoke-parent linkage is promised.
+The invocation view applies the same restriction if asked before an operation span is available.
+This does not change the configured sampler, create an early operation span, or query the sampler again.
 
 ## Replay and retry
 

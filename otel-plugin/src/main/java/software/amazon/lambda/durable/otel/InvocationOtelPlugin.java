@@ -410,6 +410,10 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
         // An observed operation's actual context is authoritative, including invocation-view continuation segments.
         var context = operationContexts.get(operationId);
         if (context == null) {
+            // A planned context has no actual span decision yet. Preserve abstention when the effective sampler
+            // cannot be verified; normal invoke collection runs after the operation's Start hook.
+            if (sdkTracerProvider == null || !OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider))
+                return null;
             // Before a new operation starts, use the same deterministic ID its initial span will receive.
             context = SpanContext.create(
                     trace.traceId(),
