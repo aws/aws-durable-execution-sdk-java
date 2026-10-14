@@ -114,8 +114,10 @@ class ContinuationShutdownIntegrationTest {
         }
     }
 
-    @Test
-    void earlyParallelCompletionStopsOnlyItsQueuedConditionAndUnblocksTheWaitingBranch() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void earlyParallelCompletionStopsOnlyItsQueuedConditionAndUnblocksTheWaitingBranch(boolean beforeEnd)
+            throws Exception {
         var closed = new AtomicBoolean();
         var late = new AtomicInteger();
         var client = readyClient(closed, late);
@@ -162,8 +164,11 @@ class ContinuationShutdownIntegrationTest {
             assertEquals(1, result.succeeded());
             assertFalse(condition.get().getCompletionFuture().isDone());
             var checkpointCount = client.getOperationUpdates().size();
-            var closing = CompletableFuture.runAsync(setup.manager::close);
-            assertTrue(setup.manager.closeEntered.await(3, TimeUnit.SECONDS));
+            var closing = CompletableFuture.runAsync(() -> {
+                if (beforeEnd) setup.manager.drainOperations();
+                else setup.manager.close();
+            });
+            if (!beforeEnd) assertTrue(setup.manager.closeEntered.await(3, TimeUnit.SECONDS));
             assertThrows(TimeoutException.class, () -> closing.get(150, TimeUnit.MILLISECONDS));
             CompletableFuture.runAsync(task.get()).get(3, TimeUnit.SECONDS);
             closing.get(3, TimeUnit.SECONDS);

@@ -9,6 +9,7 @@ import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -24,11 +25,11 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.*;
 import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
 
-/** Diagnostic for the pre-existing End/close flush boundary; no proposed production policy in this class. */
+/** Verifies that draining operations precedes invocation End and its telemetry flush. */
 class InvocationLateFlushProbeTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void alreadyRunningStepCompletesAfterEnd(boolean earlyParallel) throws Exception {
+    void alreadyRunningStepCompletesBeforeEnd(boolean earlyParallel) throws Exception {
         var running = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         var ended = new CountDownLatch(1);
@@ -101,9 +102,11 @@ class InvocationLateFlushProbeTest {
                             return "root-success";
                         },
                         config));
-                assertTrue(ended.await(5, TimeUnit.SECONDS));
+                assertTrue(running.await(5, TimeUnit.SECONDS));
                 assertThrows(TimeoutException.class, () -> call.get(100, TimeUnit.MILLISECONDS));
+                assertEquals(1, ended.getCount(), "End must wait for the running step");
                 release.countDown();
+                assertTrue(ended.await(5, TimeUnit.SECONDS));
                 assertEquals(
                         ExecutionStatus.SUCCEEDED, call.get(5, TimeUnit.SECONDS).status());
                 assertEquals(
@@ -122,8 +125,9 @@ class InvocationLateFlushProbeTest {
                 System.out.println("LATE_FLUSH_PUBLIC earlyParallel=" + earlyParallel + " backend=SUCCEEDED bodyCalls="
                         + bodyCalls.get() + " lateOperationEnds=" + lateOperationEnds.get() + " beforeManualFlush="
                         + before + " afterManualFlush=" + after);
-                assertTrue(lateOperationEnds.get() > 0, "Existing public operation-end occurs after invocation End");
-                // This diagnostic records actual export behavior; it does not redefine which outcome wins.
+                assertEquals(0, lateOperationEnds.get(), "Operation End must precede invocation End");
+                assertEquals(List.of("SUCCEEDED"), before, "Invocation End must flush the completed step");
+                assertEquals(before, after, "Manual flush must not reveal an unexported step");
             } finally {
                 release.countDown();
                 caller.shutdownNow();

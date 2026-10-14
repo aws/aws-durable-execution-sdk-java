@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -27,12 +28,15 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
+import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
@@ -213,6 +217,106 @@ class ExecutionManagerTest {
                 .subType(OperationSubType.STEP.getValue())
                 .status(status)
                 .build();
+    }
+
+    @Test
+    void operationRegisteredBeforeTokenWithdrawalIsSuspended() throws Exception {
+        try (var manager = createManager(List.of(executionOp()))) {
+            var operation = mockRegisteredOperation("step");
+            manager.registerOperation(operation);
+            assertFalse(operation.getCompletionFuture().isDone());
+
+            withdrawToken(manager);
+
+            assertSuspended(operation);
+        }
+    }
+
+    @Test
+    void operationRegisteredAfterTokenWithdrawalIsSuspended() throws Exception {
+        try (var manager = createManager(List.of(executionOp()))) {
+            withdrawToken(manager);
+            var operation = mockRegisteredOperation("late");
+
+            manager.registerOperation(operation);
+
+            assertSuspended(operation);
+        }
+    }
+
+    @Test
+    void registrationDuringPollerCompletionObservesWithdrawalBeforeSuspensionSignal() throws Exception {
+        try (var manager = createManager(List.of(executionOp()))) {
+            var poller = manager.pollForOperationUpdates("poll", Instant.now().plusSeconds(3600));
+            var registration = poller.handle((ignored, failure) -> {
+                // Pollers complete after revocation is published, but before the invocation is signaled.
+                assertTrue(manager.isCheckpointTokenRevoked());
+                assertFalse(manager.isExecutionCompletedExceptionally());
+                assertInstanceOf(SuspendExecutionException.class, failure);
+
+                var operation = mockRegisteredOperation("late");
+                manager.registerOperation(operation);
+                assertSuspended(operation);
+
+                return null;
+            });
+
+            withdrawToken(manager);
+
+            registration.get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void registrationFinishingAfterTokenWithdrawalIsSuspended() throws Exception {
+        try (var manager = createManager(List.of(executionOp()))) {
+            var registrationStarted = new CountDownLatch(1);
+            var releaseRegistration = new CountDownLatch(1);
+
+            var operation = mockRegisteredOperation("late");
+            when(operation.getOperationId()).thenAnswer(call -> {
+                registrationStarted.countDown();
+                assertTrue(releaseRegistration.await(5, TimeUnit.SECONDS));
+                return "late";
+            });
+
+            var registration = CompletableFuture.runAsync(() -> manager.registerOperation(operation));
+            try {
+                assertTrue(registrationStarted.await(5, TimeUnit.SECONDS));
+                withdrawToken(manager);
+            } finally {
+                releaseRegistration.countDown();
+            }
+            registration.get(5, TimeUnit.SECONDS);
+
+            assertSuspended(operation);
+        }
+    }
+
+    private BaseDurableOperation mockRegisteredOperation(String id) {
+        var operation = mock(BaseDurableOperation.class);
+        when(operation.getOperationId()).thenReturn(id);
+        when(operation.getCompletionFuture()).thenReturn(new CompletableFuture<>());
+        return operation;
+    }
+
+    private void withdrawToken(ExecutionManager manager) throws Exception {
+        when(client.checkpoint(any(), any(), any()))
+                .thenReturn(CheckpointDurableExecutionResponse.builder().build());
+        var checkpoint = manager.sendOperationUpdate(OperationUpdate.builder()
+                .id("revoke")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build());
+        var error = assertThrows(ExecutionException.class, () -> checkpoint.get(5, TimeUnit.SECONDS));
+        assertInstanceOf(SuspendExecutionException.class, error.getCause());
+    }
+
+    private void assertSuspended(BaseDurableOperation operation) {
+        assertTrue(operation.getCompletionFuture().isCompletedExceptionally());
+        var error = assertThrows(
+                ExecutionException.class, () -> operation.getCompletionFuture().get(5, TimeUnit.SECONDS));
+        assertInstanceOf(SuspendExecutionException.class, error.getCause());
     }
 
     @Test
@@ -494,7 +598,9 @@ class ExecutionManagerTest {
         waiter.get(5, TimeUnit.SECONDS);
         checkpoint.get(5, TimeUnit.SECONDS);
         assertDoesNotThrow(() -> manager.deregisterActiveThread(otherThread));
-        assertThrows(SuspendExecutionException.class, () -> manager.deregisterActiveThread(callerThread));
+        var suspension =
+                assertThrows(SuspendExecutionException.class, () -> manager.deregisterActiveThread(callerThread));
+        assertEquals("Execution suspended for wait operation", suspension.getMessage());
     }
 
     @Test
