@@ -56,6 +56,11 @@ This filtering applies to the state delivered to the SDK. Test results,
 therefore refer to an operation omitted from the invocation input; the ID alone
 does not provide its missing metadata. The local state API returns a single page.
 
+Operation names must still remain deterministic. Pruning can prevent the SDK from
+detecting a changed child name when it consumes a cached parent result. Tests of
+name-mismatch detection should also cover retained children and running contexts,
+where the service still provides the relevant checkpoint metadata.
+
 ### Inspecting Operations
 
 ```java

@@ -81,7 +81,11 @@ class PluginErrorContainerCompatibilityTest {
         var replay = runner.run("input");
         assertEquals(ExecutionStatus.FAILED, replay.getStatus());
         assertEquals(failed.getError(), replay.getError());
-        assertContainer(error, starts.get(2).operations().get(operation.getId()).error());
+        // The completed failed context omits its children from replay input. Inspection still retains the raw
+        // callback failure, and all of the delivered-container/identity checks above remain required.
+        assertFalse(starts.get(2).operations().containsKey(operation.getId()));
+        assertEquals(
+                error, replay.getOperation(callbackName).getCallbackDetails().error());
         assertEquals(1, submissions.get(), "Completed submission must not execute again");
         assertEquals(
                 1,
