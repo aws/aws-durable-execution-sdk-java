@@ -83,9 +83,9 @@ public class PluginRunner {
 
     /**
      * Collects supported metadata in configured order on the caller's thread. First non-null member wins; matching
-     * later values are harmless. Ordinary plugin/invalid-result failures are logged and skipped, matching the event
-     * hooks' Exception containment policy; Errors continue to propagate. The core calls this while creating a new
-     * invoke START checkpoint, not while replaying an existing operation.
+     * later values are harmless. Ordinary plugin/invalid-result failures and linkage errors are logged and skipped,
+     * matching the event hooks' isolation policy; other Errors continue to propagate. The core calls this while
+     * creating a new invoke START checkpoint, not while replaying an existing operation.
      */
     public PropagationMetadata providePropagationMetadata(PropagationInput input) {
         requireNonNull(input, "input");
@@ -108,7 +108,7 @@ public class PluginRunner {
                             owner,
                             ++conflicts);
                 }
-            } catch (Exception failure) {
+            } catch (Exception | LinkageError failure) {
                 warnPropagation("Propagation metadata from plugin {} failed; skipping contribution", identity, failure);
             }
         }
