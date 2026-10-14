@@ -19,6 +19,7 @@ import static software.amazon.lambda.durable.TypeToken.get;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -49,6 +50,7 @@ import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionExc
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -71,14 +73,13 @@ class DurableExecutorLifecycleTest {
     void queuedRevocationOverridesHandlerOutcomeAndClearsPluginError(HandlerOutcome outcome) {
         when(client.checkpoint(any(), any(), any()))
                 .thenReturn(CheckpointDurableExecutionResponse.builder().build());
-        var handlerError =
-                switch (outcome) {
-                    case FAILURE -> new IllegalArgumentException("handler failed");
-                    case RETRY ->
-                        new UnrecoverableDurableExecutionException(
-                                ErrorObject.builder().errorMessage("retry").build(), true);
-                    default -> null;
-                };
+        var handlerError = switch (outcome) {
+            case FAILURE -> new IllegalArgumentException("handler failed");
+            case RETRY ->
+                new UnrecoverableDurableExecutionException(
+                        ErrorObject.builder().errorMessage("retry").build(), true);
+            default -> null;
+        };
         var output = execute(
                 config().withCheckpointDelay(Duration.ofHours(1)).build(),
                 handlerWithQueuedCheckpoint(outcome, handlerError));
@@ -94,8 +95,10 @@ class DurableExecutorLifecycleTest {
     }
 
     @Test
-    void queuedStepDrainsOnSingleThreadExecutor() throws Exception {
-        var userExecutor = Executors.newSingleThreadExecutor();
+    void queuedStepDrainsOnBoundedExecutor() throws Exception {
+        // The invocation drains operations on the root handler thread, so a queued step needs a second user thread.
+        // Single-thread executor support is outside this test's scope.
+        var userExecutor = Executors.newFixedThreadPool(2);
         var caller = Executors.newSingleThreadExecutor();
         var handlerReady = new CountDownLatch(1);
         var releaseHandler = new CountDownLatch(1);
@@ -125,17 +128,25 @@ class DurableExecutorLifecycleTest {
 
     @Test
     void queuedStepSkipsUserCodeAfterRevocation() {
-        var userExecutor = Executors.newSingleThreadExecutor();
+        // The root handler thread drains on itself, so the queued step needs a second thread to unwind on. A blocker
+        // occupies that thread until the handler has observed the revocation, so the step still starts after it.
+        var userExecutor = Executors.newFixedThreadPool(2);
+        var releaseQueuedStep = new CountDownLatch(1);
         var ran = new AtomicBoolean();
         when(client.checkpoint(any(), any(), any()))
                 .thenReturn(CheckpointDurableExecutionResponse.builder().build());
         try {
+            userExecutor.execute(() -> await(releaseQueuedStep));
             var output = execute(config().withExecutorService(userExecutor).build(), (value, ctx) -> {
                 ctx.stepAsync("queued", String.class, stepCtx -> {
                     ran.set(true);
                     return "done";
                 });
-                ctx.wait("revoke", Duration.ofSeconds(1));
+                try {
+                    ctx.wait("revoke", Duration.ofSeconds(1));
+                } finally {
+                    releaseQueuedStep.countDown();
+                }
                 return "unreachable";
             });
 
@@ -143,6 +154,7 @@ class DurableExecutorLifecycleTest {
             assertFalse(ran.get());
             verify(client, times(1)).checkpoint(any(), any(), any());
         } finally {
+            releaseQueuedStep.countDown();
             userExecutor.shutdownNow();
         }
     }
@@ -177,6 +189,34 @@ class DurableExecutorLifecycleTest {
             release.countDown();
             caller.shutdownNow();
         }
+    }
+
+    @Test
+    void continuationAdmissionClosesBeforeDrainingHandlers() {
+        var attempted = new AtomicBoolean();
+        var dispatched = new AtomicBoolean();
+        var output = execute(
+                config().withDurableExecutionClient(TestUtils.createMockClient())
+                        .build(),
+                (value, ctx) -> {
+                    var manager = ((DurableContextImpl) ctx).getExecutionManager();
+                    var operation = mock(BaseDurableOperation.class);
+                    when(operation.getOperationId()).thenReturn("drain-probe");
+                    when(operation.getRunningUserHandler()).thenAnswer(call -> {
+                        attempted.set(true);
+                        manager.runCheckpointContinuation(() -> {}, task -> {
+                            dispatched.set(true);
+                            task.run();
+                        });
+                        return CompletableFuture.completedFuture(null);
+                    });
+                    manager.registerOperation(operation);
+                    return "done";
+                });
+
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertTrue(attempted.get());
+        assertFalse(dispatched.get(), "Draining must not admit another checkpoint continuation");
     }
 
     @Test

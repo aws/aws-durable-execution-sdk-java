@@ -19,6 +19,7 @@ import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.ParallelResult;
@@ -1368,5 +1369,30 @@ class ParallelIntegrationTest {
             assertTrue(4 <= result.getHistoryEvents().size());
             assertTrue(result.getHistoryEvents().size() <= events);
         }
+    }
+
+    @Test
+    void testInvalidSuspensionWhenWaitingOnSkippedBranch() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var config = ParallelConfig.builder()
+                    .completionConfig(CompletionConfig.firstSuccessful())
+                    .maxConcurrency(1)
+                    .build();
+            var futures = new ArrayList<DurableFuture<String>>();
+            var parallel = context.parallel("first-success-parallel", config);
+
+            try (parallel) {
+                futures.add(parallel.branch("branch-1", String.class, ctx -> "success-1"));
+                futures.add(parallel.branch("branch-2", String.class, ctx -> "skipped-2"));
+            }
+
+            parallel.get();
+            return futures.get(1).get();
+        });
+
+        var ex = assertThrows(IllegalDurableOperationException.class, () -> runner.run("test"));
+        assertTrue(ex.isRetryable());
+        assertTrue(ex.getMessage().contains("Invalid suspension. No operation is pending."));
+        assertTrue(ex.getMessage().contains("branch-2"));
     }
 }

@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -15,11 +16,13 @@ import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -75,8 +78,14 @@ public class ExecutionManager implements SafeCloseable {
     private final Set<String> activeThreads = Collections.synchronizedSet(new HashSet<>());
     private static final ThreadLocal<ThreadContext> currentThreadContext = new ThreadLocal<>();
     private final CompletableFuture<Void> executionExceptionFuture = new CompletableFuture<>();
-    // Guarded by activeThreads so starting a checkpoint request is atomic with the last-thread suspension decision.
+    // Requests and polling continuations; guarded by activeThreads so admission is atomic with last-thread suspension.
     private int checkpointRequestsInFlight;
+    private volatile IllegalDurableOperationException invalidSuspensionException;
+    // Guarded by activeThreads; an observation future can be cancelled independently of its actual task.
+    private final Map<Object, BaseDurableOperation> checkpointContinuations = new HashMap<>();
+    private boolean closing;
+    // Guarded by activeThreads; selected against normal close before publishing callbacks outside the monitor.
+    private UnrecoverableDurableExecutionException selectedContinuationFailure;
 
     /**
      * Per-wait state used to coordinate the caller thread with the future completion callback.
@@ -550,8 +559,135 @@ public class ExecutionManager implements SafeCloseable {
         }
     }
 
+    /**
+     * Runs a polling continuation away from the serialized checkpoint batcher. Keeps checkpoint processing active from
+     * receiving the callback until the continuation has registered its next worker (or finished inline). Canceling the
+     * returned future affects observation only; queued or running work still owns its activity lease.
+     *
+     * @param continuation operation work to dispatch after receiving a polling update
+     * @return completion of the continuation, or an already-completed future when execution has stopped
+     */
+    public CompletableFuture<Void> runCheckpointContinuation(Runnable continuation) {
+        return runCheckpointContinuation(null, continuation, InternalExecutor.INSTANCE);
+    }
+
+    /** Schedules an operation continuation whose unfinished waiters are stopped during manager cleanup. */
+    public CompletableFuture<Void> runCheckpointContinuation(BaseDurableOperation owner, Runnable continuation) {
+        return runCheckpointContinuation(owner, continuation, InternalExecutor.INSTANCE);
+    }
+
+    CompletableFuture<Void> runCheckpointContinuation(Runnable continuation, Executor coordinator) {
+        return runCheckpointContinuation(null, continuation, coordinator);
+    }
+
+    CompletableFuture<Void> runCheckpointContinuation(
+            BaseDurableOperation owner, Runnable continuation, Executor coordinator) {
+        var registration = registerCheckpointContinuation(owner);
+        if (registration == null) {
+            if (isClosing()) stopContinuationOwner(owner);
+            return CompletableFuture.completedFuture(null);
+        }
+        try {
+            var completion = new CompletableFuture<Void>();
+            coordinator.execute(() -> completeCheckpointContinuation(owner, registration, continuation, completion));
+            return completion;
+        } catch (RuntimeException | Error failure) {
+            try {
+                if ((owner != null && !isClosing())
+                        || failure instanceof VirtualMachineError
+                        || failure instanceof ThreadDeath) signalContinuationFailure(failure);
+            } finally {
+                finishCheckpointContinuation(registration);
+            }
+            throw failure;
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private void completeCheckpointContinuation(
+            BaseDurableOperation owner,
+            Object registration,
+            Runnable continuation,
+            CompletableFuture<Void> completion) {
+        try {
+            try {
+                if (!isClosing()) continuation.run();
+            } catch (Throwable failure) {
+                // An operation polling chain can ignore observation. Select retry control before the final lease
+                // could select PENDING; unowned ordinary helper failures retain their observation-only contract.
+                if ((owner != null && !isClosing())
+                        || failure instanceof VirtualMachineError
+                        || failure instanceof ThreadDeath) signalContinuationFailure(failure);
+                throw failure;
+            } finally {
+                finishCheckpointContinuation(registration);
+            }
+            completion.complete(null);
+        } catch (Throwable failure) {
+            completion.completeExceptionally(failure);
+            // The observation future may be ignored by a polling chain. Never hide a JVM fatal from its worker.
+            if (failure instanceof VirtualMachineError fatal) throw fatal;
+            if (failure instanceof ThreadDeath fatal) throw fatal;
+        }
+    }
+
+    private void signalContinuationFailure(Throwable failure) {
+        var control = new UnrecoverableDurableExecutionException(
+                ErrorObject.builder()
+                        .errorType(failure.getClass().getName())
+                        .errorMessage("Error in SDK checkpoint continuation")
+                        .build(),
+                true,
+                failure);
+        UnrecoverableDurableExecutionException selected;
+        synchronized (activeThreads) {
+            if (closing && !(failure instanceof VirtualMachineError || failure instanceof ThreadDeath)) return;
+            if (selectedContinuationFailure == null) selectedContinuationFailure = control;
+            selected = selectedContinuationFailure;
+        }
+        // A later admitted publisher may drain the winner's callbacks. Keep that CompletableFuture behavior,
+        // but publish/wake using the selected cause, outside the monitor needed by worker cleanup.
+        if (executionExceptionFuture.completeExceptionally(selected)) stopAllOperations(selected);
+    }
+
+    private Object registerCheckpointContinuation(BaseDurableOperation owner) {
+        synchronized (activeThreads) {
+            if (closing || executionExceptionFuture.isDone()) return null;
+            var registration = new Object();
+            checkpointContinuations.put(registration, owner);
+            checkpointRequestsInFlight++;
+            return registration;
+        }
+    }
+
+    private void finishCheckpointContinuation(Object registration) {
+        synchronized (activeThreads) {
+            // An inline coordinator may rethrow after its task already released this registration.
+            if (!checkpointContinuations.containsKey(registration)) return;
+            checkpointContinuations.remove(registration);
+            try {
+                finishCheckpointProcessing();
+            } finally {
+                activeThreads.notifyAll();
+            }
+        }
+    }
+
+    private boolean isClosing() {
+        synchronized (activeThreads) {
+            return closing;
+        }
+    }
+
+    private static void stopContinuationOwner(BaseDurableOperation owner) {
+        if (owner != null) owner.getCompletionFuture().completeExceptionally(new SuspendExecutionException());
+    }
+
     private boolean shouldSuspendExecution() {
-        return activeThreads.isEmpty() && checkpointRequestsInFlight == 0 && !executionExceptionFuture.isDone();
+        return !closing
+                && activeThreads.isEmpty()
+                && checkpointRequestsInFlight == 0
+                && !executionExceptionFuture.isDone();
     }
 
     private void preSuspendCheck() {
@@ -562,8 +698,18 @@ public class ExecutionManager implements SafeCloseable {
             default -> false;
         });
 
-        if (!hasAnyPendingOperation) {
-            logger.warn("Invalid suspension. No operation is pending");
+        if (!hasAnyPendingOperation && !isCheckpointTokenRevoked()) {
+            var waitingOperations = registeredOperations.values().stream()
+                    .filter(op -> !op.getCompletionFuture().isDone())
+                    .map(op -> String.format(
+                            "%s (id=%s)", Objects.toString(op.getName(), "<unnamed>"), op.getOperationId()))
+                    .distinct()
+                    .toList();
+
+            var errorMessage = "Invalid suspension. No operation is pending. Suspended threads were waiting for: "
+                    + waitingOperations;
+            logger.error(errorMessage);
+            this.invalidSuspensionException = new IllegalDurableOperationException(errorMessage, true);
         }
     }
 
@@ -606,12 +752,38 @@ public class ExecutionManager implements SafeCloseable {
 
     /**
      * Settles submitted operation handlers and stops polling before flushing checkpoints. Terminal decisions therefore
-     * observe token withdrawal without allowing later polls to change that decision.
+     * observe token withdrawal without allowing later polls to change that decision. Safe to call more than once: a
+     * second call finds no running handlers and an already-stopped batcher.
      */
     void drainOperations() {
+        // Closing admission can skip queued continuations. Stop their owners before joining user handlers,
+        // or a child waiting on a skipped continuation would prevent the drain from completing.
+        stopCheckpointContinuations();
         waitForRunningUserHandlers();
         validateExecutorPool();
         checkpointManager.shutdown();
+    }
+
+    private void stopCheckpointContinuations() {
+        List<BaseDurableOperation> owners;
+        synchronized (activeThreads) {
+            closing = true;
+            owners = new ArrayList<>(checkpointContinuations.values());
+        }
+        owners.forEach(ExecutionManager::stopContinuationOwner);
+        synchronized (activeThreads) {
+            while (!checkpointContinuations.isEmpty()) {
+                try {
+                    // wait releases this monitor so tasks can finish and release their registrations. No user work
+                    // or future join is performed while holding the coordination monitor.
+                    activeThreads.wait();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(
+                            "Interrupted while waiting for checkpoint continuations", interrupted);
+                }
+            }
+        }
     }
 
     private void waitForRunningUserHandlers() {
@@ -661,8 +833,9 @@ public class ExecutionManager implements SafeCloseable {
      * @param exception the unrecoverable exception that caused termination
      */
     public void terminateExecution(UnrecoverableDurableExecutionException exception) {
-        stopAllOperations(exception);
+        // Select control flow before waking a handler whose finally block can complete its body future.
         executionExceptionFuture.completeExceptionally(exception);
+        stopAllOperations(exception);
         throw exception;
     }
 
@@ -673,8 +846,8 @@ public class ExecutionManager implements SafeCloseable {
 
     private SuspendExecutionException signalSuspension() {
         var ex = new SuspendExecutionException();
-        stopAllOperations(ex);
         executionExceptionFuture.completeExceptionally(ex);
+        stopAllOperations(ex);
         return ex;
     }
 
@@ -684,6 +857,10 @@ public class ExecutionManager implements SafeCloseable {
      */
     public boolean isExecutionCompletedExceptionally() {
         return executionExceptionFuture.isCompletedExceptionally();
+    }
+
+    public IllegalDurableOperationException getInvalidSuspensionException() {
+        return invalidSuspensionException;
     }
 
     public boolean isCheckpointTokenRevoked() {

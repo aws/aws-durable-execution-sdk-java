@@ -12,9 +12,15 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 
@@ -164,5 +170,37 @@ class LocalDurableTestRunnerTest {
 
         assertEquals(ExecutionStatus.SUCCEEDED, resumed.getStatus());
         assertEquals("done", resumed.getResult(String.class));
+    }
+
+    @Test
+    void testInvalidSuspensionThrowsIllegalDurableOperationException() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, ctx) -> {
+            var durableContext = (DurableContextImpl) ctx;
+            class WaitingOperation extends BaseDurableOperation {
+                WaitingOperation() {
+                    super(
+                            OperationIdentifier.of("unregistered-op", "unregistered-op", OperationSubType.STEP),
+                            durableContext,
+                            null);
+                }
+
+                @Override
+                protected void start() {}
+
+                @Override
+                protected void replay(Operation existing) {}
+
+                void await() {
+                    waitForOperationCompletion();
+                }
+            }
+            new WaitingOperation().await();
+            return "done";
+        });
+
+        var ex = assertThrows(IllegalDurableOperationException.class, () -> runner.run("input"));
+        assertTrue(ex.isRetryable());
+        assertTrue(ex.getMessage().contains("Invalid suspension. No operation is pending."));
+        assertTrue(ex.getMessage().contains("unregistered-op"));
     }
 }
