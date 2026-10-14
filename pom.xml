@@ -141,6 +141,7 @@
                     <configuration>
                         <java>
                             <palantirJavaFormat>
+                                <version>2.98.0</version>
                                 <formatJavadoc>true</formatJavadoc>
                             </palantirJavaFormat>
                             <formatAnnotations />
