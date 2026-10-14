@@ -80,20 +80,18 @@ class MdcWorkerReuseBoundaryTest {
         var failed = new AtomicBoolean();
         var clearTried = new AtomicBoolean();
         var restoreFailure = new IllegalStateException("restore failed");
-        Error clearFatal =
-                switch (kind) {
-                    case "vm", "wrapped-vm" -> new InternalError("fallback fatal");
-                    case "death", "wrapped-death" -> new ThreadDeath();
-                    default -> null;
-                };
-        Throwable clearFailure =
-                switch (kind) {
-                    case "ordinary" -> new IllegalArgumentException("clear failed");
-                    case "assertion" -> new AssertionError("clear failed");
-                    case "same" -> restoreFailure;
-                    case "wrapped-vm", "wrapped-death" -> new CompletionException(new ExecutionException(clearFatal));
-                    default -> clearFatal;
-                };
+        Error clearFatal = switch (kind) {
+            case "vm", "wrapped-vm" -> new InternalError("fallback fatal");
+            case "death", "wrapped-death" -> new ThreadDeath();
+            default -> null;
+        };
+        Throwable clearFailure = switch (kind) {
+            case "ordinary" -> new IllegalArgumentException("clear failed");
+            case "assertion" -> new AssertionError("clear failed");
+            case "same" -> restoreFailure;
+            case "wrapped-vm", "wrapped-death" -> new CompletionException(new ExecutionException(clearFatal));
+            default -> clearFatal;
+        };
         Error expectedFatal = selectedFatal != null ? selectedFatal : clearFatal;
         var escaped = new CountDownLatch(1);
         var failedWorker = new AtomicReference<Thread>();

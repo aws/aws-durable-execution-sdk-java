@@ -161,14 +161,13 @@ class ExecutionRootLifecycleTest {
         "death,ordinary"
     })
     void flushPreservesTheExistingEndFailurePriority(String rootKind, String flushKind) {
-        Throwable rootFailure =
-                switch (rootKind) {
-                    case "linkage" -> new LinkageError("root linkage");
-                    case "assertion" -> new AssertionError("root assertion");
-                    case "vm" -> new InternalError("root fatal");
-                    case "death" -> new ThreadDeath();
-                    default -> new IllegalStateException("root ordinary");
-                };
+        Throwable rootFailure = switch (rootKind) {
+            case "linkage" -> new LinkageError("root linkage");
+            case "assertion" -> new AssertionError("root assertion");
+            case "vm" -> new InternalError("root fatal");
+            case "death" -> new ThreadDeath();
+            default -> new IllegalStateException("root ordinary");
+        };
         Throwable flushFailure = flushKind.equals("fatal")
                 ? new InternalError("flush fatal")
                 : new IllegalArgumentException("flush ordinary");
