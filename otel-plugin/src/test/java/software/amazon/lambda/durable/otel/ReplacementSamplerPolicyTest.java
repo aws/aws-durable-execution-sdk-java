@@ -15,6 +15,8 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.context.propagation.ContextPropagators;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.data.LinkData;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import io.opentelemetry.sdk.trace.export.SpanExporter;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.time.Duration;
@@ -71,6 +73,7 @@ class ReplacementSamplerPolicyTest {
         try (var provider = SdkTracerProvider.builder()
                 .setSampler(topology.equals("plain") ? configured : DurableSampler.wrap(configured))
                 .setIdGenerator(new DeterministicIdGenerator())
+                .addSpanProcessor(SimpleSpanProcessor.create(SpanExporter.noop()))
                 .build()) {
             var opaque = new TracerProvider() {
                 public Tracer get(String name) {
