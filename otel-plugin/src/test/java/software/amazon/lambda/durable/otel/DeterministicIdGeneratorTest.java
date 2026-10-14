@@ -12,6 +12,8 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.sdk.trace.IdGenerator;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.data.LinkData;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import io.opentelemetry.sdk.trace.export.SpanExporter;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.time.Instant;
@@ -54,8 +56,10 @@ class DeterministicIdGeneratorTest {
     @Test
     void scopedIds_delegateOutsideScope() {
         var providerGenerator = new DeterministicIdGenerator();
-        try (var provider =
-                SdkTracerProvider.builder().setIdGenerator(providerGenerator).build()) {
+        try (var provider = SdkTracerProvider.builder()
+                .setIdGenerator(providerGenerator)
+                .addSpanProcessor(SimpleSpanProcessor.create(SpanExporter.noop()))
+                .build()) {
             var pluginTracer = provider.get("durable-plugin");
             var unrelatedTracer = provider.get("unrelated-library");
 
@@ -85,8 +89,10 @@ class DeterministicIdGeneratorTest {
     @Test
     void scopedIds_bridgeAcrossGeneratorInstances() {
         var agentGenerator = new DeterministicIdGenerator();
-        try (var provider =
-                SdkTracerProvider.builder().setIdGenerator(agentGenerator).build()) {
+        try (var provider = SdkTracerProvider.builder()
+                .setIdGenerator(agentGenerator)
+                .addSpanProcessor(SimpleSpanProcessor.create(SpanExporter.noop()))
+                .build()) {
             var workflowTraceId = generator.generateTraceIdForExecution("arn:exec1", EXECUTION_START_TIME);
             var workflowSpanId = generator.generateWorkflowSpanId("arn:exec1");
             var workflow = generator.startSpan(
@@ -112,6 +118,7 @@ class DeterministicIdGeneratorTest {
         try (var provider = SdkTracerProvider.builder()
                 .setIdGenerator(agentGenerator)
                 .setSampler(sampler)
+                .addSpanProcessor(SimpleSpanProcessor.create(SpanExporter.noop()))
                 .build()) {
             var tracer = provider.get("durable-plugin");
             tracerReference.set(tracer);
@@ -134,8 +141,10 @@ class DeterministicIdGeneratorTest {
     void concurrentScopedIds_doNotOverwriteEachOther() throws Exception {
         var agentGenerator = new DeterministicIdGenerator();
         var executor = Executors.newFixedThreadPool(2);
-        try (var provider =
-                SdkTracerProvider.builder().setIdGenerator(agentGenerator).build()) {
+        try (var provider = SdkTracerProvider.builder()
+                .setIdGenerator(agentGenerator)
+                .addSpanProcessor(SimpleSpanProcessor.create(SpanExporter.noop()))
+                .build()) {
             var tracer = provider.get("durable-plugin");
             var barrier = new CyclicBarrier(2);
             var traceId1 = generator.generateTraceIdForExecution("arn:exec1", EXECUTION_START_TIME);
@@ -165,7 +174,9 @@ class DeterministicIdGeneratorTest {
     void installOn_preservesConfiguredFallbackGenerator() {
         var fallbackTraceId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         var fallbackSpanId = "cccccccccccccccc";
-        var builder = SdkTracerProvider.builder().setIdGenerator(fixedIds(fallbackTraceId, fallbackSpanId));
+        var builder = SdkTracerProvider.builder()
+                .setIdGenerator(fixedIds(fallbackTraceId, fallbackSpanId))
+                .addSpanProcessor(SimpleSpanProcessor.create(SpanExporter.noop()));
         var installedGenerator = DeterministicIdGenerator.installOn(builder);
 
         try (var provider = builder.build()) {
