@@ -10,7 +10,7 @@ Existing cases 1–20 and their resources are unchanged by the additions below.
 | 22 | `user-function-context` | Probe handler entry/restoration/resume, step, child, concurrent parallel branches and map iterations, and their nested steps. |
 | 23 | `callback-function-context` | Probe step retry attempts, condition checks, callback submission, a wrapped retry helper's body and strategy, and a virtual child after the asynchronous work finishes. |
 | 24 | `invocation-retry-status` | Throw the public retryable execution exception after a checkpointed step, then recover on replay. |
-| 25 | `wait-for-callback-failure` | Reuse case 17’s public handler; the driver fails its callback without Error only after invocation completion. The shared validator checks the observed empty error payload and leaf status. |
+| 25 | `caught-callback-failure-replay` | Catch the expected public callback failure, checkpoint `caught`, then resume through two typed String callback barriers and return `caught/one/two`. The failed leaf stays `ERROR` without an exception event. |
 | 26 | `external-callback-completion-replay` | Observe a root callback completion, checkpoint its result, then revisit it through two later callback barriers without duplicate terminal export. |
 
 Cases 22 and 23 require a valid active `SpanContext` and create/end ordinary
@@ -63,10 +63,19 @@ show one terminal export for each callback; the first target completion precedes
 the observation-step attempt. This is SDK cloud behavior coverage, not a claim
 that a deployed Lambda exercises the JS local-runner wrapper.
 
-Cases 25–26 use matched shared requirements and workflow pin
-`bdb4f1cd0f9252c1aaa978bb8b341b71f2b9d9dc`. The shared cloud checks establish the
-service error-payload representation and callback phase gating; local runner
-checks do not establish those service facts.
+Case 25 requires the matching caught-failure/replay shared requirement revision;
+its successful result is incompatible with the older unhandled-failure requirement.
+The owning workflow pairs handler routing with the qualified shared source ref.
+Shared cloud checks establish the service error-payload representation and callback
+phase gates; local runner checks do not establish those service facts.
+
+Case 25 catches only `CallbackFailedException` around its first `waitForCallback`.
+The marker step and both barriers remain outside that catch. Each barrier uses
+`String.class` callback deserialization, and the marker returns its checkpointed
+value rather than mutating a captured variable. Four invocations produce
+`PENDING`, `PENDING`, `PENDING`, then `SUCCEEDED`. Replaying the cached failed child
+can reach the catch without rerunning its callback body; this does not claim a
+direct callback revisit after child-history pruning. Case 17 remains unhandled.
 
 For case 25, Java reports no plugin error details for an entirely empty error
 container. The persisted container, callback failure, and caller error stay
