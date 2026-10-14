@@ -176,7 +176,8 @@ public class DurableExecutor {
         private DurableExecutionOutput finishInvocation(O value, Throwable failure) {
             // A withdrawn token means this invocation must stop and report PENDING. That overrides a handler success,
             // a handler failure, and a retryable failure, so it is checked before any of them.
-            if (manager.isCheckpointTokenRevoked()) return finishFailure(revokedTokenSuspension());
+            if (manager.isCheckpointTokenRevoked())
+                return finishFailure(new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE));
             if (failure != null) return finishFailure(ExceptionHelper.unwrapCompletableFuture(failure));
             DurableExecutionOutput output;
             try {
@@ -186,7 +187,7 @@ public class DurableExecutor {
                 // Checkpointing a large result fails with SuspendExecutionException when the token is already gone.
                 // That is a suspension, not a delivery error, so it reports PENDING rather than RETRYING.
                 if (ExceptionHelper.unwrapCompletableFuture(deliveryFailure) instanceof SuspendExecutionException) {
-                    return finishFailure(revokedTokenSuspension());
+                    return finishFailure(new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE));
                 }
                 return failDelivery(deliveryFailure);
             }
@@ -268,10 +269,6 @@ public class DurableExecutor {
         }
         if (preparation != cleanup) preparation.addSuppressed(cleanup);
         return preparation;
-    }
-
-    private static SuspendExecutionException revokedTokenSuspension() {
-        return new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE);
     }
 
     private static InvocationStatus failureStatus(Throwable failure) {
