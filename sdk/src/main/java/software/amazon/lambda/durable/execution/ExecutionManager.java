@@ -222,6 +222,11 @@ public class ExecutionManager implements SafeCloseable {
                 : completionLockFor(completionLockParent);
         operationCompletionLocks.put(operationId, completionLock);
         registeredOperations.put(operationId, operation);
+        // Revocation is published before existing operations are suspended. Check after insertion so an
+        // operation registered too late for that notification still releases its waiters.
+        if (isCheckpointTokenRevoked()) {
+            operation.getCompletionFuture().completeExceptionally(new SuspendExecutionException());
+        }
     }
 
     // ===== Checkpoint Completion Handler =====
