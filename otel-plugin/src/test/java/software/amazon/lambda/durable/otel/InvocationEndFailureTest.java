@@ -34,13 +34,12 @@ class InvocationEndFailureTest {
     @SuppressWarnings("removal")
     void restoresContextWhenInvocationEndFails(boolean executionView, String phase, String failureKind)
             throws Exception {
-        Throwable failure =
-                switch (failureKind) {
-                    case "exception" -> new IllegalStateException("telemetry failed");
-                    case "linkage" -> new NoClassDefFoundError("incompatible telemetry dependency");
-                    case "fatal" -> new InternalError("fatal telemetry failure");
-                    default -> new ThreadDeath();
-                };
+        Throwable failure = switch (failureKind) {
+            case "exception" -> new IllegalStateException("telemetry failed");
+            case "linkage" -> new NoClassDefFoundError("incompatible telemetry dependency");
+            case "fatal" -> new InternalError("fatal telemetry failure");
+            default -> new ThreadDeath();
+        };
         var processor = new FailingProcessor(phase, failure);
         var builder = SdkTracerProvider.builder().addSpanProcessor(processor);
         var config = OtelPluginConfig.builder()
@@ -92,20 +91,18 @@ class InvocationEndFailureTest {
     @MethodSource("combinedFailures")
     void preservesCombinedFinalizationAndScopeFailures(boolean executionView, String phase, String pair)
             throws Exception {
-        Throwable primary =
-                switch (pair.split("-")[0]) {
-                    case "fatal" -> new InternalError("primary finalization");
-                    case "assert" -> new AssertionError("primary finalization");
-                    case "linkage" -> new NoClassDefFoundError("primary finalization");
-                    default -> new IllegalStateException("primary finalization");
-                };
-        Throwable cleanup =
-                switch (pair.split("-")[1]) {
-                    case "fatal" -> new InternalError("scope cleanup");
-                    case "assert" -> new AssertionError("scope cleanup");
-                    case "same" -> primary;
-                    default -> new IllegalStateException("scope cleanup");
-                };
+        Throwable primary = switch (pair.split("-")[0]) {
+            case "fatal" -> new InternalError("primary finalization");
+            case "assert" -> new AssertionError("primary finalization");
+            case "linkage" -> new NoClassDefFoundError("primary finalization");
+            default -> new IllegalStateException("primary finalization");
+        };
+        Throwable cleanup = switch (pair.split("-")[1]) {
+            case "fatal" -> new InternalError("scope cleanup");
+            case "assert" -> new AssertionError("scope cleanup");
+            case "same" -> primary;
+            default -> new IllegalStateException("scope cleanup");
+        };
         var cleanupWins = List.of("runtime-fatal", "assert-fatal", "runtime-assert", "linkage-assert")
                 .contains(pair);
         var expected = cleanupWins ? cleanup : primary;

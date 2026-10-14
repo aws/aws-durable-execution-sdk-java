@@ -437,6 +437,8 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         // created earlier, at onUserFunctionStart/onOperationStart). onOperationEnd's start timestamp can be a later
         // re-observed value than the start captured at onOperationStart, so take the minimum of the two.
         var startTimestamp = earliest(capturedStart, info.startTimestamp());
+        // Use the known end when no start was observed; retain any existing start even if clocks disagree.
+        if (startTimestamp == null) startTimestamp = info.endTimestamp();
         if (startTimestamp != null) {
             spanBuilder.setStartTimestamp(startTimestamp);
         }
@@ -457,7 +459,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         if (info.attempt() != null) {
             span.setAttribute(DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
         }
-        OtelPluginSupport.applyOperationStatus(span, info);
+        OtelPluginSupport.applyOperationStatus(span, info, info.endTimestamp());
 
         endSpan(span, info.endTimestamp());
     }

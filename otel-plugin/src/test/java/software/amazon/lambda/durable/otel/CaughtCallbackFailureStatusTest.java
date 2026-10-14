@@ -36,7 +36,7 @@ class CaughtCallbackFailureStatusTest {
     static Stream<Arguments> cases() {
         return Stream.of(false, true)
                 .flatMap(execution -> Stream.of(false, true)
-                        .flatMap(live -> Stream.of("omitted", "empty", "timeout")
+                        .flatMap(live -> Stream.of("omitted", "empty", "timeout", "rich")
                                 .map(kind -> Arguments.of(execution, live, kind))));
     }
 
@@ -44,7 +44,14 @@ class CaughtCallbackFailureStatusTest {
     @MethodSource("cases")
     void caughtCallbackFailureIsErrorWhileHandlerSucceedsAndReplaySkipsSavedEffects(
             boolean executionView, boolean live, String kind) {
-        ErrorObject details = kind.equals("empty") ? ErrorObject.builder().build() : null;
+        ErrorObject details = kind.equals("empty")
+                ? ErrorObject.builder().build()
+                : kind.equals("rich")
+                        ? ErrorObject.builder()
+                                .errorType("ExternalFailure")
+                                .errorMessage("backend failure")
+                                .build()
+                        : null;
         var status = kind.equals("timeout") ? "TIMED_OUT" : "FAILED";
         try (var exporter = InMemorySpanExporter.create()) {
             var builder = SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter));
@@ -100,7 +107,17 @@ class CaughtCallbackFailureStatusTest {
             var firstTerminal = terminal(exporter, status);
             assertEquals(1, firstTerminal.size());
             assertEquals(StatusCode.ERROR, firstTerminal.get(0).getStatus().getStatusCode());
-            assertTrue(firstTerminal.get(0).getEvents().isEmpty());
+            if (kind.equals("rich")) {
+                var span = firstTerminal.get(0);
+                assertEquals(1, span.getEvents().size());
+                var eventTime = span.getEvents().get(0).getEpochNanos();
+                var backendEnd = ends.get(0).endTimestamp();
+                System.out.printf(
+                        "PUBLIC_OPERATION_TIME execution=%s live=%s backendEnd=%s start=%s end=%s event=%s%n",
+                        executionView, live, backendEnd, span.getStartEpochNanos(), span.getEndEpochNanos(), eventTime);
+                if (executionView && backendEnd != null) assertEquals(span.getEndEpochNanos(), eventTime);
+                else assertTrue(eventTime >= span.getStartEpochNanos() && eventTime <= span.getEndEpochNanos());
+            } else assertTrue(firstTerminal.get(0).getEvents().isEmpty());
             runner.advanceTime();
             var result = runner.runUntilComplete("input");
             assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());

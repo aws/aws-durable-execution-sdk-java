@@ -13,8 +13,11 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.Collections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -91,9 +94,18 @@ final class OtelPluginSupport {
 
     /** Terminal backend status and exception details are independent telemetry signals. */
     static void applyOperationStatus(Span span, OperationEndInfo info) {
+        applyOperationStatus(span, info, null);
+    }
+
+    static void applyOperationStatus(Span span, OperationEndInfo info, Instant endTimestamp) {
         if (hasOperationErrorDetails(info.error())) {
             span.setStatus(StatusCode.ERROR, info.error().getMessage());
-            span.recordException(info.error());
+            if (endTimestamp == null || endTimestamp.equals(Instant.EPOCH)) {
+                // The SDK treats epoch zero as its current-clock sentinel when ending a span.
+                span.recordException(info.error());
+            } else {
+                recordExceptionAt(span, info.error(), endTimestamp);
+            }
         } else if ("FAILED".equals(info.status())
                 || "TIMED_OUT".equals(info.status())
                 || "STOPPED".equals(info.status())) {
@@ -102,6 +114,22 @@ final class OtelPluginSupport {
             // Retain successful statusless virtual operations; unrelated cancellation/nonterminal statuses stay UNSET.
             span.setStatus(StatusCode.OK);
         }
+    }
+
+    /** Timestamped public exception event; the provider applies its event attribute limits. */
+    private static void recordExceptionAt(Span span, Throwable error, Instant timestamp) {
+        if (!span.isRecording()) return;
+        var attributes = Attributes.builder();
+        var type = error.getClass().getCanonicalName();
+        if (type != null) attributes.put("exception.type", type);
+        var message = error.getMessage();
+        if (message != null) attributes.put("exception.message", message);
+        var stacktrace = new StringWriter();
+        try (var writer = new PrintWriter(stacktrace)) {
+            error.printStackTrace(writer);
+        }
+        attributes.put("exception.stacktrace", stacktrace.toString());
+        span.addEvent("exception", attributes.build(), timestamp);
     }
 
     /** Distinguishes operation telemetry details without changing the SDK's failure notification object. */
