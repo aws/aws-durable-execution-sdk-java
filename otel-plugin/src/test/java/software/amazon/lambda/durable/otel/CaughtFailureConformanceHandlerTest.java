@@ -36,16 +36,26 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.core.SdkPojo;
+import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
+import software.amazon.lambda.durable.execution.DurableExecutor;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.*;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 import software.amazon.lambda.durable.testing.TestOperation;
 import software.amazon.lambda.durable.testing.TestResult;
+import software.amazon.lambda.durable.testing.local.LocalMemoryExecutionClient;
+import software.amazon.lambda.durable.testing.local.OperationResult;
 
 @Timeout(20)
 class CaughtFailureConformanceHandlerTest {
@@ -134,6 +144,63 @@ class CaughtFailureConformanceHandlerTest {
                     2, fixture.bodies(FAILED), "cached failed-child replay must not run its body in invocations3/4");
             verifyTopology(fixture, executionView, leaf, contextId);
             verifyLocalHistory(fourth);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void actualCase25ReplaysFailedParentWhenServiceSnapshotPrunesItsChildren(boolean executionView) throws Exception {
+        try (var fixture = fixture(executionView, CASE25)) {
+            var backend = new LocalMemoryExecutionClient();
+            var checkpointError = ErrorObject.builder().build();
+            assertEquals(
+                    ExecutionStatus.PENDING, fixture.runServiceSnapshot(backend).status());
+            backend.completeCallback(backend.getCallbackId(LEAF), OperationResult.failed(checkpointError));
+            assertEquals(
+                    ExecutionStatus.PENDING, fixture.runServiceSnapshot(backend).status());
+            var failedParent = backend.getOperationByName(FAILED);
+            assertEquals(OperationStatus.FAILED, failedParent.status());
+            assertSame(checkpointError, failedParent.contextDetails().error());
+            assertEquals(1, fixture.terminal(LEAF, "FAILED").size());
+            var failure = fixture.terminal(LEAF, "FAILED").get(0);
+            assertEquals(StatusCode.ERROR, failure.getStatus().getStatusCode());
+            assertTrue(failure.getEvents().isEmpty());
+            assertEquals(1, fixture.bodies(MARKER));
+            backend.completeCallback(backend.getCallbackId(ONE + "-callback"), OperationResult.succeeded("\"one\""));
+
+            var third = fixture.runServiceSnapshot(backend);
+            System.out.println("PRUNED_CASE25 view=" + executionView + " third=" + third.status()
+                    + " error=" + (third.error() == null ? null : third.error().errorMessage())
+                    + " pruned=" + fixture.prunedInputs);
+            assertEquals(
+                    ExecutionStatus.PENDING, third.status(), "cached failed child must reach the documented catch");
+            backend.completeCallback(backend.getCallbackId(TWO + "-callback"), OperationResult.succeeded("\"two\""));
+            var fourth = fixture.runServiceSnapshot(backend);
+            assertEquals(ExecutionStatus.SUCCEEDED, fourth.status());
+            assertEquals("\"caught/one/two\"", fourth.result());
+            assertSame(failedParent, backend.getOperationByName(FAILED));
+            assertSame(checkpointError, failedParent.contextDetails().error());
+            assertEquals(List.of(0, 0, 2, 2), fixture.prunedInputs);
+            assertEquals(
+                    2,
+                    fixture.bodies(FAILED),
+                    "only the initial wait and first failure consumption execute the child body");
+            assertEquals(1, fixture.bodies(MARKER));
+            assertEquals(1, fixture.bodies(FAILED + "-submitter"));
+            assertEquals(1, fixture.terminal(LEAF, "FAILED").size());
+            assertEquals(
+                    1,
+                    fixture.operationEnds.stream()
+                            .filter(info -> LEAF.equals(info.name()))
+                            .count());
+            assertEquals(
+                    1,
+                    fixture.operationEnds.stream()
+                            .filter(info -> MARKER.equals(info.name()))
+                            .count());
+            assertEquals(1, fixture.terminal(ONE + "-callback", "SUCCEEDED").size());
+            assertEquals(1, fixture.terminal(TWO + "-callback", "SUCCEEDED").size());
+            verifyTopology(fixture, executionView, failure, failedParent.id());
         }
     }
 
@@ -325,6 +392,10 @@ class CaughtFailureConformanceHandlerTest {
         private final ExecutorService workers = Executors.newFixedThreadPool(4);
         private final URLClassLoader loader;
         private final LocalDurableTestRunner<Map<String, Object>, String> runner;
+        private final DurableHandler<Map<String, Object>, String> handler;
+        private final DurableConfig config;
+        private final List<Integer> prunedInputs = new ArrayList<>();
+        private final List<OperationEndInfo> operationEnds = new CopyOnWriteArrayList<>();
         private final List<InvocationInfo> starts = new CopyOnWriteArrayList<>();
         private final List<InvocationEndInfo> ends = new CopyOnWriteArrayList<>();
         private final Map<String, AtomicInteger> bodies = new ConcurrentHashMap<>();
@@ -336,7 +407,7 @@ class CaughtFailureConformanceHandlerTest {
             loader = new URLClassLoader(
                     new URL[] {classes.toUri().toURL()}, getClass().getClassLoader());
             var type = loader.loadClass("software.amazon.lambda.durable.conformance.otel." + handlerName);
-            var handler = (DurableHandler<Map<String, Object>, String>)
+            handler = (DurableHandler<Map<String, Object>, String>)
                     type.getConstructor().newInstance();
             var provider = SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter));
             var options = OtelPluginConfig.builder()
@@ -347,6 +418,10 @@ class CaughtFailureConformanceHandlerTest {
                     ? new ExecutionOtelPlugin(provider, options)
                     : new InvocationOtelPlugin(provider, options);
             var observer = new DurableExecutionPlugin() {
+                public void onOperationEnd(OperationEndInfo info) {
+                    operationEnds.add(info);
+                }
+
                 public void onInvocationStart(InvocationInfo info) {
                     starts.add(info);
                 }
@@ -366,13 +441,50 @@ class CaughtFailureConformanceHandlerTest {
                         firstFailureTypes.add(info.error().getClass().getName());
                 }
             };
+            config = DurableConfig.builder()
+                    .withExecutorService(workers)
+                    .withPlugins(otel, observer)
+                    .build();
             runner = LocalDurableTestRunner.create(
+                    new TypeToken<Map<String, Object>>() {}, handler::handleRequest, config);
+        }
+
+        private DurableExecutionOutput runServiceSnapshot(LocalMemoryExecutionClient backend) {
+            // Keep the backend's actual checkpoint/history intact. Only the input snapshot omits children of the
+            // completed failed parent, matching the service replay shape absent from LocalDurableTestRunner.
+            var all = backend.getAllOperations();
+            var parent = backend.getOperationByName(FAILED);
+            var visible = all.stream()
+                    .filter(operation -> parent == null
+                            || parent.status() != OperationStatus.FAILED
+                            || !parent.id().equals(operation.parentId()))
+                    .toList();
+            prunedInputs.add(all.size() - visible.size());
+            if (parent != null) assertTrue(visible.stream().anyMatch(operation -> operation == parent));
+            var execution = Operation.builder()
+                    .id("execution")
+                    .type(OperationType.EXECUTION)
+                    .status(OperationStatus.STARTED)
+                    .startTimestamp(Instant.ofEpochSecond(1))
+                    .executionDetails(ExecutionDetails.builder()
+                            .inputPayload(config.getSerDes().serialize(INPUT))
+                            .build())
+                    .build();
+            var operations = new ArrayList<>(List.of(execution));
+            operations.addAll(visible);
+            var input = new DurableExecutionInput(
+                    "arn:case25-pruned/execution",
+                    "token",
+                    CheckpointUpdatedExecutionState.builder()
+                            .operations(operations)
+                            .build(),
+                    backend.getUpdatedOperationIdsSinceLastInvocation());
+            return DurableExecutor.execute(
+                    input,
+                    null,
                     new TypeToken<Map<String, Object>>() {},
                     handler::handleRequest,
-                    DurableConfig.builder()
-                            .withExecutorService(workers)
-                            .withPlugins(otel, observer)
-                            .build());
+                    config.toBuilder().withDurableExecutionClient(backend).build());
         }
 
         private TestResult<String> run(Map<String, Object> input) {
