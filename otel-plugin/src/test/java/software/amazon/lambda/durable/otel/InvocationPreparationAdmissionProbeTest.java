@@ -6,9 +6,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
+import java.util.concurrent.locks.LockSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -48,6 +50,8 @@ class InvocationPreparationAdmissionProbeTest {
         var preparing = new AtomicBoolean();
         var predicates = new AtomicInteger();
         var preparationDispatches = new AtomicInteger();
+        var resumedDispatches = new AtomicInteger();
+        var rootThread = new AtomicReference<Thread>();
         var childFailure = new AtomicReference<Throwable>();
         var ends = new CopyOnWriteArrayList<InvocationEndInfo>();
         var rejection = new RejectedExecutionException("controlled READY admission rejection");
@@ -56,6 +60,7 @@ class InvocationPreparationAdmissionProbeTest {
                     @Override
                     public void execute(Runnable task) {
                         if (backendReleased.get()) {
+                            resumedDispatches.incrementAndGet();
                             if (preparing.get()) preparationDispatches.incrementAndGet();
                             if (rejectResume) throw rejection;
                         }
@@ -107,6 +112,7 @@ class InvocationPreparationAdmissionProbeTest {
                     null,
                     TypeToken.get(String.class),
                     (value, root) -> {
+                        rootThread.set(Thread.currentThread());
                         if (mode.equals("awaited")) {
                             root.runInChildContextAsync("keep-active", String.class, child -> {
                                 keeperEntered.countDown();
@@ -151,13 +157,14 @@ class InvocationPreparationAdmissionProbeTest {
                 if (call.isDone()) System.out.println("PROBE_EARLY_RESULT " + call.get());
                 fail("Real backend did not reach PENDING");
             }
-            if (!mode.equals("awaited"))
-                assertTrue(
-                        preparationEntered.await(5, TimeUnit.SECONDS),
-                        "Root success selected before real output serializer");
+            // Draining now precedes serialization. Release READY only after the root reaches that boundary.
+            // A child waiting on the condition must settle before output preparation can start.
+            if (!mode.equals("awaited")) awaitDrain(rootThread.get());
             backendReleased.set(true);
             client.advanceTime();
             assertTrue(conditionFinished.await(5, TimeUnit.SECONDS), "Real durable waiter settled after backend READY");
+            if (!mode.equals("awaited"))
+                assertTrue(preparationEntered.await(5, TimeUnit.SECONDS), "Preparation starts after the child drains");
             releasePreparation.countDown();
             releaseKeeper.countDown();
             if (mode.equals("awaited") && rejectResume) {
@@ -182,8 +189,8 @@ class InvocationPreparationAdmissionProbeTest {
                     + " backend=" + client.getOperationByName("condition").status()
                     + " End=" + ends.get(0).invocationStatus());
             if (!mode.equals("awaited")) {
-                // Proposed admission guarantee, distinct from replacing the selected SUCCEEDED outcome.
-                assertEquals(0, preparationDispatches.get(), "No new READY user-worker admission after root selection");
+                assertEquals(0, resumedDispatches.get(), "No new READY user-worker admission while draining");
+                assertEquals(0, preparationDispatches.get(), "No new READY user-worker admission during preparation");
                 assertEquals(1, predicates.get());
             } else assertEquals(rejectResume ? 1 : 2, predicates.get());
         } finally {
@@ -260,6 +267,16 @@ class InvocationPreparationAdmissionProbeTest {
         } finally {
             finished.countDown();
         }
+    }
+
+    private static void awaitDrain(Thread root) {
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while (System.nanoTime() < deadline) {
+            if (Arrays.stream(root.getStackTrace())
+                    .anyMatch(frame -> frame.getMethodName().equals("waitForRunningUserHandlers"))) return;
+            LockSupport.parkNanos(100_000);
+        }
+        fail("Root did not begin draining the pending child");
     }
 
     private static void await(CountDownLatch latch) {
