@@ -123,9 +123,9 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 ## Chained-invoke propagation
 
 Both views provide the calling operation's X-Ray context to the SDK's synchronous collector. New invoke START
-checkpoints carry that context in the flat optional `ChainedInvokeOptions.XAmznTraceId` field. This draft requires
-the corresponding generated model and backend support; the current public model does not yet compile the new
-typed setter. See [the implemented path and remaining dependencies](../docs/advanced/propagation-metadata.md).
+checkpoints carry that context in the flat optional `ChainedInvokeOptions.XAmznTraceId` field. The root POM's
+AWS SDK for Java 2.56.0 provides the generated typed setter. Deployed parent/child trace behavior still requires
+cloud validation. See [the implemented path and validation status](../docs/advanced/propagation-metadata.md).
 
 ## Fallback execution roots
 
