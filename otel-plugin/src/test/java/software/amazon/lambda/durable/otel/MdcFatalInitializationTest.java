@@ -44,27 +44,24 @@ class MdcFatalInitializationTest {
     void fatalCaptureSettlesCallerThenEscapesOwnerBeforeAnyHook(String mode, boolean death, String wrapper)
             throws Exception {
         Error fatal = death ? new ThreadDeath() : new InternalError("fatal capture");
-        Throwable failure =
-                switch (wrapper) {
-                    case "completion" -> new CompletionException(fatal);
-                    case "nested" -> new CompletionException(new ExecutionException(fatal));
-                    case "reflection" -> new InvocationTargetException(fatal);
-                    case "proxy" -> new UndeclaredThrowableException(fatal);
-                    default -> fatal;
-                };
+        Throwable failure = switch (wrapper) {
+            case "completion" -> new CompletionException(fatal);
+            case "nested" -> new CompletionException(new ExecutionException(fatal));
+            case "reflection" -> new InvocationTargetException(fatal);
+            case "proxy" -> new UndeclaredThrowableException(fatal);
+            default -> fatal;
+        };
         runCapture(mode, failure, fatal);
     }
 
     @ParameterizedTest
     @MethodSource("ordinaryCases")
     void nonfatalInitializationKeepsItsDurableFailurePolicy(String mode, String kind) throws Exception {
-        Throwable failure =
-                switch (kind) {
-                    case "assertion" -> new AssertionError("ordinary capture");
-                    case "application-cause" ->
-                        new IllegalStateException("ordinary capture", new InternalError("diagnostic"));
-                    default -> new IllegalStateException("ordinary capture");
-                };
+        Throwable failure = switch (kind) {
+            case "assertion" -> new AssertionError("ordinary capture");
+            case "application-cause" -> new IllegalStateException("ordinary capture", new InternalError("diagnostic"));
+            default -> new IllegalStateException("ordinary capture");
+        };
         runCapture(mode, failure, null);
     }
 
