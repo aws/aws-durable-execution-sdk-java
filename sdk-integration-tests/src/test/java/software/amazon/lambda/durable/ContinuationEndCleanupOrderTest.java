@@ -48,13 +48,12 @@ class ContinuationEndCleanupOrderTest {
     void continuationFailureMustWakeBodyBeforeEndWaitsForCleanup(String mode, String kind) throws Exception {
         boolean rejection = kind.equals("reject");
         boolean withPlugin = true;
-        Throwable failure =
-                switch (kind) {
-                    case "reject" -> new RejectedExecutionException("resumed worker rejected");
-                    case "vm" -> new InternalError("resumed state fatal");
-                    case "death" -> new ThreadDeath();
-                    default -> new IllegalArgumentException("resumed state cannot deserialize");
-                };
+        Throwable failure = switch (kind) {
+            case "reject" -> new RejectedExecutionException("resumed worker rejected");
+            case "vm" -> new InternalError("resumed state fatal");
+            case "death" -> new ThreadDeath();
+            default -> new IllegalArgumentException("resumed state cannot deserialize");
+        };
         var injectionThread = new AtomicReference<Thread>();
         var handlerThread = new AtomicReference<Thread>();
         var callerThread = new AtomicReference<Thread>();

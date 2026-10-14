@@ -212,19 +212,17 @@ class ExecutionRootDeliveryFailureTest {
     @MethodSource("preparationEndFailures")
     void preparationAndEndFailuresRetainCallerIdentityAndCleanupDiagnostics(
             boolean executionView, String preparationKind, String endKind) {
-        Throwable original =
-                switch (preparationKind) {
-                    case "vm", "wrapped-vm" -> new InternalError("preparation fatal");
-                    case "death" -> new ThreadDeath();
-                    default -> new IllegalStateException("preparation ordinary");
-                };
+        Throwable original = switch (preparationKind) {
+            case "vm", "wrapped-vm" -> new InternalError("preparation fatal");
+            case "death" -> new ThreadDeath();
+            default -> new IllegalStateException("preparation ordinary");
+        };
         Throwable preparation = preparationKind.equals("wrapped-vm") ? new CompletionException(original) : original;
-        Error cleanup =
-                switch (endKind) {
-                    case "vm" -> new InternalError("End fatal");
-                    case "death" -> new ThreadDeath();
-                    default -> new AssertionError("End error");
-                };
+        Error cleanup = switch (endKind) {
+            case "vm" -> new InternalError("End fatal");
+            case "death" -> new ThreadDeath();
+            default -> new AssertionError("End error");
+        };
         var ends = new AtomicInteger();
         var seen = new AtomicReference<InvocationEndInfo>();
         var serDes = new SerDes() {
