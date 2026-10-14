@@ -96,12 +96,11 @@ class InvocationInfoHeaderIntegrationTest {
         assertEquals("\"input\"", output.result());
         assertNotNull(factoryInfo.get());
         assertSame(factoryInfo.get(), hookInfo.get(), "Factory and hook must receive the same immutable snapshot");
-        var expected =
-                switch (carrier) {
-                    case "present" -> HEADER;
-                    case "unavailable" -> null;
-                    default -> "";
-                };
+        var expected = switch (carrier) {
+            case "present" -> HEADER;
+            case "unavailable" -> null;
+            default -> "";
+        };
         assertEquals(expected, observed.get(), reader + " must read the captured value from InvocationInfo");
         if (runtime != null) {
             verify(runtime, times(1)).getXrayTraceId();

@@ -122,12 +122,11 @@ public class XRayContextExtractor implements ContextExtractor {
         }
 
         // Only Sampled=1 and Sampled=0 are authoritative; anything else (missing or unusable) is undecided.
-        var sampling =
-                switch (sampled == null ? "" : sampled) {
-                    case "1" -> ExtractedContext.Sampling.SAMPLED;
-                    case "0" -> ExtractedContext.Sampling.NOT_SAMPLED;
-                    default -> ExtractedContext.Sampling.UNDECIDED;
-                };
+        var sampling = switch (sampled == null ? "" : sampled) {
+            case "1" -> ExtractedContext.Sampling.SAMPLED;
+            case "0" -> ExtractedContext.Sampling.NOT_SAMPLED;
+            default -> ExtractedContext.Sampling.UNDECIDED;
+        };
 
         return new ExtractedContext(traceId, parentSpanId, sampling);
     }

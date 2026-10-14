@@ -146,30 +146,28 @@ class FactoryStartupFailureTest {
             boolean executionView, String primaryKind, String cleanupKind) {
         var firstFatal = new InternalError("startup VM fatal");
         var diagnosticReads = new AtomicInteger();
-        Throwable primary =
-                switch (primaryKind) {
-                    case "vm" -> firstFatal;
-                    case "wrapped-vm" ->
-                        new CompletionException("wrapped startup fatal", firstFatal) {
-                            @Override
-                            public synchronized Throwable getCause() {
-                                if (diagnosticReads.incrementAndGet() != 1)
-                                    throw new IllegalStateException("cause already read");
-                                return firstFatal;
-                            }
-                        };
-                    default -> new IllegalStateException("ordinary startup failure");
+        Throwable primary = switch (primaryKind) {
+            case "vm" -> firstFatal;
+            case "wrapped-vm" ->
+                new CompletionException("wrapped startup fatal", firstFatal) {
+                    @Override
+                    public synchronized Throwable getCause() {
+                        if (diagnosticReads.incrementAndGet() != 1)
+                            throw new IllegalStateException("cause already read");
+                        return firstFatal;
+                    }
                 };
+            default -> new IllegalStateException("ordinary startup failure");
+        };
         Error cleanupFatal = cleanupKind.equals("death") ? new ThreadDeath() : new InternalError("flush VM fatal");
-        Throwable cleanup =
-                switch (cleanupKind) {
-                    case "vm", "death" -> cleanupFatal;
-                    case "wrapped-vm" -> new CompletionException(cleanupFatal);
-                    case "assertion" -> new AssertionError("ordinary factory cleanup Error");
-                    case "same" -> primary;
-                    case "failed-result" -> null;
-                    default -> new IllegalArgumentException("ordinary flush failure");
-                };
+        Throwable cleanup = switch (cleanupKind) {
+            case "vm", "death" -> cleanupFatal;
+            case "wrapped-vm" -> new CompletionException(cleanupFatal);
+            case "assertion" -> new AssertionError("ordinary factory cleanup Error");
+            case "same" -> primary;
+            case "failed-result" -> null;
+            default -> new IllegalArgumentException("ordinary flush failure");
+        };
         var failStart = new AtomicBoolean(true);
         var failFlush = new AtomicBoolean(true);
         var flushes = new AtomicInteger();

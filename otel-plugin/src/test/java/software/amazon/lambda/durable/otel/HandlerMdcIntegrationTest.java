@@ -131,12 +131,11 @@ class HandlerMdcIntegrationTest {
                     return "done";
                 },
                 config);
-        var expected =
-                switch (outcome) {
-                    case "failure", "inputFailure" -> ExecutionStatus.FAILED;
-                    case "suspension" -> ExecutionStatus.PENDING;
-                    default -> ExecutionStatus.SUCCEEDED;
-                };
+        var expected = switch (outcome) {
+            case "failure", "inputFailure" -> ExecutionStatus.FAILED;
+            case "suspension" -> ExecutionStatus.PENDING;
+            default -> ExecutionStatus.SUCCEEDED;
+        };
         assertEquals(expected, runner.run("input").getStatus());
     }
 

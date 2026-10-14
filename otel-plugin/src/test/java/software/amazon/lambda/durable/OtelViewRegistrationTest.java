@@ -66,14 +66,13 @@ class OtelViewRegistrationTest {
         var second = plugin(!reversed, exporter);
         var providers = List.of(new ExecutionOtelPluginProvider(), new InvocationOtelPluginProvider());
         var names = reversed ? "otel-execution,otel-invocation" : "otel-invocation,otel-execution";
-        var plugins =
-                switch (path) {
-                    case "dynamic" -> DynamicPluginLoader.loadConfiguredPluginFactories(names, providers, List.of());
-                    case "mixed" ->
-                        DynamicPluginLoader.loadConfiguredPluginFactories(
-                                reversed ? "otel-execution" : "otel-invocation", providers, List.of(second));
-                    default -> List.of(first, second);
-                };
+        var plugins = switch (path) {
+            case "dynamic" -> DynamicPluginLoader.loadConfiguredPluginFactories(names, providers, List.of());
+            case "mixed" ->
+                DynamicPluginLoader.loadConfiguredPluginFactories(
+                        reversed ? "otel-execution" : "otel-invocation", providers, List.of(second));
+            default -> List.of(first, second);
+        };
         var ambient = Span.wrap(SpanContext.create(
                 "12345678901234567890123456789012",
                 "1234567890123456",

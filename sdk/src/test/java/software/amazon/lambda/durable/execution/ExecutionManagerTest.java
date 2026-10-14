@@ -69,13 +69,12 @@ class ExecutionManagerTest {
         try (var manager = createManager(List.of(executionOp()))) {
             var body = new CompletableFuture<String>();
             var selected = manager.runUntilCompleteOrSuspend(body);
-            Throwable failure =
-                    switch (kind) {
-                        case "ordinary" -> new IllegalArgumentException("body failure");
-                        case "vm" -> new InternalError("body fatal");
-                        case "death" -> new ThreadDeath();
-                        default -> null;
-                    };
+            Throwable failure = switch (kind) {
+                case "ordinary" -> new IllegalArgumentException("body failure");
+                case "vm" -> new InternalError("body fatal");
+                case "death" -> new ThreadDeath();
+                default -> null;
+            };
             if (failure == null) body.complete("body success");
             else body.completeExceptionally(failure);
             var later = new UnrecoverableDurableExecutionException(

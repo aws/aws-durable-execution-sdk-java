@@ -116,12 +116,11 @@ class MdcWorkerCleanupTest {
     @CsvSource({"false,ordinary", "true,ordinary", "false,fatal", "true,fatal", "false,same", "true,same"})
     void fallbackFailureIsGuardedAndRetainsFatalIdentity(boolean direct, String kind) throws Exception {
         var restore = new IllegalStateException("restore refused");
-        Throwable clear =
-                switch (kind) {
-                    case "fatal" -> new ThreadDeath();
-                    case "same" -> restore;
-                    default -> new IllegalStateException("clear refused");
-                };
+        Throwable clear = switch (kind) {
+            case "fatal" -> new ThreadDeath();
+            case "same" -> restore;
+            default -> new IllegalStateException("clear refused");
+        };
         try (var fixture = new Fixture(direct, restore, clear, null)) {
             if (clear instanceof Error fatal) {
                 assertSame(fatal, assertThrows(Error.class, fixture::run));
