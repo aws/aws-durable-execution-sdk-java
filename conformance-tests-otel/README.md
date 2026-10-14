@@ -69,7 +69,10 @@ The owning workflow pairs handler routing with the qualified shared source ref.
 Shared cloud checks establish the service error-payload representation and callback
 phase gates; local runner checks do not establish those service facts.
 
-Case 25 catches only `CallbackFailedException` around its first `waitForCallback`.
+Case 25 catches `CallbackFailedException` and the documented
+`ChildContextFailedException` replay fallback around its first `waitForCallback`.
+The fallback retains the actual failed context when its nested callback/submitter
+details have been pruned; it does not invent a callback failure category or ID.
 The marker step and both barriers remain outside that catch. Each barrier uses
 `String.class` callback deserialization, and the marker returns its checkpointed
 value rather than mutating a captured variable. Four invocations produce
