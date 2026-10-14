@@ -78,18 +78,22 @@ final class OtelPluginEnvironment {
         return new OtelPluginEnvironment(config, OtelPluginSupport.createDefaultIdGenerator(), null);
     }
 
-    /** Failed construction owns no End hook, but completed spans may already be buffered on this provider. */
+    /** Nonfatal failed construction can flush completed spans; known JVM fatals propagate without added cleanup. */
+    @SuppressWarnings("removal")
     <T> T createPlugin(Supplier<T> constructor) {
         try {
             return constructor.get();
         } catch (Throwable failure) {
-            flushAfterConstructionFailure(failure);
+            var originalCause = ExceptionHelper.unwrapAsyncFailure(failure);
+            if (originalCause instanceof VirtualMachineError fatal) throw fatal;
+            if (originalCause instanceof ThreadDeath fatal) throw fatal;
+            flushAfterNonfatalConstructionFailure(failure);
             throw failure;
         }
     }
 
     @SuppressWarnings("removal")
-    private void flushAfterConstructionFailure(Throwable failure) {
+    private void flushAfterNonfatalConstructionFailure(Throwable failure) {
         try {
             // Do not rebind or reach through an opaque provider. Use only a setup the constructor could already use.
             var setup = ownedSetup != null ? ownedSetup : resolvedGlobalSetup;
@@ -101,16 +105,10 @@ final class OtelPluginEnvironment {
             if (failure == cleanupFailure) return;
             var cleanupCause = ExceptionHelper.unwrapAsyncFailure(cleanupFailure);
             if (cleanupCause instanceof VirtualMachineError || cleanupCause instanceof ThreadDeath) {
-                var originalCause = ExceptionHelper.unwrapAsyncFailure(failure);
-                if (originalCause instanceof VirtualMachineError || originalCause instanceof ThreadDeath) {
-                    if (originalCause != cleanupCause) originalCause.addSuppressed(cleanupFailure);
-                    // Carry the classified fatal directly; a diagnostic wrapper need not tolerate another read.
-                    throw (Error) originalCause;
-                }
                 cleanupCause.addSuppressed(failure);
                 throw (Error) cleanupCause;
             }
-            // A nonfatal cleanup problem must not replace the construction failure (or an earlier JVM fatal).
+            // Nonfatal cleanup must not replace the original nonfatal construction failure.
             failure.addSuppressed(cleanupFailure);
         }
     }

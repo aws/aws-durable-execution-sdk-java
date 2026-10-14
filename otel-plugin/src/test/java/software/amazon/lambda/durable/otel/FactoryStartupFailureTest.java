@@ -236,17 +236,20 @@ class FactoryStartupFailureTest {
             var config = DurableConfig.builder().withPlugins(observing).build();
             boolean fatalCleanup =
                     cleanupKind.equals("vm") || cleanupKind.equals("wrapped-vm") || cleanupKind.equals("death");
-            Throwable expected = primaryKind.equals("wrapped-vm")
-                    ? firstFatal
-                    : primary instanceof Error || !fatalCleanup ? primary : cleanupFatal;
+            boolean originalFatal = !primaryKind.equals("ordinary");
+            Throwable expected = originalFatal ? firstFatal : fatalCleanup ? cleanupFatal : primary;
             if (expected instanceof Error)
                 assertSame(expected, assertThrows(Error.class, () -> assertSuccessfulHandler(config)));
             else assertSuccessfulHandler(config);
             assertSame(expected, observed.get());
             if (primaryKind.equals("wrapped-vm")) assertEquals(1, diagnosticReads.get());
             assertEquals(0, published.get());
-            assertEquals(1, flushes.get(), "failed construction must attempt the existing provider flush");
-            if (expected == cleanupFatal)
+            assertEquals(originalFatal ? 0 : 1, flushes.get(), "only nonfatal startup failures attempt cleanup flush");
+            if (originalFatal) {
+                assertEquals(0, suppressedAtFactory.get().length, "no cleanup ran before original fatal propagation");
+                // The startup-cleanup poison was never invoked. Keep the later ordinary End a healthy reuse control.
+                failFlush.set(false);
+            } else if (expected == cleanupFatal)
                 assertTrue(Arrays.asList(suppressedAtFactory.get()).contains(primary));
             else if (cleanup != null && cleanup != primary)
                 assertTrue(Arrays.asList(suppressedAtFactory.get()).contains(cleanup));
@@ -256,7 +259,7 @@ class FactoryStartupFailureTest {
             assertEquals(0, shutdowns.get());
             assertSuccessfulHandler(config);
             assertEquals(1, published.get());
-            assertEquals(2, flushes.get());
+            assertEquals(originalFatal ? 1 : 2, flushes.get());
             assertEquals(4, exporter.getFinishedSpanItems().size(), "next End can flush any prior completed spans too");
             assertEquals(0, shutdowns.get());
         }

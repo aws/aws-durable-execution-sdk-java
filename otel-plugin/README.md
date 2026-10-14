@@ -113,6 +113,14 @@ environments. No export or flush failure can guarantee delivery. Invocation End 
 finalization fails. A factory that fails before returning an instance keeps the major's existing containment/skipping
 contract; the SDK does not publish a partially constructed plugin just to give it an End callback.
 
+After a nonfatal construction failure, the OTel factory makes a best-effort flush of completed spans through its
+already bound, visible SDK provider, using the same five-second result wait as End. It never shuts down the shared
+provider or recovers every partially opened span. A recognized original `VirtualMachineError` or `ThreadDeath`
+(including the supported asynchronous wrappers) propagates before any additional provider flush; completed telemetry
+can remain buffered on that fatal path. For nonfatal startup failures, ordinary flush problems retain the original
+failure, while a JVM fatal from flushing still propagates. Opaque providers have no added flush guarantee, and the
+result wait does not preempt an arbitrary synchronous processor callback.
+
 ## Choose one durable OTel view
 
 Configure exactly one of `InvocationOtelPlugin.factory(...)` or `ExecutionOtelPlugin.factory(...)` when enabling
