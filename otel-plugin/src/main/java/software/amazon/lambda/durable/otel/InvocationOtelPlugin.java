@@ -461,16 +461,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
             if (info.attempt() != null) {
                 span.setAttribute(DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
             }
-            if (OtelPluginSupport.hasOperationErrorDetails(info.error())) {
-                span.setStatus(StatusCode.ERROR, info.error().getMessage());
-                span.recordException(info.error());
-            } else if (info.error() == null && ("SUCCEEDED".equals(info.status()) || info.status() == null)) {
-                // Only genuine success is OK. Non-success statuses with absent or empty backend error details
-                // stay UNSET, even when the SDK retains an empty failure container for other plugins. A null status
-                // without an error
-                // denotes a successful statusless virtual (FLAT CONTEXT) operation.
-                span.setStatus(StatusCode.OK);
-            }
+            OtelPluginSupport.applyOperationStatus(span, info);
             span.end();
         } else {
             var parentContext = resolveParentContext(info.parentId());
@@ -501,14 +492,7 @@ public class InvocationOtelPlugin implements DurableExecutionPlugin {
                 continuationSpan.setAttribute(
                         DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
             }
-            if (OtelPluginSupport.hasOperationErrorDetails(info.error())) {
-                continuationSpan.setStatus(StatusCode.ERROR, info.error().getMessage());
-                continuationSpan.recordException(info.error());
-            } else if (info.error() == null && ("SUCCEEDED".equals(info.status()) || info.status() == null)) {
-                // See onOperationEnd (this-invocation branch): only genuine success (or a successful statusless
-                // virtual operation) is OK; error-less non-success statuses stay UNSET.
-                continuationSpan.setStatus(StatusCode.OK);
-            }
+            OtelPluginSupport.applyOperationStatus(continuationSpan, info);
 
             continuationSpan.end();
         }

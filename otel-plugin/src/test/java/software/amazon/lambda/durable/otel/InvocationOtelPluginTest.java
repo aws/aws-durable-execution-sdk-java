@@ -784,9 +784,7 @@ class InvocationOtelPluginTest {
 
     @Test
     void operationEnd_withNonSuccessStatusAndNoError_leavesOperationSpanUnset() {
-        // onOperationEnd fires for every terminal status. A CANCELLED operation (or an error-less
-        // FAILED/TIMED_OUT/STOPPED) carries a non-null, non-SUCCEEDED status with a null error. It must NOT be
-        // stamped OK — the span status stays UNSET.
+        // Cancellation without diagnostic details retains UNSET; it is not blanket-classified as failure.
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         plugin.onOperationStart(
@@ -815,9 +813,8 @@ class InvocationOtelPluginTest {
     }
 
     @Test
-    void operationEnd_withoutMatchingStart_nonSuccessStatusAndNoError_leavesContinuationSpanUnset() {
-        // Same guard on the continuation-span branch (operation completed between invocations): an error-less
-        // TIMED_OUT terminal status must NOT be stamped OK.
+    void operationEnd_withoutMatchingStart_timeoutWithoutError_setsError() {
+        // An explicit timeout remains an error even when the backend supplied no exception details.
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         plugin.onOperationEnd(new OperationEndInfo(
@@ -840,7 +837,8 @@ class InvocationOtelPluginTest {
                 .filter(s -> s.getName().contains("callback"))
                 .findFirst()
                 .orElseThrow();
-        assertEquals(StatusCode.UNSET, continuationSpan.getStatus().getStatusCode());
+        assertEquals(StatusCode.ERROR, continuationSpan.getStatus().getStatusCode());
+        assertTrue(continuationSpan.getEvents().isEmpty());
     }
 
     @Test

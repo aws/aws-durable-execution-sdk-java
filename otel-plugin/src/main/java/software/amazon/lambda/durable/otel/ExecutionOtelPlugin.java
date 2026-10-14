@@ -457,16 +457,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         if (info.attempt() != null) {
             span.setAttribute(DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
         }
-        if (OtelPluginSupport.hasOperationErrorDetails(info.error())) {
-            span.setStatus(StatusCode.ERROR, info.error().getMessage());
-            span.recordException(info.error());
-        } else if (info.error() == null && ("SUCCEEDED".equals(info.status()) || info.status() == null)) {
-            // Only genuine success is OK. Non-success statuses with absent or empty backend error details stay
-            // UNSET, even when the SDK retains an empty failure container for other plugins. A null status without an
-            // error denotes
-            // a successful statusless virtual (FLAT CONTEXT) operation.
-            span.setStatus(StatusCode.OK);
-        }
+        OtelPluginSupport.applyOperationStatus(span, info);
 
         endSpan(span, info.endTimestamp());
     }

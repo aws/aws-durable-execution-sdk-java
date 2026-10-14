@@ -404,9 +404,9 @@ sampler consistent across spans.
 
 ### Operation error details
 
-A failed operation can have an absent or fully empty backend error container. Its operation status remains
-`FAILED`, `TIMED_OUT`, or `STOPPED`, while the OTel span stays `UNSET` and has no exception event when no details
-were supplied. An explicitly present empty string or stack-trace list still counts as supplied error details.
+An explicit operation status of `FAILED`, `TIMED_OUT`, or `STOPPED` sets the OTel span to `ERROR`, including when the
+backend error container is absent or fully empty. No exception event is recorded when no details were supplied.
+An explicitly present empty string or stack-trace list still counts as supplied error details.
 Virtual (FLAT) contexts can have no terminal status; a non-null failure still prevents `OK`, even when its backend
 error container supplies no details. An exception's own message (including an empty string), cause, suppressed failures,
 or explicit stack trace still supplies diagnostic information and retains `ERROR` and its exception event.

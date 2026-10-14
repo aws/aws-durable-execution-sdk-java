@@ -6,6 +6,7 @@ import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
@@ -19,6 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.execution.DurableExecutor;
+import software.amazon.lambda.durable.plugin.OperationEndInfo;
 
 /** Shared provider setup, sampling resolution, and invocation cleanup support. */
 final class OtelPluginSupport {
@@ -85,6 +87,21 @@ final class OtelPluginSupport {
     /** Only the same DurableSampler class copy can consume this loader's parent-context holder. */
     static boolean usesLocalDurableSampler(SdkTracerProvider provider) {
         return provider != null && provider.getSampler() instanceof DurableSampler;
+    }
+
+    /** Terminal backend status and exception details are independent telemetry signals. */
+    static void applyOperationStatus(Span span, OperationEndInfo info) {
+        if (hasOperationErrorDetails(info.error())) {
+            span.setStatus(StatusCode.ERROR, info.error().getMessage());
+            span.recordException(info.error());
+        } else if ("FAILED".equals(info.status())
+                || "TIMED_OUT".equals(info.status())
+                || "STOPPED".equals(info.status())) {
+            span.setStatus(StatusCode.ERROR);
+        } else if (info.error() == null && ("SUCCEEDED".equals(info.status()) || info.status() == null)) {
+            // Retain successful statusless virtual operations; unrelated cancellation/nonterminal statuses stay UNSET.
+            span.setStatus(StatusCode.OK);
+        }
     }
 
     /** Distinguishes operation telemetry details without changing the SDK's failure notification object. */

@@ -171,9 +171,7 @@ class CallbackErrorMetadataTest {
                     .filter(span -> terminal.equals(span.getAttributes().get(DURABLE_OPERATION_STATUS)))
                     .toList();
             assertEquals(1, terminalSpans.size());
-            assertEquals(
-                    hasDetails ? StatusCode.ERROR : StatusCode.UNSET,
-                    terminalSpans.get(0).getStatus().getStatusCode());
+            assertEquals(StatusCode.ERROR, terminalSpans.get(0).getStatus().getStatusCode());
             assertEquals(hasDetails ? 1 : 0, terminalSpans.get(0).getEvents().size());
             var replay = runner.run("input");
             assertEquals(ExecutionStatus.FAILED, replay.getStatus());
