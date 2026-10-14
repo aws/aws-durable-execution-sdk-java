@@ -235,7 +235,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
 
             @Override
             public DurableExecutionPlugin createPlugin(InvocationInfo info) {
-                return new InvocationOtelPlugin(environment, info);
+                return environment.createPlugin(() -> new InvocationOtelPlugin(environment, info));
             }
         };
     }

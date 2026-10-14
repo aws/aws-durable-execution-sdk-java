@@ -4,6 +4,11 @@ package software.amazon.lambda.durable.otel;
 
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
  * Everything the OTel plugins need that belongs to the execution environment rather than to one invocation.
@@ -20,6 +25,8 @@ import java.util.Objects;
  * itself only, and the next invocation's instance resolves the provider again.
  */
 final class OtelPluginEnvironment {
+
+    private static final Logger logger = LoggerFactory.getLogger(OtelPluginEnvironment.class);
 
     private final OtelPluginConfig config;
     private final DeterministicIdGenerator idGenerator;
@@ -69,6 +76,43 @@ final class OtelPluginEnvironment {
     /** The Java agent path: the global provider is resolved lazily, when an invocation's instance first needs it. */
     static OtelPluginEnvironment forGlobalProvider(OtelPluginConfig config) {
         return new OtelPluginEnvironment(config, OtelPluginSupport.createDefaultIdGenerator(), null);
+    }
+
+    /** Failed construction owns no End hook, but completed spans may already be buffered on this provider. */
+    <T> T createPlugin(Supplier<T> constructor) {
+        try {
+            return constructor.get();
+        } catch (Throwable failure) {
+            flushAfterConstructionFailure(failure);
+            throw failure;
+        }
+    }
+
+    @SuppressWarnings("removal")
+    private void flushAfterConstructionFailure(Throwable failure) {
+        try {
+            // Do not rebind or reach through an opaque provider. Use only a setup the constructor could already use.
+            var setup = ownedSetup != null ? ownedSetup : resolvedGlobalSetup;
+            if (setup == null || setup.sdkTracerProvider() == null) return;
+            var result = setup.sdkTracerProvider().forceFlush().join(5, TimeUnit.SECONDS);
+            if (!result.isSuccess())
+                logger.warn("OTel startup cleanup flush failed or timed out — some spans may be lost");
+        } catch (Throwable cleanupFailure) {
+            if (failure == cleanupFailure) return;
+            var cleanupCause = ExceptionHelper.unwrapAsyncFailure(cleanupFailure);
+            if (cleanupCause instanceof VirtualMachineError || cleanupCause instanceof ThreadDeath) {
+                var originalCause = ExceptionHelper.unwrapAsyncFailure(failure);
+                if (originalCause instanceof VirtualMachineError || originalCause instanceof ThreadDeath) {
+                    if (originalCause != cleanupCause) originalCause.addSuppressed(cleanupFailure);
+                    // Carry the classified fatal directly; a diagnostic wrapper need not tolerate another read.
+                    throw (Error) originalCause;
+                }
+                cleanupCause.addSuppressed(failure);
+                throw (Error) cleanupCause;
+            }
+            // A nonfatal cleanup problem must not replace the construction failure (or an earlier JVM fatal).
+            failure.addSuppressed(cleanupFailure);
+        }
     }
 
     OtelPluginConfig config() {

@@ -237,11 +237,11 @@ What to do instead, by what you were trying to achieve:
   List<DurableExecutionPluginFactory> factories = config.getPluginFactories();
   ```
 
-- **Copying plugin registration into a derived `DurableConfig`.** Read the factories and pass them back through `withPlugins(...)`. This is what the SDK's own `LocalDurableTestRunner` does:
+- **Copying plugin registration into a derived `DurableConfig`.** Use `config.toBuilder()` to preserve the effective factories without repeating environment provider discovery. A fresh builder discovers providers selected by `DURABLE_EXECUTION_PLUGINS` again, so adding the existing factories can duplicate them or fail exclusive-group validation. The SDK's `LocalDurableTestRunner` copies the configuration this way and overrides only the execution client:
 
   ```java
-  var derived = DurableConfig.builder()
-          .withPlugins(config.getPluginFactories().toArray(new DurableExecutionPluginFactory[0]))
+  var derived = config.toBuilder()
+          .withDurableExecutionClient(testClient)
           .build();
   ```
 
