@@ -119,9 +119,8 @@ class VirtualOperationErrorStatusTest {
             spans.forEach(span -> {
                 assertEquals(status(outcome), span.getStatus().getStatusCode());
                 assertEquals(
-                        status(outcome) == StatusCode.ERROR ? 1 : 0,
-                        span.getEvents().size());
-                if (status(outcome) == StatusCode.ERROR)
+                        hasExceptionEvent(outcome) ? 1 : 0, span.getEvents().size());
+                if (hasExceptionEvent(outcome))
                     assertDiagnostics(span.getEvents().get(0), failure, outcome);
             });
             assertEquals(1, sideEffects.get(), "Completed durable work is skipped on replay");
@@ -165,9 +164,8 @@ class VirtualOperationErrorStatusTest {
             assertEquals(1, spans.size());
             assertEquals(status(outcome), spans.get(0).getStatus().getStatusCode());
             assertEquals(
-                    status(outcome) == StatusCode.ERROR ? 1 : 0,
-                    spans.get(0).getEvents().size());
-            if (status(outcome) == StatusCode.ERROR)
+                    hasExceptionEvent(outcome) ? 1 : 0, spans.get(0).getEvents().size());
+            if (hasExceptionEvent(outcome))
                 assertDiagnostics(spans.get(0).getEvents().get(0), failure(outcome), outcome);
         }
     }
@@ -233,9 +231,12 @@ class VirtualOperationErrorStatusTest {
         }
     }
 
+    private static boolean hasExceptionEvent(String outcome) {
+        return !outcome.equals("empty") && !outcome.equals("success");
+    }
+
     private static StatusCode status(String outcome) {
         return switch (outcome) {
-            case "empty" -> StatusCode.UNSET;
             case "success" -> StatusCode.OK;
             default -> StatusCode.ERROR;
         };

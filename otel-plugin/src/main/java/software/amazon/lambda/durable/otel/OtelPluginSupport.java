@@ -106,7 +106,8 @@ final class OtelPluginSupport {
             } else {
                 recordExceptionAt(span, info.error(), endTimestamp);
             }
-        } else if ("FAILED".equals(info.status())
+        } else if (info.error() != null
+                || "FAILED".equals(info.status())
                 || "TIMED_OUT".equals(info.status())
                 || "STOPPED".equals(info.status())) {
             span.setStatus(StatusCode.ERROR);
