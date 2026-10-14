@@ -23,16 +23,15 @@ class EventProcessor {
                 .name(update.name())
                 .parentId(operation.parentId());
 
-        Event event =
-                switch (update.type()) {
-                    case STEP -> buildStepEvent(builder, update, operation);
-                    case WAIT -> buildWaitEvent(builder, update, operation);
-                    case CHAINED_INVOKE -> buildInvokeEvent(builder, update, operation);
-                    case EXECUTION -> buildExecutionEvent(builder, update);
-                    case CALLBACK -> buildCallbackEvent(builder, update);
-                    case CONTEXT -> buildContextEvent(builder, update);
-                    default -> throw new IllegalArgumentException("Unsupported operation type: " + update.type());
-                };
+        Event event = switch (update.type()) {
+            case STEP -> buildStepEvent(builder, update, operation);
+            case WAIT -> buildWaitEvent(builder, update, operation);
+            case CHAINED_INVOKE -> buildInvokeEvent(builder, update, operation);
+            case EXECUTION -> buildExecutionEvent(builder, update);
+            case CALLBACK -> buildCallbackEvent(builder, update);
+            case CONTEXT -> buildContextEvent(builder, update);
+            default -> throw new IllegalArgumentException("Unsupported operation type: " + update.type());
+        };
 
         allEvents.add(event);
     }
