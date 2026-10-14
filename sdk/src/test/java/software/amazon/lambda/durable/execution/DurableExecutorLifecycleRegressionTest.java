@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -13,6 +14,7 @@ import static software.amazon.lambda.durable.TypeToken.get;
 
 import java.time.Instant;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -37,6 +39,7 @@ import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
+import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 
 @Timeout(30)
@@ -86,6 +89,61 @@ class DurableExecutorLifecycleRegressionTest {
 
         assertSame(serializationFailure, actual);
         assertEquals(1, ended.get(), "Error serialization must not suppress the invocation-end hook");
+    }
+
+    @Test
+    void interruptedDrainStillFiresInvocationEnd() throws Exception {
+        var releaseStep = new CountDownLatch(1);
+        var handlerReturning = new CountDownLatch(1);
+        var ended = new CountDownLatch(1);
+        var endInfo = new AtomicReference<InvocationEndInfo>();
+        var rootThread = new AtomicReference<Thread>();
+        var userExecutor = Executors.newFixedThreadPool(2);
+        var caller = Executors.newSingleThreadExecutor();
+        try {
+            var config = DurableConfig.builder()
+                    .withDurableExecutionClient(TestUtils.createMockClient())
+                    .withExecutorService(userExecutor)
+                    .withPlugins(new DurableExecutionPlugin() {
+                        @Override
+                        public void onInvocationEnd(InvocationEndInfo info) {
+                            endInfo.set(info);
+                            ended.countDown();
+                        }
+                    })
+                    .build();
+
+            var invocation = caller.submit(() -> execute(config, (value, context) -> {
+                // Never awaited, so the root reaches drainOperations() while this step is still running.
+                context.stepAsync("blocked", String.class, step -> {
+                    await(releaseStep);
+                    return "late";
+                });
+                rootThread.set(Thread.currentThread());
+                handlerReturning.countDown();
+                return "root-result";
+            }));
+
+            await(handlerReturning);
+            // The interrupt flag is sticky, so the drain observes it whether it lands before or during the wait.
+            rootThread.get().interrupt();
+
+            assertTrue(
+                    ended.await(5, TimeUnit.SECONDS), "An interrupted drain must still fire the invocation-end hook");
+            assertEquals(InvocationStatus.RETRYING, endInfo.get().invocationStatus());
+            assertInstanceOf(IllegalStateException.class, endInfo.get().executionError());
+
+            // Only now let the step finish, so the caller-side drain in ExecutionManager.close() can complete.
+            releaseStep.countDown();
+            var failure = assertThrows(ExecutionException.class, () -> invocation.get(5, TimeUnit.SECONDS));
+            assertInstanceOf(IllegalStateException.class, failure.getCause());
+        } finally {
+            releaseStep.countDown();
+            caller.shutdownNow();
+            userExecutor.shutdownNow();
+            assertTrue(caller.awaitTermination(5, TimeUnit.SECONDS), "Invocation executor did not terminate");
+            assertTrue(userExecutor.awaitTermination(5, TimeUnit.SECONDS), "User executor did not terminate");
+        }
     }
 
     private static JacksonSerDes failingErrorSerializer(RuntimeException failure) {

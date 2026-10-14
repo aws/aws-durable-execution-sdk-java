@@ -131,7 +131,15 @@ public class DurableExecutor {
                 // The handler has settled, but its operations may still be running or still have checkpoints queued.
                 // Drain them here so every checkpoint response, including one that withdraws the token, is observed
                 // before the terminal decision below. Later polls therefore cannot change that decision.
-                manager.drainOperations();
+                try {
+                    manager.drainOperations();
+                } catch (RuntimeException drainFailure) {
+                    // The drain throws only when this thread is interrupted or an operation future is cancelled.
+                    // No terminal response exists yet, so the service must retry this invocation. Plugins still
+                    // need their end hook. Classifying this as a handler failure would mark the execution FAILED,
+                    // so it is reported as a delivery failure: RETRYING, then the original exception is rethrown.
+                    return failDelivery(drainFailure);
+                }
                 return finishInvocation(selected.value(), selected.failure());
             };
             // Cleanup is awaited even without plugins. Keep that path free of plugin MDC handling.
