@@ -63,7 +63,7 @@ final class OtelPluginSupport {
     /** Rejects an older core before a plugin builds a provider or activates thread-local context. */
     static void requireSameThreadInvocationHooks() {
         var message = "This OpenTelemetry plugin requires same-thread invocation hooks from the Durable Execution"
-                + " core (2.2.2 lifecycle capability). Upgrade the core together with the plugin layer.";
+                + " core. Upgrade the core together with the plugin layer.";
         try {
             if (!DurableExecutor.supportsSameThreadInvocationHooks()) throw new IllegalStateException(message);
         } catch (NoSuchMethodError missingCapability) {

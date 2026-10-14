@@ -85,10 +85,10 @@ still reports `FAILED` when its error response can be serialized. This provides 
 not a fixed depth or time limit. Arbitrary custom `getCause`, other `Throwable` accessors, and customer `SerDes`
 behavior remain outside that guarantee.
 
-This plugin version requires the core's `DurableExecutor.supportsSameThreadInvocationHooks()` capability, introduced
-in the 2.2.2 lifecycle contract (currently `2.2.2-SNAPSHOT`). Upgrade the core together with the plugin layer. Every
-plugin constructor checks this capability before building a tracer provider or activating context. A core without
-it, including released 2.2.1, is rejected with an explicit configuration error. Older cores may call
+This plugin version requires the core's `DurableExecutor.supportsSameThreadInvocationHooks()` capability.
+Upgrade the core together with the plugin layer. Every plugin constructor checks this capability before building a
+tracer provider or activating context. A core without it, including released 2.2.1, is rejected with an explicit
+configuration error. Older cores may call
 `onInvocationEnd` on another thread and are not supported with this plugin version. Existing plugin binaries remain
 usable with the updated core; their invocation-end hooks now follow the same-thread, reverse-registration-order
 contract described above.

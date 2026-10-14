@@ -433,19 +433,17 @@ class InvocationOutcomeBoundaryTest {
     })
     void preparationAndEndFailuresRetainPrimaryAndFatalIdentity(
             String preparationKind, String endKind, boolean serializeFailure, boolean inline) throws Exception {
-        Throwable original =
-                switch (preparationKind) {
-                    case "vm", "wrapped" -> new InternalError("preparation fatal");
-                    case "death" -> new ThreadDeath();
-                    default -> new IllegalStateException("preparation failure");
-                };
+        Throwable original = switch (preparationKind) {
+            case "vm", "wrapped" -> new InternalError("preparation fatal");
+            case "death" -> new ThreadDeath();
+            default -> new IllegalStateException("preparation failure");
+        };
         var delivery = preparationKind.equals("wrapped") ? new CompletionException(original) : original;
-        Error endFailure =
-                switch (endKind) {
-                    case "vm" -> new InternalError("end fatal");
-                    case "death" -> new ThreadDeath();
-                    default -> new AssertionError("end failure");
-                };
+        Error endFailure = switch (endKind) {
+            case "vm" -> new InternalError("end fatal");
+            case "death" -> new ThreadDeath();
+            default -> new AssertionError("end failure");
+        };
         var expected = preparationKind.equals("ordinary") && endKind.equals("vm") ? endFailure : original;
         var suppressed = expected == endFailure ? original : endFailure;
         var ends = new CopyOnWriteArrayList<InvocationEndInfo>();
