@@ -1040,6 +1040,9 @@ class ExecutionManagerTest {
             waitForCondition.get(5, TimeUnit.SECONDS);
             child.get(5, TimeUnit.SECONDS);
             coordinator.get(5, TimeUnit.SECONDS);
+            for (var task : tasks) {
+                task.exit().get(5, TimeUnit.SECONDS);
+            }
             assertTrue(manager.getActiveExecutorTasks().isEmpty());
         } finally {
             release.countDown();
