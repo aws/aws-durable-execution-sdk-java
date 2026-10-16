@@ -90,9 +90,12 @@ final class ExecutorTaskHandle<T> {
             return;
         }
         try {
-            completion.complete(action.get());
+            var value = action.get();
+            // A cancelling thread publishes the logical cancellation after requesting interruption. Do not let a
+            // cooperative worker race it by running completion observers before its exit signal is available.
+            if (!cancellationRequested.get()) completion.complete(value);
         } catch (Throwable throwable) {
-            completion.completeExceptionally(throwable);
+            if (!cancellationRequested.get()) completion.completeExceptionally(throwable);
         } finally {
             markExited();
         }
@@ -127,12 +130,12 @@ final class ExecutorTaskHandle<T> {
             interruptRequested.set(true);
         }
         cancellationRequested.set(true);
-        completion.cancel(false);
         var future = execution.get();
-        if (future == null) {
-            return true;
-        }
-        return cancelExecution(future);
+        // CompletableFuture cancellation runs observers inline. Physical interruption must already be requested
+        // before an observer is allowed to wait for this task's actual exit.
+        var cancelled = future == null || cancelExecution(future);
+        completion.cancel(false);
+        return cancelled;
     }
 
     private boolean cancelExecution(Future<?> future) {
@@ -140,16 +143,16 @@ final class ExecutorTaskHandle<T> {
             return false;
         }
         if (state.compareAndSet(State.REGISTERED, State.EXITED)) {
-            exit.complete(null);
             onExit.run();
+            exit.complete(null);
         }
         return true;
     }
 
     private void markExited() {
         state.set(State.EXITED);
-        exit.complete(null);
         onExit.run();
+        exit.complete(null);
     }
 
     long id() {

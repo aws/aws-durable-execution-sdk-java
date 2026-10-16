@@ -222,6 +222,42 @@ class ExecutionManagerLifecycleTest {
     }
 
     @Test
+    void cancellationInterruptsBeforeLogicalObserversWaitForExit() throws Exception {
+        var executor = Executors.newSingleThreadExecutor();
+        var cancelling = Executors.newSingleThreadExecutor();
+        var manager = createManager(null, executor);
+        var entered = new CountDownLatch(1);
+        var interrupted = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        try {
+            manager.submitRootTask(() -> {
+                entered.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException expected) {
+                    interrupted.countDown();
+                }
+                return "ignored";
+            });
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            var task = manager.getActiveExecutorTasks().get(0);
+            var observer = task.completion()
+                    .whenComplete((result, failure) -> task.exit().join());
+            var cancellation = cancelling.submit(() -> task.cancel(true));
+            assertTrue(interrupted.await(2, TimeUnit.SECONDS), "A completion observer must not delay interruption");
+            assertTrue(cancellation.get(5, TimeUnit.SECONDS));
+            assertTrue(task.completion().isCancelled());
+            assertTrue(observer.isDone());
+            assertTrue(manager.getActiveExecutorTasks().isEmpty());
+        } finally {
+            release.countDown();
+            stop(executor);
+            stop(cancelling);
+            manager.close();
+        }
+    }
+
+    @Test
     void drainingRejectsNewWorkButAllowsExistingCheckpointCleanup() throws Exception {
         var executor = Executors.newSingleThreadExecutor();
         var manager = createManager(null, executor);
