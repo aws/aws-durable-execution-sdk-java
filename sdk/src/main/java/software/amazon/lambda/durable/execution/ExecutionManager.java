@@ -19,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -269,7 +270,10 @@ public class ExecutionManager implements SafeCloseable {
         }
 
         try {
-            task.bindExecution(executor.submit(() -> runExecutorTask(task, action)));
+            // An executor can run inline, so cancellation needs the handle before execute enters user code.
+            var execution = new FutureTask<Void>(() -> runExecutorTask(task, action), null);
+            task.bindExecution(execution);
+            executor.execute(execution);
             return task.completion();
         } catch (RuntimeException | Error failure) {
             task.submissionFailed(failure);

@@ -70,7 +70,7 @@ final class ExecutorTaskHandle<T> {
     /** Completes only when no executor thread can still be running this task. */
     private final CompletableFuture<Void> exit = new CompletableFuture<>();
 
-    /** Handle returned by {@link java.util.concurrent.ExecutorService#submit(Runnable)}. */
+    /** Interruptible handle bound before dispatch, including when an executor runs the task inline. */
     private final AtomicReference<Future<?>> execution = new AtomicReference<>();
 
     private final AtomicReference<State> state = new AtomicReference<>(State.REGISTERED);
@@ -99,7 +99,7 @@ final class ExecutorTaskHandle<T> {
     }
 
     /**
-     * Binds the executor handle after submission. A cancellation racing with submission is remembered and applied as
+     * Binds the executor handle before dispatch. A cancellation racing with registration is remembered and applied as
      * soon as this handle becomes available.
      */
     void bindExecution(Future<?> future) {
