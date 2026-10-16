@@ -22,6 +22,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.MDC;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
@@ -262,10 +263,19 @@ class HandlerMdcIntegrationTest {
     private static void awaitMdcCallerJoin(Thread caller) {
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
         while (System.nanoTime() < deadline) {
-            if (caller.getState() == Thread.State.WAITING
-                    && Arrays.stream(caller.getStackTrace())
+            var state = caller.getState();
+            var frames = caller.getStackTrace();
+            var legacyJoin = Arrays.stream(frames)
+                    .anyMatch(frame -> frame.getClassName().equals(CompletableFuture.class.getName())
+                            && frame.getMethodName().equals("join"));
+            var budgetedWait = Arrays.stream(frames)
+                            .anyMatch(frame -> frame.getClassName().equals(ExecutionManager.class.getName())
+                                    && frame.getMethodName().equals("awaitInvocationOutcome"))
+                    && Arrays.stream(frames)
                             .anyMatch(frame -> frame.getClassName().equals(CompletableFuture.class.getName())
-                                    && frame.getMethodName().equals("join"))) return;
+                                    && frame.getMethodName().equals("get"));
+            if ((state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING) && (legacyJoin || budgetedWait))
+                return;
             LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
         }
         fail("Caller did not attach its completion observer before releasing the handler");
