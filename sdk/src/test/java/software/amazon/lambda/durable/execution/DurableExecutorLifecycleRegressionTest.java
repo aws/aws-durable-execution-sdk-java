@@ -13,6 +13,9 @@ import static org.mockito.Mockito.when;
 import static software.amazon.lambda.durable.TypeToken.get;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -36,6 +39,7 @@ import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
+import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
@@ -128,13 +132,15 @@ class DurableExecutorLifecycleRegressionTest {
             // The interrupt flag is sticky, so the drain observes it whether it lands before or during the wait.
             rootThread.get().interrupt();
 
+            assertThrows(TimeoutException.class, () -> invocation.get(100, TimeUnit.MILLISECONDS));
+            assertEquals(1, ended.getCount(), "Interruption must not move End ahead of still-running work");
+            releaseStep.countDown();
             assertTrue(
                     ended.await(5, TimeUnit.SECONDS), "An interrupted drain must still fire the invocation-end hook");
             assertEquals(InvocationStatus.RETRYING, endInfo.get().invocationStatus());
             assertInstanceOf(IllegalStateException.class, endInfo.get().executionError());
 
-            // Only now let the step finish, so the caller-side drain in ExecutionManager.close() can complete.
-            releaseStep.countDown();
+            // The admitted step has exited and checkpointed before the interrupted owner reports its failure.
             var failure = assertThrows(ExecutionException.class, () -> invocation.get(5, TimeUnit.SECONDS));
             assertInstanceOf(IllegalStateException.class, failure.getCause());
         } finally {
@@ -158,6 +164,66 @@ class DurableExecutorLifecycleRegressionTest {
         };
     }
 
+    @Test
+    void interruptedDrainPreservesLateStepResultForReplay() throws Exception {
+        var recorded = new ConcurrentHashMap<String, Operation>();
+        var delegate = TestUtils.createMockClient();
+        var client = mock(DurableExecutionClient.class);
+        when(client.checkpoint(any(), any(), any())).thenAnswer(call -> {
+            var response = delegate.checkpoint(call.getArgument(0), call.getArgument(1), call.getArgument(2));
+            response.newExecutionState().operations().forEach(operation -> recorded.put(operation.id(), operation));
+            return response;
+        });
+        var users = Executors.newFixedThreadPool(2);
+        var caller = Executors.newSingleThreadExecutor();
+        var stepEntered = new CountDownLatch(1);
+        var handlerReturned = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var root = new AtomicReference<Thread>();
+        var bodies = new AtomicInteger();
+        var config = DurableConfig.builder()
+                .withExecutorService(users)
+                .withDurableExecutionClient(client)
+                .build();
+        BiFunction<String, DurableContext, String> handler = (value, context) -> {
+            context.stepAsync("late-result", String.class, step -> {
+                bodies.incrementAndGet();
+                stepEntered.countDown();
+                await(release);
+                return "stored";
+            });
+            root.set(Thread.currentThread());
+            handlerReturned.countDown();
+            return "root-result";
+        };
+        try {
+            var first = caller.submit(() -> execute(config, handler));
+            assertTrue(stepEntered.await(5, TimeUnit.SECONDS));
+            assertTrue(handlerReturned.await(5, TimeUnit.SECONDS));
+            root.get().interrupt();
+            assertThrows(TimeoutException.class, () -> first.get(100, TimeUnit.MILLISECONDS));
+            release.countDown();
+            assertInstanceOf(
+                    IllegalStateException.class,
+                    assertThrows(ExecutionException.class, () -> first.get(5, TimeUnit.SECONDS))
+                            .getCause());
+            var step = recorded.values().stream()
+                    .filter(operation -> "late-result".equals(operation.name()))
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals(OperationStatus.SUCCEEDED, step.status());
+            var replay = execute(config, handler, List.copyOf(recorded.values()));
+            assertEquals(ExecutionStatus.SUCCEEDED, replay.status());
+            assertEquals(1, bodies.get(), "The acknowledged late result must replay without repeating its side effect");
+        } finally {
+            release.countDown();
+            caller.shutdownNow();
+            users.shutdownNow();
+            assertTrue(caller.awaitTermination(5, TimeUnit.SECONDS));
+            assertTrue(users.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
     private static DurableExecutionPlugin recordingPlugin(AtomicInteger ended) {
         return new DurableExecutionPlugin() {
             @Override
@@ -169,6 +235,13 @@ class DurableExecutorLifecycleRegressionTest {
 
     private static DurableExecutionOutput execute(
             DurableConfig config, BiFunction<String, DurableContext, String> handler) {
+        return execute(config, handler, List.of());
+    }
+
+    private static DurableExecutionOutput execute(
+            DurableConfig config,
+            BiFunction<String, DurableContext, String> handler,
+            List<Operation> replayOperations) {
         var execution = Operation.builder()
                 .id("exec")
                 .type(OperationType.EXECUTION)
@@ -177,10 +250,12 @@ class DurableExecutorLifecycleRegressionTest {
                 .executionDetails(
                         ExecutionDetails.builder().inputPayload("\"input\"").build())
                 .build();
+        var operations = new ArrayList<>(replayOperations);
+        operations.add(execution);
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/lifecycle/exec",
                 "token",
-                CheckpointUpdatedExecutionState.builder().operations(execution).build());
+                CheckpointUpdatedExecutionState.builder().operations(operations).build());
         return DurableExecutor.execute(input, null, get(String.class), handler, config);
     }
 

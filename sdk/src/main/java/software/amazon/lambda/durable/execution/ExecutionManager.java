@@ -1080,7 +1080,8 @@ public class ExecutionManager implements SafeCloseable {
         } catch (InterruptedException interrupted) {
             cleanupInterrupted.set(true);
             failure = new IllegalStateException("Interrupted while draining invocation operations", interrupted);
-            signalLifecycleFailure(failure);
+            // An interrupted owner drain is not itself an invocation deadline. Keep already-admitted work able to
+            // finish and checkpoint during the remaining budget; the caller still cancels if that budget expires.
             failure = settleInterruptedCleanup(hardDeadline, false, failure);
         } catch (RuntimeException problem) {
             failure = problem;
