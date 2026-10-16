@@ -13,10 +13,13 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
+import software.amazon.awssdk.services.lambda.model.EventType;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.ParallelResult;
@@ -526,8 +529,8 @@ class ParallelIntegrationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"FLAT, 2", "NESTED, 12"})
-    void testParallelUnlimitedConcurrencyWithToleratedFailureCount(NestingType nestingType, int events) {
+    @EnumSource(NestingType.class)
+    void testParallelUnlimitedConcurrencyWithToleratedFailureCount(NestingType nestingType) {
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var config = ParallelConfig.builder()
                     .completionConfig(CompletionConfig.toleratedFailureCount(1))
@@ -547,15 +550,33 @@ class ParallelIntegrationTest {
                 parallel.branch("branch-ok3", String.class, ctx -> "OK3");
             }
 
-            var result = parallel.get();
-            assertEquals(ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED, result.completionStatus());
-            assertFalse(result.completionStatus().isSucceeded());
-            return "done";
+            return parallel.get();
         });
 
         var result = runner.runUntilComplete("test");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
-        assertEquals(events, result.getHistoryEvents().size());
+        var parallelResult = result.getResult(ParallelResult.class);
+        assertEquals(ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED, parallelResult.completionStatus());
+        assertFalse(parallelResult.completionStatus().isSucceeded());
+        assertEquals(5, parallelResult.size());
+        assertEquals(2, parallelResult.failed());
+        assertEquals(5, parallelResult.statuses().size());
+        assertEquals(ParallelResult.Status.FAILED, parallelResult.statuses().get(1));
+        assertEquals(ParallelResult.Status.FAILED, parallelResult.statuses().get(3));
+        assertEquals(3, parallelResult.succeeded() + parallelResult.skipped());
+
+        // Late branches can skip their terminal checkpoint after the failure limit is exceeded,
+        // so the total history size depends on scheduling. The parallel's own events are stable.
+        assertEquals(
+                List.of(EventType.CONTEXT_STARTED, EventType.CONTEXT_SUCCEEDED),
+                result.getEventsForOperation("unlimited-tolerated").stream()
+                        .map(event -> event.eventType())
+                        .toList());
+
+        var replay = runner.run("test");
+        assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+        assertEquals(parallelResult, replay.getResult(ParallelResult.class));
+        assertEquals(result.getHistoryEvents(), replay.getHistoryEvents());
     }
 
     @ParameterizedTest
@@ -1348,5 +1369,30 @@ class ParallelIntegrationTest {
             assertTrue(4 <= result.getHistoryEvents().size());
             assertTrue(result.getHistoryEvents().size() <= events);
         }
+    }
+
+    @Test
+    void testInvalidSuspensionWhenWaitingOnSkippedBranch() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var config = ParallelConfig.builder()
+                    .completionConfig(CompletionConfig.firstSuccessful())
+                    .maxConcurrency(1)
+                    .build();
+            var futures = new ArrayList<DurableFuture<String>>();
+            var parallel = context.parallel("first-success-parallel", config);
+
+            try (parallel) {
+                futures.add(parallel.branch("branch-1", String.class, ctx -> "success-1"));
+                futures.add(parallel.branch("branch-2", String.class, ctx -> "skipped-2"));
+            }
+
+            parallel.get();
+            return futures.get(1).get();
+        });
+
+        var ex = assertThrows(IllegalDurableOperationException.class, () -> runner.run("test"));
+        assertTrue(ex.isRetryable());
+        assertTrue(ex.getMessage().contains("Invalid suspension. No operation is pending."));
+        assertTrue(ex.getMessage().contains("branch-2"));
     }
 }

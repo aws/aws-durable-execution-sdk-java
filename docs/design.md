@@ -347,9 +347,14 @@ software.amazon.lambda.durable
 │   └── WaitForConditionResult<T>    # Check function return type (value + isDone)
 │
 ├── serde/
-│   ├── SerDes              # Interface
-│   ├── JacksonSerDes       # Jackson impl
-│   └── AwsSdkV2Module      # SDK type support
+│   ├── SerDes                # Payload serialization, with optional explicit context
+│   ├── SerDesContext         # Stable execution ARN and payload entity ID
+│   ├── JacksonSerDes         # Default JSON implementation
+│   ├── FileSystemSerDes      # Delegate serialization with inline/file checkpoint envelopes
+│   ├── FileSystemStorageMode # ALWAYS or OVERFLOW
+│   ├── FileSystemPathEncoding # URI or HASH
+│   ├── DurableInputOutputSerDes # Internal Lambda durable protocol envelopes
+│   └── AwsSdkV2Module        # SDK type support
 │
 └── exception/
     ├── DurableExecutionException
@@ -502,7 +507,7 @@ SuspendExecutionException                  # Internal: triggers suspension (not 
 | `ParallelBranchFailedException` | Parallel branch failed and original exception not reconstructable | Catch in handler or let fail |
 | `NonDeterministicExecutionException` | Replay finds different operation than expected | Bug in handler (non-deterministic code) |
 | `IllegalDurableOperationException` | Illegal operation detected | Bug in handler |
-| `SerDesException` | Jackson fails to serialize/deserialize | Fix data model or custom SerDes |
+| `SerDesException` | Payload encoding/decoding or filesystem payload I/O fails | Check the data model, serializer configuration, and persisted payload availability |
 
 ---
 
@@ -649,24 +654,123 @@ For testing, use `DurableConfig.builder().withDurableExecutionClient(localMemory
 
 ## Custom SerDes and TypeToken
 
-**Custom SerDes Interface:**
+### SerDes Contract
+
+`SerDes` is the user-payload serialization extension point. `JacksonSerDes` is the default implementation. The interface retains its original methods and adds default overloads that accept an explicit `SerDesContext`:
+
 ```java
 public interface SerDes {
     String serialize(Object value);
-    <T> T deserialize(String data, Class<T> type);
+
+    default String serialize(Object value, SerDesContext context) {
+        return serialize(value);
+    }
+
     <T> T deserialize(String data, TypeToken<T> typeToken);
+
+    default <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
+        return deserialize(data, typeToken);
+    }
 }
 ```
 
-**TypeToken and Type Erasure:**
+Existing implementations inherit the defaults and continue to work unchanged. Implementations that need execution or operation identity override the context-aware methods. `DurableConfig.withSerDes(...)` selects the global serializer; operation-level `serDes(...)` settings override it for their payloads. `InvokeConfig.payloadSerDes(...)` selects the invoke request serializer separately from the result serializer.
+
+### Serialization Context and Runtime Boundaries
+
+```java
+public record SerDesContext(String durableExecutionArn, String entityId) {}
+```
+
+The execution ARN remains stable across Lambda invocations. An entity ID combines the operation ID with its payload role so a result and an exception cannot share the same storage identity:
+
+| Payload | Entity ID |
+|---------|-----------|
+| Step, child-context, map-item, and parallel-branch result | `operation/<operation-id>/result` |
+| Wait-for-condition state or final result | `operation/<operation-id>/result` |
+| Operation exception data (`ErrorObject.errorData`) | `operation/<operation-id>/exception` |
+| Invoke request payload | `operation/<operation-id>/invoke-payload` |
+| Callback or invoke result | `operation/<receiving-operation-id>/result` |
+
+`SerializableDurableOperation` supplies this context when serializing and deserializing results and exception data. `InvokeOperation` supplies the request context before checkpointing an invocation. Result deserialization receives the same operation identity during initial execution and replay. Exception type reconstruction and stack traces remain the responsibility of the operation runtime and `ExceptionHelper`.
+
+An entity identifies a payload role, not an individual write: retries and polling can serialize multiple values for the same entity. External-storage serializers must preserve every reference already returned for checkpointing. Callback and invoke results may have a different producer identity; their deserialization context identifies the receiving operation.
+
+SerDes calls run synchronously on the calling thread. Serialization and deserialization can occur on different worker or context threads, so context is passed directly to each call and shared serializers must support concurrent use. Calls may repeat, including repeated result reads; there is no general SerDes deserialization cache or dedicated SerDes executor.
+
+The SDK round-trips generated operation results through the selected serializer by default so first execution exposes the same representation as replay. `DurableConfig.withDeserializeAfterSerialization(false)` disables this immediate result deserialization.
+
+Root handler input, output, and exception serialization use the global serializer's original context-free methods. `DurableInputOutputSerDes` separately handles the internal `DurableExecutionInput` and `DurableExecutionOutput` protocol envelopes. Protocol fields, including checkpoint tokens, are not routed through user payload serializers.
+
+Test runners attach the execution ARN to each `TestOperation` snapshot. `getStepResult(type, serDes)` selects an explicit operation serializer and supplies the same `operation/<operation-id>/result` context as the runtime. The local runner uses its stable execution identity; cloud history processing uses the ARN returned by the invocation, including asynchronous snapshots. Reads without an override retain the runner's global serializer, and handler input/output remains context-free. Serializer selection is explicit because checkpoint payloads do not identify their custom serializer. See [custom SerDes inspection](advanced/testing.md#inspecting-results-with-a-custom-serdes).
+
+### FileSystemSerDes
+
+`FileSystemSerDes`, `FileSystemStorageMode`, and `FileSystemPathEncoding` live in the main `sdk` module under `software.amazon.lambda.durable.serde`. They use the JDK and the SDK's existing Jackson dependency and are included in the normal SDK artifact.
+
+The filesystem serializer wraps a delegate `SerDes`, stores its serialized strings as UTF-8, and returns a small checkpoint envelope. Configure it on an operation so the runtime supplies the execution and entity identity:
+
+```java
+import java.nio.file.Path;
+import java.util.Map;
+import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.serde.FileSystemPathEncoding;
+import software.amazon.lambda.durable.serde.FileSystemSerDes;
+import software.amazon.lambda.durable.serde.FileSystemStorageMode;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
+
+var files = FileSystemSerDes.builder(Path.of("/mnt/efs/durable-payloads"))
+        .storageMode(FileSystemStorageMode.OVERFLOW)
+        .pathEncoding(FileSystemPathEncoding.HASH)
+        .delegate(new JacksonSerDes())
+        .previewGenerator(value -> Map.of("type", value.getClass().getSimpleName()))
+        .build();
+
+var payload = context.step("large-result", String.class,
+        stepContext -> "x".repeat(300_000),
+        StepConfig.builder().serDes(files).build());
+```
+
+| Setting | Behavior |
+|---------|----------|
+| `ALWAYS` (default) | Write every non-null serialized payload to a file. |
+| `OVERFLOW` | Keep the complete escaped UTF-8 envelope inline up to 255 KiB; offload larger envelopes. |
+| `URI` (default) | Percent-encode slash-separated ARN segments and the entity ID into readable paths. |
+| `HASH` | Hash the full ARN and entity ID into fixed-length SHA-256 path segments for long identities. |
+| `delegate` | Encode and decode the payload; defaults to `JacksonSerDes` and receives the explicit context. |
+| `previewGenerator` | Add an optional JSON object beside a file pointer. Inline payloads do not generate previews. |
+
+The checkpoint representations are:
+
+```json
+{"data":"<delegate-serialized string>"}
+{"file":"<absolute path>"}
+{"file":"<absolute path>","preview":{"type":"String"}}
+```
+
+A null delegate result remains null without creating a file. File-pointer envelopes, including any preview, must also fit within 255 KiB. Deserialization validates that the envelope contains exactly one string-valued `data` or `file` field, then delegates the inline or loaded payload using the caller's `TypeToken` and context.
+
+Each offload writes a unique immutable file under the execution directory and flushes and closes it before returning the pointer. If a later write succeeds but its checkpoint fails, an earlier checkpoint still reads its original file. Ordinary failures attempt to remove unpublished files; a process crash can leave an orphan. Published files remain until the application cleans them up after their full execution and replay lifetime.
+
+Filesystem paths must remain accessible at the same absolute location across execution environments. Use a durable shared mount such as EFS; Lambda `/tmp` cannot support that replay contract. Local flush completion does not guarantee remote persistence for mounts with delayed synchronization, including S3 Files. The application controls the mount and base directory; the serializer rejects references outside the base and symlinks below it, but does not isolate other processes with write access to the mount.
+
+`FileSystemSerDes` rejects context-free calls, so it cannot be the global `DurableConfig` serializer. Configure it through `StepConfig`, `RunInChildContextConfig`, `MapConfig`, `ParallelBranchConfig`, or `WaitForConditionConfig`. Callback and invoke use also requires the external producer/consumer to understand the envelope and share the storage. Ordinary Lambda input/output and ordinary JSON callback/invoke payloads do not become filesystem envelopes automatically.
+
+See [ADR-005](adr/005-filesystem-serdes.md) for the design decision and the [filesystem serialization guide](advanced/filesystem-serdes.md) for configuration, external boundaries, and retention details.
+
+### TypeToken and Type Erasure
 
 Java's type erasure removes generic type parameters at runtime (`List<User>` becomes `List`). This is problematic for deserialization—Jackson needs the full type to reconstruct objects correctly.
 
 `TypeToken<T>` solves this by capturing generic types at compile time. Creating `new TypeToken<List<User>>() {}` produces an anonymous subclass whose superclass type parameter is preserved in bytecode and accessible via reflection (`getGenericSuperclass()`).
 
-The `SerDes` interface provides both `Class<T>` and `TypeToken<T>` overloads:
-- Use `Class<T>` for simple types: `String.class`, `User.class`
-- Use `TypeToken<T>` for parameterized types: `new TypeToken<List<User>>() {}`
+`SerDes.deserialize` always receives a `TypeToken<T>`. For direct serializer calls, use `TypeToken.get(String.class)` for a simple type or `new TypeToken<List<User>>() {}` for a parameterized type. User-facing operation APIs such as `DurableContext.step` provide both `Class<T>` and `TypeToken<T>` overloads; their `Class<T>` overloads convert the class to a type token before delegation.
+
+```java
+var serDes = new JacksonSerDes();
+var name = serDes.deserialize("\"Ada\"", TypeToken.get(String.class));
+var names = serDes.deserialize("[\"Ada\",\"Grace\"]", new TypeToken<List<String>>() {});
+```
 
 ---
 
