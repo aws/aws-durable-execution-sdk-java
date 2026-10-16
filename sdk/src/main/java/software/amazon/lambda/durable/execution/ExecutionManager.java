@@ -260,17 +260,13 @@ public class ExecutionManager implements SafeCloseable {
             });
         });
 
-        // Fire onOperationChange when a checkpoint response changed one or more operations
-        if (!updatedOperations.isEmpty()) {
+        // Fire onOperationChange when a checkpoint response changed one or more operations. Only plugins read
+        // the change info, and building it converts every stored operation. So skip it when no plugin is registered.
+        var pluginRunner = durableConfig.getPluginRunner();
+        if (!updatedOperations.isEmpty() && !pluginRunner.isEmpty()) {
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
-            durableConfig
-                    .getPluginRunner()
-                    .onOperationChange(PluginInfoConverter.toOperationChangeInfo(
-                            requestId,
-                            durableExecutionArn,
-                            updatedOperations,
-                            operationStorage.values(),
-                            initialOperationIds));
+            pluginRunner.onOperationChange(PluginInfoConverter.toOperationChangeInfo(
+                    requestId, durableExecutionArn, updatedOperations, operationStorage.values(), initialOperationIds));
         }
     }
 
