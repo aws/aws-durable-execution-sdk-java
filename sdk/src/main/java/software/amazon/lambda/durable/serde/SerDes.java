@@ -19,6 +19,16 @@ public interface SerDes {
     String serialize(Object value);
 
     /**
+     * Serializes an operation payload with its stable execution and entity identity.
+     *
+     * <p>The default preserves existing implementations. Override this method when serialization needs external
+     * storage. References returned by such implementations must remain readable after later writes for the same entity.
+     */
+    default String serialize(Object value, SerDesContext context) {
+        return serialize(value);
+    }
+
+    /**
      * Deserializes a JSON string to an object of the specified generic type.
      *
      * <p>This method supports complex generic types like {@code List<MyObject>} or {@code Map<String, MyObject>} that
@@ -36,4 +46,14 @@ public interface SerDes {
      * @return the deserialized object, or null if data is null
      */
     <T> T deserialize(String data, TypeToken<T> typeToken);
+
+    /**
+     * Deserializes an operation payload with its stable execution and entity identity.
+     *
+     * <p>The default preserves existing implementations. The context identifies the consuming operation; externally
+     * produced callback and invoke results may have been serialized with a different context.
+     */
+    default <T> T deserialize(String data, TypeToken<T> typeToken, SerDesContext context) {
+        return deserialize(data, typeToken);
+    }
 }

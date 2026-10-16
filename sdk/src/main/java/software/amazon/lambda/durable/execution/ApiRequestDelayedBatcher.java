@@ -104,24 +104,32 @@ public class ApiRequestDelayedBatcher<T> {
         }
     }
 
-    /** Flushes pending batches and waits no longer than the supplied timeout. */
+    /** Flushes pending batch and waits for completion */
+    void shutdown() {
+        flush();
+        flushingQueueFuture.join();
+    }
+
+    /** Flushes pending requests without waiting beyond the caller's remaining cleanup budget. */
     void shutdown(Duration timeout) throws InterruptedException, ExecutionException, TimeoutException {
+        flush();
+        flushingQueueFuture.get(Math.max(0, timeout.toNanos()), TimeUnit.NANOSECONDS);
+    }
+
+    /** Schedules pending requests immediately without waiting for the current batch. */
+    void flush() {
         synchronized (delayedBatch) {
             // cancel the flush timer if it has not been triggered
             this.delayedBatchFlushTimer.cancel(false);
             // execute the current batch now
             flushDelayedBatch();
         }
-
-        // wait for previous batches to be flushed
-        flushingQueueFuture.get(Math.max(0, timeout.toNanos()), TimeUnit.NANOSECONDS);
     }
 
     /** clear the current batch and creates a new batch */
     private void initializeDelayedBatch() {
         this.delayedBatch.clear();
-        // No timer is scheduled until the first item supplies an actual flush deadline. Using an unbounded sentinel
-        // avoids coupling batching behavior to the maximum Lambda invocation duration.
+        // No timer is scheduled until an item supplies its flush time.
         this.delayedBatchFlushTime = NO_FLUSH_DEADLINE;
 
         // the timer future is created initially without a timeout until an item is added to the batch
@@ -149,6 +157,7 @@ public class ApiRequestDelayedBatcher<T> {
         // the new future will just do nothing.
         flushingQueueFuture = flushingQueueFuture.thenRunAsync(this::flushQueue, InternalExecutor.INSTANCE);
     }
+
     /** Call checkpoint API with items in the flushing queue */
     private void flushQueue() {
         // There could be more items to flush because
