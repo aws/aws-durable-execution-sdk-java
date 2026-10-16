@@ -18,6 +18,7 @@ import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
@@ -63,7 +64,7 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
     @Override
     protected void replay(Operation existing) {
         switch (existing.status()) {
-            case SUCCEEDED, FAILED -> markAlreadyCompleted(); // Check if already completed / failed
+            case SUCCEEDED, FAILED, CANCELLED, TIMED_OUT, STOPPED -> markAlreadyCompleted();
             case PENDING -> pollReadyAndResumeCheckLoop(existing); // Check if pending retry
             case STARTED, READY -> resumeCheckLoop(existing);
             default ->
@@ -81,7 +82,8 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
             var result = (stepDetails != null) ? stepDetails.result() : null;
             return deserializeResult(result);
         } else {
-            var errorObject = op.stepDetails().error();
+            var stepDetails = op.stepDetails();
+            var errorObject = stepDetails != null ? stepDetails.error() : null;
 
             // Attempt to reconstruct and throw the original exception
             Throwable original = deserializeException(errorObject);
@@ -108,68 +110,88 @@ public class WaitForConditionOperation<T> extends SerializableDurableOperation<T
     }
 
     private CompletableFuture<Void> pollReadyAndResumeCheckLoop(Operation existing) {
-        return pollForOperationUpdates()
-                .thenCompose(op -> op.status() == OperationStatus.READY
-                        ? CompletableFuture.completedFuture(op)
-                        : pollForOperationUpdates())
-                .thenAccept(this::resumeCheckLoop);
+        return pollUntilReady()
+                .thenCompose(op -> executionManager.runCheckpointContinuation(this, () -> {
+                    if (!isOperationCompleted() && op.status() == OperationStatus.READY) resumeCheckLoop(op);
+                }));
+    }
+
+    private CompletableFuture<Operation> pollUntilReady() {
+        var known = getOperation();
+        if (isReadyOrTerminal(known)) return CompletableFuture.completedFuture(known);
+        var update = pollForOperationUpdates();
+        // Register before re-reading: another checkpoint may already have delivered READY before this poll existed.
+        known = getOperation();
+        if (isReadyOrTerminal(known)) {
+            update.complete(known);
+            return CompletableFuture.completedFuture(known);
+        }
+        return update.thenCompose(
+                op -> isReadyOrTerminal(op) ? CompletableFuture.completedFuture(op) : pollUntilReady());
+    }
+
+    private boolean isReadyOrTerminal(Operation operation) {
+        if (operation == null) return false;
+        var status = operation.status();
+        if (status == null || status == OperationStatus.UNKNOWN_TO_SDK_VERSION) {
+            throw terminateExecutionWithIllegalDurableOperationException(
+                    "Unexpected waitForCondition status: " + operation.statusAsString());
+        }
+        return status == OperationStatus.READY || ExecutionManager.isTerminalStatus(status);
     }
 
     private void executeCheckLogic(T currentState, int attempt) {
-        Runnable userHandler = () -> {
+        var publishedWorker = new CompletableFuture<CompletableFuture<?>>();
+        runUserHandler(() -> runCheckLoop(currentState, attempt, publishedWorker), ThreadType.STEP);
+        publishedWorker.complete(getRunningUserHandler());
+    }
+
+    private void runCheckLoop(T currentState, int attempt, CompletableFuture<CompletableFuture<?>> publishedWorker) {
+        if (!isOperationCompleted()) {
             var stepContext = getContext().createStepContext(getOperationId(), getName(), attempt);
             BaseContextImpl.setCurrentContext(stepContext);
             try (var ignored = DurableLogger.attachContext()) {
                 try {
-                    // Checkpoint START if not already started
                     var existing = getOperation();
                     if (existing == null || existing.status() != OperationStatus.STARTED) {
-                        var startUpdate = OperationUpdate.builder().action(OperationAction.START);
-                        sendOperationUpdateAsync(startUpdate);
+                        sendOperationUpdateAsync(OperationUpdate.builder().action(OperationAction.START));
                     }
-
-                    // Execute check function inside the plugin hook boundary so a failure is reported
-                    // through onUserFunctionEnd; checkpoint/poll handling stays outside the boundary.
-                    WaitForConditionResult<T> result =
-                            runUserFunction(attempt, () -> checkFunc.apply(currentState, stepContext));
-
-                    // Normalize the value through SerDes so first execution matches replay.
+                    var stateForCheck = currentState;
+                    var result = runUserFunction(attempt, () -> checkFunc.apply(stateForCheck, stepContext));
                     var serializedState = serializeAndDeserializeResult(result.value());
-                    T deserializedValue = serializedState.deserialized();
-
+                    var deserializedValue = serializedState.deserialized();
                     if (result.isDone()) {
-                        // Condition met — checkpoint SUCCEED
-                        var successUpdate = OperationUpdate.builder()
+                        sendOperationUpdate(OperationUpdate.builder()
                                 .action(OperationAction.SUCCEED)
-                                .payload(serializedState.serialized());
-                        sendOperationUpdate(successUpdate);
-                    } else {
-                        // Compute delay from strategy
-                        Duration delay = config.waitStrategy().evaluate(deserializedValue, attempt);
-
-                        // Checkpoint RETRY with delay
-                        var retryUpdate = OperationUpdate.builder()
-                                .action(OperationAction.RETRY)
-                                .payload(serializedState.serialized())
-                                .stepOptions(StepOptions.builder()
-                                        .nextAttemptDelaySeconds(Math.toIntExact(delay.toSeconds()))
-                                        .build());
-                        sendOperationUpdate(retryUpdate);
-
-                        // Poll for READY, then continue the loop
-                        pollForOperationUpdates()
-                                .thenCompose(op -> op.status() == OperationStatus.READY
-                                        ? CompletableFuture.completedFuture(op)
-                                        : pollForOperationUpdates())
-                                .thenRun(() -> executeCheckLogic(deserializedValue, attempt + 1));
+                                .payload(serializedState.serialized()));
+                        return;
                     }
-                } catch (Throwable e) {
-                    handleCheckFailure(e);
+                    Duration delay = config.waitStrategy().evaluate(deserializedValue, attempt);
+                    sendOperationUpdate(OperationUpdate.builder()
+                            .action(OperationAction.RETRY)
+                            .payload(serializedState.serialized())
+                            .stepOptions(StepOptions.builder()
+                                    .nextAttemptDelaySeconds(Math.toIntExact(delay.toSeconds()))
+                                    .build()));
+                    // Retire even when READY is already available, so a queued sibling can run on a bounded executor.
+                    // The coordinator owns activity until this worker finishes and the next attempt is registered.
+                    continueAfterCurrentWorker(publishedWorker, deserializedValue, attempt + 1);
+                } catch (Throwable failure) {
+                    handleCheckFailure(failure);
+                    return;
                 }
             }
-        };
+        }
+    }
 
-        runUserHandler(userHandler, ThreadType.STEP);
+    private void continueAfterCurrentWorker(
+            CompletableFuture<CompletableFuture<?>> publishedWorker, T nextState, int nextAttempt) {
+        pollUntilReady()
+                .thenCompose(op -> executionManager.runCheckpointContinuation(this, () -> {
+                    publishedWorker.join().join();
+                    if (!isOperationCompleted() && op.status() == OperationStatus.READY)
+                        executeCheckLogic(nextState, nextAttempt);
+                }));
     }
 
     private void handleCheckFailure(Throwable exception) {

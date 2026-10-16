@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.exception;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
@@ -37,6 +38,20 @@ class CallbackExceptionTest {
         assertEquals(OPERATION, exception.getOperation());
         assertEquals(ERROR_OBJECT, exception.getErrorObject());
         assertEquals("MyErrorType: MyErrorMessage", exception.getMessage());
+    }
+
+    @Test
+    void testCallbackFailedExceptionWithoutError() {
+        var operation = Operation.builder()
+                .callbackDetails(
+                        CallbackDetails.builder().callbackId(CALLBACK_ID).build())
+                .build();
+
+        var exception = new CallbackFailedException(operation);
+        assertEquals(CALLBACK_ID, exception.getCallbackId());
+        assertEquals(operation, exception.getOperation());
+        assertNull(exception.getErrorObject());
+        assertEquals("Callback failed", exception.getMessage());
     }
 
     @Test

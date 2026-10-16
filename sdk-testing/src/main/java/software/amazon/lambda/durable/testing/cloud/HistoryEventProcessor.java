@@ -37,6 +37,15 @@ public class HistoryEventProcessor {
      * @return a TestResult containing the execution status, output, and operation details
      */
     public <O> TestResult<O> processEvents(List<Event> events, TypeToken<O> outputType, SerDes serDes) {
+        return processEvents(events, outputType, serDes, null);
+    }
+
+    /**
+     * Processes execution history with its durable execution ARN so operation inspection can invoke context-aware
+     * serializers. The handler result continues using the runner's global serializer.
+     */
+    public <O> TestResult<O> processEvents(
+            List<Event> events, TypeToken<O> outputType, SerDes serDes, String executionArn) {
         var operations = new HashMap<String, Operation>();
         var operationEvents = new HashMap<String, List<Event>>();
         var status = ExecutionStatus.PENDING;
@@ -236,7 +245,7 @@ public class HistoryEventProcessor {
         var testOperations = new ArrayList<TestOperation>();
         for (var entry : operations.entrySet()) {
             var opEvents = operationEvents.getOrDefault(entry.getKey(), List.of());
-            testOperations.add(new TestOperation(entry.getValue(), opEvents, serDes));
+            testOperations.add(new TestOperation(entry.getValue(), opEvents, serDes, executionArn));
         }
 
         return new TestResult<>(status, result, error, testOperations, events, outputType, serDes);
@@ -311,50 +320,48 @@ public class HistoryEventProcessor {
     private Operation createInvokeOperation(String id, Event event) {
         var builder = ChainedInvokeDetails.builder();
 
-        OperationStatus status =
-                switch (event.eventType()) {
-                    case CHAINED_INVOKE_STARTED -> OperationStatus.STARTED;
-                    case CHAINED_INVOKE_SUCCEEDED -> {
-                        var details = event.callbackSucceededDetails();
-                        if (details != null
-                                && details.result() != null
-                                && details.result().payload() != null) {
-                            builder.result(details.result().payload());
-                        }
-                        yield OperationStatus.SUCCEEDED;
-                    }
-                    case CHAINED_INVOKE_FAILED -> {
-                        var details = event.callbackFailedDetails();
-                        if (details != null
-                                && details.error() != null
-                                && details.error().payload() != null) {
-                            builder.error(details.error().payload());
-                        }
-                        yield OperationStatus.FAILED;
-                    }
-                    case CHAINED_INVOKE_STOPPED -> {
-                        var details = event.chainedInvokeStoppedDetails();
-                        if (details != null
-                                && details.error() != null
-                                && details.error().payload() != null) {
-                            builder.error(details.error().payload());
-                        }
+        OperationStatus status = switch (event.eventType()) {
+            case CHAINED_INVOKE_STARTED -> OperationStatus.STARTED;
+            case CHAINED_INVOKE_SUCCEEDED -> {
+                var details = event.callbackSucceededDetails();
+                if (details != null
+                        && details.result() != null
+                        && details.result().payload() != null) {
+                    builder.result(details.result().payload());
+                }
+                yield OperationStatus.SUCCEEDED;
+            }
+            case CHAINED_INVOKE_FAILED -> {
+                var details = event.callbackFailedDetails();
+                if (details != null
+                        && details.error() != null
+                        && details.error().payload() != null) {
+                    builder.error(details.error().payload());
+                }
+                yield OperationStatus.FAILED;
+            }
+            case CHAINED_INVOKE_STOPPED -> {
+                var details = event.chainedInvokeStoppedDetails();
+                if (details != null
+                        && details.error() != null
+                        && details.error().payload() != null) {
+                    builder.error(details.error().payload());
+                }
 
-                        yield OperationStatus.STOPPED;
-                    }
-                    case CHAINED_INVOKE_TIMED_OUT -> {
-                        var details = event.chainedInvokeTimedOutDetails();
-                        if (details != null
-                                && details.error() != null
-                                && details.error().payload() != null) {
-                            builder.error(details.error().payload());
-                        }
-                        yield OperationStatus.TIMED_OUT;
-                    }
-                    default ->
-                        throw new UnsupportedOperationException(
-                                "Unknown chained invocation operation: " + event.eventType());
-                };
+                yield OperationStatus.STOPPED;
+            }
+            case CHAINED_INVOKE_TIMED_OUT -> {
+                var details = event.chainedInvokeTimedOutDetails();
+                if (details != null
+                        && details.error() != null
+                        && details.error().payload() != null) {
+                    builder.error(details.error().payload());
+                }
+                yield OperationStatus.TIMED_OUT;
+            }
+            default ->
+                throw new UnsupportedOperationException("Unknown chained invocation operation: " + event.eventType());
+        };
 
         return Operation.builder()
                 .id(id)

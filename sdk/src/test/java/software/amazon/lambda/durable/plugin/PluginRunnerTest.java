@@ -12,6 +12,68 @@ import org.junit.jupiter.api.Test;
 
 class PluginRunnerTest {
 
+    @Test
+    void exclusiveGroupsRejectDifferentImplementationsButAllowUnrelatedPlugins() {
+        var exclusive = new ExclusivePlugin();
+        var error = assertThrows(
+                IllegalStateException.class, () -> new PluginRunner(List.of(exclusive, new ConflictingPlugin())));
+        assertTrue(error.getMessage().startsWith("Dynamic plugin configuration failed: "));
+        assertDoesNotThrow(() -> new PluginRunner(List.of(exclusive, new DurableExecutionPlugin() {})));
+    }
+
+    @Test
+    void repeatedExclusiveImplementationRegistrationsAreRejected() {
+        var first = new ExclusivePlugin();
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(first, new ExclusivePlugin())));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(first, first)));
+        assertEquals(0, first.starts);
+    }
+
+    @Test
+    void repeatedUnrelatedRegistrationsRetainTheirHooks() {
+        var calls = new ArrayList<String>();
+        var plugin = new TestPlugin("same", calls);
+        new PluginRunner(List.of(plugin, plugin)).onInvocationStart(invocationInfo());
+        assertEquals(List.of("same:onInvocationStart", "same:onInvocationStart"), calls);
+    }
+
+    @Test
+    void subclassMetadataAddsToEveryInheritedGroup() {
+        var subclass = new ReannotatedPlugin();
+        assertDoesNotThrow(() -> new PluginRunner(List.of(subclass)));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(subclass, new ConflictingPlugin())));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(subclass, new CustomGroupPlugin())));
+    }
+
+    @Test
+    void repeatedGroupInHierarchyDoesNotConflictWithItself() {
+        var subclass = new RepeatedGroupPlugin();
+        assertDoesNotThrow(() -> new PluginRunner(List.of(subclass)));
+        assertThrows(IllegalStateException.class, () -> new PluginRunner(List.of(subclass, new CustomGroupPlugin())));
+    }
+
+    @ExclusivePluginGroup("example")
+    private static class ExclusivePlugin implements DurableExecutionPlugin {
+        private int starts;
+
+        @Override
+        public void onInvocationStart(InvocationInfo info) {
+            starts++;
+        }
+    }
+
+    @ExclusivePluginGroup("example")
+    private static class ConflictingPlugin implements DurableExecutionPlugin {}
+
+    @ExclusivePluginGroup("custom")
+    private static class ReannotatedPlugin extends ExclusivePlugin {}
+
+    @ExclusivePluginGroup("custom")
+    private static class CustomGroupPlugin implements DurableExecutionPlugin {}
+
+    @ExclusivePluginGroup("example")
+    private static class RepeatedGroupPlugin extends ReannotatedPlugin {}
+
     // ─── No-op / empty behavior ──────────────────────────────────────────
 
     @Test
@@ -93,7 +155,7 @@ class PluginRunnerTest {
     // ─── Awaited hooks ───────────────────────────────────────────────────
 
     @Test
-    void awaitedHooks_callAllPlugins() {
+    void invocationEnd_unwindsPluginsInReverseRegistrationOrder() {
         var calls = new ArrayList<String>();
         var plugin1 = new TestPlugin("p1", calls);
         var plugin2 = new TestPlugin("p2", calls);
@@ -101,7 +163,35 @@ class PluginRunnerTest {
 
         runner.onInvocationEnd(invocationEndInfo());
 
-        assertEquals(List.of("p1:onInvocationEnd", "p2:onInvocationEnd"), calls);
+        assertEquals(List.of("p2:onInvocationEnd", "p1:onInvocationEnd"), calls);
+    }
+
+    @SuppressWarnings("removal")
+    @Test
+    void invocationEnd_runsRemainingCleanupThenRethrowsTheFirstError() {
+        for (var firstFailure :
+                List.of(new InternalError("fatal"), new AssertionError("assertion"), new ThreadDeath())) {
+            var calls = new ArrayList<String>();
+            var inner = new TestPlugin("inner", calls) {
+                @Override
+                public void onInvocationEnd(InvocationEndInfo info) {
+                    super.onInvocationEnd(info);
+                    throw firstFailure;
+                }
+            };
+            var laterFailure = new AssertionError("later cleanup failure");
+            var middle = new TestPlugin("middle", calls) {
+                @Override
+                public void onInvocationEnd(InvocationEndInfo info) {
+                    super.onInvocationEnd(info);
+                    throw laterFailure;
+                }
+            };
+            var runner = new PluginRunner(List.of(new TestPlugin("outer", calls), middle, inner));
+            assertSame(firstFailure, assertThrows(Error.class, () -> runner.onInvocationEnd(invocationEndInfo())));
+            assertEquals(List.of(laterFailure), List.of(firstFailure.getSuppressed()));
+            assertEquals(List.of("inner:onInvocationEnd", "middle:onInvocationEnd", "outer:onInvocationEnd"), calls);
+        }
     }
 
     @Test
@@ -109,7 +199,7 @@ class PluginRunnerTest {
         var calls = new ArrayList<String>();
         var throwingPlugin = new ThrowingPlugin();
         var normalPlugin = new TestPlugin("p2", calls);
-        var runner = new PluginRunner(List.of(throwingPlugin, normalPlugin));
+        var runner = new PluginRunner(List.of(normalPlugin, throwingPlugin));
 
         assertDoesNotThrow(() -> runner.onInvocationEnd(invocationEndInfo()));
         assertEquals(List.of("p2:onInvocationEnd"), calls);

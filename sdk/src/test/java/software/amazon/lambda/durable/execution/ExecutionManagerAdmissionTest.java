@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -16,7 +17,7 @@ import static org.mockito.Mockito.when;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -158,9 +159,13 @@ class ExecutionManagerAdmissionTest {
     void finalCheckpointFlushCannotAdmitMoreCheckpointsOrPolls() throws Exception {
         when(client.checkpoint(any(), any(), any())).thenAnswer(invocation -> {
             assertThrows(RejectedExecutionException.class, () -> manager.sendOperationUpdate(update()));
-            assertThrows(RejectedExecutionException.class, () -> manager.pollForOperationUpdates("late"));
-            assertThrows(
-                    RejectedExecutionException.class, () -> manager.pollForOperationUpdates("late", Instant.now()));
+            for (var poll : List.of(
+                    manager.pollForOperationUpdates("late"), manager.pollForOperationUpdates("late", Instant.now()))) {
+                assertTrue(poll.isCompletedExceptionally());
+                assertInstanceOf(
+                        SuspendExecutionException.class,
+                        assertThrows(CompletionException.class, poll::join).getCause());
+            }
             return response();
         });
         var checkpoint = manager.sendOperationUpdate(update());
@@ -227,10 +232,12 @@ class ExecutionManagerAdmissionTest {
     @Test
     void inlineNestedInvocationCannotUseItsCallersDrainingPermission() throws Exception {
         var inline = mock(ExecutorService.class);
-        when(inline.submit(any(Runnable.class))).thenAnswer(invocation -> {
-            invocation.getArgument(0, Runnable.class).run();
-            return CompletableFuture.completedFuture(null);
-        });
+        doAnswer(invocation -> {
+                    invocation.getArgument(0, Runnable.class).run();
+                    return null;
+                })
+                .when(inline)
+                .execute(any(Runnable.class));
         when(config.getExecutorService()).thenReturn(inline);
         var other = createManager();
         var parent = contextOperation("parent", OperationSubType.RUN_IN_CHILD_CONTEXT);

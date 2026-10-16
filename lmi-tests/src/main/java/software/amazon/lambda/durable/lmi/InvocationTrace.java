@@ -15,6 +15,7 @@ import software.amazon.lambda.durable.serde.JacksonSerDes;
 /** Observes Java stack boundaries, independently of logical future completion. */
 final class InvocationTrace {
     static final String ENVIRONMENT = UUID.randomUUID().toString();
+    private static final Object EVENT_LOCK = new Object();
     private static final AtomicLong SEQUENCE = new AtomicLong();
     private static final AtomicInteger LIVE_ROOTS = new AtomicInteger();
     private static final AtomicInteger LIVE_TASKS = new AtomicInteger();
@@ -37,37 +38,49 @@ final class InvocationTrace {
     }
 
     void wrapperEnter() {
-        LIVE_WRAPPERS.incrementAndGet();
-        event("WRAPPER_ENTER");
+        synchronized (EVENT_LOCK) {
+            LIVE_WRAPPERS.incrementAndGet();
+            event("WRAPPER_ENTER");
+        }
     }
 
     void rootEnter() {
-        LIVE_ROOTS.incrementAndGet();
-        event("ROOT_ENTER");
+        synchronized (EVENT_LOCK) {
+            LIVE_ROOTS.incrementAndGet();
+            event("ROOT_ENTER");
+        }
     }
 
     void rootExit() {
-        rootExited = true;
-        LIVE_ROOTS.decrementAndGet();
-        event("ROOT_EXIT");
+        synchronized (EVENT_LOCK) {
+            rootExited = true;
+            LIVE_ROOTS.decrementAndGet();
+            event("ROOT_EXIT");
+        }
     }
 
     void taskEnter(String name) {
-        tasks.incrementAndGet();
-        LIVE_TASKS.incrementAndGet();
-        event("TASK_ENTER", Map.of("name", name));
+        synchronized (EVENT_LOCK) {
+            tasks.incrementAndGet();
+            LIVE_TASKS.incrementAndGet();
+            event("TASK_ENTER", Map.of("name", name));
+        }
     }
 
     void taskExit(String name) {
-        tasks.decrementAndGet();
-        LIVE_TASKS.decrementAndGet();
-        event("TASK_EXIT", Map.of("name", name));
+        synchronized (EVENT_LOCK) {
+            tasks.decrementAndGet();
+            LIVE_TASKS.decrementAndGet();
+            event("TASK_EXIT", Map.of("name", name));
+        }
     }
 
     void wrapperExit(String status) {
-        wrapperReturned = true;
-        LIVE_WRAPPERS.decrementAndGet();
-        event("WRAPPER_RETURN", Map.of("status", status));
+        synchronized (EVENT_LOCK) {
+            wrapperReturned = true;
+            LIVE_WRAPPERS.decrementAndGet();
+            event("WRAPPER_RETURN", Map.of("status", status));
+        }
     }
 
     void snapshot(ThreadPoolExecutor pool) {
@@ -93,7 +106,14 @@ final class InvocationTrace {
         return apiCallSequence.incrementAndGet();
     }
 
-    synchronized void event(String kind, Map<String, ?> details) {
+    void event(String kind, Map<String, ?> details) {
+        synchronized (EVENT_LOCK) {
+            writeEvent(kind, details);
+        }
+    }
+
+    // All boundary mutations, sequence assignment and counter snapshots share the same JVM-wide lock.
+    private void writeEvent(String kind, Map<String, ?> details) {
         var data = new LinkedHashMap<String, Object>();
         data.put("kind", kind);
         data.put("environment", ENVIRONMENT);

@@ -12,6 +12,7 @@ import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
+import software.amazon.lambda.durable.plugin.ExclusivePluginGroup;
 
 final class DynamicPluginLoader {
     static final String PLUGINS_ENVIRONMENT_VARIABLE = "DURABLE_EXECUTION_PLUGINS";
@@ -46,7 +47,7 @@ final class DynamicPluginLoader {
         var providersByName = indexProviders(providers);
         var plugins = new ArrayList<DurableExecutionPlugin>();
         for (var name : requestedNames) {
-            addPlugin(name, getProvider(name, providersByName), plugins);
+            addPlugin(name, getProvider(name, providersByName), plugins, explicitPlugins);
         }
         plugins.addAll(explicitPlugins);
         return List.copyOf(plugins);
@@ -122,8 +123,17 @@ final class DynamicPluginLoader {
     }
 
     private static void addPlugin(
-            String name, DurableExecutionPluginProvider provider, List<DurableExecutionPlugin> plugins) {
+            String name,
+            DurableExecutionPluginProvider provider,
+            List<DurableExecutionPlugin> plugins,
+            List<DurableExecutionPlugin> explicitPlugins) {
         var pluginType = validateProvider(name, provider);
+        // Released test runners copy resolved instances through the ordinary builder. Reuse their explicit
+        // exclusive instance instead of constructing another; unrelated multi-instance registrations stay valid.
+        if (pluginType.isAnnotationPresent(ExclusivePluginGroup.class)
+                && explicitPlugins.stream().anyMatch(plugin -> plugin.getClass() == pluginType)) {
+            return;
+        }
         var plugin = createPlugin(name, provider);
         if (!pluginType.isInstance(plugin)) {
             throw configurationError("Plugin provider '" + name + "' declared type '" + pluginType.getName()

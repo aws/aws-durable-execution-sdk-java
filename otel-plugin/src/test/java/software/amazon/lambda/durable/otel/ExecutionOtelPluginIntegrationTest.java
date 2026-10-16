@@ -144,17 +144,15 @@ class ExecutionOtelPluginIntegrationTest {
     }
 
     @Test
-    void wrappedAgentProvider_withRootDroppingSampler_keepsExecutionTreeConsistentlySampled() {
-        // The agent provider is hidden behind a classloader wrapper, so the plugin cannot reach the sampler and the
-        // bridge published nothing. With no reachable decision, the synthetic execution root is treated as sampled so
-        // the execution root and everything parented onto it are sampled together — no orphan operation spans exported
-        // under a dropped root.
+    void wrappedAgentProvider_withInstalledRootDroppingSampler_keepsExecutionTreeDropped() {
+        // The documented agent customizer retains DurableSampler as the final sampler. Its actual delegate's
+        // root DROP decision must apply to the fallback anchor and descendants, including behind an opaque provider.
         OtelPluginAutoConfigurationState.markInstalled();
         GlobalOpenTelemetry.resetForTest();
         var globalExporter = InMemorySpanExporter.create();
         var sdkTracerProvider = SdkTracerProvider.builder()
                 .setIdGenerator(new DeterministicIdGenerator())
-                .setSampler(Sampler.parentBased(Sampler.alwaysOff()))
+                .setSampler(DurableSampler.wrap(Sampler.parentBased(Sampler.alwaysOff())))
                 .addSpanProcessor(SimpleSpanProcessor.create(globalExporter))
                 .build();
         var javaAgentTracerProvider = new FakeJavaAgentTracerProvider(sdkTracerProvider);
@@ -180,18 +178,10 @@ class ExecutionOtelPluginIntegrationTest {
         var result = runner.runUntilComplete("World");
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
 
-        var spans = globalExporter.getFinishedSpanItems();
-        assertSpanExists(spans, "Workflow");
-        assertSpanExists(spans, "wrapped-step");
-        var workflowTraceId = spans.stream()
-                .filter(s -> s.getName().equals("Workflow"))
-                .findFirst()
-                .orElseThrow()
-                .getTraceId();
-        // Every exported span is on the one execution trace: the root and its children are sampled consistently.
         assertTrue(
-                spans.stream().allMatch(s -> s.getTraceId().equals(workflowTraceId)),
-                "All spans share the sampled execution trace");
+                globalExporter.getFinishedSpanItems().isEmpty(),
+                "The installed sampler's root DROP policy must not force-sample an execution tree");
+        sdkTracerProvider.close();
     }
 
     // Helpers

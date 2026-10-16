@@ -48,6 +48,7 @@ class StepOperationTest {
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
         TestUtils.executeOperationTasks(executionManager, durableContext);
+        MockExecutionManagerSupport.completeOperationsOnManager(executionManager);
     }
 
     private void mockFailedOperation(
