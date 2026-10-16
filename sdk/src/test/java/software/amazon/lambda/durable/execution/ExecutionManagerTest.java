@@ -4,7 +4,10 @@ package software.amazon.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
@@ -12,6 +15,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -24,6 +28,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -46,6 +51,9 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.OperationChangeInfo;
+import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 
 class ExecutionManagerTest {
     private static final String EXECUTION_OP_ID = "01234567-0123-0123-0123-012345678901";
@@ -55,13 +63,16 @@ class ExecutionManagerTest {
 
     private DurableExecutionClient client;
 
-    private ExecutionManager createManager(List<Operation> operations) {
+    private ExecutionManager createManager(List<Operation> operations, DurableExecutionPlugin... plugins) {
         client = TestUtils.createMockClient();
         var initialState =
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
         return new ExecutionManager(
                 new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState),
-                DurableConfig.builder().withDurableExecutionClient(client).build(),
+                DurableConfig.builder()
+                        .withDurableExecutionClient(client)
+                        .withPlugins(plugins)
+                        .build(),
                 null);
     }
 
@@ -504,6 +515,79 @@ class ExecutionManagerTest {
         assertEquals(
                 OperationStatus.SUCCEEDED,
                 manager.getOperationAndUpdateReplayState("step").status());
+    }
+
+    @Test
+    void checkpointWithoutPluginsSkipsOperationChangeInfo() {
+        try (var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)))) {
+            var operation = registerStepOperation(manager);
+            try (var converter = mockStatic(PluginInfoConverter.class, CALLS_REAL_METHODS)) {
+                manager.onCheckpointComplete(
+                        List.of(stepOp("step", OperationStatus.SUCCEEDED), stepOp("other", OperationStatus.SUCCEEDED)));
+
+                converter.verify(
+                        () -> PluginInfoConverter.toOperationChangeInfo(any(), any(), any(), any(), any()), never());
+            }
+
+            // The checkpoint still stores every operation and completes the waiting operation.
+            assertTrue(operation.getCompletionFuture().isDone());
+            assertEquals(
+                    Map.of(
+                            EXECUTION_OP_ID,
+                            OperationStatus.STARTED,
+                            "step",
+                            OperationStatus.SUCCEEDED,
+                            "other",
+                            OperationStatus.SUCCEEDED),
+                    statusesById(manager));
+        }
+    }
+
+    @Test
+    void checkpointWithPluginReportsEachStatusChangeOnce() {
+        var changes = new ArrayList<OperationChangeInfo>();
+        var plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onOperationChange(OperationChangeInfo info) {
+                changes.add(info);
+            }
+        };
+        try (var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)), plugin)) {
+            var response = List.of(stepOp("step", OperationStatus.SUCCEEDED), stepOp("other", OperationStatus.STARTED));
+            manager.onCheckpointComplete(response);
+            // The same response again changes no status, so it reports no change.
+            manager.onCheckpointComplete(response);
+
+            assertEquals(1, changes.size());
+            var change = changes.get(0);
+            assertEquals(Set.of("step", "other"), change.updatedOperations().keySet());
+            assertEquals(
+                    OperationStatus.SUCCEEDED,
+                    change.updatedOperations().get("step").status());
+            assertEquals(
+                    Set.of(EXECUTION_OP_ID, "step", "other"),
+                    change.operations().keySet());
+            assertEquals(
+                    OperationStatus.STARTED, change.operations().get("other").status());
+        }
+    }
+
+    /** Registers a step operation with the manager, so a checkpoint that reports "step" notifies it. */
+    private BaseDurableOperation registerStepOperation(ExecutionManager manager) {
+        var durableContext = mock(DurableContextImpl.class);
+        when(durableContext.getExecutionManager()).thenReturn(manager);
+        return new BaseDurableOperation(
+                OperationIdentifier.of("step", "step", OperationSubType.STEP), durableContext, null) {
+            @Override
+            protected void start() {}
+
+            @Override
+            protected void replay(Operation existing) {}
+        };
+    }
+
+    private static Map<String, OperationStatus> statusesById(ExecutionManager manager) {
+        return manager.getOperationsSnapshot().stream().collect(Collectors.toMap(Operation::id, Operation::status));
     }
 
     @Test
