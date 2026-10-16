@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -19,6 +20,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
@@ -29,6 +31,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -264,6 +268,72 @@ class ExecutionManagerLifecycleTest {
             stop(executor);
             stop(cancelling);
             manager.close();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void selectedResultCannotBeOvertakenByCancellationBeforePublication(boolean failAction) throws Exception {
+        var executor = Executors.newSingleThreadExecutor();
+        var publishing = new CountDownLatch(1);
+        var releasePublication = new CountDownLatch(1);
+        var expectedFailure = new IllegalStateException("selected failure");
+        var completion = new CompletableFuture<String>() {
+            private void waitBeforePublication() {
+                publishing.countDown();
+                boolean interrupted = false;
+                while (releasePublication.getCount() > 0) {
+                    try {
+                        releasePublication.await();
+                    } catch (InterruptedException ignored) {
+                        interrupted = true;
+                    }
+                }
+                if (interrupted) Thread.currentThread().interrupt();
+            }
+
+            @Override
+            public boolean complete(String value) {
+                waitBeforePublication();
+                return super.complete(value);
+            }
+
+            @Override
+            public boolean completeExceptionally(Throwable failure) {
+                waitBeforePublication();
+                return super.completeExceptionally(failure);
+            }
+        };
+        var task = new ExecutorTaskHandle<String>(1, ExecutorTaskHandle.Role.ROOT, null, () -> {});
+        // Hold publication after the worker selected its outcome, before CompletableFuture runs observers.
+        var completionField = ExecutorTaskHandle.class.getDeclaredField("completion");
+        completionField.setAccessible(true);
+        completionField.set(task, completion);
+        var execution = new FutureTask<Void>(
+                () -> task.run(() -> {
+                    if (failAction) throw expectedFailure;
+                    return "selected value";
+                }),
+                null);
+        task.bindExecution(execution);
+        try {
+            executor.execute(execution);
+            assertTrue(publishing.await(5, TimeUnit.SECONDS));
+            assertFalse(task.cancel(true), "A selected result must win before its observers are published");
+            assertFalse(execution.isCancelled());
+            assertFalse(completion.isDone());
+            assertFalse(task.exit().isDone(), "Outcome selection is not actual wrapper exit");
+            releasePublication.countDown();
+            if (failAction) {
+                var failure = assertThrows(ExecutionException.class, () -> completion.get(5, TimeUnit.SECONDS));
+                assertSame(expectedFailure, failure.getCause());
+            } else {
+                assertEquals("selected value", completion.get(5, TimeUnit.SECONDS));
+            }
+            task.exit().get(5, TimeUnit.SECONDS);
+        } finally {
+            releasePublication.countDown();
+            stop(executor);
         }
     }
 
