@@ -23,7 +23,8 @@ public interface DurableExecutionPlugin {
      * thread.
      *
      * <p>Check {@link InvocationInfo#isFirstInvocation()} to detect the first invocation of an execution (useful for
-     * sampling decisions or execution-level span creation).
+     * sampling decisions or execution-level span creation). The immutable runtime header snapshot is available through
+     * {@link InvocationInfo#xRayTraceId()}.
      */
     default void onInvocationStart(InvocationInfo info) {}
 

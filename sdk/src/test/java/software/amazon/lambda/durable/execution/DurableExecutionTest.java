@@ -19,6 +19,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -76,6 +77,92 @@ class DurableExecutionTest {
         return DurableConfig.builder()
                 .withDurableExecutionClient(TestUtils.createMockClient())
                 .build();
+    }
+
+    @Test
+    void capturesTraceHeaderOnRuntimeThreadBeforeDispatch() {
+        var runtimeThread = Thread.currentThread();
+        var header = "Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=0";
+        var lambdaContext = mock(RuntimeContext.class);
+        when(lambdaContext.getXrayTraceId()).thenAnswer(ignored -> {
+            assertEquals(runtimeThread, Thread.currentThread());
+            return header;
+        });
+        when(lambdaContext.getRemainingTimeInMillis()).thenReturn(30000);
+        var seen = new AtomicReference<String>();
+        var plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationStart(InvocationInfo info) {
+                assertFalse(runtimeThread == Thread.currentThread());
+                seen.set(info.xRayTraceId());
+            }
+        };
+        var executionOp = Operation.builder()
+                .id(EXECUTION_OP_ID)
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
+                .executionDetails(
+                        ExecutionDetails.builder().inputPayload("\"input\"").build())
+                .build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(executionOp)
+                        .build());
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withPlugins(plugin)
+                .build();
+        var output = DurableExecutor.execute(input, lambdaContext, get(String.class), (value, ctx) -> value, config);
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertEquals(header, seen.get());
+    }
+
+    @Test
+    void optionalTraceAccessorFailureDoesNotAbortHandler() {
+        var lambdaContext = mock(RuntimeContext.class);
+        when(lambdaContext.getRemainingTimeInMillis()).thenReturn(30000);
+        when(lambdaContext.getXrayTraceId()).thenThrow(new SecurityException("access denied"));
+        var seen = new AtomicReference<InvocationInfo>();
+        var plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationStart(InvocationInfo info) {
+                seen.set(info);
+            }
+        };
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withPlugins(plugin)
+                .build();
+        var output = DurableExecutor.execute(
+                traceCaptureInput(), lambdaContext, get(String.class), (value, ctx) -> "done " + value, config);
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertEquals("\"done test-input\"", output.result());
+        assertNotNull(seen.get());
+        assertEquals("", seen.get().xRayTraceId());
+    }
+
+    @Test
+    void noPluginsDoesNotAccessRuntimeTraceCarrier() {
+        var lambdaContext = mock(RuntimeContext.class);
+        when(lambdaContext.getRemainingTimeInMillis()).thenReturn(30000);
+        when(lambdaContext.getXrayTraceId()).thenThrow(new AssertionError("accessor must not be invoked"));
+        var output = DurableExecutor.execute(
+                traceCaptureInput(), lambdaContext, get(String.class), (value, ctx) -> value, configWithMockClient());
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertEquals("\"test-input\"", output.result());
+        verify(lambdaContext, never()).getXrayTraceId();
+    }
+
+    private DurableExecutionInput traceCaptureInput() {
+        return new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(executionOp())
+                        .build());
     }
 
     @Test
@@ -484,6 +571,13 @@ class DurableExecutionTest {
         // Verify both executions completed successfully and used the same executor
         assertTrue(output1.result().contains("Result 1: test-input-1"));
         assertTrue(output2.result().contains("Result 2: test-input-2"));
+    }
+
+    private abstract static class RuntimeContext implements Context {
+        @Override
+        public String getXrayTraceId() {
+            return null;
+        }
     }
 
     private enum OperationKind {

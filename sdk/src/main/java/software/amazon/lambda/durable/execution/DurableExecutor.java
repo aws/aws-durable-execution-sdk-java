@@ -99,6 +99,7 @@ public class DurableExecutor {
         private final String requestId;
         private final String executionArn;
         private final boolean isFirstInvocation;
+        private final String xRayTraceId;
         private I userInput;
         private boolean started;
 
@@ -118,6 +119,8 @@ public class DurableExecutor {
             requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             executionArn = input.durableExecutionArn();
             isFirstInvocation = !manager.isReplaying();
+            // Capture on the runtime caller before scheduling the handler; LMI carriers can be thread-local.
+            xRayTraceId = plugins.isEmpty() ? null : RuntimeTraceHeader.capture(lambdaContext);
         }
 
         private CompletableFuture<DurableExecutionOutput> execute() {
@@ -176,7 +179,8 @@ public class DurableExecutor {
                     PluginInfoConverter.toOperationItemMap(
                             manager.getOperationsSnapshot(), manager.getInitialOperationIds()),
                     PluginInfoConverter.toOperationItemMap(
-                            manager.getUpdatedOperationsSnapshot(), manager.getInitialOperationIds()));
+                            manager.getUpdatedOperationsSnapshot(), manager.getInitialOperationIds()),
+                    xRayTraceId);
             started = true;
             plugins.onInvocationStart(info);
         }

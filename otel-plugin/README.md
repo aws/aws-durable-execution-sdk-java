@@ -245,6 +245,43 @@ aws lambda update-function-configuration \
 
 Build the plugin layer ZIP with the OTel plugin JAR at `java/lib/aws-durable-execution-sdk-java-plugin-otel-<version>.jar`. Lambda adds JARs in this directory to the Java class path. Set `OTEL_JAVAAGENT_EXTENSIONS` to the deployed JAR so the ADOT Java agent also loads its `AutoConfigurationCustomizerProvider`, and set `DURABLE_EXECUTION_PLUGINS=otel-invocation` so the Durable Execution SDK loads its `InvocationOtelPluginProvider`.
 
+### Invocation-local headers on Lambda Managed Instances
+
+The SDK captures `Context.getXrayTraceId()` before dispatching the handler to a worker thread and stores the immutable
+snapshot in `InvocationInfo.xRayTraceId` when the worker constructs the invocation information. Startup remains `onInvocationStart(InvocationInfo)`; extractors receive the
+same object through `ContextExtractor.extract(InvocationInfo)`. There is no independent header parameter.
+
+The default extractor prefers this field, preserving Root, Parent and Sampled. A null field denotes an unavailable
+runtime carrier (including an inherited neutral Lambda Context default) or a legacy constructor call, and permits
+ordinary Lambda fallback to `com.amazonaws.xray.traceHeader`, then `_X_AMZN_TRACE_ID`. An actual runtime override
+returning null/empty is captured as an empty string and uses deterministic fallback. A non-fatal runtime exception
+while reading the accessor is also captured as an empty string, so a failed read cannot inherit another invocation's
+trace or sampling decision. A captured malformed header is likewise authoritative and never borrows another
+invocation's process-wide header. No global carrier is modified. Capture is skipped when no plugins are registered.
+
+The no-argument `ContextExtractor.extract()` remains the functional method, so existing lambdas and custom extractors
+retain their behavior. `XRayContextExtractor` uses a temporary thread-local scope solely to preserve old no-argument
+subclass overrides, including `super.extract()` delegation; the snapshot itself is stored in the record field. The
+scope is restored in `finally`. On a core that satisfies the same-thread lifecycle requirement above but lacks the optional header accessor,
+the plugin retains the legacy carrier fallback. Header support adds no further provider API or dependency requirement;
+consuming the LMI field requires both updated core and plugin. Shared plugin-instance concurrency remains the separate factory-lifetime change.
+
+**Record source compatibility boundary:** `InvocationInfo` now has eight components. Its previous 4-, 5-, 6- and
+7-argument constructors and seven accessors remain; the old constructors set the new field to null. Existing constructor
+source and compiled calls continue to work. Previously compiled seven-component record patterns also continue to run,
+but recompiling that pattern against the new record requires an eighth binding, such as `var xRayTraceId`:
+
+```java
+if (info instanceof InvocationInfo(var request, var arn, var first, var start,
+        var input, var operations, var updated, var xRayTraceId)) {
+    // Read the invocation-local header through the binding or info.xRayTraceId().
+}
+```
+
+Reflection exposes eight record components, and record equality/hash computation now includes the header. This is not
+complete record-shape/source compatibility. InvocationInfo.toString continues to omit payloads, operation snapshots
+and the runtime header. Invocation/checkpoint identities and persisted checkpoint formats do not change.
+
 ### 2. AWS X-Ray Active Tracing
 
 Enable active tracing on your Lambda function so the `_X_AMZN_TRACE_ID` environment variable is populated at invocation time. The plugin uses this header both to parent Invocation spans to the ambient Lambda/X-Ray trace and to anchor the execution trace on the propagated context when it carries a complete parent and an explicit sampling decision.
@@ -570,3 +607,16 @@ var otelPlugin = new InvocationOtelPlugin(
 ## License
 
 Apache-2.0
+
+### Installed core/plugin layer compatibility checks
+
+`src/test/compatibility/run_matrix.py` compiles a caller against a supplied released core JAR, then checks old/old,
+old/new, new/old and new/new core/plugin pairs for both views. Plugins load in a separate layer classloader through
+ServiceLoader, with core/plugin code-source checks. The current plugin requires same-thread invocation hooks: a core
+without that capability must reject construction with the exact upgrade diagnostic. The check reads the loaded core's
+capability rather than treating the "old" label as unsupported, verifies expected rejections, and continues all eight
+pair/view cases. Supported pairs check exact span names, trace IDs and parentage; the current plugin also checks the
+zero-duration synthetic root and sampled/unsampled runtime-header overrides. Released plugins retain their legacy
+carrier behavior. Supply released JARs, built current artifacts and an existing dependency classpath file; the check
+performs no downloads or AWS calls. Small runner/probe controls reject unrelated constructor failures, wrong diagnostics
+and unexpected construction success. These checks do not make an older core without the lifecycle capability supported.
