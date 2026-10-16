@@ -1260,16 +1260,24 @@ public class ExecutionManager implements SafeCloseable {
             cleanupFinished = true;
             restoreCleanupInterrupt();
         }
-        if (failure == null) return originalFailure;
-        return isFatal(originalFailure)
-                ? combineFailures(originalFailure, failure)
-                : combineFailures(failure, originalFailure);
+        var recordedFailure = lifecycleFailure.get();
+        var selectedFailure = isFatal(originalFailure) || recordedFailure == null ? originalFailure : recordedFailure;
+        if (failure == null) return selectedFailure;
+        return isFatal(selectedFailure)
+                ? combineFailures(selectedFailure, failure)
+                : combineFailures(failure, selectedFailure);
     }
 
     private Throwable drainInvocationTasks(Throwable originalFailure, long hardDeadline) throws InterruptedException {
         var taskDeadline = Math.max(System.nanoTime(), hardDeadline - CHECKPOINT_CLEANUP_RESERVE.toNanos());
-        var retrying = lifecycleFailure.get() != null || isFatal(originalFailure);
-        if (retrying) signalLifecycleFailure(originalFailure);
+        var recordedFailure = lifecycleFailure.get();
+        var abortFailure = isFatal(originalFailure)
+                ? originalFailure
+                : recordedFailure != null
+                        ? recordedFailure
+                        : isLifecycleFailure(originalFailure) ? originalFailure : null;
+        var retrying = abortFailure != null;
+        if (retrying) signalLifecycleFailure(abortFailure);
         else if (!awaitTasksUntil(minDeadline(taskDeadline, MAX_GRACEFUL_DRAIN_DURATION), false)) {
             var failure = lifecycleFailure("Invocation user work exceeded its graceful cleanup budget", null);
             signalLifecycleFailure(failure);

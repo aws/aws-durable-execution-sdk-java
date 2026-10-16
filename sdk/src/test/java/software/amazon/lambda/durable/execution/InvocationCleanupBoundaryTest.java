@@ -110,6 +110,21 @@ class InvocationCleanupBoundaryTest {
         }
     }
 
+    @Test
+    void recordedDeadlineFailureSurvivesCleanupWithoutAnOriginalFailure() {
+        var users = Executors.newSingleThreadExecutor();
+        var manager = manager(users, context(700));
+        try {
+            var recorded = manager.awaitInvocationOutcome(new CompletableFuture<Void>())
+                    .failure();
+            assertInstanceOf(UnrecoverableDurableExecutionException.class, recorded);
+            assertSame(recorded, manager.finishInvocation(null));
+        } finally {
+            users.shutdownNow();
+            manager.close();
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void terminalAcknowledgmentStopsAdditionalMetadataPagesAtCutoff(boolean admitFirstPage) throws Exception {
