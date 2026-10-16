@@ -19,16 +19,18 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 class ApiRequestDelayedBatcherTest {
     private static final Duration SHORT_DELAY = Duration.ofMillis(5);
     private static final Duration LONG_DELAY = Duration.ofMillis(100);
-    private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(5);
     private static final int MAX_BATCH_SIZE = 3;
     private static final int MAX_BATCH_BINARY_SIZE_IN_BYTES = 200;
 
@@ -193,11 +195,82 @@ class ApiRequestDelayedBatcherTest {
     }
 
     @Test
-    void whenShutdownCalled_pendingItemsAreFlushedImmediately() throws Exception {
+    void whenFlushCalled_longDelayedItemsCompletePromptly() throws Exception {
+        var future1 = cut.submit(input, Duration.ofHours(1));
+        var future2 = cut.submit(input, Duration.ofHours(1));
+
+        cut.flush();
+
+        CompletableFuture.allOf(future1, future2).get(1, TimeUnit.SECONDS);
+        verify(doBatchAction).accept(argThat(list -> list.size() == 2));
+        cut.shutdown();
+    }
+
+    @Test
+    @Timeout(10)
+    void whenFlushCalledDuringActiveBatch_queuedBatchesWaitWithoutBlockingFlush() throws Exception {
+        var firstBatchStarted = new CountDownLatch(1);
+        var releaseFirstBatch = new CountDownLatch(1);
+        var executions = new AtomicInteger();
+        var singleItemCut = blockingBatcher(firstBatchStarted, releaseFirstBatch, executions);
+        try {
+            var firstFuture = singleItemCut.submit(input, Duration.ofHours(1));
+            singleItemCut.flush();
+            await(firstBatchStarted);
+            var queuedFuture1 = singleItemCut.submit(input, Duration.ofHours(1));
+            var queuedFuture2 = singleItemCut.submit(input, Duration.ofHours(1));
+            singleItemCut.flush();
+
+            assertFalse(firstFuture.isDone());
+            assertFalse(queuedFuture1.isDone());
+            assertFalse(queuedFuture2.isDone());
+            assertEquals(1, executions.get());
+
+            releaseFirstBatch.countDown();
+            CompletableFuture.allOf(firstFuture, queuedFuture1, queuedFuture2).get(1, TimeUnit.SECONDS);
+            assertEquals(3, executions.get());
+        } finally {
+            releaseFirstBatch.countDown();
+            singleItemCut.shutdown();
+        }
+    }
+
+    @Test
+    @Timeout(10)
+    void whenShutdownCalledDuringActiveBatch_itWaitsForCompletion() throws Exception {
+        var batchStarted = new CountDownLatch(1);
+        var releaseBatch = new CountDownLatch(1);
+        var shutdownStarted = new CountDownLatch(1);
+        var blockingCut = blockingBatcher(batchStarted, releaseBatch, new AtomicInteger());
+        var caller = Executors.newSingleThreadExecutor();
+        try {
+            var future = blockingCut.submit(input, Duration.ofHours(1));
+            blockingCut.flush();
+            await(batchStarted);
+            var shutdown = caller.submit(() -> {
+                shutdownStarted.countDown();
+                blockingCut.shutdown();
+            });
+            await(shutdownStarted);
+            assertThrows(TimeoutException.class, () -> shutdown.get(100, TimeUnit.MILLISECONDS));
+            assertFalse(future.isDone());
+
+            releaseBatch.countDown();
+            shutdown.get(1, TimeUnit.SECONDS);
+            assertTrue(future.isDone());
+        } finally {
+            releaseBatch.countDown();
+            blockingCut.shutdown();
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
+    void whenShutdownCalled_pendingItemsAreFlushedImmediately() {
         var future = cut.submit(input, LONG_DELAY);
         assertFalse(future.isDone());
 
-        cut.shutdown(SHUTDOWN_TIMEOUT);
+        cut.shutdown();
 
         assertTrue(future.isDone());
         verify(doBatchAction).accept(any());
@@ -213,33 +286,38 @@ class ApiRequestDelayedBatcherTest {
     }
 
     @Test
-    void whenDelayExceedsNinetyMinutes_firstSubmissionStillSetsFlushDeadline() throws Exception {
-        var submittedAt = System.nanoTime();
-        cut.submit(input, Duration.ofMinutes(91));
-
-        var flushTimeField = ApiRequestDelayedBatcher.class.getDeclaredField("delayedBatchFlushTime");
-        flushTimeField.setAccessible(true);
-        var flushTime = flushTimeField.getLong(cut);
-
-        assertTrue(flushTime > submittedAt + Duration.ofMinutes(90).toNanos());
-        cut.shutdown(SHUTDOWN_TIMEOUT);
-    }
-
-    @Test
-    void whenNoItemsSubmitted_shutdownDoesNotInvokeBatchAction() throws Exception {
-        cut.shutdown(SHUTDOWN_TIMEOUT);
+    void whenNoItemsSubmitted_shutdownDoesNotInvokeBatchAction() {
+        cut.shutdown();
         verify(doBatchAction, never()).accept(any());
     }
 
     @Test
-    void whenMultipleBatchesFlushedViaShutdown_allFuturesComplete() throws Exception {
+    void whenMultipleBatchesFlushedViaShutdown_allFuturesComplete() {
         var future1 = cut.submit(input, LONG_DELAY);
-        cut.shutdown(SHUTDOWN_TIMEOUT);
+        cut.shutdown();
         assertTrue(future1.isDone());
 
         var future2 = cut.submit(input, LONG_DELAY);
-        cut.shutdown(SHUTDOWN_TIMEOUT);
+        cut.shutdown();
         assertTrue(future2.isDone());
+    }
+
+    private ApiRequestDelayedBatcher<Input> blockingBatcher(
+            CountDownLatch started, CountDownLatch release, AtomicInteger executions) {
+        return new ApiRequestDelayedBatcher<>(1, MAX_BATCH_BINARY_SIZE_IN_BYTES, item -> 0, requests -> {
+            executions.incrementAndGet();
+            started.countDown();
+            await(release);
+        });
+    }
+
+    private void await(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(5, TimeUnit.SECONDS), "Timed out waiting for the test latch");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        }
     }
 
     @Test

@@ -61,7 +61,7 @@ final class ExecutorTaskHandle<T> {
     /** Associated durable operation ID, or {@code null} for the root handler. */
     private final String operationId;
 
-    /** Removes this task from the execution manager's active-task registry. */
+    /** Removes this task from the invocation scope's active-task registry. */
     private final Runnable onExit;
 
     /** Logical action result consumed by the SDK; cancellation can complete it before the action exits. */
@@ -70,7 +70,7 @@ final class ExecutorTaskHandle<T> {
     /** Completes only when no executor thread can still be running this task. */
     private final CompletableFuture<Void> exit = new CompletableFuture<>();
 
-    /** Handle returned by {@link java.util.concurrent.ExecutorService#submit(Runnable)}. */
+    /** Interruptible handle bound before dispatch, including when an executor runs the task inline. */
     private final AtomicReference<Future<?>> execution = new AtomicReference<>();
 
     private final AtomicReference<State> state = new AtomicReference<>(State.REGISTERED);
@@ -90,21 +90,24 @@ final class ExecutorTaskHandle<T> {
             return;
         }
         try {
-            completion.complete(action.get());
+            var value = action.get();
+            // A cancelling thread publishes the logical cancellation after requesting interruption. Do not let a
+            // cooperative worker race it by running completion observers before its exit signal is available.
+            if (!cancellationRequested.get()) completion.complete(value);
         } catch (Throwable throwable) {
-            completion.completeExceptionally(throwable);
+            if (!cancellationRequested.get()) completion.completeExceptionally(throwable);
         } finally {
             markExited();
         }
     }
 
     /**
-     * Binds the executor handle after submission. A cancellation racing with submission is remembered and applied as
+     * Binds the executor handle before dispatch. A cancellation racing with registration is remembered and applied as
      * soon as this handle becomes available.
      */
     void bindExecution(Future<?> future) {
         if (!execution.compareAndSet(null, future)) {
-            throw new IllegalStateException("Executor task already has an execution future");
+            throw new IllegalStateException("Invocation task already has an execution future");
         }
         if (cancellationRequested.get()) {
             cancelExecution(future);
@@ -127,12 +130,12 @@ final class ExecutorTaskHandle<T> {
             interruptRequested.set(true);
         }
         cancellationRequested.set(true);
-        completion.cancel(false);
         var future = execution.get();
-        if (future == null) {
-            return true;
-        }
-        return cancelExecution(future);
+        // CompletableFuture cancellation runs observers inline. Physical interruption must already be requested
+        // before an observer is allowed to wait for this task's actual exit.
+        var cancelled = future == null || cancelExecution(future);
+        completion.cancel(false);
+        return cancelled;
     }
 
     private boolean cancelExecution(Future<?> future) {

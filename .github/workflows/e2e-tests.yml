@@ -26,6 +26,7 @@ on:
 concurrency:
   group: e2e-tests
   cancel-in-progress: false
+  queue: max
 
 # permission can be added at job level or workflow level
 permissions:
@@ -40,7 +41,9 @@ jobs:
     env:
       AWS_REGION: us-west-2
       E2E_TEST_PARALLELISM: 4
-    runs-on: ubuntu-latest
+    # Job is already gated to same-repo, non-Dependabot actors above, so fork
+    # code never runs here; use the plain CodeBuild runner label.
+    runs-on: ${{ format('codebuild-github-actions-runner-{0}-{1}', github.run_id, github.run_attempt) }}
     strategy:
       fail-fast: false
       matrix:

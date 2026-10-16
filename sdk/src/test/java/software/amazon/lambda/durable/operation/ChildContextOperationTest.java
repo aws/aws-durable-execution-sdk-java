@@ -77,6 +77,7 @@ class ChildContextOperationTest {
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext("Root", ThreadType.CONTEXT));
         when(durableContext.getDurableConfig()).thenReturn(createConfig());
         TestUtils.executeOperationTasks(executionManager, durableContext);
+        MockExecutionManagerSupport.stubWaitForOperationCompletion(executionManager);
     }
 
     private DurableConfig createConfig() {

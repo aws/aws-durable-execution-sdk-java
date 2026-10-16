@@ -20,8 +20,11 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.retry.PollingStrategy;
 import software.amazon.lambda.durable.util.DurableApiErrorClassifier;
@@ -36,6 +39,8 @@ class CheckpointManager {
     private static final int MAX_BATCH_SIZE_BYTES = 750 * 1024; // 750KB
     private static final int MAX_ITEM_COUNT = 200; // max updates in one batch
     private static final int FIRST_ATTEMPT = 1;
+    private static final String REVOKED_CHECKPOINT_TOKEN_MESSAGE =
+            "The checkpoint response did not include a checkpoint token";
     private static final Logger logger = LoggerFactory.getLogger(CheckpointManager.class);
 
     private final Consumer<List<Operation>> callback;
@@ -44,15 +49,25 @@ class CheckpointManager {
     private final ApiRequestDelayedBatcher<OperationUpdate> checkpointApiRequestDelayedBatcher;
     private final DurableConfig config;
     private final BooleanSupplier tryStartCheckpointProcessing;
-    private final Runnable finishCheckpointProcessing;
-    private String checkpointToken;
+    private final Runnable onCheckpointProcessingFinish;
+    private final Runnable onTokenRevoked;
+    private final Runnable requestAdmission;
+    private final Object checkpointLock = new Object();
+    private volatile boolean terminalExecutionAcknowledged;
+    private volatile String checkpointToken;
+    private boolean pollingStopped; // Guarded by pollingFutures.
+    /**
+     * Set when a nonterminal checkpoint response omits its token. This invocation cannot checkpoint again, so
+     * revocation is never cleared.
+     */
+    private volatile boolean checkpointTokenRevoked;
 
     CheckpointManager(
             DurableConfig config,
             String durableExecutionArn,
             String checkpointToken,
             Consumer<List<Operation>> callback) {
-        this(config, durableExecutionArn, checkpointToken, callback, () -> true, () -> {});
+        this(config, durableExecutionArn, checkpointToken, callback, () -> true, () -> {}, () -> {});
     }
 
     CheckpointManager(
@@ -61,15 +76,43 @@ class CheckpointManager {
             String checkpointToken,
             Consumer<List<Operation>> callback,
             BooleanSupplier tryStartCheckpointProcessing,
-            Runnable finishCheckpointProcessing) {
+            Runnable onCheckpointProcessingFinish,
+            Runnable onTokenRevoked) {
+        this(
+                config,
+                durableExecutionArn,
+                checkpointToken,
+                callback,
+                tryStartCheckpointProcessing,
+                onCheckpointProcessingFinish,
+                onTokenRevoked,
+                () -> {});
+    }
+
+    CheckpointManager(
+            DurableConfig config,
+            String durableExecutionArn,
+            String checkpointToken,
+            Consumer<List<Operation>> callback,
+            BooleanSupplier tryStartCheckpointProcessing,
+            Runnable onCheckpointProcessingFinish,
+            Runnable onTokenRevoked,
+            Runnable requestAdmission) {
+        this.requestAdmission = requestAdmission;
         this.config = config;
         this.durableExecutionArn = durableExecutionArn;
         this.callback = callback;
         this.checkpointToken = checkpointToken;
         this.tryStartCheckpointProcessing = tryStartCheckpointProcessing;
-        this.finishCheckpointProcessing = finishCheckpointProcessing;
+        this.onCheckpointProcessingFinish = onCheckpointProcessingFinish;
+        this.onTokenRevoked = onTokenRevoked;
         this.checkpointApiRequestDelayedBatcher = new ApiRequestDelayedBatcher<>(
                 MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointManager::estimateSize, this::checkpointBatch);
+    }
+
+    /** Returns {@code true} once the service has withdrawn this invocation's checkpoint token. */
+    boolean isCheckpointTokenRevoked() {
+        return checkpointTokenRevoked;
     }
 
     /**
@@ -78,8 +121,18 @@ class CheckpointManager {
      * @return a future that completes when the checkpoint request is executed
      */
     CompletableFuture<Void> checkpoint(OperationUpdate update) {
+        if (checkpointToken == null) {
+            return CompletableFuture.failedFuture(new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE));
+        }
+
         logger.debug("Checkpoint request received: Action {}", update.action());
-        return checkpointApiRequestDelayedBatcher.submit(update, config.getCheckpointDelay());
+        var future = checkpointApiRequestDelayedBatcher.submit(update, config.getCheckpointDelay());
+        // Withdrawal can flush before this request is submitted, so check again to avoid waiting for its timer.
+        if (checkpointToken == null) {
+            checkpointApiRequestDelayedBatcher.flush();
+        }
+
+        return future;
     }
 
     /**
@@ -111,6 +164,9 @@ class CheckpointManager {
         logger.debug("Polling request received: operation id {}", operationId);
         var future = new CompletableFuture<Operation>();
         synchronized (pollingFutures) {
+            if (pollingStopped) {
+                return CompletableFuture.failedFuture(new SuspendExecutionException());
+            }
             // register the future in pollingFutures, which will be completed by the polling thread
             pollingFutures
                     .computeIfAbsent(operationId, k -> Collections.synchronizedList(new ArrayList<>()))
@@ -150,21 +206,34 @@ class CheckpointManager {
         });
     }
 
-    /** Cancels polling futures and bounds the wait for pending checkpoint requests. */
-    void shutdown(Duration timeout) throws InterruptedException, ExecutionException, TimeoutException {
+    /** Cancels all polling futures and waits for all pending checkpoint requests to complete */
+    void shutdown() {
         // complete all polling futures with an exception
+        stopPolling(new IllegalStateException("CheckpointManager shutdown"));
+        // wait for all non-polling checkpoint requests to complete
+        checkpointApiRequestDelayedBatcher.shutdown();
+    }
+
+    void shutdown(Duration timeout) throws InterruptedException, ExecutionException, TimeoutException {
+        stopPolling(new IllegalStateException("CheckpointManager shutdown"));
+        checkpointApiRequestDelayedBatcher.shutdown(timeout);
+    }
+
+    boolean isTerminalExecutionAcknowledged() {
+        return terminalExecutionAcknowledged;
+    }
+
+    private void stopPolling(Throwable cause) {
         List<List<CompletableFuture<Operation>>> allFutures;
         synchronized (pollingFutures) {
+            pollingStopped = true;
             allFutures = new ArrayList<>(pollingFutures.values());
             pollingFutures.clear();
         }
 
         for (var futures : allFutures) {
-            futures.forEach(f -> f.completeExceptionally(new IllegalStateException("CheckpointManager shutdown")));
+            futures.forEach(future -> future.completeExceptionally(cause));
         }
-
-        // wait for all non-polling checkpoint requests to complete
-        checkpointApiRequestDelayedBatcher.shutdown(timeout);
     }
 
     /**
@@ -172,6 +241,11 @@ class CheckpointManager {
      * nextMarker)
      */
     List<Operation> fetchAllPages(CheckpointUpdatedExecutionState checkpointUpdatedExecutionState) {
+        return fetchAllPages(checkpointUpdatedExecutionState, false);
+    }
+
+    private List<Operation> fetchAllPages(
+            CheckpointUpdatedExecutionState checkpointUpdatedExecutionState, boolean terminal) {
         List<Operation> operations = new ArrayList<>();
         if (checkpointUpdatedExecutionState == null) {
             return operations;
@@ -181,6 +255,12 @@ class CheckpointManager {
         }
         var nextMarker = checkpointUpdatedExecutionState.nextMarker();
         while (nextMarker != null && !nextMarker.isEmpty()) {
+            try {
+                requestAdmission.run();
+            } catch (UnrecoverableDurableExecutionException failure) {
+                if (!terminal || !ExecutionManager.isLifecycleFailure(failure)) throw failure;
+                break; // Preserve inline/already-read metadata without issuing a new request after terminal ACK.
+            }
             var startTime = System.nanoTime();
             try {
                 var response = config.getDurableExecutionClient()
@@ -199,13 +279,27 @@ class CheckpointManager {
     }
 
     private void checkpointBatch(List<OperationUpdate> updates) {
-        synchronized (pollingFutures) {
+        synchronized (checkpointLock) {
+            synchronized (pollingFutures) {
+                // A READY recheck can complete a poll before its scheduled batch. Keep only consumers still waiting.
+                pollingFutures.entrySet().removeIf(entry -> {
+                    entry.getValue().removeIf(CompletableFuture::isDone);
+                    return entry.getValue().isEmpty();
+                });
+            }
+
             // filter the null values from pollers
             var request = updates.stream().filter(Objects::nonNull).toList();
 
             if (pollingFutures.isEmpty() && request.isEmpty()) {
                 // ignore the batch if no pollers and no data to checkpoint
                 return;
+            }
+
+            // An earlier batch already came back without a checkpoint token, so this invocation must not issue
+            // further checkpoints.
+            if (checkpointToken == null) {
+                throw new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE);
             }
 
             // Starting the backend request is coordinated with the last-thread suspension decision. Once suspension
@@ -218,50 +312,88 @@ class CheckpointManager {
                             request.size());
                 }
                 logger.debug("Skipping checkpoint API call because execution has already completed");
-                return;
+                throw new SuspendExecutionException();
             }
 
-            var startTime = System.nanoTime();
-            logger.debug("Calling durable checkpoint API with {} updates: {}", updates.size(), request);
             try {
-                var response =
-                        config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);
-                logger.debug(
-                        "Durable checkpoint API called (latency={}ns): {}.", System.nanoTime() - startTime, response);
-
-                // Notify callback of completion
-                checkpointToken = response.checkpointToken();
-                if (response.newExecutionState() != null) {
-                    // fetch all pages of operations
-                    var operations = fetchAllPages(response.newExecutionState());
-
-                    var processStartTime = System.nanoTime();
-                    int completedFutures = 0;
-                    logger.debug(
-                            "Processing {} operations. ({} pending pollers)", operations.size(), pollingFutures.size());
-                    // call the callback
-                    callback.accept(operations);
-
-                    // complete the registered pollingFutures
-                    for (var operation : operations) {
-                        var pollers = pollingFutures.remove(operation.id());
-                        if (pollers != null) {
-                            completedFutures += pollers.size();
-                            pollers.forEach(poller -> poller.complete(operation));
-                        }
-                    }
-                    logger.debug(
-                            "{} operations processed and {} pollers completed (latency={}ns). ",
-                            operations.size(),
-                            completedFutures,
-                            System.nanoTime() - processStartTime);
-                }
+                checkpointRequest(request);
             } catch (AwsServiceException e) {
                 throw DurableApiErrorClassifier.classifyException(e);
             } finally {
-                finishCheckpointProcessing.run();
+                onCheckpointProcessingFinish.run();
             }
         }
+    }
+
+    private void checkpointRequest(List<OperationUpdate> request) {
+        var startTime = System.nanoTime();
+        logger.debug("Calling durable checkpoint API with {} updates: {}", request.size(), request);
+        requestAdmission.run();
+        var response = config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);
+        if (request.stream()
+                .anyMatch(update ->
+                        update.type() == OperationType.EXECUTION && update.action() == OperationAction.SUCCEED))
+            terminalExecutionAcknowledged = true;
+        // A late response is durable at the service, but must not resume old SDK work after invocation cleanup.
+        if (!terminalExecutionAcknowledged) requestAdmission.run();
+        logger.debug("Durable checkpoint API called (latency={}ns): {}.", System.nanoTime() - startTime, response);
+
+        checkpointToken = response.checkpointToken();
+        if (checkpointToken == null) {
+            handleMissingToken(request);
+            return; // The token is gone, so this invocation cannot use the response state or fetch more pages.
+        }
+
+        var state = response.newExecutionState();
+        if (state != null) {
+            processUpdatedOperations(fetchAllPages(state, terminalExecutionAcknowledged));
+        }
+    }
+
+    private void handleMissingToken(List<OperationUpdate> updates) {
+        // Publish before completing pollers, whose dependent stages can run inline.
+        // A terminal execution update was accepted, so only nonterminal requests require suspension.
+        checkpointTokenRevoked = updates.stream().noneMatch(update -> update.type() == OperationType.EXECUTION);
+
+        var cause = new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE);
+        stopPolling(cause);
+        checkpointApiRequestDelayedBatcher.flush();
+
+        if (checkpointTokenRevoked) {
+            logger.warn(
+                    "The checkpoint response for durable execution {} did not include a checkpoint token. The SDK will"
+                            + " stop checkpointing and report the invocation as PENDING.",
+                    durableExecutionArn);
+            onTokenRevoked.run();
+            throw cause;
+        }
+
+        logger.info(
+                "Checkpoint token withheld on durable execution {}'s terminal update; execution is finished.",
+                durableExecutionArn);
+    }
+
+    private void processUpdatedOperations(List<Operation> operations) {
+        var processStartTime = System.nanoTime();
+        int completedFutures = 0;
+        logger.debug("Processing {} operations. ({} pending pollers)", operations.size(), pollingFutures.size());
+        callback.accept(operations);
+
+        for (var operation : operations) {
+            List<CompletableFuture<Operation>> pollers;
+            synchronized (pollingFutures) {
+                pollers = pollingFutures.remove(operation.id());
+            }
+            if (pollers != null) {
+                completedFutures += pollers.size();
+                pollers.forEach(poller -> poller.complete(operation));
+            }
+        }
+        logger.debug(
+                "{} operations processed and {} pollers completed (latency={}ns). ",
+                operations.size(),
+                completedFutures,
+                System.nanoTime() - processStartTime);
     }
 
     private static int estimateSize(OperationUpdate update) {

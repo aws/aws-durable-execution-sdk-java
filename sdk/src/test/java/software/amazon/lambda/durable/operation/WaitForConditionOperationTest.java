@@ -56,6 +56,7 @@ class WaitForConditionOperationTest {
                         .withExecutorService(Executors.newCachedThreadPool())
                         .build());
         TestUtils.executeOperationTasks(executionManager, durableContext);
+        MockExecutionManagerSupport.completeOperationsOnManager(executionManager);
     }
 
     private WaitForConditionOperation<Integer> createOperation(
@@ -285,6 +286,8 @@ class WaitForConditionOperationTest {
 
     @Test
     void replayPendingPollsAndResumesCheckLoop() throws Exception {
+        when(executionManager.runCheckpointContinuation(any(), any(Runnable.class)))
+                .thenAnswer(call -> CompletableFuture.runAsync(call.getArgument(1)));
         var pendingOp = Operation.builder()
                 .id(OPERATION_ID)
                 .name(OPERATION_NAME)
@@ -376,7 +379,7 @@ class WaitForConditionOperationTest {
 
     @Test
     void startNormalizesInitialStateThroughSerDes() throws Exception {
-        var mockSerDes = mock(SerDes.class);
+        var mockSerDes = mock(SerDes.class, CALLS_REAL_METHODS);
         when(mockSerDes.serialize(42)).thenReturn("42-normalized");
         when(mockSerDes.deserialize(eq("42-normalized"), any())).thenReturn(99);
 
@@ -408,7 +411,7 @@ class WaitForConditionOperationTest {
 
     @Test
     void startSerializesInitialStateButSkipsDeserializeWhenDisabled() throws Exception {
-        var mockSerDes = mock(SerDes.class);
+        var mockSerDes = mock(SerDes.class, CALLS_REAL_METHODS);
         when(mockSerDes.serialize(42)).thenReturn("42-normalized");
         when(mockSerDes.deserialize(eq("42-normalized"), any())).thenReturn(99);
 

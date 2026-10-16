@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -106,6 +107,7 @@ class SerializableDurableOperationTest {
         when(durableContext.getExecutionManager()).thenReturn(executionManager);
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.CONTEXT));
         when(executionManager.getOperationAndUpdateReplayState(OPERATION_ID)).thenReturn(OPERATION);
+        MockExecutionManagerSupport.stubWaitForOperationCompletion(executionManager);
     }
 
     @Test
@@ -158,6 +160,10 @@ class SerializableDurableOperationTest {
     @Test
     void waitForOperationCompletionThrowsIllegalStateExceptionWhenCalledFromStepThread() {
         when(executionManager.getCurrentThreadContext()).thenReturn(new ThreadContext(CONTEXT_ID, ThreadType.STEP));
+        doThrow(new IllegalStateException(
+                        "Nested STEP operation is not supported on name from within a Step execution."))
+                .when(executionManager)
+                .validateCurrentThreadCanWaitForDurableOperation(OPERATION_TYPE, OPERATION_NAME);
 
         SerializableDurableOperation<String> op =
                 new SerializableDurableOperation<>(OPERATION_IDENTIFIER, RESULT_TYPE, SER_DES, durableContext) {

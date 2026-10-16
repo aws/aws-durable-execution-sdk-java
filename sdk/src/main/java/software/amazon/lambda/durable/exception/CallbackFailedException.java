@@ -12,6 +12,10 @@ public class CallbackFailedException extends CallbackException {
     }
 
     private static String buildMessage(ErrorObject error) {
+        // SendDurableExecutionCallbackFailure accepts a request without an Error.
+        if (error == null) {
+            return "Callback failed";
+        }
         var errorType = error.errorType();
         var errorMessage = error.errorMessage();
 

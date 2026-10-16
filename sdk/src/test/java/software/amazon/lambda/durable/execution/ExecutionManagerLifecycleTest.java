@@ -26,6 +26,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -169,6 +171,55 @@ class ExecutionManagerLifecycleTest {
     }
 
     @Test
+    void cancellationInterruptsCallerRunsBeforeSubmissionReturns() throws Exception {
+        var executor = new ThreadPoolExecutor(
+                1, 1, 0, TimeUnit.MILLISECONDS, new SynchronousQueue<>(), new ThreadPoolExecutor.CallerRunsPolicy());
+        var caller = Executors.newSingleThreadExecutor();
+        var workerEntered = new CountDownLatch(1);
+        var releaseWorker = new CountDownLatch(1);
+        var bodyEntered = new CountDownLatch(1);
+        var interrupted = new CountDownLatch(1);
+        var releaseBody = new CountDownLatch(1);
+        var manager = createManager(null, executor);
+        executor.execute(() -> {
+            workerEntered.countDown();
+            await(releaseWorker);
+        });
+        assertTrue(workerEntered.await(5, TimeUnit.SECONDS));
+        try {
+            var submitted = caller.submit(() -> manager.submitRootTask(() -> {
+                bodyEntered.countDown();
+                while (releaseBody.getCount() > 0) {
+                    try {
+                        releaseBody.await();
+                    } catch (InterruptedException expected) {
+                        interrupted.countDown();
+                    }
+                }
+                return "ignored";
+            }));
+            assertTrue(bodyEntered.await(5, TimeUnit.SECONDS));
+            assertFalse(submitted.isDone(), "CallerRunsPolicy has not returned from task submission");
+            var task = manager.getActiveExecutorTasks().get(0);
+            assertNotNull(task.execution(), "The interruptible handle must exist before inline execution starts");
+            assertTrue(task.cancel(true));
+            assertTrue(interrupted.await(5, TimeUnit.SECONDS));
+            assertTrue(task.completion().isCancelled());
+            assertFalse(task.exit().isDone(), "Cancellation is not proof that user code has exited");
+            releaseBody.countDown();
+            task.exit().get(5, TimeUnit.SECONDS);
+            assertTrue(submitted.get(5, TimeUnit.SECONDS).isCancelled());
+            assertTrue(manager.getActiveExecutorTasks().isEmpty());
+        } finally {
+            releaseBody.countDown();
+            releaseWorker.countDown();
+            manager.close();
+            stop(caller);
+            stop(executor);
+        }
+    }
+
+    @Test
     void failedSubmissionIsRemovedFromManager() {
         var executor = Executors.newSingleThreadExecutor();
         executor.shutdown();
@@ -178,6 +229,42 @@ class ExecutionManagerLifecycleTest {
             assertThrows(RejectedExecutionException.class, () -> manager.submitRootTask(() -> "result"));
             assertTrue(manager.getActiveExecutorTasks().isEmpty());
         } finally {
+            manager.close();
+        }
+    }
+
+    @Test
+    void cancellationInterruptsBeforeLogicalObserversWaitForExit() throws Exception {
+        var executor = Executors.newSingleThreadExecutor();
+        var cancelling = Executors.newSingleThreadExecutor();
+        var manager = createManager(null, executor);
+        var entered = new CountDownLatch(1);
+        var interrupted = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        try {
+            manager.submitRootTask(() -> {
+                entered.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException expected) {
+                    interrupted.countDown();
+                }
+                return "ignored";
+            });
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            var task = manager.getActiveExecutorTasks().get(0);
+            var observer = task.completion()
+                    .whenComplete((result, failure) -> task.exit().join());
+            var cancellation = cancelling.submit(() -> task.cancel(true));
+            assertTrue(interrupted.await(2, TimeUnit.SECONDS), "A completion observer must not delay interruption");
+            assertTrue(cancellation.get(5, TimeUnit.SECONDS));
+            assertTrue(task.completion().isCancelled());
+            assertTrue(observer.isDone());
+            assertTrue(manager.getActiveExecutorTasks().isEmpty());
+        } finally {
+            release.countDown();
+            stop(executor);
+            stop(cancelling);
             manager.close();
         }
     }
