@@ -41,7 +41,6 @@ public class ApiRequestDelayedBatcher<T> {
 
     private final Supplier<Error> pluginFatal;
     private final AtomicReference<Error> terminalFailure = new AtomicReference<>();
-    private final CompletableFuture<Void> abortSignal = new CompletableFuture<>();
     private final Set<CompletableFuture<Void>> activeRequests = ConcurrentHashMap.newKeySet();
 
     /** Accumulated requests to be executed in future */
@@ -128,18 +127,19 @@ public class ApiRequestDelayedBatcher<T> {
     void shutdown() {
         var observedFatal = getFatalFailure();
         if (observedFatal != null) abortPending(observedFatal);
-        synchronized (delayedBatch) {
-            // cancel the flush timer if it has not been triggered
-            this.delayedBatchFlushTimer.cancel(false);
-            // execute the current batch now
-            flushDelayedBatch();
-        }
-
-        // wait for previous batches to be flushed
-        // A terminal invocation failure must not wait for an already admitted backend call to return.
-        CompletableFuture.anyOf(flushingQueueFuture, abortSignal).join();
+        flush();
+        // Rejected request observations may settle early on abort, but End must still await admitted I/O.
+        flushingQueueFuture.join();
         var fatal = getFatalFailure();
         if (fatal != null) throw new CompletionException(fatal);
+    }
+
+    /** Schedules pending requests immediately without waiting for the current batch. */
+    void flush() {
+        synchronized (delayedBatch) {
+            delayedBatchFlushTimer.cancel(false);
+            flushDelayedBatch();
+        }
     }
 
     /** clear the current batch and creates a new batch */
@@ -287,6 +287,5 @@ public class ApiRequestDelayedBatcher<T> {
             pending.addAll(activeRequests);
         }
         pending.forEach(future -> future.completeExceptionally(original));
-        abortSignal.completeExceptionally(original);
     }
 }

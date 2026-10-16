@@ -285,6 +285,9 @@ public abstract class BaseDurableOperation {
             try {
                 // A task accepted before another hook failed may only now be starting on its worker.
                 executionManager.rethrowPluginFatalIfPresent();
+                if (executionManager.isCheckpointTokenRevoked()) {
+                    throw new SuspendExecutionException();
+                }
                 runnable.run();
             } catch (Throwable throwable) {
                 executionManager.rethrowPluginFatalIfPresent();

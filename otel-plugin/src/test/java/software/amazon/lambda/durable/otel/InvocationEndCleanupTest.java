@@ -33,7 +33,8 @@ class InvocationEndCleanupTest {
 
     @ParameterizedTest
     @MethodSource("fatalCases")
-    void laterOtelAndObserverFinalizeBeforeEndFatalEscapes(boolean executionView, boolean wrapped, Error fatal) {
+    void remainingOtelAndObserverFinalizeAfterFirstReverseEndFatal(
+            boolean executionView, boolean wrapped, Error fatal) {
         var exporter = InMemorySpanExporter.create();
         var builder = SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter));
         var config = OtelPluginConfig.builder()
@@ -63,7 +64,7 @@ class InvocationEndCleanupTest {
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> "done",
-                DurableConfig.builder().withPlugins(first, otel, last).build());
+                DurableConfig.builder().withPlugins(last, otel, first).build());
         assertSame(fatal, assertThrows(Error.class, () -> runner.run("input")));
         assertEquals(List.of("first", "last"), calls);
         assertSame(snapshots.get(0), snapshots.get(1), "each plugin receives the same single dispatch snapshot");

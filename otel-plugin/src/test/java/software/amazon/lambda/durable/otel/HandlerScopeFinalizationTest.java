@@ -44,7 +44,8 @@ class HandlerScopeFinalizationTest {
         "true,true,false",
         "true,true,true"
     })
-    void preservesTimeForRealOtelFinalization(boolean executionView, boolean retry, boolean hasScope) throws Exception {
+    void ownerCleanupPrecedesRealOtelFinalization(boolean executionView, boolean retry, boolean hasScope)
+            throws Exception {
         var deadline = new Deadline();
         var clock = Executors.newSingleThreadScheduledExecutor(r -> daemon(r, "flush-clock"));
         var flush = new DelayedFlush(deadline, clock);
@@ -106,12 +107,15 @@ class HandlerScopeFinalizationTest {
                     },
                     cfg));
             check(enteredFinally.await(2, TimeUnit.SECONDS), "handler finally not reached");
+            assertThrows(TimeoutException.class, () -> response.get(600, TimeUnit.MILLISECONDS));
+            check(flush.calls.get() == 0, "End cannot flush while handler cleanup is still active");
+            releaseFinally.countDown();
             outcome(response, retry, original);
             long total = deadline.elapsedMillis();
             check(flush.calls.get() == 1, "expected one actual bundled OTel forceFlush");
             check(flush.flushMillis.get() >= 240, "actual bundled OTel join did not await forceFlush result");
-            check(total < 400, "unexpected response/deadline relation: " + total);
-            check(releaseFinally.getCount() == 1, "test cleanup was not blocked");
+            check(total >= 600, "The caller must await the actual handler owner, even past the old handoff budget");
+            check(releaseFinally.getCount() == 0, "handler cleanup must finish before End");
 
         } finally {
             releaseFinally.countDown();
@@ -144,95 +148,16 @@ class HandlerScopeFinalizationTest {
     }
 
     @Test
-    void fatalAfterTheHandoffTimeoutCannotChangeAnAlreadyReturnedOutcome() throws Exception {
+    void fatalAfterTheOldHandoffBudgetStillPrecedesEnd() throws Exception {
         scopeFatal(false, false, new InternalError("late scope fatal"), false, true);
     }
 
     @SuppressWarnings("removal")
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void lateScopeFatalAfterFinalizationPreservesCallerOutcomeAndEscapesOwner(boolean threadDeath) throws Exception {
-        var releaseScope = new CountDownLatch(1);
-        var ownerFinished = new CountDownLatch(1);
-        var shutdownEntered = new AtomicBoolean();
-        var ended = new AtomicBoolean();
-        var endCalls = new AtomicInteger();
-        var endInfo = new AtomicReference<InvocationEndInfo>();
-        Error fatal = threadDeath ? new ThreadDeath() : new InternalError("scope failure during manager shutdown");
-        var ownerFatal = new AtomicReference<Throwable>();
-        var fatalEscaped = new CountDownLatch(1);
-        var plugin = new ScopedPlugin() {
-            public AutoCloseable openHandlerScope() {
-                return () -> {
-                    await(releaseScope);
-                    throw fatal;
-                };
-            }
-
-            public void onInvocationEnd(InvocationEndInfo info) {
-                ended.set(true);
-                endCalls.incrementAndGet();
-                endInfo.set(info);
-            }
-        };
-        var workers =
-                new ThreadPoolExecutor(0, Integer.MAX_VALUE, 60, TimeUnit.SECONDS, new SynchronousQueue<>(), task -> {
-                    var owner = daemon(task, "shutdown-owner");
-                    owner.setUncaughtExceptionHandler((thread, failure) -> {
-                        ownerFatal.set(failure);
-                        fatalEscaped.countDown();
-                    });
-                    return owner;
-                }) {
-                    @Override
-                    public void execute(Runnable task) {
-                        super.execute(() -> {
-                            try {
-                                task.run();
-                            } finally {
-                                ownerFinished.countDown();
-                            }
-                        });
-                    }
-
-                    @Override
-                    public int getActiveCount() {
-                        // ExecutionManager.close reaches this after invocation-end callbacks. Hold resource closure
-                        // until the owner has reported the fatal, without altering the handler/control futures.
-                        assertTrue(ended.get());
-                        shutdownEntered.set(true);
-                        releaseScope.countDown();
-                        await(ownerFinished);
-                        return super.getActiveCount();
-                    }
-                };
-        var deadline = new Deadline();
-        try {
-            var output = assertDoesNotThrow(() -> DurableExecutor.execute(
-                    input(),
-                    deadline.context(),
-                    TypeToken.get(String.class),
-                    (value, ctx) -> {
-                        deadline.arm(0);
-                        ctx.wait("pause", Duration.ofSeconds(1));
-                        return "done";
-                    },
-                    config(workers, info -> plugin)));
-            assertEquals(ExecutionStatus.PENDING, output.status(), "the already finalized caller outcome stays frozen");
-            assertTrue(fatalEscaped.await(2, TimeUnit.SECONDS), "fatal must still escape the actual owner thread");
-            assertSame(fatal, ownerFatal.get());
-            assertTrue(shutdownEntered.get());
-            assertEquals(1, endCalls.get(), "a late fatal must not replay already delivered end hooks");
-            assertEquals(
-                    InvocationStatus.PENDING,
-                    endInfo.get().invocationStatus(),
-                    "snapshot reflects outcome known at dispatch");
-            assertNull(endInfo.get().executionError(), "the fatal is reported only later, during shutdown");
-        } finally {
-            releaseScope.countDown();
-            workers.shutdown();
-            assertTrue(workers.awaitTermination(2, TimeUnit.SECONDS));
-        }
+    void scopeFatalAfterOldBudgetIsReportedBeforeOwnerEnd(boolean threadDeath) throws Exception {
+        Error fatal = threadDeath ? new ThreadDeath() : new InternalError("owner cleanup failure");
+        scopeFatal(false, false, fatal, false, true);
     }
 
     static void scopeFatal(boolean retry, boolean wrapped, Error fatal, boolean fromBodyFinally) throws Exception {
@@ -289,14 +214,11 @@ class HandlerScopeFinalizationTest {
                     },
                     cfg));
             check(closeEntered.await(2, TimeUnit.SECONDS), "fatal site not reached");
-            check(deadline.budgetRead.await(2, TimeUnit.SECONDS), "winner not observed before fatal");
+            assertThrows(TimeoutException.class, () -> response.get(100, TimeUnit.MILLISECONDS));
+            assertEquals(0, endCalls.get(), "End must not precede handler cleanup");
             if (afterTimeout) {
-                outcome(response, retry, original);
-                assertFalse(fatalBeforeEnd.get());
-                releaseFatal.countDown();
-                assertTrue(fatalRaised.await(2, TimeUnit.SECONDS));
-                outcome(response, retry, original);
-                return;
+                assertThrows(TimeoutException.class, () -> response.get(600, TimeUnit.MILLISECONDS));
+                assertEquals(0, endCalls.get(), "No caller-thread End when the old budget expires");
             }
             releaseFatal.countDown();
             if (fromBodyFinally) {

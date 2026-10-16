@@ -15,6 +15,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import software.amazon.awssdk.services.lambda.model.*;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.plugin.*;
@@ -81,9 +82,10 @@ class PluginFatalDispatchIntegrationTest {
             public void onInvocationEnd(InvocationEndInfo info) {
                 endCalls.incrementAndGet();
                 endInfo.set(info);
-                fatalObserved.countDown();
-                releaseQueued.countDown();
-                await(queued ? queuedFinished : dispatchFinished);
+                assertEquals(
+                        0,
+                        queued ? queuedFinished.getCount() : dispatchFinished.getCount(),
+                        "End follows actual root and queued-task settlement");
             }
         };
         var config = DurableConfig.builder()
@@ -98,38 +100,49 @@ class PluginFatalDispatchIntegrationTest {
                 })
                 .withPlugins(plugin)
                 .build();
+        var caller = Executors.newSingleThreadExecutor();
         try {
+            var response = caller.submit(() -> DurableExecutor.execute(
+                    input(),
+                    null,
+                    TypeToken.get(String.class),
+                    (value, context) -> {
+                        ((DurableContextImpl) context)
+                                .getExecutionManager()
+                                .runUntilCompleteOrSuspend(new CompletableFuture<String>())
+                                .whenComplete((ignored, failure) -> fatalObserved.countDown());
+                        if (queued)
+                            context.stepAsync("late", String.class, step -> {
+                                bodies.incrementAndGet();
+                                return "unexpected";
+                            });
+                        context.stepAsync("trigger", String.class, step -> "unreachable");
+                        await(fatalObserved);
+                        if (!queued) {
+                            try {
+                                context.stepAsync("late", String.class, step -> {
+                                    bodies.incrementAndGet();
+                                    return "unexpected";
+                                });
+                            } catch (Error error) {
+                                dispatchFailure.set(error);
+                            } finally {
+                                dispatchFinished.countDown();
+                            }
+                        }
+                        return "done";
+                    },
+                    config));
+            assertTrue(fatalObserved.await(3, TimeUnit.SECONDS));
+            if (queued) {
+                assertThrows(TimeoutException.class, () -> response.get(700, TimeUnit.MILLISECONDS));
+                assertEquals(0, endCalls.get(), "End must await the admitted queued task");
+                releaseQueued.countDown();
+            }
             assertSame(
                     fatal,
-                    assertThrows(
-                            Error.class,
-                            () -> DurableExecutor.execute(
-                                    input(),
-                                    null,
-                                    TypeToken.get(String.class),
-                                    (value, context) -> {
-                                        if (queued)
-                                            context.stepAsync("late", String.class, step -> {
-                                                bodies.incrementAndGet();
-                                                return "unexpected";
-                                            });
-                                        context.stepAsync("trigger", String.class, step -> "unreachable");
-                                        await(fatalObserved);
-                                        if (!queued) {
-                                            try {
-                                                context.stepAsync("late", String.class, step -> {
-                                                    bodies.incrementAndGet();
-                                                    return "unexpected";
-                                                });
-                                            } catch (Error error) {
-                                                dispatchFailure.set(error);
-                                            } finally {
-                                                dispatchFinished.countDown();
-                                            }
-                                        }
-                                        return "done";
-                                    },
-                                    config)));
+                    assertThrows(ExecutionException.class, () -> response.get(3, TimeUnit.SECONDS))
+                            .getCause());
             assertEquals(0, bodies.get(), "no new user body may run after the fatal was recorded");
             assertEquals(0, lateStarts.get(), "a queued handler must stop before opening plugin attempt scopes");
             assertTrue(updates.stream().noneMatch(update -> "late".equals(update.name())));
@@ -139,6 +152,8 @@ class PluginFatalDispatchIntegrationTest {
             assertSame(fatal, endInfo.get().executionError());
         } finally {
             releaseQueued.countDown();
+            caller.shutdownNow();
+            assertTrue(caller.awaitTermination(3, TimeUnit.SECONDS));
             workers.shutdownNow();
             assertTrue(workers.awaitTermination(2, TimeUnit.SECONDS));
         }

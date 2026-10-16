@@ -37,19 +37,15 @@ class FatalCheckpointResponseLifetimeTest {
     @SuppressWarnings("removal")
     @ParameterizedTest
     @MethodSource("fatalCases")
-    void fatalFinalizationDiscardsLateLocalPublicationButKeepsCommittedReplay(
-            String stage, boolean holdEnd, boolean death) throws Exception {
+    void fatalDrainDiscardsAbortedResponseBeforeEndAndKeepsCommittedReplay(String stage, boolean holdEnd, boolean death)
+            throws Exception {
         Error fatal = death ? new ThreadDeath() : new InternalError("simulated peer fatal");
         try (var run = new Run(stage, holdEnd, fatal)) {
             var response = run.caller.submit(() -> DurableExecutor.execute(
                     input(List.of()), null, TypeToken.get(String.class), run.handler, run.config));
             await(run.client.ready);
-            await(run.endEntered);
-            if (!holdEnd)
-                assertSame(
-                        fatal,
-                        ExceptionHelper.unwrapAsyncFailure(
-                                assertThrows(ExecutionException.class, () -> response.get(2, TimeUnit.SECONDS))));
+            assertThrows(TimeoutException.class, () -> response.get(700, TimeUnit.MILLISECONDS));
+            assertEquals(1, run.endEntered.getCount(), "End cannot precede admitted transport settlement");
             var before = snapshot(run.manager.get());
             assertEquals(
                     OperationStatus.SUCCEEDED,
@@ -61,6 +57,7 @@ class FatalCheckpointResponseLifetimeTest {
                             CompletionException.class, () -> run.poller.get().join())));
             run.client.release.countDown();
             await(run.client.transportExited);
+            await(run.endEntered);
             assertSame(fatal, run.client.transportFailure.get());
             assertEquals(before, snapshot(run.manager.get()), "An aborted invocation must not publish a late response");
             assertEquals(0, run.hooksAfterEnd.get(), "No new checkpoint lifecycle hook may run after End starts");

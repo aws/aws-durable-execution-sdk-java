@@ -68,13 +68,17 @@ class RootBodyFatalOwnerLifetimeTest {
                             .build());
             var result = caller.submit(() -> runner.run("input"));
             await(entered);
+            if (cleanup.equals("blocked")) {
+                assertThrows(TimeoutException.class, () -> result.get(600, TimeUnit.MILLISECONDS));
+                assertTrue(ends.isEmpty(), "End must await the root scope owner");
+                release.countDown();
+            }
             var failure = assertThrows(ExecutionException.class, () -> result.get(2, TimeUnit.SECONDS));
             assertSame(fatal, ExceptionHelper.unwrapAsyncFailure(failure));
             assertEquals(1, ends.size());
             assertEquals(InvocationStatus.RETRYING, ends.get(0).invocationStatus());
             assertSame(fatal, ends.get(0).executionError());
-            if (cleanup.equals("blocked"))
-                assertEquals(1, closed.getCount(), "Return is bounded before close releases");
+            if (cleanup.equals("blocked")) assertEquals(0, closed.getCount(), "End and return follow scope closure");
             release.countDown();
             await(escaped);
             assertSame(fatal, ownerFailure.get());
@@ -131,7 +135,7 @@ class RootBodyFatalOwnerLifetimeTest {
     @SuppressWarnings("removal")
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void bodyFatalAfterEndBeginsKeepsFrozenPendingAndEscapesOwner(boolean death) throws Exception {
+    void losingFinallyFatalUnwindsBeforePendingEndAndEscapesOwner(boolean death) throws Exception {
         Error fatal = death ? new ThreadDeath() : new InternalError("simulated late body fatal");
         var bodyWaiting = new CountDownLatch(1);
         var releaseBody = new CountDownLatch(1);
@@ -167,14 +171,16 @@ class RootBodyFatalOwnerLifetimeTest {
                             .build());
             var result = caller.submit(() -> runner.run("input"));
             await(bodyWaiting);
-            await(endEntered);
+            assertThrows(TimeoutException.class, () -> result.get(600, TimeUnit.MILLISECONDS));
+            assertEquals(1, endEntered.getCount(), "End cannot start until the body finally unwinds");
             releaseBody.countDown();
-            await(escaped);
-            assertSame(fatal, ownerFailure.get());
+            await(endEntered);
             releaseEnd.countDown();
             assertEquals(
                     ExecutionStatus.PENDING, result.get(2, TimeUnit.SECONDS).getStatus());
             assertEquals(1, ends.get());
+            await(escaped);
+            assertSame(fatal, ownerFailure.get());
         } finally {
             releaseBody.countDown();
             releaseEnd.countDown();

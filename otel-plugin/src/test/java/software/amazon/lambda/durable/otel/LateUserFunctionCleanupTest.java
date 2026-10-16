@@ -22,7 +22,8 @@ import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 class LateUserFunctionCleanupTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void ownerUnwindingAfterFatalReturnStillClosesItsOriginalAttemptScope(boolean executionView) throws Exception {
+    void fatalDrainWaitsForOriginalAttemptScopeWhilePeerInvocationStaysIsolated(boolean executionView)
+            throws Exception {
         var fatal = new InternalError("peer fatal");
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
@@ -34,6 +35,8 @@ class LateUserFunctionCleanupTest {
         var endError = new AtomicReference<Throwable>();
         var ends = new AtomicInteger();
         var factories = new AtomicInteger();
+        var firstInvocationEnds = new AtomicInteger();
+        var callers = Executors.newSingleThreadExecutor();
         var endedInstance = new AtomicInteger();
         var exporter = InMemorySpanExporter.create();
         var provider = SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter));
@@ -48,6 +51,11 @@ class LateUserFunctionCleanupTest {
         DurableExecutionPluginFactory observer = info -> {
             var instance = factories.incrementAndGet();
             return new DurableExecutionPlugin() {
+                @Override
+                public void onInvocationEnd(InvocationEndInfo end) {
+                    if (instance == 1) firstInvocationEnds.incrementAndGet();
+                }
+
                 @Override
                 public void onUserFunctionStart(UserFunctionStartInfo start) {
                     if ("peer".equals(start.name())) {
@@ -119,13 +127,21 @@ class LateUserFunctionCleanupTest {
                         return peer.get();
                     },
                     durable);
-            assertSame(fatal, assertThrows(InternalError.class, () -> runner.run("input")));
-            assertEquals(0, ends.get(), "the peer is still held after invocation return");
+            var response = callers.submit(() -> runner.run("input"));
+            assertTrue(entered.await(3, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> response.get(700, TimeUnit.MILLISECONDS));
+            assertEquals(0, firstInvocationEnds.get(), "Invocation End must await the original owner");
+            assertEquals(0, ends.get(), "The peer is still held while the invocation drains");
             var other = LocalDurableTestRunner.create(String.class, (input, context) -> "other", durable);
             assertEquals(ExecutionStatus.SUCCEEDED, other.run("other").getStatus());
             assertEquals(2, factories.get(), "a new invocation creates its own plugin while old cleanup is held");
             release.countDown();
             assertTrue(exited.await(3, TimeUnit.SECONDS));
+            assertSame(
+                    fatal,
+                    assertThrows(ExecutionException.class, () -> response.get(3, TimeUnit.SECONDS))
+                            .getCause());
+            assertEquals(1, firstInvocationEnds.get());
             assertAll(
                     () -> assertEquals(1, ends.get(), "the started attempt must retain its own end-hook recipients"),
                     () -> assertEquals(
@@ -142,6 +158,8 @@ class LateUserFunctionCleanupTest {
                             .count());
         } finally {
             release.countDown();
+            callers.shutdownNow();
+            assertTrue(callers.awaitTermination(3, TimeUnit.SECONDS));
             workers.shutdownNow();
             assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS));
         }

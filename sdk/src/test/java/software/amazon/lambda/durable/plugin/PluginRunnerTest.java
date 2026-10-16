@@ -31,24 +31,25 @@ class PluginRunnerTest {
 
     @Test
     @SuppressWarnings("removal")
-    void invocationEndAttemptsEveryPluginAndPreservesFirstFatal() {
-        var first = new InternalError("first fatal");
+    void invocationEndUnwindsEveryPluginAndPreservesFirstDispatchedFatal() {
+        var first = new InternalError("first registered fatal");
+        var second = new ThreadDeath();
         var calls = new ArrayList<String>();
         var reported = new AtomicReference<Error>();
         var runner = new PluginRunner(
                 List.of(
                         endingPlugin("first", calls, first),
                         endingPlugin("linkage", calls, new NoSuchMethodError("optional API")),
-                        endingPlugin("second", calls, new ThreadDeath()),
+                        endingPlugin("second", calls, second),
                         endingPlugin("healthy", calls, null)),
                 fatal -> {
                     calls.add("reported");
                     reported.set(fatal);
                 });
         runner.onInvocationStart(invocationInfo());
-        assertSame(first, assertThrows(InternalError.class, () -> runner.onInvocationEnd(invocationEndInfo())));
-        assertEquals(List.of("first", "reported", "linkage", "second", "healthy"), calls);
-        assertSame(first, reported.get());
+        assertSame(second, assertThrows(ThreadDeath.class, () -> runner.onInvocationEnd(invocationEndInfo())));
+        assertEquals(List.of("healthy", "second", "reported", "linkage", "first"), calls);
+        assertSame(second, reported.get());
     }
 
     private static DurableExecutionPluginFactory endingPlugin(String name, List<String> calls, Error failure) {
@@ -355,7 +356,7 @@ class PluginRunnerTest {
         assertDoesNotThrow(() -> runner.onInvocationEnd(invocationEndInfo()));
 
         assertEquals(
-                List.of("p2:onOperationStart", "p3:onOperationStart", "p2:onInvocationEnd", "p3:onInvocationEnd"),
+                List.of("p2:onOperationStart", "p3:onOperationStart", "p3:onInvocationEnd", "p2:onInvocationEnd"),
                 calls);
     }
 
@@ -371,7 +372,7 @@ class PluginRunnerTest {
         calls.clear();
         assertDoesNotThrow(() -> runner.onInvocationEnd(invocationEndInfo()));
 
-        assertEquals(List.of("p2:onInvocationEnd", "p3:onInvocationEnd"), calls);
+        assertEquals(List.of("p3:onInvocationEnd", "p2:onInvocationEnd"), calls);
     }
 
     // ─── Interrupts ──────────────────────────────────────────────────────
@@ -585,7 +586,7 @@ class PluginRunnerTest {
     // ─── Awaited hooks ───────────────────────────────────────────────────
 
     @Test
-    void awaitedHooks_callAllPlugins() {
+    void awaitedEndHooks_unwindInReverseRegistrationOrder() {
         var calls = new ArrayList<String>();
         var runner =
                 new PluginRunner(List.of(info -> new TestPlugin("p1", calls), info -> new TestPlugin("p2", calls)));
@@ -594,7 +595,7 @@ class PluginRunnerTest {
 
         runner.onInvocationEnd(invocationEndInfo());
 
-        assertEquals(List.of("p1:onInvocationEnd", "p2:onInvocationEnd"), calls);
+        assertEquals(List.of("p2:onInvocationEnd", "p1:onInvocationEnd"), calls);
     }
 
     @Test

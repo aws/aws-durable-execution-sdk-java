@@ -19,10 +19,10 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.LockSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -84,14 +84,13 @@ class MdcFailureBoundaryTest {
     @SuppressWarnings("removal")
     @ParameterizedTest
     @CsvSource({"false,false", "true,false", "false,true", "true,true"})
-    void workerRestoreFatalBeforeEndDispatchIsObservedByTheCaller(boolean direct, boolean threadDeath)
-            throws Exception {
+    void workerRestoreFatalAfterEndStillReachesTheCaller(boolean direct, boolean threadDeath) throws Exception {
         Error fatal = threadDeath ? new ThreadDeath() : new InternalError("outer worker restore");
         var observed = runOuterFailure(direct, null, fatal);
         assertSame(fatal, observed.failure());
         assertEquals(1, observed.ends());
-        assertEquals(InvocationStatus.RETRYING, observed.end().invocationStatus());
-        assertSame(fatal, observed.end().executionError());
+        assertEquals(InvocationStatus.SUCCEEDED, observed.end().invocationStatus());
+        assertNull(observed.end().executionError(), "The earlier End snapshot is not rewritten by later restoration");
     }
 
     @ParameterizedTest
@@ -104,9 +103,11 @@ class MdcFailureBoundaryTest {
         var selected = bodyFatal ? primary : secondary;
         assertSame(selected, observed.failure());
         assertEquals(1, observed.ends());
-        assertSame(selected, observed.end().executionError());
-        assertEquals(InvocationStatus.RETRYING, observed.end().invocationStatus());
-        assertTrue(Arrays.asList(selected.getSuppressed()).contains(bodyFatal ? secondary : primary));
+        assertSame(primary, observed.end().executionError());
+        assertEquals(
+                bodyFatal ? InvocationStatus.RETRYING : InvocationStatus.FAILED,
+                observed.end().invocationStatus());
+        if (bodyFatal) assertTrue(Arrays.asList(selected.getSuppressed()).contains(secondary));
     }
 
     @ParameterizedTest
@@ -190,7 +191,6 @@ class MdcFailureBoundaryTest {
         var releaseRestore = new CountDownLatch(1);
         var ownerObserved = new CountDownLatch(1);
         var ownerFailure = new AtomicReference<Throwable>();
-        var callerThread = new AtomicReference<Thread>();
         var ended = new AtomicInteger();
         var bodyFailure = new IllegalStateException("ordinary body before late restoration");
         var injected = new AtomicBoolean();
@@ -205,7 +205,6 @@ class MdcFailureBoundaryTest {
         });
         var caller = Executors.newSingleThreadExecutor(task -> {
             var thread = new Thread(task, "late-mdc-caller");
-            callerThread.set(thread);
             return thread;
         });
         DurableExecutionPlugin plugin = new DurableExecutionPlugin() {
@@ -244,14 +243,15 @@ class MdcFailureBoundaryTest {
                             .build());
             var result = caller.submit(() -> runner.run("input"));
             awaitGate(startEntered);
-            awaitFinalizerJoin(callerThread.get());
             releaseStart.countDown();
             awaitGate(restoreEntered);
-            assertEquals(
-                    failedBody ? ExecutionStatus.FAILED : ExecutionStatus.SUCCEEDED,
-                    result.get(2, TimeUnit.SECONDS).getStatus());
-            assertEquals(1, ended.get());
+            assertThrows(TimeoutException.class, () -> result.get(150, TimeUnit.MILLISECONDS));
+            assertEquals(1, ended.get(), "The owner has delivered End, but return still awaits MDC restoration");
             releaseRestore.countDown();
+            assertSame(
+                    fatal,
+                    assertThrows(ExecutionException.class, () -> result.get(2, TimeUnit.SECONDS))
+                            .getCause());
             awaitGate(ownerObserved);
             assertSame(fatal, ownerFailure.get());
             assertEquals(1, ended.get());
@@ -289,18 +289,6 @@ class MdcFailureBoundaryTest {
             Thread.currentThread().interrupt();
             throw new AssertionError(failure);
         }
-    }
-
-    private static void awaitFinalizerJoin(Thread caller) {
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
-        while (System.nanoTime() < deadline) {
-            if (caller.getState() == Thread.State.WAITING
-                    && Arrays.stream(caller.getStackTrace())
-                            .anyMatch(frame -> frame.getClassName().endsWith(".DurableExecutor")
-                                    && frame.getMethodName().equals("finalizeAfterHandlerScopes"))) return;
-            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
-        }
-        fail("The invocation caller did not attach its finalizer before handler completion");
     }
 
     private static final class InlineExecutor extends AbstractExecutorService {
@@ -347,7 +335,7 @@ class MdcFailureBoundaryTest {
         "clear,true",
         "setContextMap,true"
     })
-    void nonfatalEndMdcFailuresPreserveTheSelectedOutcome(String method, boolean suspend) throws Exception {
+    void nonfatalMdcBoundaryFailuresPreserveTheirPhaseOutcome(String method, boolean suspend) throws Exception {
         runEndFailure(method, suspend, new IllegalStateException("end MDC failure"));
     }
 
@@ -361,7 +349,7 @@ class MdcFailureBoundaryTest {
         "clear,true",
         "setContextMap,true"
     })
-    void fatalEndMdcFailuresStillEscape(String method, boolean wrapped) throws Exception {
+    void fatalMdcBoundaryFailuresStillEscape(String method, boolean wrapped) throws Exception {
         Error fatal = wrapped ? new ThreadDeath() : new VirtualMachineError("fatal end MDC failure") {};
         runEndFailure(method, false, wrapped ? new CompletionException(new ExecutionException(fatal)) : fatal, fatal);
     }
@@ -377,7 +365,7 @@ class MdcFailureBoundaryTest {
                 throw new IllegalStateException("diagnostic unavailable");
             }
         };
-        runEndFailure("getCopyOfContextMap", suspend, failure);
+        runEndFailure("setContextMap", suspend, failure);
         assertEquals(1, reads.get());
     }
 
@@ -419,7 +407,7 @@ class MdcFailureBoundaryTest {
                 return this;
             }
         };
-        runEndFailure("getCopyOfContextMap", false, cycle);
+        runEndFailure("setContextMap", false, cycle);
         assertEquals(1, reads.get());
     }
 
@@ -438,15 +426,25 @@ class MdcFailureBoundaryTest {
         var callerBefore = MDC.getCopyOfContextMap();
         var injected = new AtomicBoolean();
         var plugin = new RecordingPlugin();
-        var worker = Executors.newSingleThreadExecutor();
+        var ownerFailure = new AtomicReference<Throwable>();
+        var ownerExited = new CountDownLatch(1);
+        var worker = Executors.newSingleThreadExecutor(task -> {
+            var thread = new Thread(task, "mdc-boundary-owner");
+            thread.setUncaughtExceptionHandler((owner, error) -> {
+                ownerFailure.set(error);
+                ownerExited.countDown();
+            });
+            return thread;
+        });
+        boolean capture = method.equals("getCopyOfContextMap");
         try {
             replaceAdapter(proxy(original, name -> {
-                var inEnd = Arrays.stream(Thread.currentThread().getStackTrace())
+                var inCapture = Arrays.stream(Thread.currentThread().getStackTrace())
                         .anyMatch(frame -> frame.getClassName().endsWith(".DurableExecutor")
-                                && frame.getMethodName().equals("fireOnInvocationEnd"));
-                if (inEnd && name.equals(method) && injected.compareAndSet(false, true)) throw failure;
-                // Select both legitimate MDC restoration branches, independently of the finalizer's thread.
-                if (inEnd && name.equals("getCopyOfContextMap"))
+                                && frame.getMethodName().equals("restoreMdcOnClose"));
+                boolean boundary = capture ? inCapture : isOuterRestore(name);
+                if (boundary && name.equals(method) && injected.compareAndSet(false, true)) throw failure;
+                if (inCapture && name.equals("getCopyOfContextMap"))
                     return method.equals("setContextMap") ? Map.of("ambient", "saved") : NullSnapshot.INSTANCE;
                 return null;
             }));
@@ -462,14 +460,22 @@ class MdcFailureBoundaryTest {
                             .build());
             if (expectedFatal != null) {
                 assertSame(expectedFatal, assertThrows(Error.class, () -> runner.run("input")));
-                assertEquals(method.equals("getCopyOfContextMap") ? 0 : 1, plugin.ends.get());
             } else {
                 var result = runner.run("input");
-                assertEquals(suspend ? ExecutionStatus.PENDING : ExecutionStatus.SUCCEEDED, result.getStatus());
-                assertEquals(1, plugin.ends.get());
+                assertEquals(
+                        capture
+                                ? ExecutionStatus.FAILED
+                                : suspend ? ExecutionStatus.PENDING : ExecutionStatus.SUCCEEDED,
+                        result.getStatus());
             }
-            assertTrue(injected.get(), "the actual execute() end boundary must exercise the adapter failure");
-            assertEquals(1, plugin.starts.get());
+            assertTrue(injected.get(), "The actual outer capture/restoration boundary must reach the adapter failure");
+            assertEquals(capture ? 0 : 1, plugin.starts.get());
+            assertEquals(capture ? 0 : 1, plugin.ends.get());
+            if (!capture || expectedFatal != null) {
+                assertTrue(
+                        ownerExited.await(3, TimeUnit.SECONDS), "Cleanup/fatal failure must escape the actual worker");
+                assertSame(expectedFatal != null ? expectedFatal : failure, ownerFailure.get());
+            }
         } finally {
             try {
                 worker.shutdownNow();

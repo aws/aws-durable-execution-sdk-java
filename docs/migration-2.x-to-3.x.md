@@ -226,7 +226,7 @@ What actually changed:
 - `DurableConfig.getPluginRunner()` is removed. `DurableConfig.getPluginFactories()` replaces it and returns an immutable `List<DurableExecutionPluginFactory>` in dispatch order.
 - `PluginRunner.getPlugins()` is removed. A runner holds no plugin instances until `onInvocationStart(InvocationInfo)` materializes them, and there is no accessor for them.
 - `PluginRunner`'s constructor takes `List<DurableExecutionPluginFactory>` instead of `List<DurableExecutionPlugin>`.
-- `PluginRunner.releasePlugins()` is added. The SDK calls it when the invocation returns, releasing invocation-level references. If fatal cleanup exceeds its bounded allowance, a started operation retains that invocation's end-hook recipients until its owner unwinds. These cleanup references do not create or share plugin instances with another invocation.
+- `PluginRunner.releasePlugins()` is added. The SDK calls it when the invocation returns, releasing invocation-level references. A started operation retains that invocation's end-hook recipients until its owner unwinds; invocation finalization joins that actual work before End. These cleanup references do not create or share plugin instances with another invocation.
 - `ExecutionManager.getPluginRunner()` exists in `3.x` and returns the runner for the current invocation. It is new in this release, not a renamed `2.x` method, and `ExecutionManager` is an internal coordination class. It is reachable only through `BaseContextImpl.getExecutionManager()`, which is declared on the implementation class and not on the `DurableContext` or `BaseContext` interfaces that handlers are given.
 
 What to do instead, by what you were trying to achieve:
@@ -391,8 +391,7 @@ published plugins with `RETRYING`, releases invocation state, and rethrows the f
 Fatal failures from startup or the root handler also escape the SDK's asynchronous supplier runnable, so the default
 thread-pool executor terminates that worker. A supplied executor retains its own task-exception policy. With a direct
 executor, rethrow is deferred to the invocation boundary to allow finalization first. Fatal failures from
-`onInvocationEnd` still reach the invocation caller, but their completion-stage callback does not guarantee worker
-termination. Ordinary handler failures and nonfatal plugin/factory containment retain their existing behavior.
+`onInvocationEnd` reach both the invocation caller and the actual asynchronous handler worker. Ordinary handler failures and nonfatal plugin/factory containment retain their existing behavior.
 
 ## Minor fixes retained in 3.x
 
@@ -408,10 +407,12 @@ preserve effective factory registrations without repeating environment discovery
 SDK-owned synthetic roots keep the same deterministic identity, name, attributes and checkpointed timestamps, and
 are exported before the first PENDING/RETRYING response with stable recovery reexports. Sampling intent is consumed
 before processor re-entry. Handler context retains valid same-trace ambient context or activates the view root, closes
-on its owning thread, and uses the bounded cleanup handoff. Ordinary cleanup preserves the winning durable outcome; observed scope-owned
-fatal errors escape the caller. Optional waiting reserves five seconds per plugin plus one second for shutdown/response,
-without promising a hard deadline for existing finalizers. Provider
-resources remain owned by the environment. The model-blocked outbound propagation groundwork remains separate.
+on its owning thread, and now uses main's handler-owned lifecycle: Start, body/scope unwinding, operation and checkpoint
+drain, output preparation, then End in reverse plugin registration order. The caller waits for that lifecycle; root scope cleanup
+cannot cross End through a 500 ms caller handoff. Ordinary cleanup preserves the winning suspension/retry outcome,
+while observed scope-owned fatals propagate after owner cleanup. Fatal cancellation remains cooperative: peer tasks,
+admitted continuations and transport are joined before End, so non-cooperative code can delay caller return without a
+hard bound. Provider resources remain owned by the environment. The model-blocked outbound propagation groundwork remains separate.
 
 Exclusive instrumentation metadata belongs to `DurableExecutionPluginFactory.getExclusiveGroup()` in 3.x, not the
 per-invocation plugin instance. Declare or forward the group on custom factory wrappers so configuration can validate

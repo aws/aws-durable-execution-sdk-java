@@ -32,21 +32,33 @@ class InvocationFatalPeerCleanupTest {
     @SuppressWarnings("removal")
     @ParameterizedTest
     @MethodSource("fatalCases")
-    void selectedFatalBoundsPeerCleanupAndFinalizesOnce(
+    void selectedFatalFollowsRequiredDrainAndFinalizesOnce(
             String stage, boolean plugins, boolean ignoresInterrupt, boolean threadDeath) throws Exception {
         Error fatal = threadDeath ? new ThreadDeath() : new InternalError("invocation fatal");
         try (var run = new Run(stage, plugins, ignoresInterrupt, fatal)) {
             var response = run.start();
             await(run.peerEntered);
+            if (stage.equals("output")) {
+                assertThrows(TimeoutException.class, () -> response.get(100, TimeUnit.MILLISECONDS));
+                assertFalse(run.interrupted.get(), "Output preparation cannot run before normal peer drain");
+                run.releasePeer.countDown();
+            }
+            if (stage.equals("handler") && ignoresInterrupt) {
+                assertThrows(TimeoutException.class, () -> response.get(700, TimeUnit.MILLISECONDS));
+                if (plugins) assertEquals(0, run.ends.get(), "End must join the real peer owner");
+                run.releasePeer.countDown();
+            }
             var failure = assertThrows(ExecutionException.class, () -> response.get(2, TimeUnit.SECONDS));
             assertSame(fatal, ExceptionHelper.unwrapAsyncFailure(failure));
-            assertTrue(run.interrupted.get(), "selected fatal requests cooperative cancellation");
-            assertEquals(!ignoresInterrupt, run.peerExited.get());
+            assertEquals(
+                    stage.equals("handler"), run.interrupted.get(), "Only an already known fatal interrupts peers");
+            boolean peerSettled = true;
+            assertEquals(peerSettled, run.peerExited.get());
             if (plugins) {
                 assertEquals(1, run.ends.get());
                 assertEquals(InvocationStatus.RETRYING, run.end.get().invocationStatus());
                 assertSame(fatal, run.end.get().executionError());
-                assertEquals(!ignoresInterrupt, run.peerCleanedAtEnd.get());
+                assertEquals(peerSettled, run.peerCleanedAtEnd.get());
                 assertFalse(run.wrongOwner.get());
             }
             run.releasePeer.countDown();

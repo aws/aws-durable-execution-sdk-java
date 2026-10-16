@@ -27,33 +27,36 @@ its canonical execution trace. A valid same-trace ambient Lambda span stays curr
 belongs to another trace, invocation view activates `Invocation`; execution view activates the deterministic
 `Workflow` context, including its unsampled non-recording form. Nested operations retain their existing contexts.
 
-The core opens the scope after invocation startup and closes it on the same handler thread on success, failure, or
-suspension. On suspension or termination, an opened scope gets up to 500ms to unwind before finalization, capped by
-remaining Lambda time after reserving five seconds per configured plugin and one second for shutdown/response.
-This is a best-effort reserve, not a total deadline bound: existing plugin callbacks and checkpoint draining may exceed it. The invocation caller waits; the owning handler worker remains free to exit.
-If cleanup is blocked, the SDK logs the timeout and preserves the original PENDING/RETRYING outcome.
-An observed `VirtualMachineError` or `ThreadDeath` from the new scope callbacks instead escapes the invocation caller.
-When observed before invocation finalization, the3.x lifecycle first calls invocation-end hooks once with RETRYING.
-The caller's snapshot freezes when invocation-end dispatch begins. Later scope fatals escape their owner thread but
-do not replace that frozen outcome or dispatch End again, including during resource shutdown. Ordinary cleanup failures
-and legacy body failures retain their existing classification. A response already returned cannot be rewritten. The scope still
-closes on its owning thread when the handler eventually exits; late cleanup telemetry is best effort. A compatible
-ambient span uses a no-op scope and participates in the same bounded handoff. Invocation-end hooks can execute on a
-different thread and do not own this scope. The explicit JDK-only opener requires explicit `@HandlerScoped` opt-in;
-unannotated application methods are not invoked. The factory migration follows the3.x boundary in the migration guide.
-Root-handler context requires the updated core/plugin pair. The new scope boundary isolates ordinary exceptions and nonfatal linkage
-errors during open and close, continues earlier scope cleanup, and preserves the handler outcome. JVM fatal errors
-remain outside that containment, including when wrapped by asynchronous completion/future exceptions.
+The core opens the explicit scope after invocation startup and closes it on the same handler thread on success,
+failure, or suspension. The handler owns the entire invocation lifecycle: Start, body and scope unwinding, operation
+and checkpoint drain, output preparation, then End in reverse plugin registration order. The caller waits for that owner and
+for End to finish. A zero or expired runtime budget does not move End onto the caller or allow root scope cleanup
+to continue after End. A compatible ambient span uses a no-op scope with the same lifecycle ordering.
+
+Ordinary cleanup preserves the previously selected durable outcome. Recognized `VirtualMachineError` or `ThreadDeath`
+from owned scope callbacks propagates after the owner has completed cleanup; started plugins receive one RETRYING End.
+The SDK cannot bound arbitrary root code, scope close callbacks, serializers, provider callbacks, or transports. Its
+fatal signal still interrupts cooperative peers and rejects queued work, but the invocation joins actual peer tasks,
+admitted continuations, and in-flight transport before End. A fatal no longer enables a 500 ms return while those tasks
+remain active. Non-cooperative work can therefore delay End and caller return without a hard bound. Operation owners
+retain their matching cleanup recipients through that drain, while concurrent invocations create distinct instances. Shared provider resources remain environment-owned.
+
+The JDK-only opener requires explicit `@HandlerScoped` opt-in; unannotated application methods are not invoked. The
+factory migration follows the 3.x artifact boundary in the migration guide. Nonfatal scope-open/close failures remain
+contained, and earlier scopes still close in reverse acquisition order. Root-handler context requires the matching
+core/plugin pair.
 
 The core observes the handler and manager outcomes before executor dispatch. A later ordinary `finally` return or
 failure does not replace an already selected suspension or retry. Diagnostics during ordinary failure-response
 preparation share its existing guard: if diagnostic access fails, started plugins receive one RETRYING End before
 that preparation failure propagates.
 
-Root-handler JVM fatals recognized by the existing body classifier are reported before owned handler scopes close.
-The first body fatal remains primary if close blocks or raises another fatal, using the same existing fatal handoff
-budget. A body fatal observed after End starts stays on the frozen late-failure path. Ordinary body classification and
-handlers without an owned scope retain their existing behavior.
+Root-handler JVM fatals recognized by the existing body classifier are reported before owned scopes close so peer
+work can be stopped cooperatively, but the root owner still finishes cleanup before End. The first accepted body fatal
+remains primary if close raises another fatal. Earlier selected suspension/retry control still wins over a later body
+`finally` failure; a recognized losing body fatal escapes its actual asynchronous worker after that selected outcome
+and End are delivered. A result-serialization fatal is discovered only after normal peer draining, so it cannot shorten
+that earlier drain.
 
 After a fatal abort, checkpoint and state-page responses are checked before local state/callback/poller publication.
 A response that observes the fatal at a guard stops publication; persisted backend state remains available for normal
@@ -409,12 +412,10 @@ When `enableMdc` is true (default), the plugin injects these fields into SLF4J M
 
 The `traceId` is also injected at invocation start so handler-level logs (between steps) include it.
 
-The core preserves worker MDC through handler-result completion and its invocation-end callbacks, then restores the
-previous worker map. A restoration `VirtualMachineError` or `ThreadDeath`, including one inside a standard completion,
-execution, reflection, or proxy wrapper, is reported through the existing owner-cleanup fatal channel even if the handler
-already failed ordinarily. An earlier handler JVM fatal remains primary. Before invocation-end dispatch, the caller
-receives that selected fatal and End receives `RETRYING`. Once End has begun, its outcome remains frozen: a later cleanup
-fatal escapes the actual asynchronous worker without a second End notification or rewriting an already returned result.
+The core preserves worker MDC through the handler-owned End callback, then restores the previous worker map before
+publishing the return to the caller. A recognized fatal from restoration propagates to the caller and actual worker,
+including after an ordinary handler failure. End still describes the already selected SDK outcome and is not dispatched
+a second time to describe a later MDC-restoration failure. An already known fatal remains primary over cleanup errors.
 
 After an ordinary outer restoration failure, the core attempts `MDC.clear()` once and exposes the cleanup failure on the
 asynchronous worker while retaining the selected ordinary caller outcome. This also applies when an earlier handler fatal

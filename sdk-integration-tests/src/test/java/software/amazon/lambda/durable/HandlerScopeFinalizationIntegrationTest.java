@@ -26,7 +26,7 @@ import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 class HandlerScopeFinalizationIntegrationTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void blockedCleanupReturnsTheOriginalOutcomeThenClosesOnItsOwner(boolean terminate) throws Exception {
+    void blockedCleanupMustFinishBeforeOriginalOutcomeAndEnd(boolean terminate) throws Exception {
         var releaseFinally = new CountDownLatch(1);
         var enteredFinally = new CountDownLatch(1);
         var scopeClosed = new CountDownLatch(1);
@@ -75,6 +75,9 @@ class HandlerScopeFinalizationIntegrationTest {
         try {
             var response = caller.submit(() -> runner.run("input"));
             assertTrue(enteredFinally.await(5, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> response.get(700, TimeUnit.MILLISECONDS));
+            assertEquals(1L, scopeClosed.getCount());
+            releaseFinally.countDown();
             if (terminate) {
                 var failure = assertThrows(ExecutionException.class, () -> response.get(2, TimeUnit.SECONDS));
                 assertInstanceOf(UnrecoverableDurableExecutionException.class, failure.getCause());
@@ -82,8 +85,8 @@ class HandlerScopeFinalizationIntegrationTest {
                 assertEquals(
                         ExecutionStatus.PENDING,
                         response.get(2, TimeUnit.SECONDS).getStatus());
-            assertFalse(closedAtEnd.get());
-            assertEquals(1L, scopeClosed.getCount());
+            assertTrue(closedAtEnd.get());
+            assertEquals(0L, scopeClosed.getCount());
         } finally {
             releaseFinally.countDown();
             assertTrue(scopeClosed.await(5, TimeUnit.SECONDS));
@@ -93,7 +96,7 @@ class HandlerScopeFinalizationIntegrationTest {
 
     @ParameterizedTest
     @CsvSource({"true,false", "false,false", "true,true", "false,true"})
-    void finalizationWaitsForAnOpenedScopeWithoutChangingLegacyNoScopeTiming(boolean hasScope, boolean terminate)
+    void finalizationWaitsForHandlerCleanupWithOrWithoutExplicitScope(boolean hasScope, boolean terminate)
             throws Exception {
         var finallyEntered = new CountDownLatch(1);
         var releaseFinally = new CountDownLatch(1);
@@ -157,11 +160,9 @@ class HandlerScopeFinalizationIntegrationTest {
         try {
             var response = caller.submit(() -> runner.run("input"));
             assertTrue(finallyEntered.await(5, TimeUnit.SECONDS));
-            if (hasScope) {
-                assertThrows(TimeoutException.class, () -> response.get(150, TimeUnit.MILLISECONDS));
-                assertFalse(endCalled.get(), "flush must wait for same-thread scope cleanup");
-                releaseFinally.countDown();
-            }
+            assertThrows(TimeoutException.class, () -> response.get(150, TimeUnit.MILLISECONDS));
+            assertFalse(endCalled.get(), "End must wait for handler cleanup, even without an explicit scope");
+            releaseFinally.countDown();
             if (terminate) {
                 var failure = assertThrows(ExecutionException.class, () -> response.get(5, TimeUnit.SECONDS));
                 assertInstanceOf(UnrecoverableDurableExecutionException.class, failure.getCause());

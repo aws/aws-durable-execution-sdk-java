@@ -23,7 +23,7 @@ class InFlightFatalAbortTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     @SuppressWarnings("removal")
-    void activeBatchAndAlreadyWaitingShutdownObserveFatalWithoutBackendReturn(boolean threadDeath) throws Exception {
+    void activeRequestObservesFatalButShutdownWaitsForBackendReturn(boolean threadDeath) throws Exception {
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         Error fatal = threadDeath ? new ThreadDeath() : new InternalError("active batch fatal");
@@ -36,8 +36,10 @@ class InFlightFatalAbortTest {
             assertThrows(TimeoutException.class, () -> shutdown.get(100, TimeUnit.MILLISECONDS));
             batcher.abortPending(fatal);
             assertFatal(request, fatal);
+            assertThrows(TimeoutException.class, () -> shutdown.get(700, TimeUnit.MILLISECONDS));
+            assertEquals(1, release.getCount(), "Request observation does not detach admitted I/O");
+            release.countDown();
             assertFatal(shutdown, fatal);
-            assertEquals(1, release.getCount(), "fatal handling must not need the backend to return");
             assertFatal(batcher.submit("later", Duration.ZERO), fatal);
         } finally {
             release.countDown();
@@ -49,7 +51,7 @@ class InFlightFatalAbortTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     @SuppressWarnings("removal")
-    void checkpointShutdownDoesNotWaitForBackendHeldPollerLockAfterFatal(boolean threadDeath) throws Exception {
+    void checkpointShutdownWaitsForAdmittedTransportAfterFatal(boolean threadDeath) throws Exception {
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         Error fatal = threadDeath ? new ThreadDeath() : new InternalError("checkpoint fatal");
@@ -79,8 +81,10 @@ class InFlightFatalAbortTest {
             signal.set(fatal);
             manager.abortPending(fatal);
             assertFatal(request, fatal);
-            assertFatal(shutdown, fatal);
+            assertThrows(TimeoutException.class, () -> shutdown.get(700, TimeUnit.MILLISECONDS));
             assertEquals(1, release.getCount());
+            release.countDown();
+            assertFatal(shutdown, fatal);
         } finally {
             release.countDown();
             closing.shutdown();

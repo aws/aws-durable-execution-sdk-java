@@ -20,7 +20,7 @@ class PluginFatalRunningPeerTest {
     @ParameterizedTest
     @CsvSource({"false,false,true", "true,false,true", "false,true,true", "true,true,true", "false,false,false"})
     @SuppressWarnings("removal")
-    void runningPeerCleanupIsBoundedOnlyAfterPluginFatal(
+    void runningPeerMustUnwindBeforeEndAfterPluginFatal(
             boolean threadDeath, boolean ignoresInterrupt, boolean triggerFatal) throws Exception {
         var peerEntered = new CountDownLatch(1);
         var releasePeer = new CountDownLatch(1);
@@ -83,13 +83,15 @@ class PluginFatalRunningPeerTest {
             var response = callers.submit(() -> runner.run("input"));
             assertTrue(peerEntered.await(3, TimeUnit.SECONDS));
             if (triggerFatal) {
+                if (ignoresInterrupt) {
+                    assertThrows(TimeoutException.class, () -> response.get(700, TimeUnit.MILLISECONDS));
+                    assertEquals(0, ends.get(), "End must await the actual peer owner");
+                    releasePeer.countDown();
+                }
                 var failure = assertThrows(ExecutionException.class, () -> response.get(2, TimeUnit.SECONDS));
                 assertSame(fatal, ExceptionHelper.unwrapAsyncFailure(failure));
                 assertTrue(interrupted.get(), "the running peer receives cooperative cancellation");
-                assertEquals(
-                        !ignoresInterrupt,
-                        exited.get(),
-                        "uncooperative work must not hold invocation shutdown forever");
+                assertTrue(exited.get(), "Peer work must settle before End and caller return");
             } else {
                 assertThrows(TimeoutException.class, () -> response.get(100, TimeUnit.MILLISECONDS));
                 assertFalse(interrupted.get(), "ordinary shutdown must not interrupt user work");

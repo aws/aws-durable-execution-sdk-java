@@ -59,7 +59,6 @@ class PluginFatalQueuedCheckpointTest {
 
             public void onInvocationEnd(InvocationEndInfo end) {
                 ends.incrementAndGet();
-                releaseCheckpoint.countDown();
             }
         };
         var callers = Executors.newSingleThreadExecutor(task -> daemon(task, "queued-checkpoint-caller"));
@@ -93,6 +92,10 @@ class PluginFatalQueuedCheckpointTest {
                         return queued.get();
                     },
                     config));
+            assertTrue(checkpointEntered.await(3, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> response.get(700, TimeUnit.MILLISECONDS));
+            assertEquals(0, ends.get(), "End must await the held checkpoint transport");
+            releaseCheckpoint.countDown();
             assertSame(
                     fatal,
                     assertThrows(ExecutionException.class, () -> response.get(5, TimeUnit.SECONDS))

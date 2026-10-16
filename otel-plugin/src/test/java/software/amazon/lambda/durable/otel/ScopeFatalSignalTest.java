@@ -20,8 +20,7 @@ class ScopeFatalSignalTest {
     @ParameterizedTest
     @CsvSource({"false,false", "true,false", "false,true", "true,true"})
     @SuppressWarnings("removal")
-    void fatalCloseWakesCallerAndStillAllowsBoundedEarlierCleanup(boolean threadDeath, boolean releaseInBudget)
-            throws Exception {
+    void fatalCloseStillAwaitsTheEarlierScopeOwner(boolean threadDeath, boolean releaseInBudget) throws Exception {
         var earlierEntered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         var closed = new AtomicBoolean();
@@ -56,14 +55,18 @@ class ScopeFatalSignalTest {
             assertThrows(
                     TimeoutException.class,
                     () -> result.get(100, TimeUnit.MILLISECONDS),
-                    "earlier cleanup must receive its handoff budget");
-            if (releaseInBudget) release.countDown();
+                    "earlier cleanup must finish before End");
+            if (!releaseInBudget) {
+                assertThrows(TimeoutException.class, () -> result.get(600, TimeUnit.MILLISECONDS));
+                assertFalse(closed.get(), "An elapsed caller budget cannot complete the scope owner");
+            }
+            release.countDown();
             var failure = assertThrows(
                     ExecutionException.class,
                     () -> result.get(2, TimeUnit.SECONDS),
-                    "reported fatal must wake the invocation without waiting forever for earlier cleanup");
+                    "reported fatal must propagate after the owner finishes cleanup");
             assertSame(fatal, ExceptionHelper.unwrapAsyncFailure(failure));
-            assertEquals(releaseInBudget, closed.get());
+            assertTrue(closed.get());
         } finally {
             release.countDown();
             callers.shutdown();

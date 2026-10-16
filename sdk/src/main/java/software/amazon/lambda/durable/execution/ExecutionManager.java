@@ -15,12 +15,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -79,14 +76,10 @@ public class ExecutionManager implements SafeCloseable {
     // ===== Plugins =====
     // Created per invocation, alongside this manager: the runner materializes one plugin instance per configured
     // factory when the invocation starts and releases the runner's references in close(). Started operation owners
-    // retain only their matching cleanup recipients until they unwind, including after a bounded fatal return.
+    // retain only their matching cleanup recipients until they unwind, until the invocation drain has joined their
+    // actual task.
     private final PluginRunner pluginRunner;
     private final AtomicReference<Error> pluginFatal;
-    private final CompletableFuture<Void> pluginFatalSignal = new CompletableFuture<>();
-    private long fatalOperationCleanupDeadline = Long.MAX_VALUE;
-    private final Object pluginFinalizationLock = new Object();
-    private boolean invocationFinalized;
-    private Error lateScopeFatal;
 
     // ===== Thread Coordination =====
     private final Map<String, BaseDurableOperation> registeredOperations = new ConcurrentHashMap<>();
@@ -145,6 +138,7 @@ public class ExecutionManager implements SafeCloseable {
                 this::onCheckpointComplete,
                 this::tryStartCheckpointProcessing,
                 this::finishCheckpointProcessing,
+                this::signalSuspension,
                 pluginFatal::get);
 
         this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()
@@ -266,6 +260,11 @@ public class ExecutionManager implements SafeCloseable {
                 : completionLockFor(completionLockParent);
         operationCompletionLocks.put(operationId, completionLock);
         registeredOperations.put(operationId, operation);
+        // Revocation is published before existing operations are suspended. Check after insertion so an
+        // operation registered too late for that notification still releases its waiters.
+        if (isCheckpointTokenRevoked()) {
+            operation.getCompletionFuture().completeExceptionally(new SuspendExecutionException());
+        }
     }
 
     // ===== Checkpoint Completion Handler =====
@@ -792,101 +791,116 @@ public class ExecutionManager implements SafeCloseable {
     @Override
     public void close() {
         try {
-            stopCheckpointContinuations();
-            validateRunningThreads();
-            try {
-                checkpointManager.shutdown();
-            } catch (CompletionException failure) {
-                if (!isLateScopeFatal(failure)) throw failure;
-                // The original fatal still escapes its owner. Do not deliver its batcher copy a second time
-                // on the invocation caller after the caller's one end snapshot has already been finalized.
-                logger.warn(
-                        "Handler scope failed after invocation finalization; preserving finalized outcome", failure);
-            }
+            drainOperations();
         } finally {
-            // The invocation is over: drop this invocation's plugin instances so they cannot be reached again.
-            // In a finally, because validateRunningThreads throws on a stuck user handler: leaving the instances
-            // in place then carries them into the next invocation the environment hosts, which is the
-            // cross-execution sharing the per-invocation lifetime exists to prevent.
             pluginRunner.releasePlugins();
         }
     }
 
-    /** Closes new checkpoint-continuation admission without signaling owners or joining their cleanup. */
-    void closeCheckpointContinuationAdmission() {
-        synchronized (activeThreads) {
-            closing = true;
-        }
+    /**
+     * Settles submitted operation handlers and stops polling before flushing checkpoints. Terminal decisions therefore
+     * observe token withdrawal without allowing later polls to change that decision. Safe to call more than once: a
+     * second call finds no running handlers and an already-stopped batcher.
+     */
+    void drainOperations() {
+        // Closing admission can skip queued continuations. Stop their owners before joining user handlers,
+        // or a child waiting on a skipped continuation would prevent the drain from completing.
+        var drain = new DrainFailure();
+        drain.run(() -> stopCheckpointContinuations(drain));
+        drain.run(() -> waitForRunningUserHandlers(drain));
+        drain.run(this::validateExecutorPool);
+        drain.run(checkpointManager::shutdown);
+        drain.finish();
     }
 
-    private void stopCheckpointContinuations() {
+    private void stopCheckpointContinuations(DrainFailure drain) {
         List<BaseDurableOperation> owners;
         synchronized (activeThreads) {
             closing = true;
             owners = new ArrayList<>(checkpointContinuations.values());
         }
-        owners.forEach(ExecutionManager::stopContinuationOwner);
-        while (true) {
-            // Reuse the major's one fatal cleanup deadline; never introduce an unbounded minor-lifecycle wait.
-            var deadline = fatalCleanupDeadline(Long.MAX_VALUE);
-            synchronized (activeThreads) {
-                if (checkpointContinuations.isEmpty()) return;
-                if (pluginFatal.get() != null && deadline == Long.MAX_VALUE) continue;
+        owners.forEach(owner -> drain.run(() -> stopContinuationOwner(owner)));
+        synchronized (activeThreads) {
+            while (!checkpointContinuations.isEmpty()) {
                 try {
-                    if (deadline == Long.MAX_VALUE) activeThreads.wait();
-                    else {
-                        var remaining = deadline - System.nanoTime();
-                        if (remaining <= 0) {
-                            logger.warn("SDK continuations exceeded the shared fatal cleanup budget");
-                            return;
-                        }
-                        TimeUnit.NANOSECONDS.timedWait(activeThreads, remaining);
-                    }
+                    // wait releases this monitor so tasks can finish and release their registrations. No user work
+                    // or future join is performed while holding the coordination monitor.
+                    activeThreads.wait();
                 } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException(
-                            "Interrupted while waiting for checkpoint continuations", interrupted);
+                    drain.interrupted("Interrupted while waiting for checkpoint continuations", interrupted);
                 }
             }
         }
     }
 
-    private void validateRunningThreads() {
-        var cleanupDeadline = Long.MAX_VALUE;
-        // This will detect stuck user thread and thread leaks in the thread pool
-        for (BaseDurableOperation op : registeredOperations.values()) {
-            if (pluginFatal.get() != null && op.isRunningUserHandlerOwner()) continue;
-            var userHandlerFuture = op.getRunningUserHandler();
-            if (userHandlerFuture != null && !userHandlerFuture.isDone()) {
-                // Some user threads can still be running because
-                // the operations that run them have never been waiting for and the execution has completed.
-                logger.info("Waiting for operation to complete before shutting down: {}", op.getOperationId());
-                try {
-                    if (pluginFatal.get() == null) {
-                        CompletableFuture.anyOf(userHandlerFuture, pluginFatalSignal)
-                                .handle((result, failure) -> null)
-                                .get();
-                    }
-                    cleanupDeadline = fatalCleanupDeadline(cleanupDeadline);
-                    if (cleanupDeadline == Long.MAX_VALUE) userHandlerFuture.get();
-                    else userHandlerFuture.get(Math.max(0L, cleanupDeadline - System.nanoTime()), TimeUnit.NANOSECONDS);
-                } catch (TimeoutException e) {
-                    logger.warn("Operation owner exceeded the fatal cleanup budget: {}", op.getOperationId());
-                    break;
-                } catch (InterruptedException | CancellationException e) {
-                    if (pluginFatal.get() != null) {
-                        if (e instanceof InterruptedException)
-                            Thread.currentThread().interrupt();
-                        break;
-                    }
-                    throw new IllegalStateException(
-                            "Stuck running user handler when shutting down: " + op.getOperationId());
-                } catch (Exception e) {
-                    // ok if the future completed exceptionally
-                }
+    private void waitForRunningUserHandlers(DrainFailure drain) {
+        for (var operation : registeredOperations.values()) {
+            drain.run(() -> awaitUserHandler(operation, drain));
+        }
+    }
+
+    private void awaitUserHandler(BaseDurableOperation operation, DrainFailure drain) {
+        var completion = operation.getRunningUserHandler();
+        if (completion == null) return;
+        while (!completion.isDone()) {
+            try {
+                completion.get();
+            } catch (InterruptedException interrupted) {
+                // get clears the flag. Finish all owned work before restoring it and reporting RETRYING.
+                drain.interrupted(
+                        "Interrupted while waiting for user handler " + operation.getOperationId(), interrupted);
+            } catch (CancellationException cancelled) {
+                drain.record(new IllegalStateException(
+                        "User handler observation cancelled: " + operation.getOperationId(), cancelled));
+                return;
+            } catch (Exception completedExceptionally) {
+                return; // The real owner settled exceptionally; its selected outcome is handled separately.
+            }
+        }
+    }
+
+    /** Retains cleanup failures while every required stage gets its finalization opportunity. */
+    private static final class DrainFailure {
+        private Throwable failure;
+        private boolean fatal;
+        private boolean interrupted;
+
+        void run(Runnable stage) {
+            try {
+                stage.run();
+            } catch (Throwable problem) {
+                record(problem);
             }
         }
 
+        void interrupted(String message, InterruptedException problem) {
+            if (!interrupted) record(new IllegalStateException(message, problem));
+            interrupted = true;
+        }
+
+        @SuppressWarnings("removal")
+        void record(Throwable problem) {
+            var cause = ExceptionHelper.unwrapInvocationFailure(problem);
+            boolean nextFatal = cause instanceof VirtualMachineError || cause instanceof ThreadDeath;
+            // Keep a transport wrapper intact: close may run while the same fatal already escapes the body.
+            // Throwing that fatal object again from try-with-resources would trigger self-suppression.
+            var next = problem;
+            if (failure == null || nextFatal && !fatal) {
+                if (failure != null && failure != next) next.addSuppressed(failure);
+                failure = next;
+                fatal = nextFatal;
+            } else if (failure != next) {
+                failure.addSuppressed(next);
+            }
+        }
+
+        void finish() {
+            if (interrupted) Thread.currentThread().interrupt();
+            if (failure != null) ExceptionHelper.sneakyThrow(failure);
+        }
+    }
+
+    private void validateExecutorPool() {
         // double check if the thread pool is empty
         if (durableConfig.getExecutorService() instanceof ThreadPoolExecutor threadPoolExecutor) {
             var threadCount = threadPoolExecutor.getActiveCount();
@@ -895,28 +909,6 @@ public class ExecutionManager implements SafeCloseable {
                 logger.warn("{} active threads in user executor pool when shutting down", threadCount);
             }
         }
-    }
-
-    private synchronized long fatalCleanupDeadline(long current) {
-        if (current != Long.MAX_VALUE || pluginFatal.get() == null) return current;
-        if (fatalOperationCleanupDeadline != Long.MAX_VALUE) return fatalOperationCleanupDeadline;
-        // One budget across all peers, with response headroom when the runtime exposes its deadline.
-        var budgetMillis = lambdaContext == null
-                ? 500L
-                : Math.min(500L, Math.max(0L, (long) lambdaContext.getRemainingTimeInMillis() - 1_000L));
-        fatalOperationCleanupDeadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMillis);
-        return fatalOperationCleanupDeadline;
-    }
-
-    /** Gives cooperative operation owners their shared fatal cleanup allowance before invocation finalization. */
-    void awaitFatalOperationCleanup() {
-        if (pluginFatal.get() == null) return;
-        registeredOperations.values().forEach(BaseDurableOperation::interruptRunningUserHandler);
-        validateRunningThreads();
-    }
-
-    boolean isRunningOperationOwner() {
-        return registeredOperations.values().stream().anyMatch(BaseDurableOperation::isRunningUserHandlerOwner);
     }
 
     /** Returns {@code true} if the given status represents a terminal (final) operation state. */
@@ -960,13 +952,17 @@ public class ExecutionManager implements SafeCloseable {
         return executionExceptionFuture.isCompletedExceptionally();
     }
 
-    /** Applies the existing shutdown budget to a root or result-delivery fatal already selected by the invocation. */
+    Error getInvocationFatal() {
+        return pluginFatal.get();
+    }
+
+    /** Reports a selected fatal and requests cooperative peer cancellation before the invocation drains. */
     void recordInvocationFatal(Error fatal) {
         failFromPlugin(fatal);
     }
 
     private void failFromPlugin(Error fatal) {
-        var original = recordPluginFatal(fatal, false);
+        var original = recordPluginFatal(fatal);
         executionExceptionFuture.completeExceptionally(original);
         stopAllOperations(original);
         checkpointManager.abortPending(original);
@@ -976,7 +972,7 @@ public class ExecutionManager implements SafeCloseable {
     Error recordRootHandlerFatal(Error fatal) {
         // Reuse the existing first-completion channel. A losing body-finally failure is not an instrumentation fatal.
         if (!executionExceptionFuture.completeExceptionally(fatal)) return null;
-        var original = recordPluginFatal(fatal, true);
+        var original = recordPluginFatal(fatal);
         stopAllOperations(original);
         checkpointManager.abortPending(original);
         return original;
@@ -984,40 +980,20 @@ public class ExecutionManager implements SafeCloseable {
 
     /** Stops pending work while leaving the root worker responsible for completing its scope cleanup. */
     void recordHandlerScopeFatal(Error fatal) {
-        var original = recordPluginFatal(fatal, true);
-        // Wake the invocation caller so it can apply the bounded handoff while the owner continues cleanup.
+        var original = recordPluginFatal(fatal);
+        // Publish control immediately; the root handler still owns cleanup and End before returning.
         executionExceptionFuture.completeExceptionally(original);
         stopAllOperations(original);
         checkpointManager.abortPending(original);
     }
 
-    /** Freezes the caller's end snapshot without waiting longer for the handler owner. */
-    Error beginInvocationFinalization() {
-        synchronized (pluginFinalizationLock) {
-            invocationFinalized = true;
-            return pluginFatal.get();
-        }
-    }
-
-    private Error recordPluginFatal(Error fatal, boolean fromScope) {
-        Error original;
-        synchronized (pluginFinalizationLock) {
-            if (pluginFatal.compareAndSet(null, fatal) && fromScope && invocationFinalized) {
-                lateScopeFatal = fatal;
-            }
-            original = pluginFatal.get();
-        }
-        pluginFatalSignal.complete(null);
+    private Error recordPluginFatal(Error fatal) {
+        pluginFatal.compareAndSet(null, fatal);
+        var original = pluginFatal.get();
         synchronized (activeThreads) {
             activeThreads.notifyAll();
         }
         return original;
-    }
-
-    private boolean isLateScopeFatal(Throwable failure) {
-        synchronized (pluginFinalizationLock) {
-            return lateScopeFatal != null && ExceptionHelper.unwrapAsyncFailure(failure) == lateScopeFatal;
-        }
     }
 
     /** Once plugin instrumentation has failed fatally, do not retry or persist unrelated operation outcomes. */

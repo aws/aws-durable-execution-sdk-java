@@ -31,8 +31,8 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
  * {@code Error}. It stops short of two cases, which keep propagating: the errors that report the JVM itself failing,
  * and the {@code ThreadDeath} that reports the thread running the plugin has already been terminated.
  *
- * <p>{@code onInvocationEnd} is awaited (the SDK blocks until it returns) to allow plugins to flush data before Lambda
- * freezes.
+ * <p>{@code onInvocationEnd} runs on the root handler thread after body unwinding, operation/checkpoint draining, and
+ * output preparation. The SDK awaits it before returning, so plugins can flush data before Lambda freezes.
  */
 public class PluginRunner {
 
@@ -356,7 +356,8 @@ public class PluginRunner {
     @SuppressWarnings("removal")
     public void onInvocationEnd(InvocationEndInfo info) {
         Error firstFatal = null;
-        for (var plugin : plugins) {
+        for (int index = plugins.size() - 1; index >= 0; index--) {
+            var plugin = plugins.get(index);
             try {
                 runPlugin(plugin, p -> p.onInvocationEnd(info));
             } catch (VirtualMachineError | ThreadDeath fatal) {
@@ -412,8 +413,8 @@ public class PluginRunner {
                 });
             }
         } catch (VirtualMachineError | ThreadDeath fatal) {
-            // Wake the caller before an earlier plugin's cleanup can block. Operation-owner fatal handoff keeps
-            // finalization off this cleanup thread, while earlier starts still unwind in LIFO order here.
+            // Publish the fatal before earlier cleanup can block, so cooperative peers can stop. The root handler
+            // still drains this actual owner before End; earlier starts unwind in LIFO order here.
             operationFatalObserver.accept(fatal);
             closeStartedUserFunctions(started, info, fatal);
             throw fatal;
@@ -476,7 +477,10 @@ public class PluginRunner {
         return snapshot.isEmpty() ? EMPTY_USER_FUNCTION_HOOKS : new UserFunctionHooks(snapshot, operationFatalObserver);
     }
 
-    /** An operation owner retains these recipients through its matching end, including after a bounded fatal return. */
+    /**
+     * An operation owner retains these recipients through its matching end, until the invocation has drained its actual
+     * task.
+     */
     public static final class UserFunctionHooks {
         private final List<DurableExecutionPlugin> plugins;
         private final Consumer<Error> operationFatalObserver;

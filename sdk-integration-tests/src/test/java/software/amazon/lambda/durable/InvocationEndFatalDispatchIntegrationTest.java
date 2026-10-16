@@ -48,7 +48,7 @@ class InvocationEndFatalDispatchIntegrationTest {
 
     @ParameterizedTest
     @MethodSource("cases")
-    void endHookFatalStopsQueuedAtLeastOnceWorkBeforeShutdown(boolean blockedEnd, boolean wrapped, Error fatal)
+    void standaloneEndFatalRejectsQueuedWorkInReverseOrder(boolean blockedEnd, boolean wrapped, Error fatal)
             throws Exception {
         var executor = new QueuedExecutor();
         var enteredEnd = new CountDownLatch(1);
@@ -85,7 +85,7 @@ class InvocationEndFatalDispatchIntegrationTest {
                         return super.checkpoint(arn, token, batch);
                     }
                 })
-                .withPlugins(failing, healthy)
+                .withPlugins(healthy, failing)
                 .build();
         var input = input();
         var manager = new ExecutionManager(input, config, null);
@@ -100,7 +100,7 @@ class InvocationEndFatalDispatchIntegrationTest {
                 bodies.incrementAndGet();
                 return "unexpected";
             });
-            // Model a handler that returns with accepted async work still waiting for its worker.
+            // Exercise the standalone dispatcher guard. Production drains admitted work before invoking End.
             var end = new InvocationEndInfo(
                     "request", input.durableExecutionArn(), true, InvocationStatus.SUCCEEDED, null);
             var dispatch = finalizer.submit(() -> runner.onInvocationEnd(end));

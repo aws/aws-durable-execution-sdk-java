@@ -6,202 +6,151 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.amazonaws.services.lambda.runtime.Context;
-import java.time.Duration;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BiConsumer;
-import java.util.function.BiFunction;
-import org.junit.jupiter.api.Test;
+import java.time.Instant;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.*;
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.model.DurableExecutionInput;
+import software.amazon.lambda.durable.model.ExecutionStatus;
+import software.amazon.lambda.durable.plugin.*;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
+/** The old caller handoff is replaced by handler-owned completion, including exhausted runtime budgets. */
 class HandlerScopeHandoffTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void throwingCleanupCannotReplaceTheWinningControlFlow(boolean retry) throws Exception {
-        var original = control(retry);
-        var execution = CompletableFuture.<String>failedFuture(original);
-        var handler = CompletableFuture.<String>failedFuture(new IllegalStateException("finally failed"));
-        var result = handoff(execution, handler);
-        var thrown = assertThrows(CompletionException.class, result::join);
-        assertSame(original, thrown.getCause());
-    }
-
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void nonUnwindingCleanupDoesNotWaitForever(boolean retry) throws Exception {
-        var original = control(retry);
-        var execution = CompletableFuture.<String>failedFuture(original);
-        var handler = new CompletableFuture<String>();
-        var caller = Executors.newSingleThreadExecutor(task -> {
-            var thread = new Thread(task, "handoff-caller");
-            thread.setDaemon(true);
-            return thread;
-        });
-        try {
-            var response = caller.submit(() -> {
-                var result = handoff(execution, handler);
-                var thrown = assertThrows(CompletionException.class, result::join);
-                assertSame(original, thrown.getCause());
-                return null;
-            });
-            response.get(2, TimeUnit.SECONDS);
-            assertFalse(handler.isDone(), "timeout must not complete or cancel the owner task");
-        } finally {
-            handler.complete("released");
-            caller.shutdownNow();
-        }
-    }
-
-    @Test
-    void reservesFinalizationForEveryConfiguredPluginWithoutCancellingTheOwner() {
-        var context = mock(Context.class);
-        when(context.getRemainingTimeInMillis()).thenReturn(10_000);
-        var execution = CompletableFuture.<String>failedFuture(control(false));
-        var handler = new CompletableFuture<String>();
-        assertTimeoutPreemptively(
-                Duration.ofMillis(200),
-                () -> assertSame(
-                        execution,
-                        DurableExecutor.awaitHandlerScopes(
-                                execution, handler, new AtomicBoolean(true), context, 2, new AtomicReference<>())));
-        assertFalse(handler.isDone());
-    }
-
-    @Test
-    void noScopeDoesNotConsultTheRemainingTimeOrWaitForTheHandler() {
-        var context = mock(Context.class);
-        var execution = CompletableFuture.<String>failedFuture(control(false));
-        var handler = new CompletableFuture<String>();
-        assertSame(
-                execution,
-                DurableExecutor.awaitHandlerScopes(
-                        execution, handler, new AtomicBoolean(false), context, 1, new AtomicReference<>()));
-        verifyNoInteractions(context);
-        assertFalse(handler.isDone());
-    }
-
-    @Test
-    void knownFatalStillGivesEarlierScopeCleanupItsHandoffBudget() throws Exception {
-        var fatal = new InternalError("later scope failed");
-        var handler = new CompletableFuture<String>();
-        var callers = Executors.newSingleThreadExecutor();
-        try {
-            var result = callers.submit(() -> DurableExecutor.awaitHandlerScopes(
-                    CompletableFuture.<String>failedFuture(fatal),
-                    handler,
-                    new AtomicBoolean(true),
-                    null,
-                    2,
-                    new AtomicReference<Error>(fatal)));
-            assertThrows(TimeoutException.class, () -> result.get(100, TimeUnit.MILLISECONDS));
-            handler.completeExceptionally(fatal);
-            var chosen = result.get(1, TimeUnit.SECONDS);
-            assertSame(
-                    fatal, assertThrows(CompletionException.class, chosen::join).getCause());
-        } finally {
-            handler.completeExceptionally(fatal);
-            callers.shutdownNow();
-            assertTrue(callers.awaitTermination(3, TimeUnit.SECONDS));
-        }
-    }
-
-    @Test
-    void completedHandoffWaitsForTheRegisteredOwnerFinalizer() throws Exception {
-        var callbackRegistered = new CountDownLatch(1);
-        var callbacks = new LinkedBlockingQueue<Runnable>();
-        var handler = new CompletableFuture<String>() {
-            @Override
-            public CompletableFuture<String> whenComplete(BiConsumer<? super String, ? super Throwable> action) {
-                callbackRegistered.countDown();
-                // A completed future may publish its result before its registered completion action executes.
-                return super.whenCompleteAsync(action, callbacks::add);
-            }
-        };
-        var local = new ThreadLocal<String>();
+    void controlWaitsForScopeOwnerAndEndDespiteExpiredHandoffBudget(boolean retry) throws Exception {
+        var scopeEntered = new CountDownLatch(1);
+        var releaseScope = new CountDownLatch(1);
+        var endEntered = new CountDownLatch(1);
+        var releaseEnd = new CountDownLatch(1);
         var owner = new AtomicReference<Thread>();
-        var finalizerThread = new AtomicReference<Thread>();
-        var finalizerValue = new AtomicReference<String>();
+        var endThread = new AtomicReference<Thread>();
+        var end = new AtomicReference<InvocationEndInfo>();
+        var original = new UnrecoverableDurableExecutionException(
+                ErrorObject.builder().errorMessage("retry").build(), true);
+        var plugin = new ScopedPlugin(
+                () -> {
+                    owner.set(Thread.currentThread());
+                    return () -> {
+                        scopeEntered.countDown();
+                        await(releaseScope);
+                        assertSame(owner.get(), Thread.currentThread());
+                    };
+                },
+                info -> {
+                    endThread.set(Thread.currentThread());
+                    end.set(info);
+                    endEntered.countDown();
+                    await(releaseEnd);
+                });
         var workers = Executors.newSingleThreadExecutor();
         var callers = Executors.newSingleThreadExecutor();
-        var method = DurableExecutor.class.getDeclaredMethod(
-                "finalizeAfterHandlerScopes",
-                CompletableFuture.class,
-                CompletableFuture.class,
-                AtomicBoolean.class,
-                Context.class,
-                int.class,
-                AtomicReference.class,
-                ExecutionManager.class,
-                BiFunction.class);
-        method.setAccessible(true);
-        BiFunction<String, Throwable, String> end = (value, failure) -> {
-            finalizerThread.set(Thread.currentThread());
-            finalizerValue.set(local.get());
-            local.remove();
-            return "pending";
-        };
+        var runtime = mock(Context.class);
+        when(runtime.getRemainingTimeInMillis()).thenReturn(0);
         try {
-            var result = callers.submit(() -> method.invoke(
-                    null,
-                    CompletableFuture.<String>failedFuture(control(false)),
-                    handler,
-                    new AtomicBoolean(true),
-                    null,
-                    2,
-                    new AtomicReference<Error>(),
-                    mock(ExecutionManager.class),
-                    end));
-            assertTrue(callbackRegistered.await(3, TimeUnit.SECONDS));
-            workers.submit(() -> {
-                        owner.set(Thread.currentThread());
-                        local.set("invocation");
-                        handler.complete("handler finished");
-                    })
-                    .get(3, TimeUnit.SECONDS);
-            assertTrue(handler.isDone());
-            assertThrows(
-                    TimeoutException.class,
-                    () -> result.get(100, TimeUnit.MILLISECONDS),
-                    "The waiter must not steal a completed handoff's pending completion callback");
-            var callback = callbacks.poll(3, TimeUnit.SECONDS);
-            assertNotNull(callback);
-            workers.submit(callback).get(3, TimeUnit.SECONDS);
-            assertEquals("pending", result.get(3, TimeUnit.SECONDS));
-            assertSame(owner.get(), finalizerThread.get());
-            assertEquals("invocation", finalizerValue.get());
-            assertNull(workers.submit(local::get).get(3, TimeUnit.SECONDS), "The reused owner must be clean");
+            var config = DurableConfig.builder()
+                    .withExecutorService(workers)
+                    .withDurableExecutionClient(mock(DurableExecutionClient.class))
+                    .withPlugins(info -> plugin)
+                    .build();
+            var response = callers.submit(() -> DurableExecutor.execute(
+                    input(),
+                    runtime,
+                    TypeToken.get(String.class),
+                    (value, context) -> {
+                        var manager = ((DurableContextImpl) context).getExecutionManager();
+                        try {
+                            if (retry) manager.terminateExecution(original);
+                            manager.suspendExecution();
+                            return "unreachable";
+                        } finally {
+                            throw new IllegalStateException("ordinary finally must not replace selected control");
+                        }
+                    },
+                    config));
+            assertTrue(scopeEntered.await(3, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> response.get(600, TimeUnit.MILLISECONDS));
+            assertEquals(1, endEntered.getCount(), "No End before the real scope owner finishes");
+            releaseScope.countDown();
+            assertTrue(endEntered.await(3, TimeUnit.SECONDS));
+            assertSame(owner.get(), endThread.get(), "End belongs to the handler thread");
+            assertThrows(TimeoutException.class, () -> response.get(100, TimeUnit.MILLISECONDS));
+            releaseEnd.countDown();
+            if (retry) {
+                var failure = assertThrows(ExecutionException.class, () -> response.get(3, TimeUnit.SECONDS));
+                assertSame(original, ExceptionHelper.unwrapAsyncFailure(failure));
+                assertEquals(InvocationStatus.RETRYING, end.get().invocationStatus());
+            } else {
+                assertEquals(
+                        ExecutionStatus.PENDING,
+                        response.get(3, TimeUnit.SECONDS).status());
+                assertEquals(InvocationStatus.PENDING, end.get().invocationStatus());
+            }
         } finally {
-            handler.complete("cleanup");
-            Runnable callback;
-            while ((callback = callbacks.poll()) != null)
-                workers.submit(callback).get(3, TimeUnit.SECONDS);
-            callers.shutdownNow();
-            workers.shutdownNow();
-            assertTrue(callers.awaitTermination(3, TimeUnit.SECONDS));
+            releaseScope.countDown();
+            releaseEnd.countDown();
+            workers.shutdown();
+            callers.shutdown();
             assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS));
+            assertTrue(callers.awaitTermination(3, TimeUnit.SECONDS));
         }
     }
 
-    private static CompletableFuture<String> handoff(
-            CompletableFuture<String> execution, CompletableFuture<String> handler) {
-        return DurableExecutor.awaitHandlerScopes(
-                execution, handler, new AtomicBoolean(true), null, 1, new AtomicReference<>());
+    private static DurableExecutionInput input() {
+        return new DurableExecutionInput(
+                "arn:execution/test",
+                "token",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(Operation.builder()
+                                .id("test")
+                                .type(OperationType.EXECUTION)
+                                .status(OperationStatus.STARTED)
+                                .startTimestamp(Instant.EPOCH)
+                                .executionDetails(ExecutionDetails.builder()
+                                        .inputPayload("\"input\"")
+                                        .build())
+                                .build())
+                        .build());
     }
 
-    private static Throwable control(boolean retry) {
-        return retry
-                ? new UnrecoverableDurableExecutionException(
-                        ErrorObject.builder().errorMessage("retry").build(), true)
-                : new SuspendExecutionException();
+    private static void await(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(5, TimeUnit.SECONDS));
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(error);
+        }
+    }
+
+    @HandlerScoped(ScopeOpener.class)
+    public static final class ScopedPlugin implements DurableExecutionPlugin {
+        private final Supplier<AutoCloseable> scope;
+        private final Consumer<InvocationEndInfo> end;
+
+        ScopedPlugin(Supplier<AutoCloseable> scope, Consumer<InvocationEndInfo> end) {
+            this.scope = scope;
+            this.end = end;
+        }
+
+        public void onInvocationEnd(InvocationEndInfo info) {
+            end.accept(info);
+        }
+    }
+
+    public static final class ScopeOpener implements Function<ScopedPlugin, AutoCloseable> {
+        public AutoCloseable apply(ScopedPlugin plugin) {
+            return plugin.scope.get();
+        }
     }
 }

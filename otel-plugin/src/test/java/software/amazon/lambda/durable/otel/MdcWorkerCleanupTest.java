@@ -44,8 +44,8 @@ class MdcWorkerCleanupTest {
         Error fatal = death ? new ThreadDeath() : new InternalError("simulated restore fatal");
         try (var fixture = new Fixture(direct, wrap(fatal, wrapper), null, body)) {
             assertSame(fatal, assertThrows(Error.class, fixture::run));
-            fixture.assertEnd(InvocationStatus.RETRYING, fatal);
-            assertTrue(Arrays.asList(fatal.getSuppressed()).contains(body));
+            fixture.assertEnd(InvocationStatus.FAILED, body);
+            // End observed the body failure before outer MDC restoration discovered this fatal.
             fixture.assertWorkerFailure(fatal);
             assertEquals(0, fixture.fallbackClears.get());
         }
@@ -90,9 +90,9 @@ class MdcWorkerCleanupTest {
             if (bodyFatal) assertSame(body, assertThrows(Error.class, fixture::run));
             else assertEquals(ExecutionStatus.FAILED, fixture.run().getStatus());
             fixture.assertEnd(bodyFatal ? InvocationStatus.RETRYING : InvocationStatus.FAILED, body);
-            assertTrue(Arrays.asList(body.getSuppressed()).contains(cleanup));
+            if (bodyFatal) assertTrue(Arrays.asList(body.getSuppressed()).contains(cleanup));
             assertEquals(1, fixture.fallbackClears.get());
-            fixture.assertWorkerFailure(body);
+            fixture.assertWorkerFailure(bodyFatal ? body : cleanup);
             assertNull(fixture.markerOnNextTask());
         }
     }
@@ -124,7 +124,7 @@ class MdcWorkerCleanupTest {
         try (var fixture = new Fixture(direct, restore, clear, null)) {
             if (clear instanceof Error fatal) {
                 assertSame(fatal, assertThrows(Error.class, fixture::run));
-                fixture.assertEnd(InvocationStatus.RETRYING, fatal);
+                fixture.assertEnd(InvocationStatus.SUCCEEDED, null);
                 // Manager resource closure may add its own transport diagnostic; retain the exact restoration failure.
                 assertTrue(Arrays.asList(fatal.getSuppressed()).contains(restore));
                 fixture.assertWorkerFailure(fatal);
@@ -276,7 +276,7 @@ class MdcWorkerCleanupTest {
         }
     }
 
-    // Ensure the first public handler task finishes before execute returns, so its cleanup is before End dispatch.
+    // Finish the real handler task before dispatch returns; outer MDC cleanup follows the handler-owned End.
     private static final class OwnedExecutor extends AbstractExecutorService {
         final boolean direct;
         final AtomicInteger created = new AtomicInteger();

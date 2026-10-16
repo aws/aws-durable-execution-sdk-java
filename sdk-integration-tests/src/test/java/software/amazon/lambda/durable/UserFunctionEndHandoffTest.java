@@ -17,7 +17,7 @@ import software.amazon.lambda.durable.util.ExceptionHelper;
 class UserFunctionEndHandoffTest {
     @ParameterizedTest
     @CsvSource({"false,false", "true,false", "false,true", "true,true"})
-    void fatalWakesCallerWithoutFinalizingInsideTheOperationOwner(boolean exceedsBudget, boolean partialStart)
+    void fatalWaitsForMatchingUserFunctionEndBeforeInvocationEnd(boolean exceedsBudget, boolean partialStart)
             throws Exception {
         var fatal = new InternalError("first end fatal");
         var cleanupEntered = new CountDownLatch(1);
@@ -101,6 +101,12 @@ class UserFunctionEndHandoffTest {
                 assertFalse(invocationEnded.get(), "cooperative owner cleanup must precede invocation finalization");
                 releaseCleanup.countDown();
             }
+            if (exceedsBudget) {
+                assertThrows(TimeoutException.class, () -> response.get(700, TimeUnit.MILLISECONDS));
+                assertFalse(invocationEnded.get(), "End must not overtake operation-owner cleanup");
+                assertFalse(cleanupFinished.get());
+                releaseCleanup.countDown();
+            }
             var failure = assertThrows(ExecutionException.class, () -> response.get(2, TimeUnit.SECONDS));
             assertSame(fatal, ExceptionHelper.unwrapAsyncFailure(failure));
             assertEquals(partialStart ? 0 : 1, bodyCalls.get());
@@ -108,8 +114,8 @@ class UserFunctionEndHandoffTest {
             if (exceedsBudget)
                 assertNotSame(
                         owner.get(), endThread.get(), "a held operation cannot finalize inline ahead of its cleanup");
-            assertEquals(!exceedsBudget, cleanupBeforeEnd.get());
-            if (exceedsBudget) assertFalse(cleanupFinished.get(), "the caller must not wait for uncooperative cleanup");
+            assertTrue(cleanupBeforeEnd.get());
+            assertTrue(cleanupFinished.get(), "The caller must await the operation's actual cleanup");
             releaseCleanup.countDown();
             assertTrue(cleanupExited.await(3, TimeUnit.SECONDS));
             assertEquals(List.of("held", "earlier"), cleanupOrder, "earlier starts unwind in LIFO order");

@@ -24,6 +24,7 @@ class PluginFatalStartAdmissionTest {
         var peerExited = new CountDownLatch(1);
         var peerOwner = new AtomicReference<Thread>();
         var bodyCalls = new AtomicInteger();
+        var ends = new AtomicInteger();
         var workers = new ThreadPoolExecutor(0, 16, 1, TimeUnit.SECONDS, new SynchronousQueue<>()) {
             @Override
             public void execute(Runnable task) {
@@ -40,6 +41,11 @@ class PluginFatalStartAdmissionTest {
         };
         var callers = Executors.newSingleThreadExecutor();
         DurableExecutionPluginFactory plugin = info -> new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationEnd(InvocationEndInfo info) {
+                ends.incrementAndGet();
+            }
+
             @Override
             public void onUserFunctionStart(UserFunctionStartInfo start) {
                 if ("blocked".equals(start.name())) {
@@ -81,11 +87,16 @@ class PluginFatalStartAdmissionTest {
                     },
                     config);
             var result = callers.submit(() -> runner.run("input"));
+            assertTrue(startEntered.await(3, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> result.get(700, TimeUnit.MILLISECONDS));
+            assertEquals(0, ends.get(), "End must await the admitted start hook's owner");
+            releaseStart.countDown();
             var failure = assertThrows(ExecutionException.class, () -> result.get(3, TimeUnit.SECONDS));
             assertSame(fatal, ExceptionHelper.unwrapAsyncFailure(failure));
             assertEquals(0, bodyCalls.get());
             releaseStart.countDown();
             assertTrue(peerExited.await(3, TimeUnit.SECONDS));
+            assertEquals(1, ends.get());
             assertEquals(0, bodyCalls.get(), "a hook returning after the fatal must not admit user side effects");
         } finally {
             releaseStart.countDown();

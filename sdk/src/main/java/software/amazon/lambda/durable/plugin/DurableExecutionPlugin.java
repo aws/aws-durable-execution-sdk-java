@@ -29,8 +29,9 @@ public interface DurableExecutionPlugin {
     /**
      * Called at the end of each Lambda invocation. Use to flush spans/metrics before Lambda freezes.
      *
-     * <p>This hook is awaited — the SDK blocks until it returns. This is the only safe flush point before Lambda
-     * freezes the execution environment.
+     * <p>This hook runs on the root handler thread after body/scope unwinding, operation and checkpoint drain, and
+     * output preparation. It is awaited before the invocation returns and is the safe flush point before Lambda freezes
+     * the execution environment.
      *
      * <p>Check {@link InvocationEndInfo#invocationStatus()} to detect if the execution reached a terminal state in this
      * invocation (useful for writing summary records or flushing final data).

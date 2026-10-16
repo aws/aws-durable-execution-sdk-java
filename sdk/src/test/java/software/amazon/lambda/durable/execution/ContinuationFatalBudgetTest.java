@@ -18,7 +18,7 @@ class ContinuationFatalBudgetTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     @Timeout(10)
-    void admittedContinuationUsesExistingMajorFatalBudget(boolean reportWhileClosing) throws Exception {
+    void admittedContinuationMustSettleBeforeFatalClose(boolean reportWhileClosing) throws Exception {
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/budget/execution",
                 "token",
@@ -68,11 +68,14 @@ class ContinuationFatalBudgetTest {
                 assertThrows(TimeoutException.class, () -> closing.get(100, TimeUnit.MILLISECONDS));
                 manager.recordInvocationFatal(fatal);
             }
+            assertThrows(TimeoutException.class, () -> closing.get(700, TimeUnit.MILLISECONDS));
+            assertFalse(observed.isDone(), "The actual continuation is still owned while held");
+            release.countDown();
             var closeFailure = closing.get(2, TimeUnit.SECONDS);
             if (closeFailure != null) assertSame(fatal, ExceptionHelper.unwrapAsyncFailure(closeFailure));
             assertSame(
                     fatal, ExceptionHelper.unwrapAsyncFailure(assertThrows(CompletionException.class, selected::join)));
-            assertFalse(observed.isDone(), "The caller budget must not depend on releasing the continuation");
+            assertTrue(observed.isDone(), "Close must await actual continuation settlement");
             release.countDown();
             observed.get(2, TimeUnit.SECONDS);
         } finally {
