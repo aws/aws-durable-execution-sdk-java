@@ -957,13 +957,12 @@ public class ExecutionManager implements SafeCloseable {
         // Closing admission can skip queued continuations. Stop their owners before joining user handlers,
         // or a child waiting on a skipped continuation would prevent the drain from completing.
         beginDraining();
-        try {
-            stopCheckpointContinuations();
-            waitForRunningUserHandlers();
-            drainExecutorTasks();
-        } finally {
-            closeLifecycle();
-        }
+        stopCheckpointContinuations();
+        waitForRunningUserHandlers();
+        drainExecutorTasks();
+        // An interrupted wait leaves admitted work draining. The caller's subsequent close must still allow its
+        // completion checkpoints; closing here on failure would discard results and repeat completed side effects.
+        closeLifecycle();
         validateExecutorPool();
         checkpointManager.shutdown();
     }
