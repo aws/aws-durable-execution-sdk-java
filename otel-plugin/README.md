@@ -379,9 +379,15 @@ The supported SDK sampler follows this precedence, highest first:
    Eviction can cause another evaluation. The delegate still receives the canonical trace ID; drop and
    `RECORD_ONLY` decisions, attributes and updated trace state are retained.
 
-A visible plain replacement sampler supplies its root policy for execution-ancestor flags, then keeps its normal
-per-span sampling behavior. It receives no SDK sampling carrier and does not provide the SDK decision-reuse
-or full-result override guarantees above. Opaque providers cannot expose a later sampler replacement to the
+For a visible plain replacement sampler with no explicit upstream or same-trace ambient decision, a fallback anchor
+uses the provider's actual root sampling result for its parent context. It does not spend a preliminary decision before
+creating that root. Descendants still use the provider's own per-span sampling, so a stateful policy can select them
+differently. Explicit and ambient decisions retain their existing context behavior. The legacy complete-remote-parent
+path still evaluates root policy before span creation when sampling is undecided; a stateful replacement can observe
+that additional query. The query resolves the remote parent's otherwise-unknown sampled flag from the configured
+root policy; omitting it can bypass `ParentBased(alwaysOff)`. Supply an explicit upstream decision or retain
+`DurableSampler` when a policy result must be reused authoritatively. A plain replacement receives no SDK sampling carrier and does not provide SDK-wide decision
+reuse or full-result overrides. Opaque providers cannot expose a later sampler replacement to the
 application, so retain the wrapper through the documented customization setup.
 
 For explicit execution-level control, keep `DurableSampler` as the final installed sampler and set `Sampled` upstream,
@@ -395,6 +401,31 @@ can export only the anchor or only its Invocation child. This behavior is covere
 `ExecutionRootParityTest.plainReplacementRetainsIndependentPerSpanSampling`; installing `DurableSampler` restores the
 shared decision. Merely delaying anchor creation until terminal completion would not make an arbitrary replacement
 sampler consistent across spans.
+
+### Operation error details
+
+An explicit operation status of `FAILED`, `TIMED_OUT`, or `STOPPED` sets the OTel span to `ERROR`, including when the
+backend error container is absent or fully empty. No exception event is recorded when no details were supplied.
+An explicitly present empty string or stack-trace list still counts as supplied error details.
+Virtual (FLAT) contexts can have no terminal status; a non-null failure still sets `ERROR`, even when its backend
+error container supplies no details. That failure has no exception event unless details are available.
+An exception's own message (including an empty string), cause, suppressed failures,
+or explicit stack trace still supplies diagnostic information and retains `ERROR` and its exception event.
+
+This telemetry decision does not remove the SDK's failure notification: a present `ErrorObject`, including `{}`,
+remains a `DurableOperationException` in operation hooks and snapshots. An absent container retains its existing
+null metadata behavior. Persisted errors, caller failures, replay, and user-function error handling are unchanged.
+
+Execution-view operation spans with a known, nonzero backend end timestamp record the exception event at that
+same timestamp. This path uses the public `exception` event with standard `exception.type`, `exception.message`
+(when present), and `exception.stacktrace` attributes. Java's standard stack-trace text and the provider's ordinary
+event attribute count/value limits apply; native `recordException` resolver behavior is not preserved on this path.
+Invocation-view events and operations without a backend end (including the SDK's epoch-zero clock sentinel) keep
+native `recordException` behavior.
+
+When an Execution-view completion has no observed or backend start timestamp, its known end also supplies the start.
+Existing earliest-known-start selection is unchanged and is not clamped to the backend end, so clock skew can still
+produce an inverted interval. This correction does not add a broader clock or containment policy.
 
 ## Span Attributes
 

@@ -573,8 +573,8 @@ public abstract class BaseDurableOperation {
     }
 
     /**
-     * Extracts the error from a terminal operation as a Throwable. Returns null if the operation succeeded or has no
-     * error details.
+     * Extracts an error for plugin metadata from a failed, timed-out, or stopped operation. Other statuses and an
+     * absent error container return null. A present container remains represented even when it has no members.
      */
     public static Throwable extractErrorFromOperation(Operation operation) {
         if (operation.status() != OperationStatus.FAILED
