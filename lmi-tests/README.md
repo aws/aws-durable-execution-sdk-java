@@ -213,12 +213,17 @@ outcomes come from request-correlated runtime logs. Invocation request failures
 are saved in `invocations/*.json` with the function ARN, scenario, start time,
 request state, elapsed time, and CLI exit code/error when available. The driver
 checks the invocation Future during evidence polling so an API/CLI failure is
-reported immediately. Missing runtime-entry evidence during admission is a collection error;
+reported immediately. Cleanup audits every request launched by the case after
+reconciliation and drainage, including discarded placement attempts; recovered
+acceptance cannot erase a failed, cancelled, or unsettled driver request. Missing runtime-entry evidence during admission is a collection error;
 once any request activity is observed, lifecycle and drain checks require its
 wrapper entry and return. Healthy/probe scheduling
 uses the actual runtime deadline, excluding cold-start and request-queue delay.
 A successful durable retry cannot erase an old invocation
-that exceeds the cleanup budget. No virtual-thread executor variant is deployed
+that exceeds the cleanup budget. Healthy peers and anchors must return SUCCEEDED
+on the original admitted request with normal lifecycle ordering, even when their
+eventual durable execution succeeds. Physical cleanup may settle a late root exit;
+that settlement does not turn the earlier ordering violation into healthy acceptance. No virtual-thread executor variant is deployed
 until its executor contract is defined; default cached and shared fixed pools
 are covered separately.
 

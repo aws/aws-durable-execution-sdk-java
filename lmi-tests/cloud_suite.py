@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 
 from cloud_support import (Cloud, CollectionError, PreconditionError, api_calls_complete, assert_fixed,
                            assert_lifecycle, assert_nested_reached, assert_overlap, assert_replay, aws,
-                           platform_timeout, request_identities, require, save, selected)
+                           platform_timeout, request_identities, require, save, scrub, selected)
 
 ROOT = Path(__file__).resolve().parent
 ARTIFACTS = ROOT / "artifacts"
@@ -260,6 +260,18 @@ def wait_returns(cloud, fixture, items, seconds=30):
     cloud.poll(fixture, lambda events: markers <= {e["marker"] for e in selected(events, "WRAPPER_RETURN")}, seconds, items=items)
 
 
+def assert_healthy_request_success(cloud, fixture, item):
+    """A later durable retry cannot replace the admitted healthy request's outcome."""
+    returns = cloud.poll(
+        fixture, lambda events: selected(request_trace(
+            events, item["marker"], item["requestId"], item["environment"]), "WRAPPER_RETURN"),
+        seconds=PEER_LOG_OBSERVATION_SECONDS, items=[item])
+    require(len(returns) == 1 and returns[0].get("status") == "SUCCEEDED",
+            f"Original healthy request {item['requestId']} did not return SUCCEEDED")
+    assert_lifecycle(request_trace(
+        cloud.events_for(item), item["marker"], item["requestId"], item["environment"]))
+
+
 def wait_for_wrapper_status(cloud, fixture, item, status, seconds=30):
     return cloud.poll(
         fixture,
@@ -331,6 +343,8 @@ def replay_case(cloud, fixture, scenario):
         cloud.gate(gate_name, release=True)
         cloud.finish(anchor)
         wait_returns(cloud, fixture, [anchor])
+        wait_for_runtime_quiescence(cloud, fixture, anchor["marker"])
+        assert_healthy_request_success(cloud, fixture, anchor)
         # Root/task interval overlap is required, including the first victim invocation.
         assert_overlap(list(cloud.events.values()), {anchor["marker"], victim["marker"]}, 2, target)
     wait_for_runtime_quiescence(cloud, fixture, victim["marker"])
@@ -350,7 +364,9 @@ def overlap_case(cloud, fixture, target=None):
     prefix = uuid.uuid4().hex[:12]
     gate_name = prefix + "-anchor"
     anchor = cloud.launch(fixture, "hold", prefix + "-anchor", target=target, gate=cloud.gate(gate_name))
-    heartbeat = cloud.poll(fixture, lambda events: selected(events, "HEARTBEAT", anchor["marker"]), category=PreconditionError, items=[anchor])[0]
+    heartbeats = cloud.poll(fixture, lambda events: selected(events, "HEARTBEAT", anchor["marker"]), category=PreconditionError, items=[anchor])
+    heartbeat = min(heartbeats, key=lambda event: event["epochMillis"])
+    anchor["requestId"], anchor["environment"] = heartbeat["requestId"], heartbeat["environment"]
     require(target is None or heartbeat["environment"] == target,
             "Overlap anchor did not enter the requested original environment")
     peers, peer_gate = healthy_peers(cloud, fixture, heartbeat["environment"], count - 1, prefix + "-peer")
@@ -364,6 +380,7 @@ def overlap_case(cloud, fixture, target=None):
     wait_returns(cloud, fixture, items)
     wait_for_runtime_quiescence(cloud, fixture, {item["marker"] for item in items})
     for item in items:
+        assert_healthy_request_success(cloud, fixture, item)
         assert_lifecycle(cloud.events_for(item))
 
 
@@ -587,19 +604,36 @@ def recovery_admissions(events, environment, peers, probes, deadline):
             and all(start < e["sequence"] < end for start, end in intervals)]
 
 
+def invocation_request_failures(items):
+    """Reconciliation can recover an ARN, but cannot erase the driver's transport failure."""
+    failures = []
+    for item in items:
+        future = item["future"]
+        if not future.done():
+            failures.append(CollectionError(f"Invocation request did not settle for {item['marker']}"))
+            continue
+        try:
+            future.result()
+        except Exception as failure:
+            error = CollectionError(
+                f"Invocation request failed for {item['marker']}: {type(failure).__name__}: {scrub(str(failure))}")
+            failures.append(error)
+    return failures
+
+
 def cleanup_case(cloud, fixture, invocation_start, seconds):
     """Release and terminate every request created by one case before the next case starts."""
     failures = []
+    items = cloud.invocations[invocation_start:]
     try:
         cloud.release_all()
     except Exception as failure:
         failures.append(failure)
     try:
-        items = cloud.invocations[invocation_start:]
         cloud.stop_all(items, seconds=seconds)
     except Exception as failure:
         failures.append(failure)
-    markers = {item["marker"] for item in cloud.invocations[invocation_start:]}
+    markers = {item["marker"] for item in items}
     if markers:
         try:
             wait_for_runtime_quiescence(
@@ -608,6 +642,9 @@ def cleanup_case(cloud, fixture, invocation_start, seconds):
                 allow_no_entry=True)
         except Exception as failure:
             failures.append(failure)
+    failures.extend(invocation_request_failures(items))
+    if len(failures) > 1:
+        raise CollectionError("; ".join(scrub(str(failure)) for failure in failures)) from failures[0]
     if failures:
         raise failures[0]
 
@@ -665,6 +702,10 @@ def assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim):
             cloud, events, victim["marker"], request_id, target, peers, probes, deadline),
         seconds=timeout + 30,
         items=[victim, *peers, *probes])
+    if peers:
+        # Slot-readiness evidence can precede a healthy root-exit log. Collect the
+        # complete peer traces before applying their separate lifecycle assertions.
+        wait_for_runtime_quiescence(cloud, fixture, {peer["marker"] for peer in peers})
     cloud.finish(victim, expected=None)
     history = cloud.history(victim)
     if stubborn:
@@ -698,7 +739,7 @@ def assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim):
             cloud.events_for(peer), peer["marker"], peer["requestId"], peer["environment"])
         heartbeats = selected(peer_events, "HEARTBEAT")
         check(any(e["nanos"] >= deadline for e in heartbeats), "Healthy invocation stopped progressing at victim deadline")
-        assert_lifecycle(peer_events)
+        assert_healthy_request_success(cloud, fixture, peer)
     if stubborn:
         check(bool(selected(trace, "IGNORED_INTERRUPT")), "Cancellation was not attempted for the non-cooperative child")
         check(bool(selected(trace, "LATE_REJECTED")) and not selected(trace, "LATE_ACCEPTED"), "Residual child could issue later SDK work")
@@ -718,11 +759,16 @@ def inflight_case(cloud, fixture, scenario):
     prefix = uuid.uuid4().hex[:12]
     gate_name = prefix + "-gate"
     anchor = cloud.launch(fixture, "hold", prefix + "-healthy", gate=cloud.gate(gate_name))
-    target = cloud.poll(fixture, lambda events: selected(events, "HEARTBEAT", anchor["marker"]), category=PreconditionError, items=[anchor])[0]["environment"]
+    heartbeats = cloud.poll(fixture, lambda events: selected(events, "HEARTBEAT", anchor["marker"]), category=PreconditionError, items=[anchor])
+    admitted = min(heartbeats, key=lambda event: event["epochMillis"])
+    target = admitted["environment"]
+    anchor["requestId"], anchor["environment"] = admitted["requestId"], target
     victim = cloud.launch(fixture, scenario, prefix + "-victim", target=target, hold_ms=1500)
     wait_returns(cloud, fixture, [victim])
     cloud.gate(gate_name, release=True)
     cloud.finish(anchor)
+    wait_for_runtime_quiescence(cloud, fixture, anchor["marker"])
+    assert_healthy_request_success(cloud, fixture, anchor)
     if selected(cloud.events_for(victim), "PLACEMENT_MISS"):
         raise PreconditionError("In-flight cleanup victim placed in another environment")
     cloud.finish(victim, expected="FAILED" if scenario == "failure-inflight" else "SUCCEEDED")
