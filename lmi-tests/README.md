@@ -227,7 +227,14 @@ that settlement does not turn the earlier ordering violation into healthy accept
 Before a case can pass, every request launched by that case is checked again after
 cleanup, including recovery probes, retries, and discarded placement attempts. Only
 the stubborn victim keeps its explicit residual-task exception; an earlier primary
-or cleanup failure is preserved.
+or cleanup failure is preserved. Healthy admission identities are also revalidated
+against the complete marker trace: an earlier heartbeat from another request or JVM
+fails acceptance instead of repinning existing timing and progress evidence. The
+first timeout task request and each warm-run JVM selection are likewise revalidated
+after final collection, without moving deadline/recovery credit to a retry or
+resource-growth credit to a replacement environment. Fixed and nested cohort
+identities, barriers, and progress are revalidated against final evidence as well;
+a normally ordered retry cannot replace an admitted participant.
 After stopping durable executions, cleanup allows any pre-stop stubborn retry its
 configured residual hold (capped at 120 seconds), plus the existing 30-second
 collection margin and 20-second quiet period. This cleanup allowance does not alter
