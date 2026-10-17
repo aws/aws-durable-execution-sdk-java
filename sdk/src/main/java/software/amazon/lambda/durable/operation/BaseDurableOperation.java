@@ -243,8 +243,16 @@ public abstract class BaseDurableOperation {
      *
      * @return the completed operation
      */
-    protected Operation waitForOperationCompletion() {
+    /**
+     * Waits for this operation's completion future. Unlike {@link #waitForOperationCompletion()}, this does not look up
+     * a checkpointed operation, so skipped branches that were never started can settle without an {@code Operation}.
+     */
+    protected void waitForCompletionFuture() {
         executionManager.waitForOperationCompletion(this);
+    }
+
+    protected Operation waitForOperationCompletion() {
+        waitForCompletionFuture();
 
         if (isVirtual) {
             // We don't  store virtual operations so they don't corresponding Operation in storage

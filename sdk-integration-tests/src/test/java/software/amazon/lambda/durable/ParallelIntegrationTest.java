@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -19,7 +21,7 @@ import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
-import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
+import software.amazon.lambda.durable.exception.ParallelBranchSkippedException;
 import software.amazon.lambda.durable.model.ConcurrencyCompletionStatus;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.ParallelResult;
@@ -1387,12 +1389,104 @@ class ParallelIntegrationTest {
             }
 
             parallel.get();
-            return futures.get(1).get();
+            var skipped = assertThrows(
+                    ParallelBranchSkippedException.class, () -> futures.get(1).get());
+            assertEquals("branch-2", skipped.getBranchName());
+            return "done";
         });
 
-        var ex = assertThrows(IllegalDurableOperationException.class, () -> runner.run("test"));
-        assertTrue(ex.isRetryable());
-        assertTrue(ex.getMessage().contains("Invalid suspension. No operation is pending."));
-        assertTrue(ex.getMessage().contains("branch-2"));
+        var result = assertTimeoutPreemptively(Duration.ofSeconds(10), () -> runner.runUntilComplete("test"));
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+        assertEquals("done", result.getResult(String.class));
+    }
+
+    @Test
+    void getOnSkippedBranchThatNeverStartedThrowsOnFirstRunAndReplay() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var config = ParallelConfig.builder()
+                    .maxConcurrency(1)
+                    .completionConfig(CompletionConfig.firstSuccessful())
+                    .build();
+            var parallel = context.parallel("first-successful", config);
+            var a = parallel.branch("branch-a", String.class, ctx -> "A");
+            var b = parallel.branch("branch-b", String.class, ctx -> "B");
+            var result = parallel.get();
+            assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionStatus());
+            assertEquals(List.of(ParallelResult.Status.SUCCEEDED, ParallelResult.Status.SKIPPED), result.statuses());
+            assertEquals("A", a.get());
+            var skipped = assertThrows(ParallelBranchSkippedException.class, b::get);
+            assertEquals("branch-b", skipped.getBranchName());
+            assertEquals("Parallel branch 'branch-b' was skipped", skipped.getMessage());
+            return "done";
+        });
+
+        var first = assertTimeoutPreemptively(Duration.ofSeconds(10), () -> runner.runUntilComplete("input"));
+        assertEquals(ExecutionStatus.SUCCEEDED, first.getStatus());
+        assertEquals("done", first.getResult(String.class));
+
+        var replay = assertTimeoutPreemptively(Duration.ofSeconds(10), () -> runner.run("input"));
+        assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+        assertEquals("done", replay.getResult(String.class));
+    }
+
+    @Test
+    void getOnSkippedInFlightBranchThrowsOnFirstRunAndReplay() throws Exception {
+        var branchBStarted = new CountDownLatch(1);
+        var releaseBranchB = new CountDownLatch(1);
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var config = ParallelConfig.builder()
+                    .completionConfig(CompletionConfig.firstSuccessful())
+                    .build();
+            var parallel = context.parallel("first-successful", config);
+            var b = parallel.branch("branch-b", String.class, ctx -> {
+                branchBStarted.countDown();
+                try {
+                    if (!releaseBranchB.await(10, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("timed out waiting to release branch-b");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException(e);
+                }
+                return "B";
+            });
+            var a = parallel.branch("branch-a", String.class, ctx -> {
+                try {
+                    if (!branchBStarted.await(10, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("timed out waiting for branch-b to start");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException(e);
+                }
+                return "A";
+            });
+            var result = parallel.get();
+            assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionStatus());
+            assertEquals(List.of(ParallelResult.Status.SKIPPED, ParallelResult.Status.SUCCEEDED), result.statuses());
+            try {
+                var skipped = assertThrows(ParallelBranchSkippedException.class, b::get);
+                assertEquals("branch-b", skipped.getBranchName());
+                assertEquals("A", a.get());
+                context.wait("pause", Duration.ofSeconds(1));
+                var skippedOnReplay = assertThrows(ParallelBranchSkippedException.class, b::get);
+                assertEquals("branch-b", skippedOnReplay.getBranchName());
+                return "done";
+            } finally {
+                releaseBranchB.countDown();
+            }
+        });
+
+        try {
+            var first = assertTimeoutPreemptively(Duration.ofSeconds(15), () -> runner.run("input"));
+            assertEquals(ExecutionStatus.PENDING, first.getStatus());
+
+            runner.advanceTime();
+            var replay = assertTimeoutPreemptively(Duration.ofSeconds(15), () -> runner.run("input"));
+            assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+            assertEquals("done", replay.getResult(String.class));
+        } finally {
+            releaseBranchB.countDown();
+        }
     }
 }
