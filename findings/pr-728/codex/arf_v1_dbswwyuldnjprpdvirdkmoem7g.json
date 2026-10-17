@@ -1,0 +1,1 @@
+{"finding_digest":"18656b628b1b52f8bc754446a6388cf9a03f1fa8728f2fbf1fdc5d0bd6e6c7fa","finding_id":"arf_v1_dbswwyuldnjprpdvirdkmoem7g","identity_key":"lmi-tests/cloud_suite.py::replay_case::replay-ledger-not-revalidated-after-cleanup","pull_request_number":728,"repository":{"full_name":"aws/aws-durable-execution-sdk-java","id":1124528661},"reviewer":"codex","schema_version":1}
