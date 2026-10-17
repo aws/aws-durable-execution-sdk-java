@@ -367,38 +367,80 @@ def overlap_case(cloud, fixture, target=None):
         assert_lifecycle(cloud.events_for(item))
 
 
+def fixed_cohort_setup(events, markers):
+    """Missing CloudWatch diagnostics are not affirmative placement-failure evidence."""
+    events = [e for e in events if e["marker"] in markers]
+    entered = selected(events, "BARRIER_ENTER")
+    if len(entered) != len(markers) or {e["marker"] for e in entered} != markers:
+        return None
+    identities = request_identities(entered)
+    if (identities != request_identities(events)
+            or len({e["requestId"] for e in entered}) != len(markers)):
+        return None
+    passed = selected(events, "BARRIER_PASSED")
+    if len(passed) == len(markers) and request_identities(passed) == identities:
+        return "admitted"
+    if not passed and len({e["environment"] for e in entered}) == len(markers):
+        return "misplaced"
+    return None
+
+
+def fixed_attempt_events(events, markers):
+    events = [e for e in events if e["marker"] in markers]
+    require(not selected(events, "ESCAPE"),
+            "A fixed-pool cohort needed an escape; refusing to rerun or pass the assertion")
+    return events
+
+
 def fixed_case(cloud, fixture, scenario):
+    attempted = []
     for attempt in range(3):
         prefix = uuid.uuid4().hex[:12]
         items = [cloud.launch(fixture, scenario, prefix + f"-{i}", cohort=prefix, peers=2) for i in range(2)]
+        attempted.extend(items)
+        markers = {item["marker"] for item in items}
+        all_markers = {item["marker"] for item in attempted}
         wait_returns(cloud, fixture, items, seconds=35)
-        events = [e for i in items for e in cloud.events_for(i)]
-        if len(selected(events, "BARRIER_PASSED")) == 2:
-            if scenario == "nested":
-                # A broken child barrier is setup failure, not nested starvation. Its
-                # diagnostics may arrive after the wrapper-return CloudWatch batch.
-                cloud.poll(fixture, lambda events: selected(
-                    [e for e in events if e["marker"] in {i["marker"] for i in items}], "CHILD_BARRIER_FAILED")
-                    or len([e for e in selected(events, "CHILD_BARRIER_PASSED")
-                            if e["marker"] in {i["marker"] for i in items}]) == 2,
-                    seconds=PEER_LOG_OBSERVATION_SECONDS, items=items)
-                events = [e for i in items for e in cloud.events_for(i)]
-                if selected(events, "CHILD_BARRIER_FAILED"):
-                    raise PreconditionError("Nested child barrier was not established")
-            # A failure after admission is final, even if the escape grows the pool.
+        setup = cloud.poll(
+            fixture, lambda events: fixed_cohort_setup(fixed_attempt_events(events, all_markers), markers),
+            seconds=PEER_LOG_OBSERVATION_SECONDS, category=CollectionError, items=attempted)
+        if setup == "misplaced":
+            # Retry only a positively identified placement miss, after both executions
+            # are terminal and their runtime work is drained. Recheck delayed evidence.
+            cloud.finish_all(items, expected="FAILED")
             for item in items:
-                cloud.finish(item)
                 cloud.history(item)
-            wait_for_runtime_quiescence(cloud, fixture, {item["marker"] for item in items})
-            events = [e for item in items for e in cloud.events_for(item)]
-            if scenario == "nested":
-                assert_nested_reached(events, {item["marker"] for item in items})
-            assert_fixed(events, {i["marker"] for i in items},
-                         progress_start="CHILD_BARRIER_PASSED" if scenario == "nested" else "BARRIER_PASSED")
+            wait_for_runtime_quiescence(cloud, fixture, all_markers)
+            events = fixed_attempt_events([e for item in attempted for e in cloud.events_for(item)], all_markers)
+            require(fixed_cohort_setup(events, markers) == "misplaced",
+                    "Fixed-pool setup changed during settlement; refusing to rerun the assertion")
             assert_lifecycle(events)
-            return
-        if selected(events, "BARRIER_PASSED") or selected(events, "ESCAPE"):
-            raise AssertionError("Partial fixed-pool admission or escape; refusing to rerun the assertion")
+            continue
+        if scenario == "nested":
+            # A broken child barrier is setup failure, not nested starvation. Its
+            # diagnostics may arrive after the wrapper-return CloudWatch batch.
+            cloud.poll(fixture, lambda events: selected(
+                [e for e in fixed_attempt_events(events, all_markers) if e["marker"] in markers],
+                "CHILD_BARRIER_FAILED")
+                or len([e for e in selected(events, "CHILD_BARRIER_PASSED")
+                        if e["marker"] in markers]) == 2,
+                seconds=PEER_LOG_OBSERVATION_SECONDS, items=attempted)
+            events = [e for i in items for e in cloud.events_for(i)]
+            if selected(events, "CHILD_BARRIER_FAILED"):
+                raise PreconditionError("Nested child barrier was not established")
+        # A failure after admission is final, even if the escape grows the pool.
+        for item in items:
+            cloud.finish(item)
+            cloud.history(item)
+        wait_for_runtime_quiescence(cloud, fixture, all_markers)
+        all_events = fixed_attempt_events([e for item in attempted for e in cloud.events_for(item)], all_markers)
+        events = [e for e in all_events if e["marker"] in markers]
+        if scenario == "nested":
+            assert_nested_reached(events, markers)
+        assert_fixed(events, markers,
+                     progress_start="CHILD_BARRIER_PASSED" if scenario == "nested" else "BARRIER_PASSED")
+        assert_lifecycle(all_events)
+        return
     raise PreconditionError("Two fixed-executor roots could not meet in one JVM")
 
 
