@@ -238,19 +238,20 @@ public abstract class BaseDurableOperation {
     }
 
     /**
-     * Waits for the operation to complete. Deregisters the current thread to allow Lambda suspension if the operation
-     * is still in progress, then re-registers when the operation completes.
+     * Waits for this operation's completion future without looking up a checkpointed {@code Operation}.
      *
-     * @return the completed operation
-     */
-    /**
-     * Waits for this operation's completion future. Unlike {@link #waitForOperationCompletion()}, this does not look up
-     * a checkpointed operation, so skipped branches that were never started can settle without an {@code Operation}.
+     * <p>Skipped parallel branches that never started can settle this way because they have no checkpointed operation.
      */
     protected void waitForCompletionFuture() {
         executionManager.waitForOperationCompletion(this);
     }
 
+    /**
+     * Waits for the operation to complete. Deregisters the current thread to allow Lambda suspension if the operation
+     * is still in progress, then re-registers when the operation completes.
+     *
+     * @return the completed operation
+     */
     protected Operation waitForOperationCompletion() {
         waitForCompletionFuture();
 
