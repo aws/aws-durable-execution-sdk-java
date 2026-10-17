@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -34,8 +35,8 @@ import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 class FactoryStartupFailureTest {
     @ParameterizedTest
     @CsvSource({"false,true", "true,true", "false,false", "true,false"})
-    void completedAnchorFlushesAtFailedFactoryBoundaryAndProviderIsReusable(
-            boolean executionView, boolean failStartup) {
+    void completedAnchorFlushesAtFailedFactoryBoundaryAndProviderIsReusable(boolean executionView, boolean failStartup)
+            throws Exception {
         var original = new IllegalStateException("Invocation processor start failed");
         var failOnce = new AtomicBoolean(failStartup);
         var rootsEnded = new AtomicInteger();
@@ -115,6 +116,7 @@ class FactoryStartupFailureTest {
             }
             assertEquals(1, flushes.get());
             assertEquals(0, shutdowns.get());
+            awaitBatchFlushRetired(batch);
             assertSuccessfulHandler(config);
             assertEquals(failStartup ? 1 : 2, published.size());
             assertEquals(
@@ -143,7 +145,7 @@ class FactoryStartupFailureTest {
         "false,ordinary,failed-result", "true,ordinary,failed-result"
     })
     void constructionFailureIdentityAndFatalCleanupPrecedenceStayLocal(
-            boolean executionView, String primaryKind, String cleanupKind) {
+            boolean executionView, String primaryKind, String cleanupKind) throws Exception {
         var firstFatal = new InternalError("startup VM fatal");
         var diagnosticReads = new AtomicInteger();
         Throwable primary = switch (primaryKind) {
@@ -255,12 +257,30 @@ class FactoryStartupFailureTest {
                 assertEquals(
                         0, suppressedAtFactory.get().length, "no factory self suppression or synthetic flush failure");
             assertEquals(0, shutdowns.get());
+            awaitBatchFlushRetired(batch);
             assertSuccessfulHandler(config);
             assertEquals(1, published.get());
             assertEquals(originalFatal ? 1 : 2, flushes.get());
             assertEquals(4, exporter.getFinishedSpanItems().size(), "next End can flush any prior completed spans too");
             assertEquals(0, shutdowns.get());
         }
+    }
+
+    private static void awaitBatchFlushRetired(BatchSpanProcessor batch) throws Exception {
+        // BSP 1.67 completes forceFlush before clearing its in-progress slot. A new invocation can otherwise reuse
+        // that completed result without flushing its spans. Keep both export-at-return assertions strict, but wait
+        // for this test-owned processor's prior flush to retire before exercising sequential provider reuse.
+        var workerField = BatchSpanProcessor.class.getDeclaredField("worker");
+        workerField.setAccessible(true);
+        var worker = workerField.get(batch);
+        var pendingField = worker.getClass().getDeclaredField("flushRequested");
+        pendingField.setAccessible(true);
+        var pending = (AtomicReference<?>) pendingField.get(worker);
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (pending.get() != null && System.nanoTime() < deadline) {
+            TimeUnit.MILLISECONDS.sleep(1);
+        }
+        assertNull(pending.get(), "previous BSP flush must retire before the provider reuse control");
     }
 
     private static void assertSuccessfulHandler(DurableConfig config) {
