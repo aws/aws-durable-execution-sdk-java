@@ -64,7 +64,7 @@ public class DurableExecutor {
     /**
      * Returns whether this core runs invocation start/end hooks on the root handler thread and awaits handler cleanup
      * and end-hook completion before returning. Plugins that retain thread-local scopes may require this capability
-     * before construction. Introduced with the 2.2.2 lifecycle contract.
+     * before construction.
      */
     public static boolean supportsSameThreadInvocationHooks() {
         return true;
