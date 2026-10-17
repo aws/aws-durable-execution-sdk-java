@@ -53,6 +53,12 @@ final class ExecutorTaskHandle<T> {
         EXITED
     }
 
+    private enum Publication {
+        PENDING,
+        RESULT,
+        CANCELLED
+    }
+
     /** Scope-local sequence number; this is not a durable operation ID. */
     private final long id;
 
@@ -74,7 +80,7 @@ final class ExecutorTaskHandle<T> {
     private final AtomicReference<Future<?>> execution = new AtomicReference<>();
 
     private final AtomicReference<State> state = new AtomicReference<>(State.REGISTERED);
-    private final AtomicBoolean cancellationRequested = new AtomicBoolean();
+    private final AtomicReference<Publication> publication = new AtomicReference<>(Publication.PENDING);
     private final AtomicBoolean interruptRequested = new AtomicBoolean();
 
     ExecutorTaskHandle(long id, Role role, String operationId, Runnable onExit) {
@@ -91,11 +97,12 @@ final class ExecutorTaskHandle<T> {
         }
         try {
             var value = action.get();
-            // A cancelling thread publishes the logical cancellation after requesting interruption. Do not let a
-            // cooperative worker race it by running completion observers before its exit signal is available.
-            if (!cancellationRequested.get()) completion.complete(value);
+            // Select the publisher atomically: cancellation must not win between a flag check and completion.
+            // A cancel-winning worker leaves publication to the cancelling thread after physical interruption.
+            if (publication.compareAndSet(Publication.PENDING, Publication.RESULT)) completion.complete(value);
         } catch (Throwable throwable) {
-            if (!cancellationRequested.get()) completion.completeExceptionally(throwable);
+            if (publication.compareAndSet(Publication.PENDING, Publication.RESULT))
+                completion.completeExceptionally(throwable);
         } finally {
             markExited();
         }
@@ -109,27 +116,35 @@ final class ExecutorTaskHandle<T> {
         if (!execution.compareAndSet(null, future)) {
             throw new IllegalStateException("Invocation task already has an execution future");
         }
-        if (cancellationRequested.get()) {
+        if (publication.get() == Publication.CANCELLED) {
             cancelExecution(future);
         }
     }
 
     /** Records a synchronous executor rejection and releases the scope registration. */
     void submissionFailed(Throwable failure) {
-        completion.completeExceptionally(failure);
+        if (publication.compareAndSet(Publication.PENDING, Publication.RESULT))
+            completion.completeExceptionally(failure);
         markExited();
     }
 
     /**
      * Requests cooperative cancellation through the executor handle. Logical completion is cancelled immediately;
-     * actual exit remains pending until running code returns. User code that ignores interruption cannot be forcibly
-     * stopped.
+     * actual exit remains pending until running code returns. Once the worker has selected its result, cancellation
+     * returns false even if its completion observers have not run yet. Observers of an ordinary result still run on the
+     * publishing worker and must not wait for that same worker to exit. User code that ignores interruption cannot be
+     * forcibly stopped.
      */
     boolean cancel(boolean mayInterruptIfRunning) {
+        while (true) {
+            var selected = publication.get();
+            if (selected == Publication.RESULT) return false;
+            if (selected == Publication.CANCELLED
+                    || publication.compareAndSet(Publication.PENDING, Publication.CANCELLED)) break;
+        }
         if (mayInterruptIfRunning) {
             interruptRequested.set(true);
         }
-        cancellationRequested.set(true);
         var future = execution.get();
         // CompletableFuture cancellation runs observers inline. Physical interruption must already be requested
         // before an observer is allowed to wait for this task's actual exit.
