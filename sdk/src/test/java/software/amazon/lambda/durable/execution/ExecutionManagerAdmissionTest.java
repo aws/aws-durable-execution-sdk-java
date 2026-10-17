@@ -14,6 +14,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
+import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -23,6 +24,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,6 +40,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
@@ -57,9 +60,26 @@ class ExecutionManagerAdmissionTest {
                 .withCheckpointDelay(Duration.ofHours(1))
                 .withPollingStrategy(attempt -> Duration.ofHours(1))
                 .build());
-        manager = createManager();
+        manager = createManager(null);
         manager.registerActiveThread(null);
         when(client.checkpoint(any(), any(), any())).thenReturn(response());
+    }
+
+    private ExecutionManager createManager(Context context) {
+        var execution = Operation.builder()
+                .id("execution")
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .build();
+        return new ExecutionManager(
+                new DurableExecutionInput(
+                        "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/test/execution",
+                        "token",
+                        CheckpointUpdatedExecutionState.builder()
+                                .operations(execution)
+                                .build()),
+                config,
+                context);
     }
 
     @AfterEach
@@ -140,6 +160,38 @@ class ExecutionManagerAdmissionTest {
             var poll = admission.get(5, TimeUnit.SECONDS);
             assertEquals(interrupted, shutdown.get(5, TimeUnit.SECONDS));
             assertTrue(poll.isCompletedExceptionally());
+        } finally {
+            releaseAdmission.countDown();
+        }
+    }
+
+    @Test
+    void stuckCheckpointAdmissionCannotExceedCleanupDeadline() throws Exception {
+        manager.close();
+        var context = mock(Context.class);
+        when(context.getRemainingTimeInMillis()).thenReturn(500);
+        manager = createManager(context);
+        var admissionEntered = new CountDownLatch(1);
+        var releaseAdmission = new CountDownLatch(1);
+        doAnswer(invocation -> {
+                    admissionEntered.countDown();
+                    await(releaseAdmission);
+                    return invocation.callRealMethod();
+                })
+                .when(config)
+                .getPollingStrategy();
+        try {
+            var admission = callers.submit(() -> manager.pollForOperationUpdates("pending"));
+            await(admissionEntered);
+            var shutdown = callers.submit(() -> manager.finishInvocation(null));
+            var failure =
+                    assertInstanceOf(UnrecoverableDurableExecutionException.class, shutdown.get(5, TimeUnit.SECONDS));
+            assertTrue(failure.isRetryable());
+            assertInstanceOf(TimeoutException.class, failure.getCause());
+            assertEquals(ExecutionManager.LifecycleState.CLOSED, manager.getLifecycleState());
+            assertThrows(RejectedExecutionException.class, () -> manager.sendOperationUpdate(update()));
+            releaseAdmission.countDown();
+            admission.get(5, TimeUnit.SECONDS).cancel(false);
         } finally {
             releaseAdmission.countDown();
         }
@@ -283,20 +335,7 @@ class ExecutionManagerAdmissionTest {
     }
 
     private ExecutionManager createManager() {
-        var execution = Operation.builder()
-                .id("execution")
-                .type(OperationType.EXECUTION)
-                .status(OperationStatus.STARTED)
-                .build();
-        return new ExecutionManager(
-                new DurableExecutionInput(
-                        "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/test/execution",
-                        "token",
-                        CheckpointUpdatedExecutionState.builder()
-                                .operations(execution)
-                                .build()),
-                config,
-                null);
+        return createManager(null);
     }
 
     private static BaseDurableOperation contextOperation(String id, OperationSubType subType) {

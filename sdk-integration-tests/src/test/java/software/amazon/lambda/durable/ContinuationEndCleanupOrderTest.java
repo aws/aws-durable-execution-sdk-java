@@ -341,9 +341,17 @@ class ContinuationEndCleanupOrderTest {
     private static void awaitCallerOutcomeJoin(Thread caller) {
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
         while (System.nanoTime() < deadline) {
-            if (Arrays.stream(caller.getStackTrace())
+            var frames = caller.getStackTrace();
+            var legacyJoin = Arrays.stream(frames)
                     .anyMatch(frame -> frame.getClassName().equals(CompletableFuture.class.getName())
-                            && frame.getMethodName().equals("join"))) return;
+                            && frame.getMethodName().equals("join"));
+            var budgetedWait = Arrays.stream(frames)
+                            .anyMatch(frame -> frame.getClassName().equals(ExecutionManager.class.getName())
+                                    && frame.getMethodName().equals("awaitInvocationOutcome"))
+                    && Arrays.stream(frames)
+                            .anyMatch(frame -> frame.getClassName().equals(CompletableFuture.class.getName())
+                                    && frame.getMethodName().equals("get"));
+            if (legacyJoin || budgetedWait) return;
             Thread.yield();
         }
         fail("Invocation caller did not reach its installed outcome observer");

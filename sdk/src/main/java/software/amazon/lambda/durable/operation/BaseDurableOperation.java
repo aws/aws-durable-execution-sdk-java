@@ -356,6 +356,7 @@ public abstract class BaseDurableOperation {
      * @return the user function's result
      */
     protected <T> T runUserFunction(Integer attempt, Supplier<T> userFunction) {
+        executionManager.checkUserFunctionExecutionAllowed();
         var pluginRunner = getPluginRunner();
         var startInfo = PluginInfoConverter.toUserFunctionStartInfo(
                 operationIdentifier,
@@ -364,6 +365,7 @@ public abstract class BaseDurableOperation {
                 attempt);
         pluginRunner.onUserFunctionStart(startInfo);
         try {
+            executionManager.checkUserFunctionExecutionAllowed();
             T result = userFunction.get();
             pluginRunner.onUserFunctionEnd(
                     PluginInfoConverter.toUserFunctionEndInfo(startInfo, UserFunctionOutcome.SUCCEEDED, null));

@@ -132,13 +132,15 @@ class DurableExecutorLifecycleRegressionTest {
             // The interrupt flag is sticky, so the drain observes it whether it lands before or during the wait.
             rootThread.get().interrupt();
 
+            assertThrows(TimeoutException.class, () -> invocation.get(100, TimeUnit.MILLISECONDS));
+            assertEquals(1, ended.getCount(), "Interruption must not move End ahead of still-running work");
+            releaseStep.countDown();
             assertTrue(
                     ended.await(5, TimeUnit.SECONDS), "An interrupted drain must still fire the invocation-end hook");
             assertEquals(InvocationStatus.RETRYING, endInfo.get().invocationStatus());
             assertInstanceOf(IllegalStateException.class, endInfo.get().executionError());
 
-            // Only now let the step finish, so the caller-side drain in ExecutionManager.close() can complete.
-            releaseStep.countDown();
+            // The admitted step has exited and checkpointed before the interrupted owner reports its failure.
             var failure = assertThrows(ExecutionException.class, () -> invocation.get(5, TimeUnit.SECONDS));
             assertInstanceOf(IllegalStateException.class, failure.getCause());
         } finally {
