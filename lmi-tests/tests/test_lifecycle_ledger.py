@@ -158,10 +158,14 @@ class NestedBarrierEvidenceTest(unittest.TestCase):
         events = []
 
         def launch(fixture, scenario, marker, **kwargs):
+            events.append(event("BARRIER_ENTER", len(events) + 1, marker))
             events.append(event("BARRIER_PASSED", len(events) + 1, marker))
             return {"marker": marker}
 
         def poll(fixture, predicate, **kwargs):
+            ready = predicate(events)
+            if ready:
+                return ready
             self.assertFalse(predicate(events))
             events.append(event("CHILD_BARRIER_FAILED", 3, events[0]["marker"]))
             self.assertTrue(predicate(events))
