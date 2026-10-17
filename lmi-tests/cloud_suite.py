@@ -262,6 +262,7 @@ def wait_returns(cloud, fixture, items, seconds=30):
 
 def assert_healthy_request_success(cloud, fixture, item):
     """A later durable retry cannot replace the admitted healthy request's outcome."""
+    item.setdefault("healthyAdmission", (item["marker"], item["environment"], item["requestId"]))
     returns = cloud.poll(
         fixture, lambda events: selected(request_trace(
             events, item["marker"], item["requestId"], item["environment"]), "WRAPPER_RETURN"),
@@ -433,6 +434,10 @@ def fixed_case(cloud, fixture, scenario):
                     "Fixed-pool setup changed during settlement; refusing to rerun the assertion")
             assert_lifecycle(events)
             continue
+        admitted = tuple(sorted(request_identities(selected(
+            [event for item in items for event in cloud.events_for(item)], "BARRIER_ENTER"))))
+        for item in items:
+            item.setdefault("fixedAdmission", (admitted, scenario))
         if scenario == "nested":
             # A broken child barrier is setup failure, not nested starvation. Its
             # diagnostics may arrive after the wrapper-return CloudWatch batch.
@@ -679,6 +684,7 @@ def assert_timeout_case(cloud, fixture, stubborn, prefix, timeout, victim):
     entry = min(entries, key=lambda event: event["epochMillis"])
     target = entry["environment"]
     request_id = entry["requestId"]
+    victim.setdefault("timeoutAdmission", (victim["marker"], target, request_id))
     runtime_entry = cloud.poll(
         fixture,
         lambda events: selected(request_trace(events, victim["marker"], request_id, target), "WRAPPER_ENTER"),
@@ -814,6 +820,7 @@ def warm_case(cloud, fixture):
             wait_for_runtime_quiescence(cloud, fixture, item["marker"])
             trace = cloud.events_for(item)
             target = warm_environment(trace, target)
+            item.setdefault("warmEnvironment", target)
             snapshots.extend(e for e in selected(trace, "SNAPSHOT") if e["environment"] == target)
             if scenario == "replay":
                 assert_replay(trace, cloud.history(item), marker)
@@ -844,12 +851,59 @@ def cases_for_fixture(cloud, fixture):
     return cases
 
 
+def assert_original_healthy_admission(events, admission):
+    """Reject changed admission evidence instead of repinning earlier timing assertions."""
+    marker, environment, request_id = admission
+    heartbeats = selected(events, "HEARTBEAT", marker)
+    require(heartbeats, "Missing original healthy admission heartbeat")
+    original = min(heartbeats, key=lambda event: event["epochMillis"])
+    require((original["marker"], original["environment"], original["requestId"]) == admission,
+            "Original healthy admission changed after collecting delayed evidence")
+    returns = selected(request_trace(events, marker, request_id, environment), "WRAPPER_RETURN")
+    require(len(returns) == 1 and returns[0].get("status") == "SUCCEEDED",
+            f"Original healthy request {request_id} did not return SUCCEEDED")
+
+
+def assert_original_timeout_admission(events, admission):
+    """A retry cannot inherit the first selected request's deadline and recovery evidence."""
+    entries = selected(events, "TASK_ENTER", admission[0])
+    require(entries, "Missing original timeout admission task entry")
+    original = min(entries, key=lambda event: event["epochMillis"])
+    require((original["marker"], original["environment"], original["requestId"]) == admission,
+            "Original timeout admission changed after collecting delayed evidence")
+
+
+def assert_original_fixed_admission(cloud, items, admission):
+    """Recheck cohort identity and progress after the last collection window."""
+    original, scenario = admission
+    markers = {identity[0] for identity in original}
+    events = [event for item in items if item["marker"] in markers for event in cloud.events_for(item)]
+    require(fixed_cohort_setup(events, markers) == "admitted"
+            and request_identities(selected(events, "BARRIER_ENTER")) == set(original),
+            "Original fixed cohort changed after collecting delayed evidence")
+    if scenario == "nested":
+        assert_nested_reached(events, markers)
+    assert_fixed(events, markers,
+                 progress_start="CHILD_BARRIER_PASSED" if scenario == "nested" else "BARRIER_PASSED")
+
+
 def assert_case_request_lifecycles(cloud, invocation_start):
     """Settlement cannot turn an earlier wrapper-ordering violation into a passing case."""
-    for item in cloud.invocations[invocation_start:]:
+    items = cloud.invocations[invocation_start:]
+    checked_cohorts = set()
+    for item in items:
+        events = cloud.events_for(item)
         assert_request_lifecycles(
-            cloud.events_for(item), item["marker"],
-            allow_residual_tasks=item.get("scenario") == "stubborn")
+            events, item["marker"], allow_residual_tasks=item.get("scenario") == "stubborn")
+        if "healthyAdmission" in item:
+            assert_original_healthy_admission(events, item["healthyAdmission"])
+        if "timeoutAdmission" in item:
+            assert_original_timeout_admission(events, item["timeoutAdmission"])
+        if "warmEnvironment" in item:
+            warm_environment(events, item["warmEnvironment"])
+        if "fixedAdmission" in item and item["fixedAdmission"] not in checked_cohorts:
+            assert_original_fixed_admission(cloud, items, item["fixedAdmission"])
+            checked_cohorts.add(item["fixedAdmission"])
 
 
 def execute_case(cloud, fixture, case):
