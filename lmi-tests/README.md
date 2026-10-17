@@ -224,6 +224,10 @@ that exceeds the cleanup budget. Healthy peers and anchors must return SUCCEEDED
 on the original admitted request with normal lifecycle ordering, even when their
 eventual durable execution succeeds. Physical cleanup may settle a late root exit;
 that settlement does not turn the earlier ordering violation into healthy acceptance.
+Before a case can pass, every request launched by that case is checked again after
+cleanup, including recovery probes, retries, and discarded placement attempts. Only
+the stubborn victim keeps its explicit residual-task exception; an earlier primary
+or cleanup failure is preserved.
 After stopping durable executions, cleanup allows any pre-stop stubborn retry its
 configured residual hold (capped at 120 seconds), plus the existing 30-second
 collection margin and 20-second quiet period. This cleanup allowance does not alter
