@@ -621,6 +621,16 @@ def invocation_request_failures(items):
     return failures
 
 
+def cleanup_observation_seconds(items):
+    """Allow pre-stop retries their bounded fixture hold, then collect a quiet trace."""
+    # Match LifecycleHandler.stubborn's 120-second cap. The full hold is conservative
+    # even when the retry's task-entry log has not arrived when stop_all completes.
+    residual = max((max(0, min(item["holdMillis"], 120_000)) / 1000
+                    for item in items if item.get("scenario") == "stubborn"), default=0)
+    # Keep the existing collection margin and required quiet period after residual exit.
+    return residual + 30 + PEER_LOG_OBSERVATION_SECONDS
+
+
 def cleanup_case(cloud, fixture, invocation_start, seconds):
     """Release and terminate every request created by one case before the next case starts."""
     failures = []
@@ -637,7 +647,7 @@ def cleanup_case(cloud, fixture, invocation_start, seconds):
     if markers:
         try:
             wait_for_runtime_quiescence(
-                cloud, fixture, markers, seconds=PEER_LOG_OBSERVATION_SECONDS + 30,
+                cloud, fixture, markers, seconds=cleanup_observation_seconds(items),
                 quiet_seconds=PEER_LOG_OBSERVATION_SECONDS,
                 allow_no_entry=True)
         except Exception as failure:

@@ -284,7 +284,8 @@ class Cloud:
                                            "--expires-in", "3600"], raw=True)
 
     def launch(self, fixture, scenario, marker, cohort=None, target=None, peers=1, hold_ms=100000, gate=None):
-        item = {"marker": marker, "fixture": fixture, "started": time.time()}
+        item = {"marker": marker, "fixture": fixture, "started": time.time(),
+                "scenario": scenario, "holdMillis": hold_ms}
         payload = {"runId": self.manifest["runId"], "cohort": cohort or marker,
                    "scenario": scenario, "marker": marker, "controlUrl": gate,
                    "targetEnvironment": target, "peers": peers, "holdMillis": hold_ms}
