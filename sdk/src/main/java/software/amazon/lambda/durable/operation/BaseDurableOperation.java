@@ -325,8 +325,7 @@ public abstract class BaseDurableOperation {
         registerActiveThread(operationId);
 
         try {
-            runningUserHandler.set(CompletableFuture.runAsync(
-                    wrapped, getContext().getDurableConfig().getExecutorService()));
+            runningUserHandler.set(executionManager.submitOperationTask(this, wrapped));
         } catch (RuntimeException | Error dispatchFailure) {
             // Admission failed, so no worker will execute its deregistration finally block. The submitting
             // coordinator need not have a user ThreadContext; undo the registration directly on the manager.
