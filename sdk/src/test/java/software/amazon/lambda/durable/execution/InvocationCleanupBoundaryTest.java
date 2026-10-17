@@ -404,9 +404,13 @@ class InvocationCleanupBoundaryTest {
             });
             await(submitted);
             var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-            while (submitter.get().getState() != Thread.State.BLOCKED && System.nanoTime() < deadline)
+            var observed = submitter.get().getState();
+            while (observed != Thread.State.BLOCKED && System.nanoTime() < deadline) {
                 Thread.onSpinWait();
-            assertEquals(Thread.State.BLOCKED, submitter.get().getState());
+                observed = submitter.get().getState();
+            }
+            // Keep the observed contention, rather than race a second thread-state snapshot.
+            assertEquals(Thread.State.BLOCKED, observed);
             releaseSnapshot.countDown();
             closing.get(5, TimeUnit.SECONDS);
             late.get(5, TimeUnit.SECONDS);
