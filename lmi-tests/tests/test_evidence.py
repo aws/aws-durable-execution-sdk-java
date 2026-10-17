@@ -556,7 +556,9 @@ class EvidenceTest(unittest.TestCase):
     @patch("cloud_suite.wait_for_runtime_quiescence")
     def test_case_cleanup_drains_every_driver_request(self, quiescence):
         cloud = Mock()
-        victim, peer, probe = ({"marker": name} for name in ("victim", "peer", "probe"))
+        finished = Future()
+        finished.set_result({})
+        victim, peer, probe = ({"marker": name, "future": finished} for name in ("victim", "peer", "probe"))
         cloud.invocations = [{"marker": "older"}, victim, peer, probe]
         cloud.events_for.return_value = []
         cleanup_case(cloud, "default2", 1, 90)
