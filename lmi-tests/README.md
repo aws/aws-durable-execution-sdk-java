@@ -223,7 +223,11 @@ A successful durable retry cannot erase an old invocation
 that exceeds the cleanup budget. Healthy peers and anchors must return SUCCEEDED
 on the original admitted request with normal lifecycle ordering, even when their
 eventual durable execution succeeds. Physical cleanup may settle a late root exit;
-that settlement does not turn the earlier ordering violation into healthy acceptance. No virtual-thread executor variant is deployed
+that settlement does not turn the earlier ordering violation into healthy acceptance.
+After stopping durable executions, cleanup allows any pre-stop stubborn retry its
+configured residual hold (capped at 120 seconds), plus the existing 30-second
+collection margin and 20-second quiet period. This cleanup allowance does not alter
+the original invocation deadline + 5s or progress/recovery acceptance limits. No virtual-thread executor variant is deployed
 until its executor contract is defined; default cached and shared fixed pools
 are covered separately.
 
