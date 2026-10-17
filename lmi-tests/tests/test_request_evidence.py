@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Request identity, suspension cleanup and distinct-execution counterexamples."""
 from pathlib import Path
+from itertools import count
 import sys
 import unittest
 from unittest.mock import Mock, patch
@@ -95,21 +96,22 @@ class OriginalEnvironmentTest(unittest.TestCase):
         cloud = Mock()
         cloud.launch.return_value = {"marker": "anchor"}
         # The handler's first-invocation placement gate does not run on replay.
-        cloud.poll.return_value = [event("HEARTBEAT", 5, "resume", "replacement", marker="anchor")]
+        cloud.poll.return_value = [event("HEARTBEAT", 5, "resume", "replacement", marker="anchor", epochMillis=5)]
         with self.assertRaisesRegex(AssertionError, "original environment"):
             overlap_case(cloud, "default2", target="original")
         peers.assert_not_called()
 
+    @patch("cloud_suite.assert_healthy_request_success")
     @patch("cloud_suite.assert_lifecycle")
     @patch("cloud_suite.assert_overlap")
     @patch("cloud_suite.wait_returns")
     @patch("cloud_suite.wait_for_runtime_quiescence")
     @patch("cloud_suite.healthy_peers", return_value=([], "gate"))
-    def test_matching_or_unspecified_target_uses_the_admitted_environment(self, peers, quiet, returns, overlap, lifecycle):
+    def test_matching_or_unspecified_target_uses_the_admitted_environment(self, peers, quiet, returns, overlap, lifecycle, healthy):
         for target in (None, "original"):
             cloud = Mock()
             cloud.launch.return_value = {"marker": "anchor"}
-            cloud.poll.return_value = [event("HEARTBEAT", 5, environment="original", marker="anchor")]
+            cloud.poll.return_value = [event("HEARTBEAT", 5, environment="original", marker="anchor", epochMillis=5)]
             cloud.events = {}
             overlap_case(cloud, "default1", target=target)
             self.assertEqual("original", peers.call_args.args[2])
@@ -144,12 +146,20 @@ class SuspensionCleanupTest(unittest.TestCase):
     def heartbeat(self, request="healthy", environment="jvm"):
         return event("HEARTBEAT", 11, request, environment, marker="case-healthy", epochMillis=11)
 
-    def run_case(self, events, delayed=()):
+    def run_case(self, events, delayed=(), refresh_delayed=()):
         cloud = Mock()
         cloud.events = dict(enumerate(events))
         cloud.launch.side_effect = lambda fixture, scenario, marker, **kwargs: {"marker": marker}
         cloud.events_for.side_effect = lambda item: [e for e in cloud.events.values() if e["marker"] == item["marker"]]
-        cloud.refresh.side_effect = lambda fixture: list(cloud.events.values())
+        refresh_count = 0
+        def refresh(fixture):
+            nonlocal refresh_count
+            refresh_count += 1
+            if refresh_count == 2:
+                for e in refresh_delayed:
+                    cloud.events[len(cloud.events)] = e
+            return list(cloud.events.values())
+        cloud.refresh.side_effect = refresh
         cloud.history.return_value = [{"Name": name, "Id": name, "EventType": kind} for name, kind in
                                       [("success", "StepSucceeded"), ("failure", "StepFailed"), ("resume", "WaitSucceeded")]]
         def poll(fixture, predicate, *args, **kwargs):
@@ -163,7 +173,7 @@ class SuspensionCleanupTest(unittest.TestCase):
             return result
         cloud.poll.side_effect = poll
         with patch("cloud_suite.uuid.uuid4", return_value=Mock(hex="case")), \
-             patch("cloud_suite.time.monotonic", side_effect=[0, 0, 10]), patch("cloud_suite.time.sleep"):
+             patch("cloud_suite.time.monotonic", side_effect=count(step=10)), patch("cloud_suite.time.sleep"):
             replay_case(cloud, "default2", "suspend")
         return cloud
 
@@ -173,6 +183,35 @@ class SuspensionCleanupTest(unittest.TestCase):
 
     def test_original_cleanup_is_used_even_when_resume_logs_arrive_first(self):
         self.run_case(self.evidence() + [self.heartbeat()])
+
+    def test_suspension_anchor_throw_is_not_repaired_by_a_successful_retry(self):
+        events = self.evidence() + [self.heartbeat()]
+        next(e for e in events if e["marker"] == "case-healthy"
+             and e["kind"] == "WRAPPER_RETURN")["status"] = "THREW"
+        events += [event(kind, sequence, "healthy-retry", marker="case-healthy",
+                         name="held-step", status="SUCCEEDED", epochMillis=sequence)
+                   for kind, sequence in [("WRAPPER_ENTER", 30), ("ROOT_ENTER", 31),
+                                          ("TASK_ENTER", 32), ("TASK_EXIT", 33),
+                                          ("ROOT_EXIT", 34), ("WRAPPER_RETURN", 35)]]
+        with self.assertRaisesRegex(AssertionError, "Original healthy request healthy"):
+            self.run_case(events)
+
+    def test_late_anchor_root_exit_is_drained_but_not_healthy_acceptance(self):
+        events = self.evidence() + [self.heartbeat()]
+        next(e for e in events if e["marker"] == "case-healthy"
+             and e["kind"] == "ROOT_EXIT")["sequence"] = 28
+        next(e for e in events if e["marker"] == "case-healthy"
+             and e["kind"] == "WRAPPER_RETURN")["rootExited"] = False
+        self.assertTrue(runtime_requests_drained(events, "case-healthy"))
+        with self.assertRaisesRegex(AssertionError, "before root exit"):
+            self.run_case(events)
+
+    def test_delayed_causally_correct_anchor_exit_is_collected_before_acceptance(self):
+        events = self.evidence() + [self.heartbeat()]
+        anchor_exit = next(e for e in events if e["marker"] == "case-healthy" and e["kind"] == "ROOT_EXIT")
+        events.remove(anchor_exit)
+        self.assertFalse(runtime_requests_drained(events, "case-healthy"))
+        self.run_case(events, refresh_delayed=[anchor_exit])
 
     def test_waits_for_the_matching_exit_and_original_peer_heartbeat(self):
         events = self.evidence()
@@ -185,8 +224,13 @@ class SuspensionCleanupTest(unittest.TestCase):
     def test_retry_or_replacement_heartbeat_cannot_prove_original_peer_progress(self):
         for request, environment in [("retry", "jvm"), ("healthy", "replacement")]:
             with self.subTest(request=request, environment=environment):
+                other_request = [event(kind, sequence, request, environment, marker="case-healthy",
+                                       name="held-step", status="SUCCEEDED", epochMillis=sequence)
+                                 for kind, sequence in [("WRAPPER_ENTER", 8), ("ROOT_ENTER", 9),
+                                                        ("TASK_ENTER", 10), ("TASK_EXIT", 28),
+                                                        ("ROOT_EXIT", 29), ("WRAPPER_RETURN", 30)]]
                 with self.assertRaisesRegex(AssertionError, "Evidence deadline exceeded"):
-                    self.run_case(self.evidence() + [self.heartbeat(request, environment)])
+                    self.run_case(self.evidence() + other_request + [self.heartbeat(request, environment)])
 
     def test_other_request_or_jvm_cannot_supply_the_original_cleanup_exit(self):
         for field, value in [("requestId", "resume"), ("environment", "replacement")]:
