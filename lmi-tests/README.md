@@ -198,6 +198,10 @@ at 120 seconds. The normal invocation timeout is 60 seconds; the durable executi
 timeout is 240 seconds. Cleanup is required by the invocation deadline plus
 5 seconds. Probe admission has an 8-second tolerance. Collection latency does
 not extend these assertions, which compare timestamps captured inside the JVM.
+Fixed-pool placement retries require positive barrier-entry evidence from distinct
+JVMs, terminal failed executions, and settled runtime work. Missing or delayed
+barrier diagnostics never authorize a retry. Every attempted cohort remains in
+the escape ledger, so a later successful cohort cannot hide an earlier pool escape.
 
 `timeouts/*.json` distinguishes server timeout logs from an SDK deadline
 cancellation that returns early with an invocation error. A client HTTP timeout
