@@ -18,7 +18,7 @@ public class PluginErrorIsolation extends DurableHandler<String, String> {
     @Override
     protected DurableConfig createConfiguration() {
         return DurableConfig.builder()
-                .withPlugins(new FaultyConformancePlugin())
+                .withPlugins(info -> new FaultyConformancePlugin())
                 .build();
     }
 

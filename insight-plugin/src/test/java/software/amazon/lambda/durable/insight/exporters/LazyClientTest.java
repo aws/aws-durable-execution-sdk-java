@@ -43,4 +43,18 @@ class LazyClientTest {
         assertTrue(e.getMessage().contains("software.amazon.awssdk:redshiftdata"), e.getMessage());
         assertInstanceOf(NoClassDefFoundError.class, e.getCause());
     }
+
+    public static final class FatalBuilder {
+        static final VirtualMachineError FAILURE = new VirtualMachineError("builder VM failure") {};
+
+        public static Object builder() {
+            throw FAILURE;
+        }
+    }
+
+    @Test
+    void reflectiveBuilderFatalKeepsItsOriginalIdentity() {
+        var client = LazyClient.forSdkClient(null, "test", FatalBuilder.class.getName(), null);
+        assertSame(FatalBuilder.FAILURE, assertThrows(VirtualMachineError.class, client::get));
+    }
 }

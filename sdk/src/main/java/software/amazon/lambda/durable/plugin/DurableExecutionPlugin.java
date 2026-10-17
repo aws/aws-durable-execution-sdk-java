@@ -10,39 +10,28 @@ package software.amazon.lambda.durable.plugin;
  *
  * <p>All methods have default no-op implementations, allowing plugins to override only the hooks they need.
  *
- * <p>Plugin errors are isolated — exceptions thrown by plugin methods are caught and logged but never disrupt SDK
- * execution.
+ * <p>Non-fatal plugin failures are caught and logged without disrupting SDK execution. {@link VirtualMachineError} and
+ * {@link ThreadDeath} propagate, including when wrapped by asynchronous completion/future exceptions.
  */
 public interface DurableExecutionPlugin {
 
     // ─── Invocation-level hooks ──────────────────────────────────────────
 
     /**
-     * Called on the root handler thread at the start of each Lambda invocation. Use to set up per-invocation state
-     * (trace ID, invocation span) and thread-local context. The paired {@link #onInvocationEnd} runs on this same
-     * thread.
+     * Called at the start of each Lambda invocation. Use to set up per-invocation state (trace ID, invocation span).
      *
      * <p>Check {@link InvocationInfo#isFirstInvocation()} to detect the first invocation of an execution (useful for
-     * sampling decisions or execution-level span creation).
+     * sampling decisions or execution-level span creation). The runtime-thread snapshot is available through
+     * {@link InvocationInfo#xRayTraceId()}.
      */
     default void onInvocationStart(InvocationInfo info) {}
 
     /**
-     * Called on the same root handler thread as {@link #onInvocationStart}, after the handler and its finally blocks
-     * have exited. Use to restore thread-local context and flush spans/metrics before Lambda freezes.
+     * Called at the end of each Lambda invocation. Use to flush spans/metrics before Lambda freezes.
      *
-     * <p>This hook is awaited — the SDK blocks until it returns. This is the only safe flush point before Lambda
-     * freezes the execution environment. Suspension and termination also wait for the handler to unwind and this hook
-     * to finish; a blocked handler, finally block, or end hook delays the invocation response. No caller-thread
-     * fallback or cleanup timeout is applied. An earlier suspension/termination retains its selected outcome even if a
-     * later handler finally block returns or throws.
-     *
-     * <p>Start hooks run in registration order; end hooks run in reverse order to unwind nested thread-local scopes. If
-     * an end hook throws an Error that is not isolated, the remaining end hooks still run before it is rethrown. The
-     * first such Error propagates, except that a later VirtualMachineError or ThreadDeath takes precedence over a
-     * non-JVM-fatal Error. Other distinct end-hook Errors are retained as suppressed failures. If a start hook throws
-     * an Error that is not isolated, later start hooks are not called, but all configured end hooks still run in
-     * reverse order. An end hook must therefore tolerate a start hook that did not complete.
+     * <p>This hook runs on the root handler thread after body/scope unwinding, operation and checkpoint drain, and
+     * output preparation. It is awaited before the invocation returns and is the safe flush point before Lambda freezes
+     * the execution environment.
      *
      * <p>Check {@link InvocationEndInfo#invocationStatus()} to detect if the execution reached a terminal state in this
      * invocation (useful for writing summary records or flushing final data).
@@ -91,6 +80,10 @@ public interface DurableExecutionPlugin {
      * functions.
      *
      * <p>This hook fires on the same thread as user code, so plugins can close OTel scopes here.
+     *
+     * <p>If a later plugin's start hook fails fatally, plugins whose start hooks completed successfully receive this
+     * hook in reverse order on the same thread, with {@link UserFunctionOutcome#FAILED} and the original fatal error.
+     * The user function does not run in that case. Cleanup failures do not replace the original start-hook error.
      *
      * <p>It fires for every outcome of the user function: normal return, a thrown failure, and suspension. Check
      * {@link UserFunctionEndInfo#outcome()} to distinguish them. A suspended function reports

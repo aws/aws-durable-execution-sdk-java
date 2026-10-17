@@ -10,8 +10,8 @@ package software.amazon.lambda.durable.otel;
  * mirrors the {@code OtelPluginConfig} object in the JavaScript SDK and the {@code OtelPluginConfig} dataclass in the
  * Python SDK for cross-SDK parity.
  *
- * <p>Construct via {@link #builder()} and pass to a plugin's {@code (SdkTracerProviderBuilder, OtelPluginConfig)}
- * constructor:
+ * <p>Construct via {@link #builder()} and pass to a plugin's {@code factory(SdkTracerProviderBuilder,
+ * OtelPluginConfig)}:
  *
  * <pre>{@code
  * var config = OtelPluginConfig.builder()
@@ -20,7 +20,7 @@ package software.amazon.lambda.durable.otel;
  *     .workflowSpanName("Workflow")
  *     .instrumentationName("my-scope")
  *     .build();
- * var plugin = new InvocationOtelPlugin(tracerProviderBuilder, config);
+ * var factory = InvocationOtelPlugin.factory(tracerProviderBuilder, config);
  * }</pre>
  *
  * <p>Defaults: {@code contextExtractor = new XRayContextExtractor()}, {@code enableMdc = true}, {@code workflowSpanName

@@ -20,6 +20,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
@@ -34,6 +35,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
@@ -78,7 +80,7 @@ class DurableExecutorLifecycleRegressionTest {
         var config = DurableConfig.builder()
                 .withDurableExecutionClient(mock(DurableExecutionClient.class))
                 .withSerDes(failingErrorSerializer(serializationFailure))
-                .withPlugins(recordingPlugin(ended))
+                .withPlugins(ignoredInfo -> recordingPlugin(ended))
                 .build();
 
         var actual = assertThrows(
@@ -92,9 +94,13 @@ class DurableExecutorLifecycleRegressionTest {
     }
 
     @Test
-    void interruptedDrainStillFiresInvocationEnd() throws Exception {
+    void interruptedDrainFinishesContinuationAndPeerBeforeInvocationEnd() throws Exception {
         var releaseStep = new CountDownLatch(1);
         var handlerReturning = new CountDownLatch(1);
+        var continuationEntered = new CountDownLatch(1);
+        var releaseContinuation = new CountDownLatch(1);
+        var continuationWorkers = Executors.newSingleThreadExecutor();
+        var interruptedAtEnd = new AtomicBoolean();
         var ended = new CountDownLatch(1);
         var endInfo = new AtomicReference<InvocationEndInfo>();
         var rootThread = new AtomicReference<Thread>();
@@ -104,10 +110,11 @@ class DurableExecutorLifecycleRegressionTest {
             var config = DurableConfig.builder()
                     .withDurableExecutionClient(TestUtils.createMockClient())
                     .withExecutorService(userExecutor)
-                    .withPlugins(new DurableExecutionPlugin() {
+                    .withPlugins(ignoredInfo -> new DurableExecutionPlugin() {
                         @Override
                         public void onInvocationEnd(InvocationEndInfo info) {
                             endInfo.set(info);
+                            interruptedAtEnd.set(Thread.currentThread().isInterrupted());
                             ended.countDown();
                         }
                     })
@@ -119,6 +126,15 @@ class DurableExecutorLifecycleRegressionTest {
                     await(releaseStep);
                     return "late";
                 });
+                ((DurableContextImpl) context)
+                        .getExecutionManager()
+                        .runCheckpointContinuation(
+                                () -> {
+                                    continuationEntered.countDown();
+                                    await(releaseContinuation);
+                                },
+                                continuationWorkers);
+                await(continuationEntered);
                 rootThread.set(Thread.currentThread());
                 handlerReturning.countDown();
                 return "root-result";
@@ -128,17 +144,25 @@ class DurableExecutorLifecycleRegressionTest {
             // The interrupt flag is sticky, so the drain observes it whether it lands before or during the wait.
             rootThread.get().interrupt();
 
-            assertTrue(
-                    ended.await(5, TimeUnit.SECONDS), "An interrupted drain must still fire the invocation-end hook");
+            assertThrows(TimeoutException.class, () -> invocation.get(150, TimeUnit.MILLISECONDS));
+            assertEquals(1L, ended.getCount(), "An interrupt must not let End overtake the held continuation");
+            releaseContinuation.countDown();
+            assertThrows(TimeoutException.class, () -> invocation.get(150, TimeUnit.MILLISECONDS));
+            assertEquals(1L, ended.getCount(), "After the continuation, End must still join the held peer");
+            releaseStep.countDown();
+            assertTrue(ended.await(5, TimeUnit.SECONDS));
             assertEquals(InvocationStatus.RETRYING, endInfo.get().invocationStatus());
             assertInstanceOf(IllegalStateException.class, endInfo.get().executionError());
-
-            // Only now let the step finish, so the caller-side drain in ExecutionManager.close() can complete.
-            releaseStep.countDown();
+            assertInstanceOf(
+                    InterruptedException.class, endInfo.get().executionError().getCause());
+            assertTrue(interruptedAtEnd.get(), "Interrupt status is restored only after required drain work");
             var failure = assertThrows(ExecutionException.class, () -> invocation.get(5, TimeUnit.SECONDS));
             assertInstanceOf(IllegalStateException.class, failure.getCause());
         } finally {
+            releaseContinuation.countDown();
             releaseStep.countDown();
+            continuationWorkers.shutdownNow();
+            assertTrue(continuationWorkers.awaitTermination(5, TimeUnit.SECONDS));
             caller.shutdownNow();
             userExecutor.shutdownNow();
             assertTrue(caller.awaitTermination(5, TimeUnit.SECONDS), "Invocation executor did not terminate");

@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static software.amazon.lambda.durable.otel.Invocations.started;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
@@ -37,7 +38,9 @@ class ExecutionOtelPluginTest {
     private static final String CONFIGURED_SERVICE_NAME = "durable-execution-conformance";
 
     private InMemorySpanExporter spanExporter;
-    private ExecutionOtelPlugin plugin;
+
+    /** The environment's plugin factory; each test creates one instance per invocation from it. */
+    private DurableExecutionPluginFactory factory;
 
     @BeforeEach
     void setUp() {
@@ -46,7 +49,7 @@ class ExecutionOtelPluginTest {
         OtelPluginAutoConfigurationState.resetInstalledForTest();
         spanExporter = InMemorySpanExporter.create();
         var resource = Resource.create(Attributes.of(SERVICE_NAME, CONFIGURED_SERVICE_NAME));
-        plugin = new ExecutionOtelPlugin(
+        factory = ExecutionOtelPlugin.factory(
                 SdkTracerProvider.builder()
                         .setResource(resource)
                         .addSpanProcessor(SimpleSpanProcessor.create(spanExporter)),
@@ -65,12 +68,12 @@ class ExecutionOtelPluginTest {
         OtelPluginAutoConfigurationState.resetInstalledForTest();
     }
 
-    // ─── Default constructor ─────────────────────────────────────────────
+    // ─── Java agent path (global provider) ───────────────────────────────
 
     @Test
     void customInstrumentationName_isUsedForTracerScope() {
         var exporter = InMemorySpanExporter.create();
-        var customPlugin = new ExecutionOtelPlugin(
+        var customPluginFactory = ExecutionOtelPlugin.factory(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
                 OtelPluginConfig.builder()
                         .contextExtractor(() -> null)
@@ -78,7 +81,7 @@ class ExecutionOtelPluginTest {
                         .workflowSpanName("Workflow")
                         .instrumentationName("my-custom-scope")
                         .build());
-        customPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var customPlugin = started(customPluginFactory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         customPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = exporter.getFinishedSpanItems();
@@ -89,12 +92,13 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void defaultConstructor_retriesGlobalProviderBindingOnNextInvocation() {
+    void agentPathFactory_bindsGlobalProviderOnALaterInvocationsInstance() {
         GlobalOpenTelemetry.resetForTest();
         OtelPluginAutoConfigurationState.markInstalled();
 
-        var defaultPlugin = new ExecutionOtelPlugin();
-        defaultPlugin.onInvocationStart(new InvocationInfo("req-disabled", "arn:disabled", true, Instant.now()));
+        var defaultPluginFactory = ExecutionOtelPlugin.factory();
+        var defaultPlugin =
+                started(defaultPluginFactory, new InvocationInfo("req-disabled", "arn:disabled", true, Instant.now()));
         defaultPlugin.onOperationStart(new OperationInfo(
                 "op-disabled", "disabled-step", "STEP", "Step", null, Instant.now(), null, null, false));
         defaultPlugin.onOperationEnd(new OperationEndInfo(
@@ -121,7 +125,8 @@ class ExecutionOtelPluginTest {
                 .build();
         OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
 
-        defaultPlugin.onInvocationStart(new InvocationInfo("req-enabled", "arn:enabled", true, Instant.now()));
+        defaultPlugin =
+                started(defaultPluginFactory, new InvocationInfo("req-enabled", "arn:enabled", true, Instant.now()));
         defaultPlugin.onOperationStart(new OperationInfo(
                 "op-enabled", "enabled-step", "STEP", "Step", null, Instant.now(), null, null, false));
         defaultPlugin.onOperationEnd(new OperationEndInfo(
@@ -147,8 +152,8 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void defaultConstructor_usesGlobalSdkTracerProviderDirectly() {
-        var defaultPlugin = new ExecutionOtelPlugin();
+    void agentPathFactory_usesGlobalSdkTracerProviderDirectly() {
+        var defaultPluginFactory = ExecutionOtelPlugin.factory();
         assertFalse(GlobalOpenTelemetry.isSet());
 
         OtelPluginAutoConfigurationState.markInstalled();
@@ -158,7 +163,8 @@ class ExecutionOtelPluginTest {
                 .build();
         OpenTelemetrySdk.builder().setTracerProvider(globalTracerProvider).buildAndRegisterGlobal();
 
-        defaultPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
+        var defaultPlugin =
+                started(defaultPluginFactory, new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
         defaultPlugin.onOperationStart(
                 new OperationInfo("op-1", "step", "STEP", "Step", null, Instant.now(), null, null, false));
         defaultPlugin.onOperationEnd(new OperationEndInfo(
@@ -194,15 +200,22 @@ class ExecutionOtelPluginTest {
                 .get();
 
         assertEquals("otel-execution", provider.getName());
-        assertEquals(DurableExecutionPluginProvider.API_VERSION, provider.getApiVersion());
-        assertEquals(ExecutionOtelPlugin.class, provider.getPluginType());
+
+        // The provider is the per-invocation factory: it creates an ExecutionOtelPlugin for the invocation it is
+        // handed,
+        // and a distinct instance for the next one.
+        var first = provider.createPlugin(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var second = provider.createPlugin(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        assertInstanceOf(ExecutionOtelPlugin.class, first);
+        assertInstanceOf(ExecutionOtelPlugin.class, second);
+        assertNotSame(first, second, "Each invocation gets its own plugin instance");
     }
 
     // ─── Workflow root span lifecycle ────────────────────────────────────
 
     @Test
     void terminalInvocation_exportsWorkflowAndInvocationSpans() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -217,7 +230,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void spans_preserveConfiguredServiceName() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         for (var span : spanExporter.getFinishedSpanItems()) {
@@ -231,7 +244,7 @@ class ExecutionOtelPluginTest {
     @Test
     void workflowSpan_startsAtExecutionStartTime() {
         var start = Instant.parse("2026-01-15T08:00:00Z");
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, start));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, start));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var workflowSpan = spanByName(spanExporter.getFinishedSpanItems(), "Workflow");
@@ -243,7 +256,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void workflowSpan_hasInternalKind() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         assertEquals(
@@ -254,7 +267,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void workflowAndInvocationSpans_shareExecutionTrace_withoutAmbientContext() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -281,7 +294,7 @@ class ExecutionOtelPluginTest {
         // Drive an invocation to learn the canonical execution trace ID, then start a fresh invocation with an ambient
         // span on that same trace: the Invocation span joins the ambient span directly.
         var executionStart = Instant.parse("2026-01-01T00:00:00Z");
-        plugin.onInvocationStart(new InvocationInfo("req-0", ARN, true, executionStart));
+        var plugin = started(factory, new InvocationInfo("req-0", ARN, true, executionStart));
         plugin.onInvocationEnd(new InvocationEndInfo("req-0", ARN, true, InvocationStatus.SUCCEEDED, null));
         var canonicalTraceId =
                 spanByName(spanExporter.getFinishedSpanItems(), "Workflow").getTraceId();
@@ -291,9 +304,9 @@ class ExecutionOtelPluginTest {
         var ambient =
                 SpanContext.create(canonicalTraceId, ambientSpanId, TraceFlags.getSampled(), TraceState.getDefault());
         try (var ignored = Span.wrap(ambient).makeCurrent()) {
-            plugin.onInvocationStart(new InvocationInfo("req-1", ARN, false, executionStart));
-            plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, false, InvocationStatus.SUCCEEDED, null));
+            plugin = started(factory, new InvocationInfo("req-1", ARN, false, executionStart));
         }
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, false, InvocationStatus.SUCCEEDED, null));
 
         var invocationSpan = spanByName(spanExporter.getFinishedSpanItems(), "Invocation");
         assertEquals(canonicalTraceId, invocationSpan.getTraceId());
@@ -310,10 +323,13 @@ class ExecutionOtelPluginTest {
         var ambientSpanId = "1111111111111111";
         var ambient =
                 SpanContext.create(ambientTraceId, ambientSpanId, TraceFlags.getSampled(), TraceState.getDefault());
+        // The instance is created inside the ambient scope because the invocation's parent resolution happens when the
+        // factory creates it, not later.
+        DurableExecutionPlugin plugin;
         try (var ignored = Span.wrap(ambient).makeCurrent()) {
-            plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-            plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+            plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         }
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = spanExporter.getFinishedSpanItems();
         var workflowSpan = spanByName(spans, "Workflow");
@@ -331,7 +347,7 @@ class ExecutionOtelPluginTest {
         var backendParentId = "2222222222222222";
         var extractCalls = new AtomicInteger();
         var exporter = InMemorySpanExporter.create();
-        var extractorPlugin = new ExecutionOtelPlugin(
+        var extractorPluginFactory = ExecutionOtelPlugin.factory(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
                 OtelPluginConfig.builder()
                         .contextExtractor(() -> {
@@ -348,11 +364,11 @@ class ExecutionOtelPluginTest {
                 "1111111111111111",
                 TraceFlags.getSampled(),
                 TraceState.getDefault());
+        DurableExecutionPlugin extractorPlugin;
         try (var ignored = Span.wrap(ambient).makeCurrent()) {
-            extractorPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
-            extractorPlugin.onInvocationEnd(
-                    new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+            extractorPlugin = started(extractorPluginFactory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         }
+        extractorPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         assertEquals(1, extractCalls.get(), "Extractor is invoked even when a valid ambient span is active");
         var spans = exporter.getFinishedSpanItems();
@@ -377,18 +393,20 @@ class ExecutionOtelPluginTest {
                 TraceState.getDefault());
         var startTime = Instant.now();
 
+        // Two invocations of the same execution, so two instances from the same factory.
+        DurableExecutionPlugin plugin;
         try (var ignored = Span.wrap(ambientA).makeCurrent()) {
-            plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, startTime));
-            plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
+            plugin = started(factory, new InvocationInfo("req-1", ARN, true, startTime));
         }
+        plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
         var firstInvocationTrace =
                 spanByName(spanExporter.getFinishedSpanItems(), "Invocation").getTraceId();
         spanExporter.reset();
 
         try (var ignored = Span.wrap(ambientB).makeCurrent()) {
-            plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, startTime));
-            plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
+            plugin = started(factory, new InvocationInfo("req-2", ARN, false, startTime));
         }
+        plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
         var secondInvocationTrace =
                 spanByName(spanExporter.getFinishedSpanItems(), "Invocation").getTraceId();
 
@@ -400,7 +418,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void nonTerminalInvocation_doesNotExportWorkflowSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
 
         var spans = spanExporter.getFinishedSpanItems();
@@ -416,7 +434,7 @@ class ExecutionOtelPluginTest {
     @Test
     void workflowSpan_exportedOnceAcrossInvocations_sameSpanId() {
         // Invocation 1: non-terminal → no Workflow span exported
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
         assertTrue(
                 spanExporter.getFinishedSpanItems().stream()
@@ -425,7 +443,7 @@ class ExecutionOtelPluginTest {
         spanExporter.reset();
 
         // Invocation 2: terminal → Workflow span exported with the deterministic ID
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        plugin = started(factory, new InvocationInfo("req-2", ARN, false, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
 
         var workflowSpan = spanByName(spanExporter.getFinishedSpanItems(), "Workflow");
@@ -437,7 +455,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void failedInvocation_setsErrorOnBothWorkflowAndInvocationSpans() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(
                 new InvocationEndInfo("req-1", ARN, true, InvocationStatus.FAILED, new RuntimeException("boom")));
 
@@ -449,7 +467,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void retryingInvocation_invocationSpanUnset_workflowNotExported() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo(
                 "req-1", ARN, true, InvocationStatus.RETRYING, new RuntimeException("transient")));
 
@@ -467,7 +485,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void operationSpan_carriesAttemptNumberAtEnd() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "flaky", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
@@ -496,7 +514,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void continuationOperationSpan_carriesAttemptNumber() {
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-2", ARN, false, Instant.now()));
         // No matching onOperationStart in this invocation — continuation branch.
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1",
@@ -526,7 +544,7 @@ class ExecutionOtelPluginTest {
     void operationSpan_startsAtOperationStartTimestamp() {
         var opStart = Instant.parse("2026-02-01T10:00:00Z");
         var opEnd = Instant.parse("2026-02-01T10:00:03Z");
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(new OperationInfo("op-1", "step-a", "STEP", "Step", null, opStart, null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1", "step-a", "STEP", "Step", null, opStart, opEnd, "SUCCEEDED", null, false, null, null));
@@ -541,7 +559,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void operationSpan_parentedToWorkflow_linkedToInvocation() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
@@ -576,7 +594,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void attemptSpan_childOfOperation_linkedToInvocation() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onUserFunctionStart(
@@ -629,7 +647,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void attemptSpan_carriesOperationSubtype() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "process-order", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
@@ -658,7 +676,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void childOperation_parentedToParentOperationSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(new OperationInfo(
                 "op-parent", "my-context", "CONTEXT", "RunInChildContext", null, Instant.now(), null, null, false));
         plugin.onOperationStart(new OperationInfo(
@@ -707,7 +725,7 @@ class ExecutionOtelPluginTest {
         // DurableSampler), so descendants inherit the resolved decision. With always_off the resolved decision is
         // unsampled, so the current context inside the context body must be unsampled — not a provisional sampled bit.
         var exporter = InMemorySpanExporter.create();
-        var offPlugin = new ExecutionOtelPlugin(
+        var offPluginFactory = ExecutionOtelPlugin.factory(
                 SdkTracerProvider.builder()
                         .setSampler(Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
@@ -717,7 +735,7 @@ class ExecutionOtelPluginTest {
                         .workflowSpanName("Workflow")
                         .build());
 
-        offPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var offPlugin = started(offPluginFactory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         offPlugin.onOperationStart(
                 new OperationInfo("ctx-1", "my-ctx", "CONTEXT", "Context", null, Instant.now(), null, null, false));
         offPlugin.onUserFunctionStart(
@@ -762,7 +780,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void userFunctionFailure_setsErrorOnAttemptSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "failing", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
@@ -788,7 +806,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void userFunctionSuccess_setsOkOnAttemptSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "compute", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
@@ -814,7 +832,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void userFunctionIncomplete_leavesAttemptSpanUnset() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "waiting", "STEP", "Step", null, Instant.now(), false, 1));
         plugin.onUserFunctionEnd(new UserFunctionEndInfo(
@@ -839,7 +857,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void operationSuccess_setsOkOnOperationSpan() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-ok", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
@@ -866,7 +884,7 @@ class ExecutionOtelPluginTest {
         // onOperationEnd fires for every terminal status. A CANCELLED operation (or an error-less
         // FAILED/TIMED_OUT/STOPPED) carries a non-null, non-SUCCEEDED status with a null error. It must NOT be
         // stamped OK — the span status stays UNSET.
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-cancel", "step-cancel", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
@@ -892,7 +910,7 @@ class ExecutionOtelPluginTest {
     void operationEnd_withoutStart_nonSuccessStatusAndNoError_leavesContinuationSpanUnset() {
         // Same guard on the continuation-span branch (operation completed between invocations): an error-less
         // TIMED_OUT terminal status must NOT be stamped OK.
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-2", ARN, false, Instant.now()));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-cb-timeout",
                 "my-callback",
@@ -916,7 +934,7 @@ class ExecutionOtelPluginTest {
     void operationEnd_withNullStatusAndNoError_setsOkOnOperationSpan() {
         // A successful statusless virtual (FLAT CONTEXT) operation fires onOperationEnd with a null operation ->
         // null status and null error. This is genuine success and must be stamped OK.
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-ctx", "my-ctx", "CONTEXT", null, null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
@@ -940,7 +958,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void operationNotCompleted_notEndedAtInvocationEnd() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), null, null, false));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
@@ -960,7 +978,7 @@ class ExecutionOtelPluginTest {
     void openAttemptSpan_isEndedAtInvocationEnd_notAbandoned() {
         // A user function that starts but never ends (e.g. the execution suspends mid-attempt) must not leave a
         // recording span abandoned: onInvocationEnd force-ends it so it is exported.
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onUserFunctionStart(
                 new UserFunctionStartInfo("op-1", "stuck", "STEP", "Step", null, Instant.now(), false, 1));
         // No onUserFunctionEnd — the invocation suspends.
@@ -976,7 +994,7 @@ class ExecutionOtelPluginTest {
     @Test
     void everyRecordingSpanIsEnded_onNonTerminalInvocation() {
         // No recording span may be left un-ended when the execution returns a non-terminal status.
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onUserFunctionStart(
@@ -1011,7 +1029,7 @@ class ExecutionOtelPluginTest {
      */
     private void assertNoOpenSpansOnNonTerminal(InvocationStatus status) {
         var lifecycle = new LifecycleTrackingSpanProcessor();
-        var trackingPlugin = new ExecutionOtelPlugin(
+        var trackingPluginFactory = ExecutionOtelPlugin.factory(
                 SdkTracerProvider.builder().addSpanProcessor(lifecycle),
                 OtelPluginConfig.builder()
                         .contextExtractor(() -> null)
@@ -1019,7 +1037,7 @@ class ExecutionOtelPluginTest {
                         .workflowSpanName("Workflow")
                         .build());
 
-        trackingPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var trackingPlugin = started(trackingPluginFactory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         trackingPlugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
         trackingPlugin.onUserFunctionStart(
@@ -1042,7 +1060,7 @@ class ExecutionOtelPluginTest {
     @Test
     void operationOpenedThenCompletedNextInvocation_exportedOnceOnOperationEnd() {
         // Invocation 1: operation opens but does not complete.
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "my-wait", "WAIT", "Wait", null, Instant.now(), null, null, false));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.PENDING, null));
@@ -1053,7 +1071,7 @@ class ExecutionOtelPluginTest {
         spanExporter.reset();
 
         // Invocation 2: the operation completes → materialized once via onOperationEnd, linked to this invocation.
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        plugin = started(factory, new InvocationInfo("req-2", ARN, false, Instant.now()));
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-1",
                 "my-wait",
@@ -1085,7 +1103,7 @@ class ExecutionOtelPluginTest {
     @Test
     void executionTraceIsStableAcrossInvocations_andSharedByInvocationSpans() {
         var executionStartTime = Instant.parse("2026-08-15T00:00:00Z");
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, executionStartTime));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, executionStartTime));
         plugin.onOperationStart(
                 new OperationInfo("op-1", "step-1", "STEP", "Step", null, Instant.now(), null, null, false));
         plugin.onOperationEnd(new OperationEndInfo(
@@ -1107,7 +1125,7 @@ class ExecutionOtelPluginTest {
         var firstInvocationTraceId = spanByName(firstSpans, "Invocation").getTraceId();
         spanExporter.reset();
 
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, executionStartTime));
+        plugin = started(factory, new InvocationInfo("req-2", ARN, false, executionStartTime));
         plugin.onInvocationEnd(new InvocationEndInfo("req-2", ARN, false, InvocationStatus.SUCCEEDED, null));
         var secondSpans = spanExporter.getFinishedSpanItems();
         var workflowSpan = spanByName(secondSpans, "Workflow");
@@ -1121,7 +1139,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void operationEnd_withoutStart_createsContinuationSpanWithLink() {
-        plugin.onInvocationStart(new InvocationInfo("req-2", ARN, false, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-2", ARN, false, Instant.now()));
         // Operation completed between invocations — no matching onOperationStart in this invocation.
         plugin.onOperationEnd(new OperationEndInfo(
                 "op-wait-1",
@@ -1150,7 +1168,7 @@ class ExecutionOtelPluginTest {
 
     @Test
     void deterministicWorkflowSpanId_stableAcrossInvocations() {
-        plugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var plugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         plugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
         var firstWorkflowSpanId =
                 spanByName(spanExporter.getFinishedSpanItems(), "Workflow").getSpanId();
@@ -1158,14 +1176,14 @@ class ExecutionOtelPluginTest {
 
         // A second (independent) plugin for the same execution ARN must derive the same Workflow span ID.
         var exporter2 = InMemorySpanExporter.create();
-        var plugin2 = new ExecutionOtelPlugin(
+        var plugin2Factory = ExecutionOtelPlugin.factory(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter2)),
                 OtelPluginConfig.builder()
                         .contextExtractor(() -> null)
                         .enableMdc(false)
                         .workflowSpanName("Workflow")
                         .build());
-        plugin2.onInvocationStart(new InvocationInfo("req-9", ARN, true, Instant.now()));
+        var plugin2 = started(plugin2Factory, new InvocationInfo("req-9", ARN, true, Instant.now()));
         plugin2.onInvocationEnd(new InvocationEndInfo("req-9", ARN, true, InvocationStatus.SUCCEEDED, null));
         var secondWorkflowSpanId =
                 spanByName(exporter2.getFinishedSpanItems(), "Workflow").getSpanId();
@@ -1181,7 +1199,7 @@ class ExecutionOtelPluginTest {
     @Test
     void sampling_disabled_producesNoSpans() {
         var exporter = InMemorySpanExporter.create();
-        var sampledPlugin = new ExecutionOtelPlugin(
+        var sampledPluginFactory = ExecutionOtelPlugin.factory(
                 SdkTracerProvider.builder()
                         .setSampler(io.opentelemetry.sdk.trace.samplers.Sampler.alwaysOff())
                         .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
@@ -1190,7 +1208,7 @@ class ExecutionOtelPluginTest {
                         .enableMdc(false)
                         .workflowSpanName("Workflow")
                         .build());
-        sampledPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var sampledPlugin = started(sampledPluginFactory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         sampledPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
         assertTrue(exporter.getFinishedSpanItems().isEmpty(), "No spans should be exported with 0% sampling");
     }
@@ -1205,7 +1223,7 @@ class ExecutionOtelPluginTest {
         // Two-arg context → UNDECIDED sampling: the valid remote parent is still the authoritative ancestor. A
         // non-parent-based alwaysOn sampler exports the spans so the topology is observable (a plain parent-based
         // sampler would drop them, since the remote parent's sampled flag is left unset).
-        var xrayPlugin = new ExecutionOtelPlugin(
+        var xrayPluginFactory = ExecutionOtelPlugin.factory(
                 SdkTracerProvider.builder()
                         .setSampler(Sampler.alwaysOn())
                         .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
@@ -1214,7 +1232,7 @@ class ExecutionOtelPluginTest {
                         .enableMdc(false)
                         .workflowSpanName("Workflow")
                         .build());
-        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var xrayPlugin = started(xrayPluginFactory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         xrayPlugin.onOperationStart(
                 new OperationInfo("op-1", "step-a", "STEP", "Step", null, Instant.now(), null, null, false));
         xrayPlugin.onOperationEnd(new OperationEndInfo(
@@ -1254,7 +1272,7 @@ class ExecutionOtelPluginTest {
         var xrayTraceId = "aabbccddee112233445566778899aabb";
         var parentSpanId = "53995c3f42cd8ad8";
         var exporter = InMemorySpanExporter.create();
-        var xrayPlugin = new ExecutionOtelPlugin(
+        var xrayPluginFactory = ExecutionOtelPlugin.factory(
                 SdkTracerProvider.builder()
                         .setSampler(Sampler.parentBased(Sampler.alwaysOn()))
                         .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
@@ -1263,7 +1281,7 @@ class ExecutionOtelPluginTest {
                         .enableMdc(false)
                         .workflowSpanName("Workflow")
                         .build());
-        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var xrayPlugin = started(xrayPluginFactory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = exporter.getFinishedSpanItems();
@@ -1284,7 +1302,7 @@ class ExecutionOtelPluginTest {
         var xrayTraceId = "aabbccddee112233445566778899aabb";
         var parentSpanId = "53995c3f42cd8ad8";
         var exporter = InMemorySpanExporter.create();
-        var xrayPlugin = new ExecutionOtelPlugin(
+        var xrayPluginFactory = ExecutionOtelPlugin.factory(
                 SdkTracerProvider.builder()
                         .setSampler(Sampler.parentBased(Sampler.alwaysOff()))
                         .addSpanProcessor(SimpleSpanProcessor.create(exporter)),
@@ -1293,7 +1311,7 @@ class ExecutionOtelPluginTest {
                         .enableMdc(false)
                         .workflowSpanName("Workflow")
                         .build());
-        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var xrayPlugin = started(xrayPluginFactory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         assertTrue(
@@ -1307,7 +1325,7 @@ class ExecutionOtelPluginTest {
         var parentSpanId = "53995c3f42cd8ad8";
         var exporter = InMemorySpanExporter.create();
         // Explicit Sampled=1 with a complete parent → the remote context is the execution ancestor directly.
-        var xrayPlugin = new ExecutionOtelPlugin(
+        var xrayPluginFactory = ExecutionOtelPlugin.factory(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
                 OtelPluginConfig.builder()
                         .contextExtractor(() ->
@@ -1316,7 +1334,7 @@ class ExecutionOtelPluginTest {
                         .workflowSpanName("Workflow")
                         .build());
 
-        xrayPlugin.onInvocationStart(new InvocationInfo("req-1", ARN, true, Instant.now()));
+        var xrayPlugin = started(xrayPluginFactory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
         var spans = exporter.getFinishedSpanItems();

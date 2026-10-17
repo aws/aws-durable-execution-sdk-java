@@ -316,6 +316,46 @@ Resources:
       Handler: software.amazon.lambda.durable.conformance.otel.Otel20VirtualContext
       Role: !Ref LambdaExecutionRoleArn
 
+  Otel21CompletedStepReplay:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-21
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel21CompletedStepReplay
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel22UserFunctionContext:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-22
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel22UserFunctionContext
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel23CallbackFunctionContext:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-23
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel23CallbackFunctionContext
+      Role: !Ref LambdaExecutionRoleArn
+
+  Otel24InvocationRetryStatus:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-invocation-24
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel24InvocationRetryStatus
+      Role: !Ref LambdaExecutionRoleArn
+
   OtelExecution1Success:
     Type: AWS::Serverless::Function
     TestingMetadata:
@@ -596,6 +636,58 @@ Resources:
     Properties:
       CodeUri: .
       Handler: software.amazon.lambda.durable.conformance.otel.Otel20VirtualContext
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution21CompletedStepReplay:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-21
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel21CompletedStepReplay
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution22UserFunctionContext:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-22
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel22UserFunctionContext
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution23CallbackFunctionContext:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-23
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel23CallbackFunctionContext
+      Role: !Ref LambdaExecutionRoleArn
+      Environment:
+        Variables:
+          OTEL_PLUGIN_MODE: execution
+
+  OtelExecution24InvocationRetryStatus:
+    Type: AWS::Serverless::Function
+    TestingMetadata:
+      TestDescription:
+        - otel-execution-24
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.otel.Otel24InvocationRetryStatus
       Role: !Ref LambdaExecutionRoleArn
       Environment:
         Variables:

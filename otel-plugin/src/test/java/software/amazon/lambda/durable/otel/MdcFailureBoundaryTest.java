@@ -8,7 +8,9 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.UndeclaredThrowableException;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -17,15 +19,14 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.MDC;
 import org.slf4j.spi.MDCAdapter;
 import software.amazon.lambda.durable.DurableConfig;
@@ -35,6 +36,7 @@ import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 class MdcFailureBoundaryTest {
     @Test
@@ -60,7 +62,7 @@ class MdcFailureBoundaryTest {
                     },
                     DurableConfig.builder()
                             .withExecutorService(executor)
-                            .withPlugins(plugin)
+                            .withPlugins(info -> plugin)
                             .build());
             var result = runner.run("input");
             assertTrue(injected.get());
@@ -79,239 +81,371 @@ class MdcFailureBoundaryTest {
         }
     }
 
+    @SuppressWarnings("removal")
     @ParameterizedTest
-    @CsvSource({
-        "false,false,exception", "true,false,exception", "false,true,exception", "true,true,exception",
-        "false,false,fatal", "true,false,fatal", "false,true,fatal", "true,true,fatal",
-        "false,false,assertion", "true,false,assertion", "false,true,assertion", "true,true,assertion",
-        "false,false,linkage", "true,false,linkage", "false,true,linkage", "true,true,linkage"
-    })
-    void workerMdcRestorationFailureCannotStrandTheInvocation(boolean ambientMdc, boolean suspend, String failureKind)
+    @CsvSource({"false,false", "true,false", "false,true", "true,true"})
+    void workerRestoreFatalAfterEndStillReachesTheCaller(boolean direct, boolean threadDeath) throws Exception {
+        Error fatal = threadDeath ? new ThreadDeath() : new InternalError("outer worker restore");
+        var observed = runOuterFailure(direct, null, fatal);
+        assertSame(fatal, observed.failure());
+        assertEquals(1, observed.ends());
+        assertEquals(InvocationStatus.SUCCEEDED, observed.end().invocationStatus());
+        assertNull(observed.end().executionError(), "The earlier End snapshot is not rewritten by later restoration");
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,false", "true,false", "false,true", "true,true"})
+    void restorationFatalIsReportedAfterFailedBodyWithoutReplacingEarlierFatal(boolean direct, boolean bodyFatal)
+            throws Exception {
+        Throwable primary = bodyFatal ? new InternalError("primary body") : new IllegalStateException("primary body");
+        var secondary = new InternalError("restoration fatal");
+        var observed = runOuterFailure(direct, primary, secondary);
+        var selected = bodyFatal ? primary : secondary;
+        assertSame(selected, observed.failure());
+        assertEquals(1, observed.ends());
+        assertSame(primary, observed.end().executionError());
+        assertEquals(
+                bodyFatal ? InvocationStatus.RETRYING : InvocationStatus.FAILED,
+                observed.end().invocationStatus());
+        if (bodyFatal) assertTrue(Arrays.asList(selected.getSuppressed()).contains(secondary));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void ordinaryWorkerRestorationFailureRetainsSuccessfulOutcome(boolean direct) throws Exception {
+        var observed = runOuterFailure(direct, null, new IllegalStateException("adapter refused restoration"));
+        assertNull(observed.failure());
+        assertEquals(ExecutionStatus.SUCCEEDED, observed.status());
+        assertEquals(1, observed.ends());
+        assertEquals(InvocationStatus.SUCCEEDED, observed.end().invocationStatus());
+    }
+
+    private static OuterOutcome runOuterFailure(boolean direct, Throwable bodyFailure, Throwable restoreFailure)
             throws Exception {
         var original = MDC.getMDCAdapter();
+        var callerBefore = MDC.getCopyOfContextMap();
         var injected = new AtomicBoolean();
-        var plugin = new RecordingPlugin();
-        Throwable failure = switch (failureKind) {
-            case "fatal" -> new InternalError("worker MDC restoration failed");
-            case "assertion" -> new AssertionError("worker MDC restoration failed");
-            case "linkage" -> new NoClassDefFoundError("worker MDC restoration failed");
-            default -> new IllegalStateException("worker MDC restoration failed");
+        var ends = new AtomicInteger();
+        var endInfo = new AtomicReference<InvocationEndInfo>();
+        ExecutorService executor = direct ? new InlineExecutor() : new CompletingWorker();
+        DurableExecutionPlugin plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationEnd(InvocationEndInfo info) {
+                ends.incrementAndGet();
+                endInfo.set(info);
+            }
         };
-        var ownerFailure = new AtomicReference<Throwable>();
-        var observed = new CountDownLatch(1);
-        var workers = Executors.newSingleThreadExecutor(task -> {
-            var thread = new Thread(
-                    () -> {
-                        if (ambientMdc) MDC.put("ambient", "saved");
-                        else MDC.clear();
-                        task.run();
-                    },
-                    "mdc-restoration-worker");
-            thread.setUncaughtExceptionHandler((owner, error) -> {
-                ownerFailure.set(error);
-                observed.countDown();
-            });
-            return thread;
-        });
         try {
-            replaceAdapter(proxy(original, method -> {
-                if (Thread.currentThread().getName().equals("mdc-restoration-worker")
-                        && plugin.ends.get() == 1
-                        && method.equals(ambientMdc ? "setContextMap" : "clear")
-                        && injected.compareAndSet(false, true)) throw failure;
+            replaceAdapter(proxy(original, name -> {
+                if (isOuterRestore(name) && injected.compareAndSet(false, true)) throw restoreFailure;
                 return null;
             }));
             var runner = LocalDurableTestRunner.create(
                     String.class,
                     (input, context) -> {
-                        if (suspend) context.wait("resume", Duration.ofSeconds(1));
+                        if (bodyFailure != null) ExceptionHelper.sneakyThrow(bodyFailure);
                         return "done";
                     },
                     DurableConfig.builder()
-                            .withExecutorService(workers)
-                            .withPlugins(plugin)
+                            .withExecutorService(executor)
+                            .withPlugins(info -> plugin)
                             .build());
-            if (failureKind.equals("fatal")) {
-                assertSame(failure, assertThrows(Error.class, () -> runner.run("input")));
-            } else {
+            Error observed = null;
+            ExecutionStatus status = null;
+            String errorMessage = null;
+            try {
                 var result = runner.run("input");
-                assertEquals(suspend ? ExecutionStatus.PENDING : ExecutionStatus.SUCCEEDED, result.getStatus());
+                status = result.getStatus();
+                errorMessage =
+                        result.getError().map(error -> error.errorMessage()).orElse(null);
+            } catch (Error failure) {
+                observed = failure;
             }
-            assertEquals(1, plugin.starts.get());
-            assertEquals(1, plugin.ends.get());
-            assertTrue(injected.get());
-            assertTrue(observed.await(3, TimeUnit.SECONDS));
-            assertSame(failure, ownerFailure.get(), "restoration failure still escapes its worker after End");
+            assertTrue(injected.get(), "The actual outer worker restoration must reach the injected failure");
+            return new OuterOutcome(observed, status, errorMessage, endInfo.get(), ends.get());
         } finally {
-            workers.shutdownNow();
-            assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS));
-            replaceAdapter(original);
+            try {
+                executor.shutdownNow();
+                assertTrue(executor.awaitTermination(3, TimeUnit.SECONDS));
+            } finally {
+                replaceAdapter(original);
+                if (callerBefore == null) MDC.clear();
+                else MDC.setContextMap(callerBefore);
+            }
         }
     }
 
-    static Stream<Arguments> postEndFatalCases() {
-        return Stream.of(false, true)
-                .flatMap(inline -> Stream.of(false, true)
-                        .flatMap(suspend -> Stream.of(false, true)
-                                .flatMap(death -> Stream.of("direct", "completion", "execution", "reflection", "proxy")
-                                        .map(wrapper -> Arguments.of(inline, suspend, death, wrapper)))));
-    }
+    private record OuterOutcome(
+            Error failure, ExecutionStatus status, String errorMessage, InvocationEndInfo end, int ends) {}
 
     @SuppressWarnings("removal")
     @ParameterizedTest
-    @MethodSource("postEndFatalCases")
-    void postEndFatalReachesCallerAndWorkerWithoutChangingEnd(
-            boolean inline, boolean suspend, boolean death, String wrapper) throws Exception {
-        Error fatal = death ? new ThreadDeath() : new InternalError("post-End restore fatal");
-        Throwable failure = switch (wrapper) {
-            case "completion" -> new CompletionException(fatal);
-            case "execution" -> new ExecutionException(fatal);
-            case "reflection" -> new InvocationTargetException(fatal);
-            case "proxy" -> new UndeclaredThrowableException(fatal);
-            default -> fatal;
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void postDispatchWorkerFatalEscapesOwnerWithoutRepeatingEnd(boolean threadDeath, boolean failedBody)
+            throws Exception {
+        var original = MDC.getMDCAdapter();
+        var callerBefore = MDC.getCopyOfContextMap();
+        var startEntered = new CountDownLatch(1);
+        var releaseStart = new CountDownLatch(1);
+        var restoreEntered = new CountDownLatch(1);
+        var releaseRestore = new CountDownLatch(1);
+        var ownerObserved = new CountDownLatch(1);
+        var ownerFailure = new AtomicReference<Throwable>();
+        var ended = new AtomicInteger();
+        var bodyFailure = new IllegalStateException("ordinary body before late restoration");
+        var injected = new AtomicBoolean();
+        Error fatal = threadDeath ? new ThreadDeath() : new InternalError("late outer restore");
+        var worker = Executors.newSingleThreadExecutor(task -> {
+            var thread = new Thread(task, "late-mdc-owner");
+            thread.setUncaughtExceptionHandler((owner, failure) -> {
+                ownerFailure.set(failure);
+                ownerObserved.countDown();
+            });
+            return thread;
+        });
+        var caller = Executors.newSingleThreadExecutor(task -> {
+            var thread = new Thread(task, "late-mdc-caller");
+            return thread;
+        });
+        DurableExecutionPlugin plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationStart(InvocationInfo info) {
+                startEntered.countDown();
+                awaitGate(releaseStart);
+            }
+
+            @Override
+            public void onInvocationEnd(InvocationEndInfo info) {
+                assertEquals(
+                        failedBody ? InvocationStatus.FAILED : InvocationStatus.SUCCEEDED, info.invocationStatus());
+                assertSame(failedBody ? bodyFailure : null, info.executionError());
+                ended.incrementAndGet();
+            }
         };
-        exercisePostEndFailure(inline, suspend, failure, fatal, null);
+        try {
+            replaceAdapter(proxy(original, name -> {
+                if (isOuterRestore(name) && injected.compareAndSet(false, true)) {
+                    restoreEntered.countDown();
+                    awaitGate(releaseRestore);
+                    throw fatal;
+                }
+                return null;
+            }));
+            var runner = LocalDurableTestRunner.create(
+                    String.class,
+                    (input, context) -> {
+                        if (failedBody) throw bodyFailure;
+                        return "done";
+                    },
+                    DurableConfig.builder()
+                            .withExecutorService(worker)
+                            .withPlugins(info -> plugin)
+                            .build());
+            var result = caller.submit(() -> runner.run("input"));
+            awaitGate(startEntered);
+            releaseStart.countDown();
+            awaitGate(restoreEntered);
+            assertThrows(TimeoutException.class, () -> result.get(150, TimeUnit.MILLISECONDS));
+            assertEquals(1, ended.get(), "The owner has delivered End, but return still awaits MDC restoration");
+            releaseRestore.countDown();
+            assertSame(
+                    fatal,
+                    assertThrows(ExecutionException.class, () -> result.get(2, TimeUnit.SECONDS))
+                            .getCause());
+            awaitGate(ownerObserved);
+            assertSame(fatal, ownerFailure.get());
+            assertEquals(1, ended.get());
+        } finally {
+            releaseStart.countDown();
+            releaseRestore.countDown();
+            try {
+                caller.shutdownNow();
+                worker.shutdownNow();
+                assertTrue(caller.awaitTermination(3, TimeUnit.SECONDS));
+                assertTrue(worker.awaitTermination(3, TimeUnit.SECONDS));
+            } finally {
+                replaceAdapter(original);
+                if (callerBefore == null) MDC.clear();
+                else MDC.setContextMap(callerBefore);
+            }
+        }
+    }
+
+    private static boolean isOuterRestore(String method) {
+        if (!method.equals("clear") && !method.equals("setContextMap")) return false;
+        var frames = Arrays.stream(Thread.currentThread().getStackTrace()).toList();
+        return frames.stream()
+                        .anyMatch(frame -> frame.getClassName().endsWith(".DurableExecutor")
+                                && frame.getMethodName().startsWith("lambda$restoreMdcOnClose"))
+                && frames.stream()
+                        .noneMatch(frame -> frame.getClassName().endsWith(".DurableExecutor")
+                                && frame.getMethodName().equals("fireOnInvocationEnd"));
+    }
+
+    private static void awaitGate(CountDownLatch gate) {
+        try {
+            assertTrue(gate.await(5, TimeUnit.SECONDS), "Controlled MDC gate was not released");
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(failure);
+        }
+    }
+
+    private static final class InlineExecutor extends AbstractExecutorService {
+        private boolean shutdown;
+
+        @Override
+        public void execute(Runnable command) {
+            command.run();
+        }
+
+        @Override
+        public void shutdown() {
+            shutdown = true;
+        }
+
+        @Override
+        public List<Runnable> shutdownNow() {
+            shutdown = true;
+            return List.of();
+        }
+
+        @Override
+        public boolean isShutdown() {
+            return shutdown;
+        }
+
+        @Override
+        public boolean isTerminated() {
+            return shutdown;
+        }
+
+        @Override
+        public boolean awaitTermination(long timeout, TimeUnit unit) {
+            return shutdown;
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "getCopyOfContextMap,false",
+        "clear,false",
+        "setContextMap,false",
+        "getCopyOfContextMap,true",
+        "clear,true",
+        "setContextMap,true"
+    })
+    void nonfatalMdcBoundaryFailuresPreserveTheirPhaseOutcome(String method, boolean suspend) throws Exception {
+        runEndFailure(method, suspend, new IllegalStateException("end MDC failure"));
     }
 
     @SuppressWarnings("removal")
     @ParameterizedTest
     @CsvSource({
-        "false,false,false",
-        "false,false,true",
-        "false,true,false",
-        "false,true,true",
-        "true,false,false",
-        "true,false,true",
-        "true,true,false",
-        "true,true,true"
+        "getCopyOfContextMap,false",
+        "clear,false",
+        "setContextMap,false",
+        "getCopyOfContextMap,true",
+        "clear,true",
+        "setContextMap,true"
     })
-    void fatalDiagnosticRetainsIdentityAndIsReadOnce(boolean inline, boolean suspend, boolean death) throws Exception {
-        Error fatal = death ? new ThreadDeath() : new InternalError("fatal diagnostic");
+    void fatalMdcBoundaryFailuresStillEscape(String method, boolean wrapped) throws Exception {
+        Error fatal = wrapped ? new ThreadDeath() : new VirtualMachineError("fatal end MDC failure") {};
+        runEndFailure(method, false, wrapped ? new CompletionException(new ExecutionException(fatal)) : fatal, fatal);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void unreadableOrdinaryCausePreservesSuccessAndSuspension(boolean suspend) throws Exception {
         var reads = new AtomicInteger();
-        var wrapper = new CompletionException("diagnostic", null) {
+        var failure = new CompletionException("unreadable", null) {
+            @Override
+            public synchronized Throwable getCause() {
+                reads.incrementAndGet();
+                throw new IllegalStateException("diagnostic unavailable");
+            }
+        };
+        runEndFailure("setContextMap", suspend, failure);
+        assertEquals(1, reads.get());
+    }
+
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void fatalCauseAccessorEscapesWithOriginalIdentity(boolean threadDeath) throws Exception {
+        var reads = new AtomicInteger();
+        Error fatal = threadDeath ? new ThreadDeath() : new VirtualMachineError("fatal accessor") {};
+        var failure = new CompletionException("unreadable", null) {
             @Override
             public synchronized Throwable getCause() {
                 reads.incrementAndGet();
                 throw fatal;
             }
         };
-        exercisePostEndFailure(inline, suspend, wrapper, fatal, null);
+        runEndFailure("setContextMap", false, failure, fatal);
         assertEquals(1, reads.get());
     }
 
     @SuppressWarnings("removal")
     @ParameterizedTest
-    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
-    void earlierEndFatalRemainsPrimaryAndRetainsRestorationDiagnostic(boolean inline, boolean death) throws Exception {
-        Error primary = death ? new ThreadDeath() : new InternalError("End fatal");
-        var restoration = new InternalError("later restoration fatal");
-        exercisePostEndFailure(inline, false, restoration, primary, primary);
-        assertArrayEquals(new Throwable[] {restoration}, primary.getSuppressed());
+    @CsvSource({"reflection,false", "reflection,true", "proxy,false", "proxy,true"})
+    void jdkReflectiveWrappersKeepFatalIdentity(String wrapper, boolean threadDeath) throws Exception {
+        Error fatal = threadDeath ? new ThreadDeath() : new VirtualMachineError("wrapped fatal") {};
+        Throwable failure = wrapper.equals("reflection")
+                ? new InvocationTargetException(fatal)
+                : new UndeclaredThrowableException(fatal);
+        runEndFailure("clear", false, failure, fatal);
     }
 
-    @SuppressWarnings("removal")
-    @ParameterizedTest
-    @CsvSource({
-        "false,false,false",
-        "false,false,true",
-        "false,true,false",
-        "false,true,true",
-        "true,false,false",
-        "true,false,true",
-        "true,true,false",
-        "true,true,true"
-    })
-    void sameFatalAtEndAndRestorationRetainsOwnerIdentity(boolean inline, boolean suspend, boolean death)
-            throws Exception {
-        Error fatal = death ? new ThreadDeath() : new InternalError("same End/restore fatal");
-        exercisePostEndFailure(inline, suspend, fatal, fatal, fatal);
-        assertEquals(0, fatal.getSuppressed().length, "Never suppress the fatal onto itself");
-    }
-
-    @ParameterizedTest
-    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
-    void restorationFatalRetainsEarlierNonfatalEndFailure(boolean inline, boolean wrapped) throws Exception {
-        var earlier = new AssertionError("ordinary End failure");
-        var fatal = new InternalError("later restoration fatal");
-        exercisePostEndFailure(inline, false, wrapped ? new CompletionException(fatal) : fatal, fatal, earlier);
-        assertArrayEquals(new Throwable[] {earlier}, fatal.getSuppressed());
-    }
-
-    private static void exercisePostEndFailure(
-            boolean inline, boolean suspend, Throwable failure, Error expectedFatal, Error endFailure)
-            throws Exception {
-        var original = MDC.getMDCAdapter();
-        var injected = new AtomicBoolean();
-        var plugin = new RecordingPlugin() {
+    @Test
+    void cyclicCauseIsReadOnlyOnceAndPreservesOutcome() throws Exception {
+        var reads = new AtomicInteger();
+        var cycle = new CompletionException("cycle", null) {
             @Override
-            public void onInvocationEnd(InvocationEndInfo info) {
-                super.onInvocationEnd(info);
-                if (endFailure != null) throw endFailure;
+            public synchronized Throwable getCause() {
+                reads.incrementAndGet();
+                return this;
             }
         };
+        runEndFailure("setContextMap", false, cycle);
+        assertEquals(1, reads.get());
+    }
+
+    @Test
+    void ordinaryApplicationCauseIsNotTreatedAsATransportWrapper() throws Exception {
+        runEndFailure("clear", false, new IllegalStateException("ordinary diagnostic", new VirtualMachineError() {}));
+    }
+
+    private static void runEndFailure(String method, boolean suspend, Throwable failure) throws Exception {
+        runEndFailure(method, suspend, failure, null);
+    }
+
+    private static void runEndFailure(String method, boolean suspend, Throwable failure, Error expectedFatal)
+            throws Exception {
+        var original = MDC.getMDCAdapter();
+        var callerBefore = MDC.getCopyOfContextMap();
+        var injected = new AtomicBoolean();
+        var plugin = new RecordingPlugin();
         var ownerFailure = new AtomicReference<Throwable>();
-        var owner = new AtomicReference<Thread>();
-        var escaped = new CountDownLatch(1);
-        var caller = Executors.newSingleThreadExecutor(task -> new Thread(task, "post-end-caller"));
-        var delegate = Executors.newSingleThreadExecutor(task -> {
-            var thread = new Thread(task, "post-end-worker");
-            thread.setUncaughtExceptionHandler((worker, error) -> {
+        var ownerExited = new CountDownLatch(1);
+        var worker = Executors.newSingleThreadExecutor(task -> {
+            var thread = new Thread(task, "mdc-boundary-owner");
+            thread.setUncaughtExceptionHandler((owner, error) -> {
                 ownerFailure.set(error);
-                escaped.countDown();
+                ownerExited.countDown();
             });
             return thread;
         });
-        var executor = new AbstractExecutorService() {
-            @Override
-            public void execute(Runnable task) {
-                Runnable owned = () -> {
-                    owner.set(Thread.currentThread());
-                    if (suspend) MDC.put("ambient", "saved");
-                    else MDC.clear();
-                    task.run();
-                };
-                if (inline) {
-                    try {
-                        owned.run();
-                    } catch (Throwable error) {
-                        ownerFailure.set(error);
-                        escaped.countDown();
-                        throw error;
-                    }
-                } else delegate.execute(owned);
-            }
-
-            @Override
-            public void shutdown() {
-                delegate.shutdown();
-            }
-
-            @Override
-            public List<Runnable> shutdownNow() {
-                return delegate.shutdownNow();
-            }
-
-            @Override
-            public boolean isShutdown() {
-                return delegate.isShutdown();
-            }
-
-            @Override
-            public boolean isTerminated() {
-                return delegate.isTerminated();
-            }
-
-            @Override
-            public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
-                return delegate.awaitTermination(timeout, unit);
-            }
-        };
+        boolean capture = method.equals("getCopyOfContextMap");
         try {
-            replaceAdapter(proxy(original, method -> {
-                if (Thread.currentThread() == owner.get()
-                        && plugin.ends.get() == 1
-                        && method.equals(suspend ? "setContextMap" : "clear")
-                        && injected.compareAndSet(false, true)) throw failure;
+            replaceAdapter(proxy(original, name -> {
+                var inCapture = Arrays.stream(Thread.currentThread().getStackTrace())
+                        .anyMatch(frame -> frame.getClassName().endsWith(".DurableExecutor")
+                                && frame.getMethodName().equals("restoreMdcOnClose"));
+                boolean boundary = capture ? inCapture : isOuterRestore(name);
+                if (boundary && name.equals(method) && injected.compareAndSet(false, true)) throw failure;
+                if (inCapture && name.equals("getCopyOfContextMap"))
+                    return method.equals("setContextMap") ? Map.of("ambient", "saved") : NullSnapshot.INSTANCE;
                 return null;
             }));
             var runner = LocalDurableTestRunner.create(
@@ -321,36 +455,41 @@ class MdcFailureBoundaryTest {
                         return "done";
                     },
                     DurableConfig.builder()
-                            .withExecutorService(executor)
-                            .withPlugins(plugin)
+                            .withExecutorService(worker)
+                            .withPlugins(info -> plugin)
                             .build());
-            var observation = caller.submit(() -> {
-                try {
-                    return (Object) runner.run("input");
-                } catch (Throwable error) {
-                    return error;
-                }
-            });
-            assertSame(
-                    expectedFatal,
-                    observation.get(3, TimeUnit.SECONDS),
-                    "caller receives original fatal without hanging");
-            assertTrue(escaped.await(3, TimeUnit.SECONDS), "fatal escapes actual worker after observation settlement");
-            assertSame(expectedFatal, ownerFailure.get());
-            assertTrue(injected.get());
-            assertEquals(1, plugin.starts.get());
-            assertEquals(1, plugin.ends.get());
-            assertEquals(suspend ? InvocationStatus.PENDING : InvocationStatus.SUCCEEDED, plugin.status.get());
+            if (expectedFatal != null) {
+                assertSame(expectedFatal, assertThrows(Error.class, () -> runner.run("input")));
+            } else {
+                var result = runner.run("input");
+                assertEquals(
+                        capture
+                                ? ExecutionStatus.FAILED
+                                : suspend ? ExecutionStatus.PENDING : ExecutionStatus.SUCCEEDED,
+                        result.getStatus());
+            }
+            assertTrue(injected.get(), "The actual outer capture/restoration boundary must reach the adapter failure");
+            assertEquals(capture ? 0 : 1, plugin.starts.get());
+            assertEquals(capture ? 0 : 1, plugin.ends.get());
+            if (!capture || expectedFatal != null) {
+                assertTrue(
+                        ownerExited.await(3, TimeUnit.SECONDS), "Cleanup/fatal failure must escape the actual worker");
+                assertSame(expectedFatal != null ? expectedFatal : failure, ownerFailure.get());
+            }
         } finally {
-            caller.shutdownNow();
-            executor.shutdownNow();
             try {
-                assertTrue(caller.awaitTermination(3, TimeUnit.SECONDS));
-                assertTrue(executor.awaitTermination(3, TimeUnit.SECONDS));
+                worker.shutdownNow();
+                assertTrue(worker.awaitTermination(3, TimeUnit.SECONDS));
             } finally {
                 replaceAdapter(original);
+                if (callerBefore == null) MDC.clear();
+                else MDC.setContextMap(callerBefore);
             }
         }
+    }
+
+    private enum NullSnapshot {
+        INSTANCE
     }
 
     @FunctionalInterface
@@ -362,6 +501,7 @@ class MdcFailureBoundaryTest {
         return (MDCAdapter) Proxy.newProxyInstance(
                 MDCAdapter.class.getClassLoader(), new Class<?>[] {MDCAdapter.class}, (proxy, method, args) -> {
                     var value = fault.apply(method.getName());
+                    if (value == NullSnapshot.INSTANCE) return null;
                     if (value != null) return value;
                     try {
                         return method.invoke(delegate, args);
@@ -377,10 +517,9 @@ class MdcFailureBoundaryTest {
         setter.invoke(null, adapter);
     }
 
-    private static class RecordingPlugin implements DurableExecutionPlugin {
+    private static final class RecordingPlugin implements DurableExecutionPlugin {
         final AtomicInteger starts = new AtomicInteger();
         final AtomicInteger ends = new AtomicInteger();
-        final AtomicReference<InvocationStatus> status = new AtomicReference<>();
 
         @Override
         public void onInvocationStart(InvocationInfo info) {
@@ -389,7 +528,6 @@ class MdcFailureBoundaryTest {
 
         @Override
         public void onInvocationEnd(InvocationEndInfo info) {
-            status.set(info.invocationStatus());
             ends.incrementAndGet();
         }
     }

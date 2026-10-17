@@ -192,24 +192,29 @@ one event per record to `{logStreamPrefix}YYYY/MM/DD` (IAM: `logs:CreateLogStrea
   logs the failure rather than silently dropping it or failing the execution.
 - **`includeErrors`** gates **both** the execution-level error and each operation-level error; with
   `includeErrors(false)` neither is emitted, so a sensitive failure message never reaches a record.
-- **Plugin failures never disrupt execution.** Every plugin-owned boundary — record construction,
-  input snapshotting, transforms, truncation, and each exporter's render/export/flush (including a
-  `NoClassDefFoundError` from an optional exporter's absent SDK) — is guarded against any `Throwable`
-  and logged, so one failing exporter cannot block the others and no plugin fault propagates into
-  the durable execution.
+- **Non-fatal plugin failures are isolated.** Record construction, snapshotting, transforms,
+  truncation and exporter render/export/flush contain and log ordinary failures, including
+  `AssertionError` and optional-dependency `NoClassDefFoundError`. `VirtualMachineError` and
+  `ThreadDeath` propagate as their original error objects, including through future, reflection
+  and Jackson transport wrappers. Arbitrary business-exception causes are not reclassified.
+  A fatal failure stops the shared scheduler: queued records are released and drain/flush waiters
+  fail, including when another exporter is blocked. Subsequent scheduler calls rethrow that fatal;
+  a finished fatal pump cannot later be mistaken for a successful drain or flush. Already-running
+  customer exporter code cannot be forcibly stopped, but it does not delay fatal delivery.
 - **Per-exporter size truncation** (`Truncation`) drops, in order: operation results oldest-first,
   then whole operations oldest-first, then execution input, then output — setting `truncated`,
   `droppedOperations`, `droppedInput`, `droppedOutput` as applicable. The size is measured against
   the exact shape each exporter emits (its `render`).
 - **Exporter isolation.** Every exporter receives its own copy of each record, truncated to its own
-  limit; a failing or slow exporter is logged and never blocks the others or the execution.
+  limit; ordinary exporter failures are logged without preventing the other exporters from running.
 - **Export scheduling.** Exporter I/O never runs on the SDK threads that deliver plugin hooks.
   Records are handed to a background worker that exports at most one record at a time; each
   record is a complete snapshot of its execution, so while an export is in flight newer updates for
-  the same execution coalesce into that execution's pending slot and only the latest is exported
-  next; records of different executions never displace each other. At invocation end the plugin waits
-  for the queue to drain and then flushes every exporter once, so the final record is always
-  delivered before the invocation returns.
+  the same invocation coalesce into that invocation's pending slot and only the latest is exported
+  next; records of different invocations never displace each other. At invocation end the plugin waits
+  for its latest record to reach every exporter, then requests a flush through the same worker.
+  Concurrent flush requests may share one flush, and the final record is delivered before the
+  invocation returns.
 
 ## Conformance
 

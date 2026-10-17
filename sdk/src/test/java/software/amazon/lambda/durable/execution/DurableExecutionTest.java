@@ -19,6 +19,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -30,6 +31,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -59,6 +61,7 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.HandlerScoped;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -76,6 +79,47 @@ class DurableExecutionTest {
         return DurableConfig.builder()
                 .withDurableExecutionClient(TestUtils.createMockClient())
                 .build();
+    }
+
+    @Test
+    void capturesTraceHeaderOnRuntimeThreadBeforeDispatch() {
+        var runtimeThread = Thread.currentThread();
+        var header = "Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=0";
+        var lambdaContext = mock(RuntimeContext.class);
+        when(lambdaContext.getXrayTraceId()).thenAnswer(ignored -> {
+            assertEquals(runtimeThread, Thread.currentThread());
+            return header;
+        });
+        when(lambdaContext.getRemainingTimeInMillis()).thenReturn(30000);
+        var seen = new AtomicReference<String>();
+        var plugin = new DurableExecutionPlugin() {
+            @Override
+            public void onInvocationStart(InvocationInfo info) {
+                assertFalse(runtimeThread == Thread.currentThread());
+                seen.set(info.xRayTraceId());
+            }
+        };
+        var executionOp = Operation.builder()
+                .id(EXECUTION_OP_ID)
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .startTimestamp(EXECUTION_START_TIME)
+                .executionDetails(
+                        ExecutionDetails.builder().inputPayload("\"input\"").build())
+                .build();
+        var input = new DurableExecutionInput(
+                EXECUTION_ARN,
+                "token",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(executionOp)
+                        .build());
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withPlugins(ignored -> plugin)
+                .build();
+        var output = DurableExecutor.execute(input, lambdaContext, get(String.class), (value, ctx) -> value, config);
+        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
+        assertEquals(header, seen.get());
     }
 
     @Test
@@ -555,7 +599,7 @@ class DurableExecutionTest {
         var plugin = mock(DurableExecutionPlugin.class);
         var config = DurableConfig.builder()
                 .withDurableExecutionClient(client)
-                .withPlugins(plugin)
+                .withPlugins(ignoredInfo -> plugin)
                 .build();
 
         var handlerReadyToReturn = new CountDownLatch(1);
@@ -605,8 +649,16 @@ class DurableExecutionTest {
         assertInstanceOf(SuspendExecutionException.class, error.getCause());
     }
 
-    @Test
-    void invalidSuspensionThrowsIllegalDurableOperationExceptionAndNotifiesPluginsAsRetrying() {
+    private abstract static class RuntimeContext implements Context {
+        @Override
+        public String getXrayTraceId() {
+            return null;
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void invalidSuspensionThrowsIllegalDurableOperationExceptionAndNotifiesPluginsAsRetrying(boolean ownedScope) {
         var input = new DurableExecutionInput(
                 EXECUTION_ARN,
                 "token1",
@@ -614,10 +666,14 @@ class DurableExecutionTest {
                         .operations(List.of(executionOp()))
                         .build());
 
-        var plugin = new RecordingPlugin();
+        var recordedPlugin = new AtomicReference<RecordingPlugin>();
         var config = DurableConfig.builder()
                 .withDurableExecutionClient(TestUtils.createMockClient())
-                .withPlugins(plugin)
+                .withPlugins(info -> {
+                    var plugin = ownedScope ? new ScopedRecordingPlugin() : new RecordingPlugin();
+                    recordedPlugin.set(plugin);
+                    return plugin;
+                })
                 .build();
 
         var exception = assertThrows(
@@ -656,15 +712,16 @@ class DurableExecutionTest {
         assertTrue(exception.isRetryable());
         assertTrue(exception.getMessage().contains("Invalid suspension. No operation is pending."));
         assertTrue(exception.getMessage().contains("my-waiting-op"));
+        var plugin = recordedPlugin.get();
+        assertNotNull(plugin);
         assertEquals(InvocationStatus.RETRYING, plugin.invocationStatus);
         assertEquals(exception, plugin.invocationError);
-        assertNotNull(plugin.startThread);
-        assertSame(plugin.startThread, plugin.endThread);
-        assertEquals(1, plugin.endCalls);
+        assertInvocationLifecycle(plugin);
     }
 
-    @Test
-    void revokedCheckpointTokenDoesNotRecordInvalidSuspension() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void revokedCheckpointTokenDoesNotRecordInvalidSuspension(boolean ownedScope) {
         var mockClient = mock(DurableExecutionClient.class);
         when(mockClient.checkpoint(any(), any(), any()))
                 .thenReturn(CheckpointDurableExecutionResponse.builder()
@@ -678,10 +735,14 @@ class DurableExecutionTest {
                         .operations(List.of(executionOp()))
                         .build());
 
-        var plugin = new RecordingPlugin();
+        var recordedPlugin = new AtomicReference<RecordingPlugin>();
         var config = DurableConfig.builder()
                 .withDurableExecutionClient(mockClient)
-                .withPlugins(plugin)
+                .withPlugins(info -> {
+                    var plugin = ownedScope ? new ScopedRecordingPlugin() : new RecordingPlugin();
+                    recordedPlugin.set(plugin);
+                    return plugin;
+                })
                 .build();
 
         var output = DurableExecutor.execute(
@@ -704,11 +765,49 @@ class DurableExecutionTest {
                 config);
 
         assertEquals(ExecutionStatus.PENDING, output.status());
+        var plugin = recordedPlugin.get();
+        assertNotNull(plugin);
         assertEquals(InvocationStatus.PENDING, plugin.invocationStatus);
         assertNull(plugin.invocationError);
+        assertInvocationLifecycle(plugin);
+    }
+
+    private static void assertInvocationLifecycle(RecordingPlugin plugin) {
         assertNotNull(plugin.startThread);
-        assertSame(plugin.startThread, plugin.endThread);
+        assertNotNull(plugin.endThread);
         assertEquals(1, plugin.endCalls);
+        if (plugin instanceof ScopedRecordingPlugin scoped) {
+            assertSame(plugin.startThread, scoped.scopeOwner);
+            assertSame(scoped.scopeOwner, scoped.closeThread);
+            assertEquals(1, scoped.closeCalls);
+            assertEquals(1, scoped.closeCallsAtEnd, "ordinary owned cleanup must finish before End");
+        }
+        // Major End dispatch can run on the caller after handler completion; scope closure owns its thread.
+    }
+
+    @HandlerScoped(ScopedRecordingPlugin.Opener.class)
+    private static final class ScopedRecordingPlugin extends RecordingPlugin {
+        private Thread scopeOwner;
+        private Thread closeThread;
+        private int closeCalls;
+        private int closeCallsAtEnd;
+
+        @Override
+        public void onInvocationEnd(InvocationEndInfo info) {
+            closeCallsAtEnd = closeCalls;
+            super.onInvocationEnd(info);
+        }
+
+        public static class Opener implements Function<ScopedRecordingPlugin, AutoCloseable> {
+            @Override
+            public AutoCloseable apply(ScopedRecordingPlugin plugin) {
+                plugin.scopeOwner = Thread.currentThread();
+                return () -> {
+                    plugin.closeThread = Thread.currentThread();
+                    plugin.closeCalls++;
+                };
+            }
+        }
     }
 
     private static class RecordingPlugin implements DurableExecutionPlugin {

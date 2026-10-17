@@ -44,8 +44,8 @@ class WorkflowInsightPluginTest {
             2, Duration.ofSeconds(1), Duration.ofSeconds(1), 2.0, JitterStrategy.NONE);
 
     private DurableConfig configWith(CapturingExporter exporter, WorkflowInsightConfig.Builder cfg) {
-        var plugin = WorkflowInsight.workflowInsight(cfg.addExporter(exporter).build());
-        return DurableConfig.builder().withPlugins(plugin).build();
+        var factory = WorkflowInsight.workflowInsight(cfg.addExporter(exporter).build());
+        return DurableConfig.builder().withPlugins(factory).build();
     }
 
     private OperationRecord op(WorkflowInsightRecord rec, String name) {

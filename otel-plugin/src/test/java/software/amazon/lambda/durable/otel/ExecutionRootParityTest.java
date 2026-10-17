@@ -28,7 +28,7 @@ import java.util.function.Function;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -42,7 +42,8 @@ class ExecutionRootParityTest {
     @ValueSource(booleans = {false, true})
     void sampledAnchorEndsBeforeTheStartHookReturns(boolean executionView) {
         try (var exporter = InMemorySpanExporter.create()) {
-            var plugin = plugin(executionView, exporter, Sampler.alwaysOn());
+            var factory = plugin(executionView, exporter, Sampler.alwaysOn());
+            var plugin = factory.createPlugin(start(true));
             plugin.onInvocationStart(start(true));
             var roots = roots(exporter);
             assertEquals(1, roots.size(), "The anchor is available to processors before handler execution");
@@ -74,8 +75,9 @@ class ExecutionRootParityTest {
             };
         });
         try (var exporter = InMemorySpanExporter.create()) {
-            var plugin = plugin(executionView, exporter, sampler);
+            var factory = plugin(executionView, exporter, sampler);
             for (var first : new boolean[] {true, false}) {
+                var plugin = factory.createPlugin(start(first));
                 plugin.onInvocationStart(start(first));
                 plugin.onInvocationEnd(end(first));
             }
@@ -110,7 +112,8 @@ class ExecutionRootParityTest {
     @ValueSource(booleans = {false, true})
     void recordOnlyStillRecordsChildrenWithoutAnAnchor(boolean executionView) {
         try (var exporter = InMemorySpanExporter.create()) {
-            var plugin = plugin(executionView, exporter, sampler(name -> SamplingResult.recordOnly()));
+            var factory = plugin(executionView, exporter, sampler(name -> SamplingResult.recordOnly()));
+            var plugin = factory.createPlugin(start(true));
             plugin.onInvocationStart(start(true));
             plugin.onInvocationEnd(end(false));
             assertTrue(roots(exporter).isEmpty());
@@ -137,8 +140,9 @@ class ExecutionRootParityTest {
                         .build()) {
             GlobalOpenTelemetry.set(
                     OpenTelemetrySdk.builder().setTracerProvider(provider).build());
-            DurableExecutionPlugin plugin =
-                    executionView ? new ExecutionOtelPlugin(config()) : new InvocationOtelPlugin(config());
+            DurableExecutionPluginFactory factory =
+                    executionView ? ExecutionOtelPlugin.factory(config()) : InvocationOtelPlugin.factory(config());
+            var plugin = factory.createPlugin(start(true));
             plugin.onInvocationStart(start(true));
             plugin.onInvocationEnd(end(false));
             assertEquals(sampleAnchor ? 1 : 0, roots(exporter).size());
@@ -153,14 +157,16 @@ class ExecutionRootParityTest {
         }
     }
 
-    private static DurableExecutionPlugin plugin(
+    private static DurableExecutionPluginFactory plugin(
             boolean executionView, InMemorySpanExporter exporter, Sampler sampler) {
         var builder = SdkTracerProvider.builder()
                 .setSampler(sampler)
                 .addSpanProcessor(SimpleSpanProcessor.builder(exporter)
                         .setExportUnsampledSpans(true)
                         .build());
-        return executionView ? new ExecutionOtelPlugin(builder, config()) : new InvocationOtelPlugin(builder, config());
+        return executionView
+                ? ExecutionOtelPlugin.factory(builder, config())
+                : InvocationOtelPlugin.factory(builder, config());
     }
 
     private static OtelPluginConfig config() {
