@@ -186,14 +186,15 @@ class EvidenceTest(unittest.TestCase):
         value = {"controlUrl": "secret", "InputPayload": '{"controlUrl":"https://bucket/key?X-Amz-Signature=secret"}'}
         self.assertNotIn("secret", json.dumps(scrub(value)))
 
-    def test_one_stack_declares_all_five_functions_and_their_scaling_limits(self):
+    def test_one_stack_declares_all_functions_and_their_scaling_limits(self):
         manifest = {"stack": "test", "role": "role", "bucket": "bucket", "provider": "provider",
                     "commit": "sha", "invocationTimeout": 60, "codeSha256": "digest", "codeKey": "code/digest.jar", "runId": "run-1"}
         spec = template(manifest)
         functions = [r["Properties"] for r in spec["Resources"].values() if r["Type"] == "AWS::Lambda::Function"]
-        self.assertEqual(5, len(functions))
+        self.assertEqual(len(FIXTURES), len(functions))
         self.assertEqual(set(FIXTURES), set(spec["Outputs"]))
-        self.assertEqual(5, sum(r["Type"] == "AWS::Logs::LogGroup" for r in spec["Resources"].values()))
+        self.assertEqual(
+            len(FIXTURES), sum(r["Type"] == "AWS::Logs::LogGroup" for r in spec["Resources"].values()))
         concurrencies = set()
         for function in functions:
             capacity = function["CapacityProviderConfig"]["LambdaManagedInstancesCapacityProviderConfig"]
@@ -213,7 +214,7 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual({1, 2, 8}, concurrencies)
         fixed_executor = spec["Resources"]["fixed2Function"]["Properties"]["Environment"]["Variables"]
         nested_executor = spec["Resources"]["nested2Function"]["Properties"]["Environment"]["Variables"]
-        self.assertEqual("fixed", fixed_executor["LMI_EXECUTOR"])
+        self.assertEqual("invocation-fixed", fixed_executor["LMI_EXECUTOR"])
         self.assertEqual("nested", nested_executor["LMI_EXECUTOR"])
         self.assertGreater(PEER_LOG_OBSERVATION_SECONDS, 9)
 
@@ -226,7 +227,10 @@ class EvidenceTest(unittest.TestCase):
         try:
             for fixture in FIXTURES:
                 cases = cases_for_fixture(cloud, fixture)
-                self.assertTrue(cases)
+                if fixture == "nested2":
+                    self.assertEqual([], cases)
+                else:
+                    self.assertTrue(cases)
                 names.extend(name for name, _ in cases)
                 for _, run in cases:
                     run()
@@ -237,15 +241,15 @@ class EvidenceTest(unittest.TestCase):
         finally:
             for p in patches:
                 p.stop()
-        self.assertEqual(13, len(names))
-        self.assertEqual(13, len(set(names)))
+        self.assertEqual(12, len(names))
+        self.assertEqual(12, len(set(names)))
 
     @patch("cloud_suite.Cloud")
-    def test_cloud_suite_requires_all_five_functions(self, cloud):
+    def test_cloud_suite_requires_all_functions(self, cloud):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "manifest.json"
             path.write_text(json.dumps({"functions": {"default1": {}}}))
-            with patch("cloud_suite.MANIFEST", path), self.assertRaisesRegex(PreconditionError, "All five"):
+            with patch("cloud_suite.MANIFEST", path), self.assertRaisesRegex(PreconditionError, "All required"):
                 run_tests()
         cloud.assert_not_called()
 

@@ -11,6 +11,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -75,6 +76,8 @@ public class ExecutionManager implements SafeCloseable {
     private static final Logger logger = LoggerFactory.getLogger(ExecutionManager.class);
 
     private static final AtomicLong LOCAL_INVOCATION_SEQUENCE = new AtomicLong();
+    private static final Set<ExecutorService> ACTIVE_INVOCATION_EXECUTORS =
+            Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
 
     // Stop waiting for the root early enough to cancel tasks and flush checkpoints before the platform deadline.
     private static final Duration EXECUTION_DEADLINE_HEADROOM = Duration.ofMillis(500);
@@ -84,6 +87,7 @@ public class ExecutionManager implements SafeCloseable {
     private static final Duration MAX_CLEANUP_DURATION = Duration.ofSeconds(30);
     private static final Duration MAX_GRACEFUL_DRAIN_DURATION = Duration.ofSeconds(5);
     private static final Duration MAX_CANCELLATION_DRAIN_DURATION = Duration.ofSeconds(1);
+    private static final Duration EXECUTOR_SHUTDOWN_RESERVE = Duration.ofMillis(100);
     private static final Duration CHECKPOINT_CLEANUP_RESERVE = Duration.ofMillis(100);
     private static final String LIFECYCLE_ERROR_TYPE =
             "software.amazon.lambda.durable.execution.InvocationLifecycleException";
@@ -113,6 +117,8 @@ public class ExecutionManager implements SafeCloseable {
     private final Context lambdaContext;
     private final AtomicReference<ExecutionMode> executionMode;
     private final DurableConfig durableConfig;
+    private final ExecutorService executorService;
+    private final boolean ownsExecutorService;
     private final Set<String> updatedOperationIdsSinceLastInvocation;
     private final Set<String> initialOperationIds;
 
@@ -206,6 +212,21 @@ public class ExecutionManager implements SafeCloseable {
         // Validate initial operation is an EXECUTION operation
         if (executionOp == null) {
             throw new IllegalStateException("EXECUTION operation not found");
+        }
+        var invocationExecutorFactory = config.getInvocationExecutorFactory();
+        if (invocationExecutorFactory.isPresent()) {
+            this.executorService = Objects.requireNonNull(
+                    invocationExecutorFactory.get().get(), "Invocation executor factory returned null");
+            this.ownsExecutorService = true;
+        } else {
+            this.executorService = config.getExecutorService();
+            this.ownsExecutorService = false;
+        }
+        if (ownsExecutorService && executorService.isShutdown()) {
+            throw new IllegalStateException("Invocation executor factory returned a shutdown executor");
+        }
+        if (ownsExecutorService && !ACTIVE_INVOCATION_EXECUTORS.add(executorService)) {
+            throw new IllegalStateException("Invocation executor factory returned an executor already in use");
         }
         logger.debug("DurableExecution.execute() called");
         logger.debug("DurableExecutionArn: {}", durableExecutionArn);
@@ -331,7 +352,7 @@ public class ExecutionManager implements SafeCloseable {
 
     /** Submits the invocation's root handler and records its executor task separately from its logical result. */
     <T> CompletableFuture<T> submitRootTask(Supplier<T> action) {
-        return submitExecutorTask(ExecutorTaskHandle.Role.ROOT, null, durableConfig.getExecutorService(), action);
+        return submitExecutorTask(ExecutorTaskHandle.Role.ROOT, null, executorService, action);
     }
 
     /** Submits an operation handler and records its executor task separately from its logical result. */
@@ -342,7 +363,7 @@ public class ExecutionManager implements SafeCloseable {
                     case MAP, PARALLEL -> ExecutorTaskHandle.Role.COORDINATOR;
                     default -> ExecutorTaskHandle.Role.CHILD_CONTEXT;
                 };
-        return submitExecutorTask(role, operation, durableConfig.getExecutorService(), () -> {
+        return submitExecutorTask(role, operation, executorService, () -> {
             action.run();
             return null;
         });
@@ -361,7 +382,7 @@ public class ExecutionManager implements SafeCloseable {
         submitExecutorTask(
                 ExecutorTaskHandle.Role.ROOT,
                 null,
-                durableConfig.getExecutorService(),
+                executorService,
                 () -> {
                     command.run();
                     return null;
@@ -1154,7 +1175,7 @@ public class ExecutionManager implements SafeCloseable {
 
     private void validateExecutorPool() {
         // double check if the thread pool is empty
-        if (durableConfig.getExecutorService() instanceof ThreadPoolExecutor threadPoolExecutor) {
+        if (executorService instanceof ThreadPoolExecutor threadPoolExecutor) {
             var threadCount = threadPoolExecutor.getActiveCount();
             // This may or may not be a problem because getActiveCount doesn't return an accurate number
             if (threadCount > 0) {
@@ -1255,6 +1276,7 @@ public class ExecutionManager implements SafeCloseable {
             failure = problem;
             signalLifecycleFailure(failure);
         } finally {
+            failure = shutdownOwnedExecutor(hardDeadline, failure);
             failure = stopCheckpointAdmission(hardDeadline, failure);
             failure = shutdownCheckpoints(hardDeadline, failure);
             closeLifecycle();
@@ -1269,8 +1291,46 @@ public class ExecutionManager implements SafeCloseable {
                 : combineFailures(failure, selectedFailure);
     }
 
+    private Throwable shutdownOwnedExecutor(long hardDeadline, Throwable priorFailure) {
+        if (!ownsExecutorService) {
+            return priorFailure;
+        }
+        var executorDeadline = Math.max(System.nanoTime(), hardDeadline - CHECKPOINT_CLEANUP_RESERVE.toNanos());
+        try {
+            executorService.shutdown();
+            if (!getActiveExecutorTasks().isEmpty()) {
+                executorService.shutdownNow();
+            }
+            if (executorService.awaitTermination(remainingNanos(executorDeadline), TimeUnit.NANOSECONDS)) {
+                return priorFailure;
+            }
+            executorService.shutdownNow();
+            if (executorService.awaitTermination(remainingNanos(executorDeadline), TimeUnit.NANOSECONDS)) {
+                return priorFailure;
+            }
+            return combineFailures(
+                    priorFailure,
+                    lifecycleFailure("Invocation executor did not terminate before cleanup deadline", null));
+        } catch (InterruptedException interrupted) {
+            cleanupInterrupted.set(true);
+            executorService.shutdownNow();
+            return combineFailures(
+                    priorFailure, lifecycleFailure("Interrupted while shutting down invocation executor", interrupted));
+        } catch (RuntimeException failure) {
+            return combineFailures(priorFailure, lifecycleFailure("Invocation executor shutdown failed", failure));
+        } finally {
+            if (executorService.isShutdown()) {
+                ACTIVE_INVOCATION_EXECUTORS.remove(executorService);
+            }
+        }
+    }
+
     private Throwable drainInvocationTasks(Throwable originalFailure, long hardDeadline) throws InterruptedException {
-        var taskDeadline = Math.max(System.nanoTime(), hardDeadline - CHECKPOINT_CLEANUP_RESERVE.toNanos());
+        var taskDeadline = Math.max(
+                System.nanoTime(),
+                hardDeadline
+                        - CHECKPOINT_CLEANUP_RESERVE.toNanos()
+                        - (ownsExecutorService ? EXECUTOR_SHUTDOWN_RESERVE.toNanos() : 0));
         var recordedFailure = lifecycleFailure.get();
         var abortFailure = isFatal(originalFailure)
                 ? originalFailure
