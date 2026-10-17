@@ -844,6 +844,14 @@ def cases_for_fixture(cloud, fixture):
     return cases
 
 
+def assert_case_request_lifecycles(cloud, invocation_start):
+    """Settlement cannot turn an earlier wrapper-ordering violation into a passing case."""
+    for item in cloud.invocations[invocation_start:]:
+        assert_request_lifecycles(
+            cloud.events_for(item), item["marker"],
+            allow_residual_tasks=item.get("scenario") == "stubborn")
+
+
 def execute_case(cloud, fixture, case):
     """Run one assertion and return its primary and isolation-cleanup failures separately."""
     invocation_start = len(cloud.invocations)
@@ -857,6 +865,11 @@ def execute_case(cloud, fixture, case):
         cleanup_case(cloud, fixture, invocation_start, cloud.manifest["invocationTimeout"] + 30)
     except Exception as failure:
         cleanup_failure = failure
+    if primary_failure is None and cleanup_failure is None:
+        try:
+            assert_case_request_lifecycles(cloud, invocation_start)
+        except Exception as failure:
+            primary_failure = failure
     return primary_failure, cleanup_failure
 
 
