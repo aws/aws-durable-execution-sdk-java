@@ -1,0 +1,306 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.telemetry;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationEndInfo;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.plugin.InvocationStatus;
+import software.amazon.lambda.durable.plugin.OperationChangeInfo;
+import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
+
+/**
+ * Hand-driven hook tests for behaviors the local runner cannot easily produce deterministically: on-change emission
+ * (invocation start / operation change / invocation end), cross-invocation state preservation on PENDING/RETRYING, and
+ * exporter isolation + flush.
+ */
+class DurableExecutionTelemetryHookTest {
+
+    private static final String ARN =
+            "arn:aws:lambda:us-west-2:1:function:f:$LATEST/durable-execution/exec-1/invocation-1";
+    private static final Instant START = Instant.parse("2026-08-05T00:00:00Z");
+
+    private static class CapturingExporter implements TelemetryExporter {
+        final List<DurableExecutionTelemetryRecord> records = new CopyOnWriteArrayList<>();
+        final List<Thread> threads = new CopyOnWriteArrayList<>();
+        volatile int flushes;
+
+        @Override
+        public void export(DurableExecutionTelemetryRecord record) {
+            records.add(record);
+            threads.add(Thread.currentThread());
+        }
+
+        @Override
+        public void flush() {
+            flushes++;
+        }
+    }
+
+    private Map<String, OperationChangeItemInfo> ops(String name, OperationStatus status) {
+        Map<String, OperationChangeItemInfo> m = new LinkedHashMap<>();
+        m.put(
+                "op-1",
+                new OperationChangeItemInfo(
+                        "op-1", name, "STEP", "Step", null, START, START.plusMillis(5), status, 1, false, null, null));
+        return m;
+    }
+
+    private InvocationInfo start(boolean first) {
+        return start(ARN, first);
+    }
+
+    private InvocationInfo start(String arn, boolean first) {
+        return new InvocationInfo("req", arn, first, START, "in", ops("greet", OperationStatus.STARTED), Map.of());
+    }
+
+    private InvocationEndInfo end(InvocationStatus status, Object result, Throwable error) {
+        return end(ARN, status, result, error);
+    }
+
+    private InvocationEndInfo end(String arn, InvocationStatus status, Object result, Throwable error) {
+        return new InvocationEndInfo(
+                "req", arn, true, START, ops("greet", OperationStatus.SUCCEEDED), status, error, "in", result);
+    }
+
+    @Test
+    void anotherExecutionsChangeHookDuringTheEndDrainCannotDropTheFinalRecord() throws Exception {
+        String arnA = ARN;
+        String arnB = ARN.replace("exec-1", "exec-2");
+        var exportingA = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var exporter = new CapturingExporter() {
+            @Override
+            public void export(DurableExecutionTelemetryRecord record) {
+                super.export(record);
+                // Block a's first export so a's final record has to wait in the pending slot while b keeps emitting.
+                if (records.size() == 1) {
+                    exportingA.countDown();
+                    try {
+                        assertTrue(release.await(5, TimeUnit.SECONDS));
+                    } catch (InterruptedException e) {
+                        throw new AssertionError(e);
+                    }
+                }
+            }
+        };
+        var plugin = (DurableExecutionTelemetry.TelemetryPlugin)
+                DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
+                        .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_CHANGE)
+                        .addExporter(exporter)
+                        .build());
+
+        plugin.onInvocationStart(start(arnA, true));
+        assertTrue(exportingA.await(5, TimeUnit.SECONDS));
+        plugin.onInvocationStart(start(arnB, true));
+
+        // a ends: its SUCCEEDED record is pending behind the blocked export, and a's end hook blocks in the drain.
+        var endingA = new Thread(() -> plugin.onInvocationEnd(end(arnA, InvocationStatus.SUCCEEDED, "out", null)));
+        endingA.start();
+        Thread.sleep(100);
+        // b's change hook arrives while a's final record is still pending; it must not displace it.
+        plugin.onOperationChange(new OperationChangeInfo(
+                "req", arnB, ops("greet", OperationStatus.SUCCEEDED), ops("greet", OperationStatus.SUCCEEDED)));
+        release.countDown();
+        endingA.join(5_000);
+        assertFalse(endingA.isAlive());
+        plugin.onInvocationEnd(end(arnB, InvocationStatus.SUCCEEDED, "out", null));
+
+        var aStatuses = exporter.records.stream()
+                .filter(r -> arnA.equals(r.executionArn()))
+                .map(DurableExecutionTelemetryRecord::status)
+                .toList();
+        var bStatuses = exporter.records.stream()
+                .filter(r -> arnB.equals(r.executionArn()))
+                .map(DurableExecutionTelemetryRecord::status)
+                .toList();
+        assertEquals(List.of("RUNNING", "SUCCEEDED"), aStatuses, "a's final record is delivered");
+        assertEquals("SUCCEEDED", bStatuses.get(bStatuses.size() - 1), "b's final record is delivered last");
+        assertTrue(bStatuses.subList(0, bStatuses.size() - 1).stream().allMatch("RUNNING"::equals));
+    }
+
+    @Test
+    void onChangeEmitsAtStartChangeAndEnd() {
+        var exporter = new CapturingExporter();
+        var plugin = (DurableExecutionTelemetry.TelemetryPlugin)
+                DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
+                        .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_CHANGE)
+                        .addExporter(exporter)
+                        .build());
+
+        // Let each scheduled export land before the next hook so all three snapshots are observable; back-to-back
+        // hooks may otherwise coalesce into the latest record (covered separately below).
+        plugin.onInvocationStart(start(true));
+        plugin.drainExports();
+        plugin.onOperationChange(new OperationChangeInfo(
+                "req", ARN, ops("greet", OperationStatus.SUCCEEDED), ops("greet", OperationStatus.SUCCEEDED)));
+        plugin.drainExports();
+        plugin.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null));
+
+        assertEquals(3, exporter.records.size());
+        assertEquals("RUNNING", exporter.records.get(0).status());
+        assertEquals("RUNNING", exporter.records.get(1).status());
+        assertEquals("SUCCEEDED", exporter.records.get(2).status());
+        assertEquals(1, exporter.flushes, "exporters are flushed once, at invocation end");
+    }
+
+    @Test
+    void onChangeExportsOffTheHookThreadAndCoalescesBurstsIntoTheLatestRecord() {
+        var exporter = new CapturingExporter();
+        var plugin = (DurableExecutionTelemetry.TelemetryPlugin)
+                DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
+                        .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_CHANGE)
+                        .addExporter(exporter)
+                        .build());
+
+        plugin.onInvocationStart(start(true));
+        for (int i = 0; i < 20; i++) {
+            plugin.onOperationChange(new OperationChangeInfo(
+                    "req", ARN, ops("greet", OperationStatus.SUCCEEDED), ops("greet", OperationStatus.SUCCEEDED)));
+        }
+        plugin.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null));
+
+        // Intermediate RUNNING snapshots may be superseded while an export is in flight, but the final record is always
+        // delivered, always last, and no export ever ran on the thread that delivered the hooks.
+        assertFalse(exporter.records.isEmpty());
+        assertTrue(exporter.records.size() <= 22, "no duplicate exports");
+        var last = exporter.records.get(exporter.records.size() - 1);
+        assertEquals("SUCCEEDED", last.status());
+        assertTrue(exporter.records.subList(0, exporter.records.size() - 1).stream()
+                .allMatch(r -> "RUNNING".equals(r.status())));
+        assertTrue(exporter.threads.stream().noneMatch(t -> t == Thread.currentThread()));
+        assertEquals(1, exporter.flushes);
+    }
+
+    @Test
+    void changeHookArrivingWhileTheEndRecordDrainsCannotFollowOrReplaceIt() throws Exception {
+        var exportingFinal = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var exporter = new CapturingExporter() {
+            @Override
+            public void export(DurableExecutionTelemetryRecord record) {
+                super.export(record);
+                if ("SUCCEEDED".equals(record.status())) {
+                    exportingFinal.countDown();
+                    try {
+                        assertTrue(release.await(5, TimeUnit.SECONDS));
+                    } catch (InterruptedException e) {
+                        throw new AssertionError(e);
+                    }
+                }
+            }
+        };
+        var plugin = (DurableExecutionTelemetry.TelemetryPlugin)
+                DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
+                        .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_CHANGE)
+                        .addExporter(exporter)
+                        .build());
+
+        plugin.onInvocationStart(start(true));
+        plugin.drainExports();
+
+        // The end hook blocks in its drain while the final record is being exported; the change hook arrives then,
+        // as it does when a checkpoint for an unawaited asynchronous operation completes during invocation end.
+        var ending = new Thread(() -> plugin.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null)));
+        ending.start();
+        assertTrue(exportingFinal.await(5, TimeUnit.SECONDS));
+        plugin.onOperationChange(new OperationChangeInfo(
+                "req", ARN, ops("greet", OperationStatus.SUCCEEDED), ops("greet", OperationStatus.SUCCEEDED)));
+        release.countDown();
+        ending.join(5_000);
+        assertFalse(ending.isAlive());
+
+        assertEquals(2, exporter.records.size(), "start snapshot + final record; the late change is dropped");
+        assertEquals("RUNNING", exporter.records.get(0).status());
+        assertEquals("SUCCEEDED", exporter.records.get(1).status());
+        assertEquals(1, exporter.flushes);
+    }
+
+    @Test
+    void invocationEndFlushesExportersEvenWhenNothingWasEmitted() {
+        var exporter = new CapturingExporter();
+        DurableExecutionPlugin plugin = DurableExecutionTelemetry.durableExecutionTelemetry(
+                DurableExecutionTelemetryConfig.builder().addExporter(exporter).build());
+
+        plugin.onInvocationStart(start(true));
+        plugin.onInvocationEnd(end(InvocationStatus.PENDING, null, null));
+
+        assertTrue(exporter.records.isEmpty(), "on-complete emits nothing for a suspend");
+        assertEquals(1, exporter.flushes, "the invocation boundary still flushes buffered exporters");
+    }
+
+    @Test
+    void onCompleteSkipsNonTerminalAndEmitsTerminalOnly() {
+        var exporter = new CapturingExporter();
+        DurableExecutionPlugin plugin = DurableExecutionTelemetry.durableExecutionTelemetry(
+                DurableExecutionTelemetryConfig.builder().addExporter(exporter).build());
+
+        plugin.onInvocationStart(start(true));
+        plugin.onOperationChange(new OperationChangeInfo(
+                "req", ARN, ops("greet", OperationStatus.SUCCEEDED), ops("greet", OperationStatus.SUCCEEDED)));
+        assertTrue(exporter.records.isEmpty(), "no record before terminal in on-complete mode");
+        plugin.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null));
+        assertEquals(1, exporter.records.size());
+        assertEquals("SUCCEEDED", exporter.records.get(0).status());
+    }
+
+    @Test
+    void suspendResumeKeepsStableStartTimeAndLeavesNoRetainedState() {
+        var exporter = new CapturingExporter();
+        var plugin = (DurableExecutionTelemetry.TelemetryPlugin)
+                DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
+                        .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_CHANGE)
+                        .addExporter(exporter)
+                        .build());
+
+        plugin.onInvocationStart(start(true)); // first invocation
+        plugin.drainExports();
+        plugin.onInvocationEnd(end(InvocationStatus.PENDING, null, null)); // suspend -> state removed
+        plugin.onInvocationStart(start(false)); // resume invocation re-seeds state
+        plugin.drainExports();
+        plugin.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null)); // resume + terminal
+
+        // start(RUNNING) + pending(RUNNING) + resume-start(RUNNING) + terminal(SUCCEEDED); all share the stable
+        // startTime recreated from InvocationInfo.executionStartTime() across the suspend boundary.
+        assertEquals(4, exporter.records.size());
+        String startTime = exporter.records.get(0).startTime();
+        assertTrue(exporter.records.stream().allMatch(r -> startTime.equals(r.startTime())));
+        assertEquals(START.toString(), startTime);
+        assertEquals(0, plugin.retainedStateCount(), "no per-execution state retained after invocation end");
+    }
+
+    @Test
+    void exporterFailureIsIsolatedAndOthersStillReceiveAndFlush() {
+        var throwing = new TelemetryExporter() {
+            @Override
+            public void export(DurableExecutionTelemetryRecord record) {
+                throw new RuntimeException("exporter down");
+            }
+        };
+        var good = new CapturingExporter();
+        DurableExecutionPlugin plugin =
+                DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
+                        .addExporter(throwing)
+                        .addExporter(good)
+                        .build());
+
+        plugin.onInvocationStart(start(true));
+        plugin.onInvocationEnd(end(InvocationStatus.SUCCEEDED, "out", null));
+
+        assertEquals(1, good.records.size(), "failing exporter never blocks the others");
+        assertFalse(good.flushes == 0, "surviving exporter is flushed");
+    }
+}
