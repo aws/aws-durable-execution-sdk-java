@@ -13,7 +13,6 @@ import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
-import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
@@ -43,7 +42,6 @@ import software.amazon.lambda.durable.telemetry.exporters.LambdaLogExporter;
  * time from {@link InvocationInfo#executionStartTime()}, the same sampling decision deterministically from the ARN, and
  * the input snapshot from {@link InvocationInfo#executionInput()}.
  */
-@Experimental
 public final class DurableExecutionTelemetry {
 
     private static final Logger logger = LoggerFactory.getLogger(DurableExecutionTelemetry.class);

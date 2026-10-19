@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.telemetry;
 
-import software.amazon.lambda.durable.annotations.Experimental;
-
 /** Exports workflow telemetry records to a destination. */
-@Experimental
 public interface TelemetryExporter {
 
     /** Emits one record to the destination. */

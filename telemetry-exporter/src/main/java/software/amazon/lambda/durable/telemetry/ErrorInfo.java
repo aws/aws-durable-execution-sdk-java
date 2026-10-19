@@ -4,10 +4,8 @@ package software.amazon.lambda.durable.telemetry;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import software.amazon.lambda.durable.annotations.Experimental;
 
 /** Error detail carried on a record or operation, mirroring the JS {@code {name, message}} shape. */
-@Experimental
 public final class ErrorInfo {
     private final String name;
     private final String message;

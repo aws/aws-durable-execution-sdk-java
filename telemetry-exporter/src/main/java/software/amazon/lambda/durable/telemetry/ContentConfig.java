@@ -5,7 +5,6 @@ package software.amazon.lambda.durable.telemetry;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
-import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Controls what data is included in emitted records (input/output transforms, operation overrides, error inclusion).
@@ -24,7 +23,6 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * the cached input snapshot or any later emission — and a transform that throws omits the field (the failure is logged)
  * rather than failing the execution.
  */
-@Experimental
 public final class ContentConfig {
     private final boolean includeInput;
     private final Function<Object, Object> inputTransform;
