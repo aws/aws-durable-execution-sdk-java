@@ -44,7 +44,7 @@ The publication workflow:
 1. Verifies that the tag is a semantic version, points to a commit on the
    default branch, and matches the Maven version in the tagged POM.
 2. Builds, signs, and uploads the SDK, testing library, OpenTelemetry plugin,
-   and Workflow Insight plugin to Sonatype Central Portal.
+   and Durable Execution Telemetry Exporter to Sonatype Central Portal.
 3. Uploads the four JARs to the existing GitHub release.
 4. Opens a pull request for the next development version. A final release
    increments the patch version, so `2.1.1` produces `2.1.2-SNAPSHOT`. A
@@ -56,8 +56,8 @@ After **Publish Maven Release** succeeds:
 1. Open [Publishing Deployments](https://central.sonatype.com/publishing/deployments)
    in Sonatype Central Portal.
 2. Find the deployments for the release version and verify that they contain
-   the expected SDK, testing library, OpenTelemetry plugin, and Workflow Insight
-   plugin artifacts.
+   the expected SDK, testing library, OpenTelemetry plugin, and Durable Execution
+   Telemetry Exporter artifacts.
 3. Click **Publish** for each deployment and wait for publication to complete.
    The workflow uses `autoPublish=false`, so this manual action is required.
 4. Confirm that the GitHub release contains the expected JARs and that the
