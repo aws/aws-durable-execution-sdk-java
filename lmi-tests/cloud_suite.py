@@ -807,7 +807,7 @@ def warm_environment(trace, target):
 
 
 def warm_case(cloud, fixture):
-    target = None
+    target, items = None, []
     for batch in range(3):
         for scenario in ["success", "failure", "replay"]:
             marker = uuid.uuid4().hex[:12]
@@ -823,11 +823,23 @@ def warm_case(cloud, fixture):
             target = warm_environment(trace, target)
             item.setdefault("warmEnvironment", target)
             item.setdefault("warmRequests", sorted(request_identities(trace)))
+            items.append(item)
             if scenario == "replay":
                 item["replayHistory"] = cloud.history(item)
                 assert_replay(trace, item["replayHistory"], marker)
             assert_lifecycle(trace)
-    # The final case audit compares resources only after collecting every return snapshot.
+    # Preserve proven resource failures even if cleanup also fails. An incomplete endpoint
+    # must wait for the final case audit before it can establish thread growth.
+    complete = not incomplete_warm_snapshots(cloud, items)
+    snapshots = [event for item in items for event in selected(cloud.events_for(item), "SNAPSHOT")]
+    assert_warm_resources(snapshots)
+    if complete:
+        assert_warm_snapshots(snapshots)
+
+
+def assert_warm_resources(snapshots):
+    require(all(e["liveTasks"] == 0 and e["liveRoots"] == 0 and e["queued"] == 0 for e in snapshots),
+            "Invocation-owned tasks, roots or queued work accumulated across warm batches")
 
 
 def assert_warm_snapshots(snapshots):
@@ -835,8 +847,7 @@ def assert_warm_snapshots(snapshots):
     snapshots = sorted(snapshots, key=lambda event: event["sequence"])
     # Default cached pools retain idle threads: measure live invocation-owned work/queue instead.
     require(snapshots, "Missing warm task snapshots")
-    require(all(e["liveTasks"] == 0 and e["liveRoots"] == 0 and e["queued"] == 0 for e in snapshots),
-            "Invocation-owned tasks, roots or queued work accumulated across warm batches")
+    assert_warm_resources(snapshots)
     require(snapshots[-1]["threads"] <= snapshots[0]["threads"] + 16,
             "Thread growth exceeded bounded cache tolerance (+16)")
 

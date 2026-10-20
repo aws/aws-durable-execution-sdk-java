@@ -582,9 +582,9 @@ class EvidenceTest(unittest.TestCase):
             "marker": marker, "scenario": scenario}
         cloud.events_for.side_effect = lambda item: [
             {"kind": "WRAPPER_ENTER", "marker": item["marker"], "environment": "jvm",
-             "requestId": item["marker"]},
+             "requestId": item["marker"], "sequence": 0},
             {"kind": "WRAPPER_RETURN", "marker": item["marker"], "environment": "jvm",
-             "requestId": item["marker"]},
+             "requestId": item["marker"], "sequence": 2},
             {"kind": "SNAPSHOT", "marker": item["marker"], "environment": "jvm",
              "requestId": item["marker"], "liveTasks": 0, "liveRoots": 0,
              "queued": 0, "threads": 10, "sequence": 1}]

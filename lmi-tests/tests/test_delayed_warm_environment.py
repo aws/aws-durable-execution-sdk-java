@@ -18,7 +18,8 @@ from test_evidence import event
 class DelayedWarmEnvironmentTest(unittest.TestCase):
     def run_case(self, late_original=False, duplicate_body=False, reverse_snapshots=False,
                  final_threads=20, delayed_snapshot=False, missing_snapshot=False,
-                 delayed_after_cleanup=False, wrong_snapshot_request=False):
+                 delayed_after_cleanup=False, wrong_snapshot_request=False, cleanup_failure=False,
+                 pending_threads=20, pending_queue=0):
         cloud = Mock()
         cloud.manifest = {"runId": "case", "invocationTimeout": 60}
         cloud.invocations, visible = [], []
@@ -58,6 +59,7 @@ class DelayedWarmEnvironmentTest(unittest.TestCase):
             records = trace(marker, marker, scenario, len(cloud.invocations) * 100)
             if len(cloud.invocations) == 9:
                 snapshots = [entry for entry in records if entry["kind"] == "SNAPSHOT"]
+                snapshots[0].update(threads=pending_threads, queued=pending_queue)
                 snapshots[-1]["threads"] = final_threads
                 if reverse_snapshots:
                     records.remove(snapshots[0])
@@ -98,6 +100,8 @@ class DelayedWarmEnvironmentTest(unittest.TestCase):
         def cleanup(*args, **kwargs):
             cleanup_case(*args, **kwargs)
             cloud.cleanup_finished = True
+            if cleanup_failure:
+                raise RuntimeError("cleanup failed")
         with patch("cloud_suite.uuid.uuid4", side_effect=lambda: SimpleNamespace(hex="case" + str(next(ids)))), \
                 patch("cloud_suite.time.monotonic", side_effect=count()), patch("cloud_suite.time.sleep"), \
                 patch("cloud_suite.cleanup_case", side_effect=cleanup):
@@ -153,6 +157,22 @@ class DelayedWarmEnvironmentTest(unittest.TestCase):
         primary, cleanup = self.run_case(wrong_snapshot_request=True)
         self.assertIsInstance(primary, CollectionError)
         self.assertIsNone(cleanup)
+
+    def test_proven_warm_resource_failure_is_preserved_when_cleanup_also_fails(self):
+        primary, cleanup = self.run_case(final_threads=50, cleanup_failure=True)
+        self.assertIsInstance(primary, AssertionError)
+        self.assertIn("Thread growth", str(primary))
+        self.assertIsInstance(cleanup, RuntimeError)
+        self.assertIn("cleanup failed", str(cleanup))
+
+    def test_pending_thread_count_does_not_replace_delayed_final_endpoint(self):
+        self.assertEqual((None, None), self.run_case(delayed_after_cleanup=True, pending_threads=50))
+
+    def test_partial_zero_work_violation_is_preserved_with_cleanup_failure(self):
+        primary, cleanup = self.run_case(missing_snapshot=True, pending_queue=1, cleanup_failure=True)
+        self.assertIsInstance(primary, AssertionError)
+        self.assertIn("queued work accumulated", str(primary))
+        self.assertIsInstance(cleanup, RuntimeError)
 
 
 if __name__ == "__main__":
