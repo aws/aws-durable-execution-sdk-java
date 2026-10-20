@@ -14,6 +14,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -284,42 +285,58 @@ class ExportSchedulerFlushSerializationTest {
     void aFlushIsServedWhileTheQueueKeepsReceivingRecords() throws Exception {
         var exports = new AtomicInteger();
         var flushes = new AtomicInteger();
+        var scheduled = new AtomicInteger();
+        var backlogWhenFlushed = new AtomicInteger();
+        var stop = new AtomicBoolean();
+        var exporting = new CountDownLatch(1);
+        var releaseExport = new CountDownLatch(1);
+        var produceNext = new Semaphore(0);
+        var recordQueued = new Semaphore(0);
         var exporter = new TelemetryExporter() {
             @Override
             public void export(DurableExecutionTelemetryRecord record) {
+                exporting.countDown();
+                await(releaseExport);
+                if (!stop.get()) {
+                    // Keep a record queued before this export finishes, regardless of producer thread scheduling.
+                    produceNext.release();
+                    acquire(recordQueued);
+                }
                 sleep(2);
                 exports.incrementAndGet();
             }
 
             @Override
             public void flush() {
+                backlogWhenFlushed.set(1 + scheduled.get() - exports.get());
                 flushes.incrementAndGet();
             }
         };
-        var scheduler = scheduler(sharedWorkers(), new CopyOnWriteArrayList<>(), exporter);
+        var failures = new CopyOnWriteArrayList<Throwable>();
+        var scheduler = scheduler(sharedWorkers(), failures, exporter);
 
-        // A producer that never lets the queue run dry: it keeps re-scheduling a fixed, rotating set of executions, so
-        // `pending` stays non-empty (and bounded, since records coalesce per execution) for as long as it runs.
+        // Each export asks the producer to queue its successor before returning. The pump always has a backlogged
+        // record until cleanup stops production, so a flush that waits for an empty queue must miss the deadline.
         var rotation = new ArrayList<TelemetryPlugin>();
         for (int i = 0; i < 50; i++) {
             rotation.add(Executions.plugin(scheduler, arn(i)));
         }
-        var stop = new AtomicBoolean();
-        var scheduled = new AtomicInteger();
-        var producing = new CountDownLatch(1);
         var producer = new Thread(
                 () -> {
                     int index = 0;
-                    while (!stop.get()) {
+                    while (true) {
+                        acquire(produceNext);
+                        if (stop.get()) return;
                         TelemetryPlugin execution = rotation.get(index++ % rotation.size());
                         scheduler.schedule(execution, record(execution.executionArn, "RUNNING"));
                         scheduled.incrementAndGet();
-                        producing.countDown();
+                        recordQueued.release();
                     }
                 },
                 "record-producer");
         producer.setDaemon(true);
         producer.start();
+        scheduler.schedule(rotation.get(0), record(arn(0), "RUNNING"));
         int exportsBefore;
         int scheduledBefore;
         boolean served;
@@ -327,7 +344,7 @@ class ExportSchedulerFlushSerializationTest {
         var scheduledWhenServed = new AtomicInteger();
         var flushReturned = new CountDownLatch(1);
         try {
-            assertTrue(producing.await(5, TimeUnit.SECONDS), "the producer never started scheduling");
+            assertTrue(exporting.await(5, TimeUnit.SECONDS), "the first export never started");
             exportsBefore = exports.get();
             scheduledBefore = scheduled.get();
 
@@ -342,10 +359,14 @@ class ExportSchedulerFlushSerializationTest {
                     "flusher");
             flusher.setDaemon(true);
             flusher.start();
+            releaseExport.countDown();
             served = flushReturned.await(FLUSH_DEADLINE_MILLIS, TimeUnit.MILLISECONDS);
         } finally {
             // Stop the producer before asserting, so a starved flush is released and its thread does not leak.
             stop.set(true);
+            releaseExport.countDown();
+            produceNext.release();
+            recordQueued.release();
             producer.join(10_000);
         }
 
@@ -355,11 +376,23 @@ class ExportSchedulerFlushSerializationTest {
                         + " records; it must be served between records rather than after the queue drains");
         assertTrue(flushReturned.await(5, TimeUnit.SECONDS));
         assertEquals(1, flushes.get(), "the flush was served exactly once");
+        assertTrue(backlogWhenFlushed.get() > 0, "the flush must run while another record is queued");
         assertTrue(
                 exportsWhenServed.get() > exportsBefore, "the pump kept exporting: the flush did not stall the queue");
         assertTrue(
                 scheduledWhenServed.get() > scheduledBefore,
                 "the queue was still receiving records when the flush was served");
+        assertFalse(producer.isAlive(), "the producer must stop after the test");
+        assertTrue(failures.isEmpty(), "producer/export callbacks must not fail: " + failures);
+    }
+
+    private static void acquire(Semaphore semaphore) {
+        try {
+            assertTrue(semaphore.tryAcquire(5, TimeUnit.SECONDS), "producer/export coordination timed out");
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(failure);
+        }
     }
 
     @Test
