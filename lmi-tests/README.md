@@ -11,6 +11,11 @@ Completed cases retain their original invocation range and assertion inputs in
 `collect` command recheck their collected lifecycle, replay and warm-pool evidence
 and update JUnit if delayed logs reveal a violation. Warm thread counts use the
 JVM sequence, so CloudWatch delivery order cannot select an earlier endpoint.
+Warm cases also retain each original marker/JVM/request identity. The final audit
+requires one snapshot before every matching wrapper return, including the final
+successful replay return, and allows one 30-second collection window for delayed
+measurements. Missing evidence is a collection error. Resource comparisons use
+those original snapshots and retain the existing zero-work and +16-thread limits.
 
 ## Test design
 

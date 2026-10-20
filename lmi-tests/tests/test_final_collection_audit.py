@@ -2,16 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Final refreshes must update the case verdict, including previously completed cases."""
 import json
+from itertools import count
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloud_support import Cloud, save
-from cloud_suite import FIXTURES, collect, run_tests
+from cloud_suite import FIXTURES, collect, run_tests, save_case_assertions
 from test_evidence import event
 
 
@@ -128,6 +130,52 @@ class FinalCollectionAuditTest(unittest.TestCase):
         save(path, saved)
         with self.assertRaisesRegex(AssertionError, "different deployed run"):
             self.collect_suite()
+
+    def prepare_warm_collection(self):
+        for request, base, status in [("warm-initial", 0, "PENDING"), ("warm-final", 10, "SUCCEEDED")]:
+            for kind, offset in [("WRAPPER_ENTER", 1), ("ROOT_ENTER", 2), ("ROOT_EXIT", 3),
+                                 ("SNAPSHOT", 4), ("WRAPPER_RETURN", 5)]:
+                self.events.append(event(kind, base + offset, request, marker="warm", status=status,
+                                         fixture="default2", runId="run", executionArn="arn:warm",
+                                         liveTasks=0, liveRoots=0, queued=0, threads=20))
+        final_snapshot = next(entry for entry in self.events
+                              if entry["kind"] == "SNAPSHOT" and entry["requestId"] == "warm-final")
+        self.events.remove(final_snapshot)
+        suite = ET.Element("testsuite", name="LMI cloud lifecycle")
+        node = ET.SubElement(suite, "testcase", classname="LmiCloudLifecycle", name="warm")
+        ET.ElementTree(suite).write(self.artifacts / "junit.xml")
+        cloud = SimpleNamespace(manifest=self.manifest, invocations=[{
+            "marker": "warm", "fixture": "default2", "scenario": "success", "warmEnvironment": "jvm",
+            "warmRequests": [("warm", "jvm", "warm-initial"), ("warm", "jvm", "warm-final")]}])
+        with patch("cloud_suite.ARTIFACTS", self.artifacts):
+            save_case_assertions(cloud, [(node, 0, 1)])
+        return final_snapshot
+
+    def test_standalone_collect_rejects_a_final_warm_snapshot_that_never_arrives(self):
+        self.prepare_warm_collection()
+        with patch("cloud_suite.time.monotonic", side_effect=count()), patch("cloud_suite.time.sleep"):
+            with self.assertRaisesRegex(AssertionError, "final collection"):
+                self.collect_suite()
+        node = ET.parse(self.artifacts / "junit.xml").getroot().find("testcase/error")
+        self.assertEqual("CollectionError", node.get("type"))
+        self.assertIn("warm-final", node.get("message"))
+        self.assertLess(self.refresh_count, 40, "Missing evidence must exhaust one bounded collection window")
+
+    def test_standalone_collect_waits_for_the_matching_final_warm_snapshot(self):
+        self.late_events = [self.prepare_warm_collection()]
+        self.deliver_at = len(FIXTURES) + 2
+        with patch("cloud_suite.time.monotonic", side_effect=count()), patch("cloud_suite.time.sleep"):
+            self.collect_suite()
+        self.assertEqual({"warm": []}, self.failures())
+        self.assertEqual(self.deliver_at, self.refresh_count)
+
+    def test_saved_warm_request_identity_cannot_disappear_from_collected_evidence(self):
+        self.prepare_warm_collection()
+        self.events = [entry for entry in self.events if entry["requestId"] != "warm-final"]
+        with patch("cloud_suite.time.monotonic", side_effect=count()), patch("cloud_suite.time.sleep"):
+            with self.assertRaisesRegex(AssertionError, "final collection"):
+                self.collect_suite()
+        self.assertIn("warm-final", self.failures()["warm"][0])
 
 
 if __name__ == "__main__":

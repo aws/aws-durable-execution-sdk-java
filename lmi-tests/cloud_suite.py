@@ -807,7 +807,7 @@ def warm_environment(trace, target):
 
 
 def warm_case(cloud, fixture):
-    target, snapshots = None, []
+    target = None
     for batch in range(3):
         for scenario in ["success", "failure", "replay"]:
             marker = uuid.uuid4().hex[:12]
@@ -822,12 +822,12 @@ def warm_case(cloud, fixture):
             trace = cloud.events_for(item)
             target = warm_environment(trace, target)
             item.setdefault("warmEnvironment", target)
-            snapshots.extend(e for e in selected(trace, "SNAPSHOT") if e["environment"] == target)
+            item.setdefault("warmRequests", sorted(request_identities(trace)))
             if scenario == "replay":
                 item["replayHistory"] = cloud.history(item)
                 assert_replay(trace, item["replayHistory"], marker)
             assert_lifecycle(trace)
-    assert_warm_snapshots(snapshots)
+    # The final case audit compares resources only after collecting every return snapshot.
 
 
 def assert_warm_snapshots(snapshots):
@@ -839,6 +839,42 @@ def assert_warm_snapshots(snapshots):
             "Invocation-owned tasks, roots or queued work accumulated across warm batches")
     require(snapshots[-1]["threads"] <= snapshots[0]["threads"] + 16,
             "Thread growth exceeded bounded cache tolerance (+16)")
+
+
+def incomplete_warm_snapshots(cloud, items):
+    missing = set()
+    for item in items:
+        expected = {tuple(identity) for identity in item.get("warmRequests", [])}
+        if not expected:
+            raise CollectionError(f"Missing original warm request identities for {item['marker']}")
+        events = cloud.events_for(item)
+        if selected(events, "WRAPPER_ENTER") or selected(events, "WRAPPER_RETURN"):
+            warm_environment(events, item["warmEnvironment"])
+        for identity in expected | request_identities(events):
+            marker, environment, request_id = identity
+            trace = request_trace(events, marker, request_id, environment)
+            returns, snapshots = selected(trace, "WRAPPER_RETURN"), selected(trace, "SNAPSHOT")
+            if (len(returns) != 1 or len(snapshots) != 1
+                    or snapshots[0]["sequence"] >= returns[0]["sequence"]):
+                missing.add(identity)
+    return missing
+
+
+def collect_warm_snapshots(cloud, items, seconds=30):
+    """Complete the original warm measurements without changing their observation times."""
+    missing = incomplete_warm_snapshots(cloud, items)
+    if not missing:
+        return
+    deadline = time.monotonic() + seconds
+    fixtures = {item["fixture"] for item in items}
+    while missing:
+        if time.monotonic() >= deadline:
+            raise CollectionError(f"Incomplete warm wrapper-return snapshots for {sorted(missing)}")
+        for fixture in sorted(fixtures):
+            cloud.refresh(fixture)
+        missing = incomplete_warm_snapshots(cloud, items)
+        if missing:
+            time.sleep(1)
 
 
 def cases_for_fixture(cloud, fixture):
@@ -898,6 +934,9 @@ def assert_original_fixed_admission(cloud, items, admission):
 def assert_case_request_lifecycles(cloud, invocation_start, invocation_end=None):
     """Settlement cannot turn an earlier wrapper-ordering violation into a passing case."""
     items = cloud.invocations[invocation_start:invocation_end]
+    warm_items = [item for item in items if "warmEnvironment" in item]
+    if warm_items:
+        collect_warm_snapshots(cloud, warm_items)
     checked_cohorts, warm_snapshots = set(), []
     for item in items:
         events = cloud.events_for(item)
@@ -915,7 +954,7 @@ def assert_case_request_lifecycles(cloud, invocation_start, invocation_end=None)
         if "fixedAdmission" in item and item["fixedAdmission"] not in checked_cohorts:
             assert_original_fixed_admission(cloud, items, item["fixedAdmission"])
             checked_cohorts.add(item["fixedAdmission"])
-    if any("warmEnvironment" in item for item in items):
+    if warm_items:
         assert_warm_snapshots(warm_snapshots)
 
 
@@ -948,8 +987,8 @@ def record_failure(node, failure, kind=None):
 
 
 def save_case_assertions(cloud, records):
-    fields = {"marker", "scenario", "healthyAdmission", "timeoutAdmission", "warmEnvironment",
-              "fixedAdmission", "replayHistory"}
+    fields = {"marker", "fixture", "scenario", "healthyAdmission", "timeoutAdmission", "warmEnvironment",
+              "warmRequests", "fixedAdmission", "replayHistory"}
     save(ARTIFACTS / "case-assertions.json", {
         "runId": cloud.manifest["runId"], "commit": cloud.manifest["commit"],
         "cases": [{"name": node.get("name"), "items": [
