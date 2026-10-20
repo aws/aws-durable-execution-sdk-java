@@ -356,7 +356,7 @@ public abstract class BaseDurableOperation {
             }
         };
         try {
-            getContext().getDurableConfig().getExecutorService().execute(observed);
+            executionManager.executeOperationTask(this, observed);
         } catch (Throwable failure) {
             // No accepted task will settle a rejected submission. Complete the published future so shutdown cannot
             // wait forever, and remove its reservation without turning submission failure into suspension.

@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -12,7 +13,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static software.amazon.lambda.durable.TypeToken.get;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -38,6 +44,7 @@ import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
+import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
@@ -170,6 +177,97 @@ class DurableExecutorLifecycleRegressionTest {
         }
     }
 
+    @Test
+    void nestedWorkAdmittedWhileParentDrainsMustFinishBeforeEnd() throws Exception {
+        var parentReady = new CountDownLatch(1);
+        var releaseParent = new CountDownLatch(1);
+        var nestedEntered = new CountDownLatch(1);
+        var releaseNested = new CountDownLatch(1);
+        var nestedExited = new CountDownLatch(1);
+        var ended = new CountDownLatch(1);
+        var rootThread = new AtomicReference<Thread>();
+        var workers = Executors.newCachedThreadPool();
+        var callers = Executors.newSingleThreadExecutor();
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withExecutorService(workers)
+                .withCheckpointDelay(Duration.ZERO)
+                .withPlugins(info -> new DurableExecutionPlugin() {
+                    @Override
+                    public void onInvocationEnd(InvocationEndInfo end) {
+                        ended.countDown();
+                    }
+                })
+                .build();
+        var execution = Operation.builder()
+                .id("exec")
+                .type(OperationType.EXECUTION)
+                .status(OperationStatus.STARTED)
+                .startTimestamp(Instant.EPOCH)
+                .executionDetails(
+                        ExecutionDetails.builder().inputPayload("\"input\"").build())
+                .build();
+        var input = new DurableExecutionInput(
+                "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/lifecycle/exec",
+                "token",
+                CheckpointUpdatedExecutionState.builder().operations(execution).build());
+        try {
+            var invocation = callers.submit(() -> DurableExecutor.execute(
+                    input,
+                    null,
+                    get(String.class),
+                    (value, context) -> {
+                        rootThread.set(Thread.currentThread());
+                        context.runInChildContextAsync("parent", String.class, child -> {
+                            child.step("first", String.class, step -> "one");
+                            child.step("second", String.class, step -> "two");
+                            child.step("third", String.class, step -> "three");
+                            child.step("fourth", String.class, step -> "four");
+                            parentReady.countDown();
+                            await(releaseParent);
+                            child.stepAsync("fifth", String.class, step -> {
+                                nestedEntered.countDown();
+                                try {
+                                    await(releaseNested);
+                                    return "late";
+                                } finally {
+                                    nestedExited.countDown();
+                                }
+                            });
+                            await(nestedEntered);
+                            return "parent-result";
+                        });
+                        await(parentReady);
+                        return "root-result";
+                    },
+                    config));
+            await(parentReady);
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (System.nanoTime() < deadline
+                    && Arrays.stream(rootThread.get().getStackTrace())
+                            .noneMatch(frame -> frame.getMethodName().equals("awaitUserHandler"))) Thread.onSpinWait();
+            assertTrue(
+                    Arrays.stream(rootThread.get().getStackTrace())
+                            .anyMatch(frame -> frame.getMethodName().equals("awaitUserHandler")),
+                    "Root must enter actual drain");
+            releaseParent.countDown();
+            await(nestedEntered);
+            assertFalse(
+                    ended.await(300, TimeUnit.MILLISECONDS), "End overtook nested work admitted by draining parent");
+            assertEquals(1, nestedExited.getCount());
+            releaseNested.countDown();
+            invocation.get(5, TimeUnit.SECONDS);
+            assertEquals(0, ended.getCount());
+        } finally {
+            releaseParent.countDown();
+            releaseNested.countDown();
+            workers.shutdownNow();
+            callers.shutdownNow();
+            assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS));
+            assertTrue(callers.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
     private static JacksonSerDes failingErrorSerializer(RuntimeException failure) {
         return new JacksonSerDes() {
             @Override
@@ -180,6 +278,66 @@ class DurableExecutorLifecycleRegressionTest {
                 return super.serialize(value);
             }
         };
+    }
+
+    @Test
+    void interruptedDrainPreservesLateStepResultForReplay() throws Exception {
+        var recorded = new ConcurrentHashMap<String, Operation>();
+        var delegate = TestUtils.createMockClient();
+        var client = mock(DurableExecutionClient.class);
+        when(client.checkpoint(any(), any(), any())).thenAnswer(call -> {
+            var response = delegate.checkpoint(call.getArgument(0), call.getArgument(1), call.getArgument(2));
+            response.newExecutionState().operations().forEach(operation -> recorded.put(operation.id(), operation));
+            return response;
+        });
+        var users = Executors.newFixedThreadPool(2);
+        var caller = Executors.newSingleThreadExecutor();
+        var stepEntered = new CountDownLatch(1);
+        var handlerReturned = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var root = new AtomicReference<Thread>();
+        var bodies = new AtomicInteger();
+        var config = DurableConfig.builder()
+                .withExecutorService(users)
+                .withDurableExecutionClient(client)
+                .build();
+        BiFunction<String, DurableContext, String> handler = (value, context) -> {
+            context.stepAsync("late-result", String.class, step -> {
+                bodies.incrementAndGet();
+                stepEntered.countDown();
+                await(release);
+                return "stored";
+            });
+            root.set(Thread.currentThread());
+            handlerReturned.countDown();
+            return "root-result";
+        };
+        try {
+            var first = caller.submit(() -> execute(config, handler));
+            assertTrue(stepEntered.await(5, TimeUnit.SECONDS));
+            assertTrue(handlerReturned.await(5, TimeUnit.SECONDS));
+            root.get().interrupt();
+            assertThrows(TimeoutException.class, () -> first.get(100, TimeUnit.MILLISECONDS));
+            release.countDown();
+            assertInstanceOf(
+                    IllegalStateException.class,
+                    assertThrows(ExecutionException.class, () -> first.get(5, TimeUnit.SECONDS))
+                            .getCause());
+            var step = recorded.values().stream()
+                    .filter(operation -> "late-result".equals(operation.name()))
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals(OperationStatus.SUCCEEDED, step.status());
+            var replay = execute(config, handler, List.copyOf(recorded.values()));
+            assertEquals(ExecutionStatus.SUCCEEDED, replay.status());
+            assertEquals(1, bodies.get(), "The acknowledged late result must replay without repeating its side effect");
+        } finally {
+            release.countDown();
+            caller.shutdownNow();
+            users.shutdownNow();
+            assertTrue(caller.awaitTermination(5, TimeUnit.SECONDS));
+            assertTrue(users.awaitTermination(5, TimeUnit.SECONDS));
+        }
     }
 
     private static DurableExecutionPlugin recordingPlugin(AtomicInteger ended) {
@@ -193,6 +351,13 @@ class DurableExecutorLifecycleRegressionTest {
 
     private static DurableExecutionOutput execute(
             DurableConfig config, BiFunction<String, DurableContext, String> handler) {
+        return execute(config, handler, List.of());
+    }
+
+    private static DurableExecutionOutput execute(
+            DurableConfig config,
+            BiFunction<String, DurableContext, String> handler,
+            List<Operation> replayOperations) {
         var execution = Operation.builder()
                 .id("exec")
                 .type(OperationType.EXECUTION)
@@ -201,10 +366,12 @@ class DurableExecutorLifecycleRegressionTest {
                 .executionDetails(
                         ExecutionDetails.builder().inputPayload("\"input\"").build())
                 .build();
+        var operations = new ArrayList<>(replayOperations);
+        operations.add(execution);
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/lifecycle/exec",
                 "token",
-                CheckpointUpdatedExecutionState.builder().operations(execution).build());
+                CheckpointUpdatedExecutionState.builder().operations(operations).build());
         return DurableExecutor.execute(input, null, get(String.class), handler, config);
     }
 

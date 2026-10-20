@@ -159,8 +159,8 @@ public class DurableExecutor {
                 return finishInvocation(selected.value(), selected.failure());
             };
             // Cleanup is awaited even without plugins. Keep that path free of plugin MDC handling.
-            if (plugins.isEmpty()) return supplyWithoutPlugins(task, config.getExecutorService(), losingBodyFatal::get);
-            return supplyHandler(task, this::finishFailure, config.getExecutorService(), losingBodyFatal::get);
+            if (plugins.isEmpty()) return supplyWithoutPlugins(task, manager::executeRootTask, losingBodyFatal::get);
+            return supplyHandler(task, this::finishFailure, manager::executeRootTask, losingBodyFatal::get);
         }
 
         private O invokeHandler() {
@@ -547,7 +547,7 @@ public class DurableExecutor {
 
             // Checkpoint the large result and wait for it to complete
             executionManager
-                    .sendOperationUpdate(OperationUpdate.builder()
+                    .sendExecutionResultUpdate(OperationUpdate.builder()
                             .type(OperationType.EXECUTION)
                             .id(executionManager.getExecutionOperation().id())
                             .action(OperationAction.SUCCEED)
