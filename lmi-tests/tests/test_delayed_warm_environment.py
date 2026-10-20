@@ -16,7 +16,8 @@ from test_evidence import event
 
 
 class DelayedWarmEnvironmentTest(unittest.TestCase):
-    def run_case(self, late_original=False):
+    def run_case(self, late_original=False, duplicate_body=False, reverse_snapshots=False,
+                 final_threads=20, delayed_snapshot=False):
         cloud = Mock()
         cloud.manifest = {"runId": "case", "invocationTimeout": 60}
         cloud.invocations, visible = [], []
@@ -51,7 +52,17 @@ class DelayedWarmEnvironmentTest(unittest.TestCase):
             return records
         def launch(fixture, scenario, marker, **kwargs):
             item = Cloud.launch(cloud, fixture, scenario, marker, **kwargs)
-            visible.extend(trace(marker, marker, scenario, len(cloud.invocations) * 100))
+            records = trace(marker, marker, scenario, len(cloud.invocations) * 100)
+            if len(cloud.invocations) == 9:
+                snapshots = [entry for entry in records if entry["kind"] == "SNAPSHOT"]
+                snapshots[-1]["threads"] = final_threads
+                if reverse_snapshots:
+                    records.remove(snapshots[0])
+                    records.append(snapshots[0])
+                if delayed_snapshot:
+                    records.remove(snapshots[-1])
+                    cloud.delayed_snapshot = snapshots[-1]
+            visible.extend(records)
             return item
         cloud.launch.side_effect = launch
         cloud.refresh.side_effect = lambda fixture: list(visible)
@@ -61,6 +72,14 @@ class DelayedWarmEnvironmentTest(unittest.TestCase):
                                      for name, kind in [("success", "StepSucceeded"), ("failure", "StepFailed"),
                                                         ("resume", "WaitSucceeded")]]
         def stop(*args, **kwargs):
+            if duplicate_body:
+                replay = next(item for item in cloud.invocations if item["scenario"] == "replay")
+                resumed = next(entry for entry in visible if entry["marker"] == replay["marker"]
+                               and entry["kind"] == "WRAPPER_RETURN" and entry["status"] == "SUCCEEDED")
+                visible.append(event("BODY", resumed["sequence"] - 1.5, resumed["requestId"],
+                                     marker=replay["marker"], name="success", value=replay["marker"]))
+            if delayed_snapshot:
+                visible.append(cloud.delayed_snapshot)
             if late_original:
                 visible.extend(trace(cloud.invocations[0]["marker"], "late-original", "success", 0,
                                      environment="original-jvm", status="THREW"))
@@ -77,6 +96,27 @@ class DelayedWarmEnvironmentTest(unittest.TestCase):
 
     def test_one_jvm_warm_replay_sequence_still_passes(self):
         self.assertEqual((None, None), self.run_case())
+
+    def test_replay_body_delivered_during_cleanup_cannot_run_twice(self):
+        primary, cleanup = self.run_case(duplicate_body=True)
+        self.assertIsInstance(primary, AssertionError)
+        self.assertIn("body ran 2 times", str(primary))
+        self.assertIsNone(cleanup)
+
+    def test_last_warm_snapshot_uses_jvm_sequence_not_delivery_order(self):
+        primary, cleanup = self.run_case(reverse_snapshots=True, final_threads=50)
+        self.assertIsInstance(primary, AssertionError)
+        self.assertIn("Thread growth", str(primary))
+        self.assertIsNone(cleanup)
+
+    def test_reordered_snapshots_within_the_existing_tolerance_pass(self):
+        self.assertEqual((None, None), self.run_case(reverse_snapshots=True, final_threads=36))
+
+    def test_final_warm_snapshot_delivered_during_cleanup_is_rechecked(self):
+        primary, cleanup = self.run_case(delayed_snapshot=True, final_threads=50)
+        self.assertIsInstance(primary, AssertionError)
+        self.assertIn("Thread growth", str(primary))
+        self.assertIsNone(cleanup)
 
 
 if __name__ == "__main__":

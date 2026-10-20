@@ -351,6 +351,7 @@ def replay_case(cloud, fixture, scenario):
     wait_for_runtime_quiescence(cloud, fixture, victim["marker"])
     history = cloud.history(victim)
     events = cloud.events_for(victim)
+    victim["replayHistory"] = history
     assert_replay(events, history, victim["marker"])
     if scenario == "suspend":
         if anchor:
@@ -823,8 +824,15 @@ def warm_case(cloud, fixture):
             item.setdefault("warmEnvironment", target)
             snapshots.extend(e for e in selected(trace, "SNAPSHOT") if e["environment"] == target)
             if scenario == "replay":
-                assert_replay(trace, cloud.history(item), marker)
+                item["replayHistory"] = cloud.history(item)
+                assert_replay(trace, item["replayHistory"], marker)
             assert_lifecycle(trace)
+    assert_warm_snapshots(snapshots)
+
+
+def assert_warm_snapshots(snapshots):
+    # All snapshots belong to the same JVM, whose sequence gives causal order.
+    snapshots = sorted(snapshots, key=lambda event: event["sequence"])
     # Default cached pools retain idle threads: measure live invocation-owned work/queue instead.
     require(snapshots, "Missing warm task snapshots")
     require(all(e["liveTasks"] == 0 and e["liveRoots"] == 0 and e["queued"] == 0 for e in snapshots),
@@ -887,10 +895,10 @@ def assert_original_fixed_admission(cloud, items, admission):
                  progress_start="CHILD_BARRIER_PASSED" if scenario == "nested" else "BARRIER_PASSED")
 
 
-def assert_case_request_lifecycles(cloud, invocation_start):
+def assert_case_request_lifecycles(cloud, invocation_start, invocation_end=None):
     """Settlement cannot turn an earlier wrapper-ordering violation into a passing case."""
-    items = cloud.invocations[invocation_start:]
-    checked_cohorts = set()
+    items = cloud.invocations[invocation_start:invocation_end]
+    checked_cohorts, warm_snapshots = set(), []
     for item in items:
         events = cloud.events_for(item)
         assert_request_lifecycles(
@@ -899,11 +907,16 @@ def assert_case_request_lifecycles(cloud, invocation_start):
             assert_original_healthy_admission(events, item["healthyAdmission"])
         if "timeoutAdmission" in item:
             assert_original_timeout_admission(events, item["timeoutAdmission"])
+        if "replayHistory" in item:
+            assert_replay(events, item["replayHistory"], item["marker"])
         if "warmEnvironment" in item:
             warm_environment(events, item["warmEnvironment"])
+            warm_snapshots.extend(selected(events, "SNAPSHOT"))
         if "fixedAdmission" in item and item["fixedAdmission"] not in checked_cohorts:
             assert_original_fixed_admission(cloud, items, item["fixedAdmission"])
             checked_cohorts.add(item["fixedAdmission"])
+    if any("warmEnvironment" in item for item in items):
+        assert_warm_snapshots(warm_snapshots)
 
 
 def execute_case(cloud, fixture, case):
@@ -927,32 +940,54 @@ def execute_case(cloud, fixture, case):
     return primary_failure, cleanup_failure
 
 
+def record_failure(node, failure, kind=None):
+    kind = kind or ("failure" if isinstance(failure, AssertionError) else "error")
+    ET.SubElement(node, kind, type=type(failure).__name__, message=str(failure)).text = "".join(
+        traceback.format_exception(type(failure), failure, failure.__traceback__))
+    print(kind.upper(), node.get("name"), str(failure), flush=True)
+
+
+def save_case_assertions(cloud, records):
+    fields = {"marker", "scenario", "healthyAdmission", "timeoutAdmission", "warmEnvironment",
+              "fixedAdmission", "replayHistory"}
+    save(ARTIFACTS / "case-assertions.json", {
+        "runId": cloud.manifest["runId"], "commit": cloud.manifest["commit"],
+        "cases": [{"name": node.get("name"), "items": [
+            {key: value for key, value in item.items() if key in fields}
+            for item in cloud.invocations[start:end]]} for node, start, end in records]})
+
+
+def revalidate_cases(cloud, records):
+    for node, start, end in records:
+        if node.find("failure") is not None or node.find("error") is not None:
+            continue
+        try:
+            assert_case_request_lifecycles(cloud, start, end)
+        except Exception as failure:
+            record_failure(node, failure)
+
+
 def run_tests():
     manifest = json.loads(MANIFEST.read_text())
     if set(manifest["functions"]) != set(FIXTURES):
         raise PreconditionError("All required functions must be deployed before running the cloud suite")
     cloud = Cloud(manifest, ARTIFACTS)
     suite = ET.Element("testsuite", name="LMI cloud lifecycle")
+    records = []
     cases = [(fixture, name, case) for fixture in FIXTURES
              for name, case in cases_for_fixture(cloud, fixture)]
     try:
         for fixture, name, case in cases:
             started = time.monotonic()
             node = ET.SubElement(suite, "testcase", classname="LmiCloudLifecycle", name=name)
+            invocation_start = len(cloud.invocations)
             primary_failure, cleanup_failure = execute_case(cloud, fixture, case)
+            records.append((node, invocation_start, len(cloud.invocations)))
+            save_case_assertions(cloud, records)
             if primary_failure is not None:
-                kind = "failure" if isinstance(primary_failure, AssertionError) else "error"
-                ET.SubElement(node, kind, type=type(primary_failure).__name__,
-                              message=str(primary_failure)).text = "".join(traceback.format_exception(
-                                  type(primary_failure), primary_failure, primary_failure.__traceback__))
-                print(kind.upper(), name, str(primary_failure), flush=True)
+                record_failure(node, primary_failure)
             if cleanup_failure is not None:
-                ET.SubElement(node, "error", type=type(cleanup_failure).__name__,
-                              message=str(cleanup_failure)).text = "".join(traceback.format_exception(
-                                  type(cleanup_failure), cleanup_failure, cleanup_failure.__traceback__))
-                print("ERROR", name, "isolation cleanup:", str(cleanup_failure), flush=True)
-            if primary_failure is None and cleanup_failure is None:
-                print("PASS", name, flush=True)
+                record_failure(node, cleanup_failure, "error")
             refresh_failure = None
             try:
                 for current_fixture in manifest["functions"]:
@@ -960,6 +995,9 @@ def run_tests():
             except Exception as error:
                 refresh_failure = error
                 ET.SubElement(node, "error", type="CollectionError", message=str(error))
+            revalidate_cases(cloud, records)
+            if not len(node):
+                print("PASS", name, flush=True)
             node.set("time", str(round(time.monotonic() - started, 3)))
             write_junit(suite)
             if cleanup_failure is not None or refresh_failure is not None:
@@ -968,6 +1006,33 @@ def run_tests():
         cloud.close()
         write_junit(suite)
     require(not suite.findall(".//failure") and not suite.findall(".//error"), "LMI cloud cases failed; see JUnit and artifacts")
+
+
+def revalidate_collected_cases(cloud):
+    path = ARTIFACTS / "case-assertions.json"
+    if not path.exists():
+        return
+    saved = json.loads(path.read_text())
+    require(saved["runId"] == cloud.manifest["runId"] and saved["commit"] == cloud.manifest["commit"],
+            "Case assertions belong to a different deployed run")
+    suite = ET.parse(ARTIFACTS / "junit.xml").getroot()
+    nodes = {node.get("name"): node for node in suite.findall("testcase")}
+    records = []
+    for case in saved["cases"]:
+        start = len(cloud.invocations)
+        for item in case["items"]:
+            for field in ("healthyAdmission", "timeoutAdmission"):
+                if field in item:
+                    item[field] = tuple(item[field])
+            if "fixedAdmission" in item:
+                identities, scenario = item["fixedAdmission"]
+                item["fixedAdmission"] = (tuple(tuple(identity) for identity in identities), scenario)
+            cloud.invocations.append(item)
+        records.append((nodes[case["name"]], start, len(cloud.invocations)))
+    revalidate_cases(cloud, records)
+    write_junit(suite)
+    require(not suite.findall(".//failure") and not suite.findall(".//error"),
+            "LMI cloud cases failed after final collection; see JUnit and artifacts")
 
 
 def write_junit(suite):
@@ -1007,6 +1072,10 @@ def collect():
         except Exception as error:
             errors.append(str(error))
     cloud.pool.shutdown()
+    try:
+        revalidate_collected_cases(cloud)
+    except Exception as error:
+        errors.append(str(error))
     save(ARTIFACTS / "collection-errors.json", errors)
     require(not errors, "Evidence collection failed: " + "; ".join(errors))
 

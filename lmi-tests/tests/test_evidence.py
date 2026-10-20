@@ -545,11 +545,14 @@ class EvidenceTest(unittest.TestCase):
     @patch("cloud_suite.Cloud")
     def test_cleanup_failure_aborts_later_cases(self, cloud_type, fixture_cases, execute, write):
         cloud = cloud_type.return_value
+        cloud.invocations = []
+        cloud.manifest = {"runId": "run", "commit": "sha"}
         fixture_cases.side_effect = lambda instance, fixture: [(fixture + "-case", Mock())]
         with TemporaryDirectory() as directory:
             manifest = Path(directory) / "manifest.json"
             manifest.write_text(json.dumps({"functions": {fixture: {} for fixture in FIXTURES}}))
-            with patch("cloud_suite.MANIFEST", manifest), self.assertRaisesRegex(AssertionError, "cases failed"):
+            with patch("cloud_suite.MANIFEST", manifest), patch("cloud_suite.ARTIFACTS", Path(directory)), \
+                    self.assertRaisesRegex(AssertionError, "cases failed"):
                 run_tests()
         self.assertEqual(1, execute.call_count)
         suite = write.call_args.args[0]
@@ -585,7 +588,7 @@ class EvidenceTest(unittest.TestCase):
             {"kind": "WRAPPER_ENTER", "marker": item["marker"], "environment": "jvm"},
             {"kind": "WRAPPER_RETURN", "marker": item["marker"], "environment": "jvm"},
             {"kind": "SNAPSHOT", "marker": item["marker"], "environment": "jvm",
-             "liveTasks": 0, "liveRoots": 0, "queued": 0, "threads": 10}]
+             "liveTasks": 0, "liveRoots": 0, "queued": 0, "threads": 10, "sequence": 1}]
         warm_case(cloud, "default2")
         replay_items = [call.args[2] for call in wait_status.call_args_list]
         self.assertEqual(3, len(replay_items))

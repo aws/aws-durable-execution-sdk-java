@@ -6,6 +6,12 @@ and implements the cloud coverage requested in [#727](https://github.com/aws/aws
 The affected SDK is expected to fail. Do not invert assertions, skip regressions,
 or accept a retry that happens to pass after a lifecycle violation.
 
+Completed cases retain their original invocation range and assertion inputs in
+`artifacts/case-assertions.json`. Later fixture refreshes and the standalone
+`collect` command recheck their collected lifecycle, replay and warm-pool evidence
+and update JUnit if delayed logs reveal a violation. Warm thread counts use the
+JVM sequence, so CloudWatch delivery order cannot select an earlier endpoint.
+
 ## Test design
 
 * Each fixture is a published durable function with LMI invocation concurrency
