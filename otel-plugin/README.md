@@ -97,6 +97,20 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 </dependency>
 ```
 
+## Chained-invoke propagation
+
+Both views provide the calling operation's X-Ray context to the SDK's synchronous collector. New invoke START
+checkpoints carry that context in the flat optional `ChainedInvokeOptions.XAmznTraceId` field. The root POM's
+AWS SDK for Java 2.56.0 provides the generated typed setter. Deployed parent/child trace behavior still requires
+cloud validation. See [the implemented path and validation status](../docs/advanced/propagation-metadata.md).
+
+Execution-view operation spans are deferred until completion. Their placeholders can provide sampling metadata only
+with a visible provider using the SDK's `DurableSampler`, as configured by the application-owned builder constructor.
+Replacement samplers and opaque provider/agent facades therefore cause this view to abstain; the backend's existing
+omitted-header fallback applies. Invocation view uses the actual started operation span's flags; before that span is
+available, it applies the same sampling-policy restriction. Neither path changes
+the customer's sampler or creates a span just to obtain a sampling decision.
+
 ## Fallback execution roots
 
 When the backend supplies no complete remote parent, both views create and immediately end a `DurableExecutionRoot`
@@ -350,9 +364,15 @@ The supported SDK sampler follows this precedence, highest first:
    Eviction can cause another evaluation. The delegate still receives the canonical trace ID; drop and
    `RECORD_ONLY` decisions, attributes and updated trace state are retained.
 
-A visible plain replacement sampler supplies its root policy for execution-ancestor flags, then keeps its normal
-per-span sampling behavior. It receives no SDK sampling carrier and does not provide the SDK decision-reuse
-or full-result override guarantees above. Opaque providers cannot expose a later sampler replacement to the
+For a visible plain replacement sampler with no explicit upstream or same-trace ambient decision, a fallback anchor
+uses the provider's actual root sampling result for its parent context. It does not spend a preliminary decision before
+creating that root. Descendants still use the provider's own per-span sampling, so a stateful policy can select them
+differently. Explicit and ambient decisions retain their existing context behavior. The legacy complete-remote-parent
+path still evaluates root policy before span creation when sampling is undecided; a stateful replacement can observe
+that additional query. The query resolves the remote parent's otherwise-unknown sampled flag from the configured
+root policy; omitting it can bypass `ParentBased(alwaysOff)`. Supply an explicit upstream decision or retain
+`DurableSampler` when a policy result must be reused authoritatively. A plain replacement receives no SDK sampling carrier and does not provide SDK-wide decision
+reuse or full-result overrides. Opaque providers cannot expose a later sampler replacement to the
 application, so retain the wrapper through the documented customization setup.
 
 For explicit execution-level control, keep `DurableSampler` as the final installed sampler and set `Sampled` upstream,
@@ -366,6 +386,31 @@ can export only the anchor or only its Invocation child. This behavior is covere
 `ExecutionRootParityTest.plainReplacementRetainsIndependentPerSpanSampling`; installing `DurableSampler` restores the
 shared decision. Merely delaying anchor creation until terminal completion would not make an arbitrary replacement
 sampler consistent across spans.
+
+### Operation error details
+
+An explicit operation status of `FAILED`, `TIMED_OUT`, or `STOPPED` sets the OTel span to `ERROR`, including when the
+backend error container is absent or fully empty. No exception event is recorded when no details were supplied.
+An explicitly present empty string or stack-trace list still counts as supplied error details.
+Virtual (FLAT) contexts can have no terminal status; a non-null failure still sets `ERROR`, even when its backend
+error container supplies no details. That failure has no exception event unless details are available.
+An exception's own message (including an empty string), cause, suppressed failures,
+or explicit stack trace still supplies diagnostic information and retains `ERROR` and its exception event.
+
+This telemetry decision does not remove the SDK's failure notification: a present `ErrorObject`, including `{}`,
+remains a `DurableOperationException` in operation hooks and snapshots. An absent container retains its existing
+null metadata behavior. Persisted errors, caller failures, replay, and user-function error handling are unchanged.
+
+Execution-view operation spans with a known, nonzero backend end timestamp record the exception event at that
+same timestamp. This path uses the public `exception` event with standard `exception.type`, `exception.message`
+(when present), and `exception.stacktrace` attributes. Java's standard stack-trace text and the provider's ordinary
+event attribute count/value limits apply; native `recordException` resolver behavior is not preserved on this path.
+Invocation-view events and operations without a backend end (including the SDK's epoch-zero clock sentinel) keep
+native `recordException` behavior.
+
+When an Execution-view completion has no observed or backend start timestamp, its known end also supplies the start.
+Existing earliest-known-start selection is unchanged and is not clamped to the backend end, so clock skew can still
+produce an inverted interval. This correction does not add a broader clock or containment policy.
 
 ## Span Attributes
 
@@ -568,11 +613,11 @@ Apache-2.0
 
 The retained `src/test/compatibility/run_matrix.py` is the2.x regression harness for the additive minor fixes. It
 verifies released/current2.x artifacts in separate plugin-layer loaders without dependency-floor rejection. It is not
-a3.x compatibility bridge: the factory/provider migration deliberately requires3.x artifacts and rebuilt provider
+a 3.x compatibility bridge: the factory/provider migration deliberately requires 3.x artifacts and rebuilt provider
 layers. The major's provider migration tests validate clear rejection of selected legacy providers; the minor PRs
 retain their independently tested2.x compatibility guarantees.
 
 The inherited `@HandlerScoped` annotation names an explicit JDK `Function` opener. The core passes the plugin
 instance to it without discovering a plugin method by name. Bundled openers call private SDK implementation code.
 Custom opener classes need a public no-argument constructor accessible to the core. The factory/provider migration
-still requires3.x artifacts and intentionally final view classes; this is not a cross-major subclass compatibility bridge.
+still requires 3.x artifacts and intentionally final view classes; this is not a cross-major subclass compatibility bridge.

@@ -289,9 +289,9 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
                 Span.current(),
                 canonicalTraceId,
                 workflowSpanName,
-                Attributes.of(DURABLE_EXECUTION_ARN, durableExecutionArn));
-        // A null decision is unresolved on the agent path: defer to DurableSampler's own delegate (keyed by trace ID),
-        // rather than fabricating a decision that would bypass an installed drop/rate-limit policy.
+                Attributes.of(DURABLE_EXECUTION_ARN, info.durableExecutionArn()));
+        // An unresolved decision is supplied by the actual fallback root or the agent-side sampler. Do not invent
+        // a decision that bypasses an installed drop/rate-limit policy.
         this.samplingIntent = decision != null
                 ? DurableSamplingDecision.Intent.resolved(decision)
                 : DurableSamplingDecision.Intent.deferred(canonicalTraceId);
@@ -310,9 +310,11 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
                 OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider));
         DurableExecutionRoot.end(root, executionStartTime);
         this.executionRootSpan = root;
-        // Plain replacement providers retain the approved ancestor-flag fallback.
-        if (root != null && OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)) {
-            execCtx = new ExecutionTraceContext(root.getSpanContext());
+        // An unresolved plain fallback uses the real root's decision; explicit/ambient decisions and the
+        // legacy remote-parent path retain their existing behavior. Plain samplers still own each child decision.
+        if (executionRootSpan != null
+                && (OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider) || decision == null)) {
+            execCtx = new ExecutionTraceContext(executionRootSpan.getSpanContext());
         }
         this.executionTrace = new ExecutionTrace(canonicalTraceId, execCtx.traceFlags());
         this.executionAncestor = execCtx.executionAncestor();
@@ -454,6 +456,30 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
         }
     }
 
+    /** Produces metadata without creating spans or changing the configured provider/resource. */
+    @Override
+    public String providePropagationMetadata(
+            String executionArn, String operationId, String parentOperationId, String targetFunctionName) {
+        if (disabled() || !executionArn.equals(durableExecutionArn)) return null;
+        var trace = executionTrace;
+        if (trace == null) return null;
+        // An observed operation's actual context is authoritative, including invocation-view continuation segments.
+        var context = operationContexts.get(operationId);
+        if (context == null) {
+            // A planned context has no actual span decision yet. Preserve abstention when the effective sampler
+            // cannot be verified; normal invoke collection runs after the operation's Start hook.
+            if (sdkTracerProvider == null || !OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider))
+                return null;
+            // Before a new operation starts, use the same deterministic ID its initial span will receive.
+            context = SpanContext.create(
+                    trace.traceId(),
+                    idGenerator.generateSpanIdForOperation(durableExecutionArn, operationId),
+                    effectiveTraceFlags(),
+                    effectiveTraceState());
+        }
+        return OtelPropagationMetadata.fromContext(context);
+    }
+
     // ─── Operation hooks ─────────────────────────────────────────────────
 
     @Override
@@ -513,16 +539,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
             if (info.attempt() != null) {
                 span.setAttribute(DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
             }
-            if (info.error() != null) {
-                span.setStatus(StatusCode.ERROR, info.error().getMessage());
-                span.recordException(info.error());
-            } else if ("SUCCEEDED".equals(info.status()) || info.status() == null) {
-                // Only stamp OK on genuine success. onOperationEnd fires for every terminal status, and
-                // extractErrorFromOperation returns null for CANCELLED (always) and for FAILED/TIMED_OUT/STOPPED
-                // with no attached error object — those carry a non-null, non-SUCCEEDED status and must stay UNSET.
-                // A null status is a successful statusless virtual (FLAT CONTEXT) operation, which is OK.
-                span.setStatus(StatusCode.OK);
-            }
+            OtelPluginSupport.applyOperationStatus(span, info);
             span.end();
         } else {
             var parentContext = resolveParentContext(info.parentId());
@@ -553,14 +570,7 @@ public final class InvocationOtelPlugin implements DurableExecutionPlugin {
                 continuationSpan.setAttribute(
                         DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
             }
-            if (info.error() != null) {
-                continuationSpan.setStatus(StatusCode.ERROR, info.error().getMessage());
-                continuationSpan.recordException(info.error());
-            } else if ("SUCCEEDED".equals(info.status()) || info.status() == null) {
-                // See onOperationEnd (this-invocation branch): only genuine success (or a successful statusless
-                // virtual operation) is OK; error-less non-success statuses stay UNSET.
-                continuationSpan.setStatus(StatusCode.OK);
-            }
+            OtelPluginSupport.applyOperationStatus(continuationSpan, info);
 
             continuationSpan.end();
         }

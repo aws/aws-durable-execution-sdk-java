@@ -495,8 +495,11 @@ public final class DurableConfig {
          * failures and null factory results are logged and skipped. {@link VirtualMachineError} and {@link ThreadDeath}
          * propagate, including when wrapped by asynchronous completion/future exceptions.
          *
-         * <p>Calling this method replaces any previously registered factories. Plugins are called in registration
-         * order.
+         * <p>Calling this method replaces any previously registered factories. Hooks use registration order, except
+         * invocation end, which uses reverse order under the same-thread lifecycle contract. A fresh builder combines
+         * this explicit list with environment-selected factories. On a builder returned by
+         * {@link DurableConfig#toBuilder()}, this method replaces the complete resolved list and dynamic discovery
+         * remains disabled, including when the replacement list is empty.
          *
          * @param pluginFactories the plugin factories to register
          * @return This builder

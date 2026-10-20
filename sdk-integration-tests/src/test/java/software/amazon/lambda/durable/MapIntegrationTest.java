@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.MapConfig;
 import software.amazon.lambda.durable.config.NestingType;
@@ -2041,28 +2042,43 @@ class MapIntegrationTest {
                 attempted.getOperation("after").getId());
     }
 
-    @Test
-    void testChangedItemNameFailsCachedReplay() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void testChangedItemNameChecksServiceVisibleChildren(boolean retainChildren) {
         var suffix = new AtomicReference<>("first");
+        var itemCalls = new AtomicInteger();
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var result = context.map(
                     "replay-map",
                     List.of("a", "b"),
                     String.class,
-                    (item, index, ctx) -> item.toUpperCase(),
+                    (item, index, ctx) -> {
+                        itemCalls.incrementAndGet();
+                        return item.toUpperCase().repeat(retainChildren ? 140_000 : 1);
+                    },
                     MapConfig.builder()
                             .itemNamer((item, index) -> item + "-" + suffix.get())
                             .build());
-            return String.join(",", result.results());
+            context.wait("resume-after-map", Duration.ofSeconds(1));
+            return result.results().stream().mapToInt(String::length).sum();
         });
 
-        assertEquals(ExecutionStatus.SUCCEEDED, runner.runUntilComplete("test").getStatus());
+        assertEquals(ExecutionStatus.PENDING, runner.run("test").getStatus());
         suffix.set("second");
+        runner.advanceTime();
 
         var replay = runner.run("test");
 
-        assertEquals(ExecutionStatus.FAILED, replay.getStatus());
-        assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
+        if (retainChildren) {
+            assertEquals(ExecutionStatus.FAILED, replay.getStatus());
+            assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
+        } else {
+            // The service omits the completed map's children. Their old names cannot be checked from the cached
+            // aggregate alone; this does not relax the caller's requirement to keep names deterministic.
+            assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+            assertEquals(2, replay.getResult(Integer.class));
+        }
+        assertEquals(2, itemCalls.get(), "Completed item bodies are not repeated");
     }
 
     @Test
@@ -2114,9 +2130,11 @@ class MapIntegrationTest {
         assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
     }
 
-    @Test
-    void testRemovingItemNamerFailsCachedReplay() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void testRemovingItemNamerChecksServiceVisibleChildren(boolean retainChildren) {
         var useItemNamer = new AtomicBoolean(true);
+        var itemCalls = new AtomicInteger();
         var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
             var configBuilder = MapConfig.builder();
             if (useItemNamer.get()) {
@@ -2126,18 +2144,29 @@ class MapIntegrationTest {
                     "removed-namer-map",
                     List.of("a", "b"),
                     String.class,
-                    (item, index, ctx) -> item.toUpperCase(),
+                    (item, index, ctx) -> {
+                        itemCalls.incrementAndGet();
+                        return item.toUpperCase().repeat(retainChildren ? 140_000 : 1);
+                    },
                     configBuilder.build());
-            return String.join(",", result.results());
+            context.wait("resume-after-map", Duration.ofSeconds(1));
+            return result.results().stream().mapToInt(String::length).sum();
         });
 
-        assertEquals(ExecutionStatus.SUCCEEDED, runner.runUntilComplete("test").getStatus());
+        assertEquals(ExecutionStatus.PENDING, runner.run("test").getStatus());
         useItemNamer.set(false);
+        runner.advanceTime();
 
         var replay = runner.run("test");
 
-        assertEquals(ExecutionStatus.FAILED, replay.getStatus());
-        assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
+        if (retainChildren) {
+            assertEquals(ExecutionStatus.FAILED, replay.getStatus());
+            assertTrue(replay.getError().orElseThrow().errorType().contains("NonDeterministicExecutionException"));
+        } else {
+            assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+            assertEquals(2, replay.getResult(Integer.class));
+        }
+        assertEquals(2, itemCalls.get(), "Completed item bodies are not repeated");
     }
 
     @Test

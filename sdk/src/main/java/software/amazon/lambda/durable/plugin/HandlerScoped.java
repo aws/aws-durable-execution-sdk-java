@@ -16,11 +16,11 @@ import java.util.function.Function;
  * plugin's explicit opener, so unrelated methods on old subclasses retain their behavior. Older cores ignore this
  * optional metadata; plugin layer signatures require no new shared SDK type.
  *
- * <p>Scopes open and close on the handler thread, in reverse order on exit. Suspension/termination gives cleanup a
- * bounded opportunity to unwind. The handler retains ownership even after a timeout. Ordinary cleanup preserves the
- * winning outcome; observed VirtualMachineError/ThreadDeath from scope callbacks escapes the invocation caller.
- * Optional waiting reserves five seconds per configured plugin plus one second for shutdown/response. This is best
- * effort: existing finalizers and checkpoint draining can exceed it.
+ * <p>Scopes open on the handler thread and close on that same thread in reverse order. The invocation waits for all
+ * scope cleanup before dispatching invocation-end hooks, including during suspension or termination. No cleanup
+ * deadline or reserved time budget is enforced: a blocking close can delay invocation-end hooks and caller return
+ * indefinitely. Ordinary cleanup preserves the winning outcome; observed VirtualMachineError/ThreadDeath from scope
+ * callbacks escapes the invocation caller after cleanup completes.
  */
 @Inherited
 @Retention(RetentionPolicy.RUNTIME)

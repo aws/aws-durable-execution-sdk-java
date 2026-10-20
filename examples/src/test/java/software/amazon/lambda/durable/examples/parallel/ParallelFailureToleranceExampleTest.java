@@ -118,6 +118,28 @@ class ParallelFailureToleranceExampleTest {
         }
     }
 
+    @Test
+    void failsWhenOnlyFailedBranchesExceedTolerance() {
+        var handler = new ParallelFailureToleranceExample();
+        var runner = LocalDurableTestRunner.create(ParallelFailureToleranceExample.Input.class, handler);
+
+        // Both failures must complete to exceed tolerance. A racing good branch need not finish before that point.
+        var input = new ParallelFailureToleranceExample.Input(List.of("bad-svc-b", "bad-svc-c"), 1, 2);
+        var result = runner.runUntilComplete(input);
+
+        assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
+
+        var output = result.getResult(ParallelFailureToleranceExample.Output.class);
+        assertEquals(2, output.failed());
+        assertEquals(0, output.succeeded());
+        var parallel = new JacksonSerDes()
+                .deserialize(
+                        result.getOperation("call-services").getContextDetails().result(),
+                        TypeToken.get(ParallelResult.class));
+        assertEquals(ConcurrencyCompletionStatus.FAILURE_TOLERANCE_EXCEEDED, parallel.completionStatus());
+        assertEquals(2, parallel.failed());
+    }
+
     private static void await(CountDownLatch latch) {
         try {
             assertTrue(latch.await(5, TimeUnit.SECONDS), "Controlled branch scheduling was not released");

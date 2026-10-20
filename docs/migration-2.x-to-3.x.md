@@ -412,11 +412,11 @@ drain, output preparation, then End in reverse plugin registration order. The ca
 cannot cross End through a 500 ms caller handoff. Ordinary cleanup preserves the winning suspension/retry outcome,
 while observed scope-owned fatals propagate after owner cleanup. Fatal cancellation remains cooperative: peer tasks,
 admitted continuations and transport are joined before End, so non-cooperative code can delay caller return without a
-hard bound. Provider resources remain owned by the environment. The model-blocked outbound propagation groundwork remains separate.
+hard bound. Provider resources remain owned by the environment. Chained-invoke START checkpoints retain the released outbound propagation metadata path; collection uses the current invocation's plugin instances.
 
 Exclusive instrumentation metadata belongs to `DurableExecutionPluginFactory.getExclusiveGroup()` in 3.x, not the
 per-invocation plugin instance. Declare or forward the group on custom factory wrappers so configuration can validate
-it before construction. The 2.x minor release declares instance groups with inherited `@ExclusivePluginGroup` metadata; migrate that declaration to the factory in3.x so conflicts can be rejected before instances exist. Instance annotations are not a3.x factory registration contract.
+it before construction. The 2.x minor release declares instance groups with inherited `@ExclusivePluginGroup` metadata; migrate that declaration to the factory in 3.x so conflicts can be rejected before instances exist. Instance annotations are not a 3.x factory registration contract.
 
 Fatal operation/user-function hook errors are reported to the invocation before they are rethrown on the hook thread.
 The first plugin-owned fatal cause aborts operation waits and bypasses user-operation retry and error serialization.
@@ -428,7 +428,7 @@ If a user-function start hook fails fatally, successfully started hooks receive 
 owner thread before invocation finalization is signaled. Cleanup failures do not replace the original fatal error.
 Unrelated user-body failures retain their existing operation semantics. Invocation-end information remains a snapshot at
 dispatch: a fatal reported only during subsequent resource shutdown is rethrown before the response, without replaying an already delivered end hook.
-If an invocation-end hook itself throws a fatal error, the remaining end hooks are still attempted once in registration
+If an invocation-end hook itself throws a fatal error, the remaining end hooks are still attempted once in reverse registration
 order with that same snapshot. The first fatal is published immediately, before a later end hook can block while
 flushing, and is rethrown after the remaining hooks finish. A fatal already present in the end snapshot
 retains precedence over a later cleanup fatal. Ordinary event hooks retain immediate fatal propagation.
