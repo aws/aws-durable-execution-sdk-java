@@ -2,7 +2,22 @@
 
 The shared conformance repository owns the requirements and validators. This
 module supplies public-API handlers and SAM resources for both tracing views.
-Existing cases 1–20 and their resources are unchanged by the additions below.
+
+Cases 1–20 are documented in the shared
+[invocation-view requirements](https://github.com/aws/aws-durable-execution-conformance-tests/tree/main/packages/aws-durable-execution-conformance-tests-otel/test-requirements/otel-invocation)
+and [execution-view requirements](https://github.com/aws/aws-durable-execution-conformance-tests/tree/main/packages/aws-durable-execution-conformance-tests-otel/test-requirements/otel-execution).
+For case N, `otel-invocation-N.yaml` and `otel-execution-N.yaml` define the
+scenario, input, expected execution history/result, and telemetry assertions
+for each view. The [shared OTel README](https://github.com/aws/aws-durable-execution-conformance-tests/blob/main/packages/aws-durable-execution-conformance-tests-otel/README.md)
+explains the suites and how to run them.
+
+The Java implementations are the numbered `OtelN...` classes in the
+[handler directory](src/main/java/software/amazon/lambda/durable/conformance/otel/).
+The [SAM template](template.yaml) maps each case to its handler in both views.
+When investigating a run, read the shared requirements at the
+`conformance_test_ref` selected by the [OTel workflow](../.github/workflows/otel-conformance-tests.yml).
+
+The following notes cover cases 21–26.
 
 | Case | Scenario | Behavior |
 | --- | --- | --- |
