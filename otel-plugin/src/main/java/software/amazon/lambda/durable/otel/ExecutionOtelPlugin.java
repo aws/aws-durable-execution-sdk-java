@@ -236,8 +236,8 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
                 canonicalTraceId,
                 workflowSpanName,
                 Attributes.of(DURABLE_EXECUTION_ARN, arn()));
-        // A null decision is unresolved on the agent path: defer to DurableSampler's own delegate (keyed by trace ID),
-        // rather than fabricating a decision that would bypass an installed drop/rate-limit policy.
+        // An unresolved decision is supplied by the actual fallback root or the agent-side sampler. Do not invent
+        // a decision that bypasses an installed drop/rate-limit policy.
         samplingIntent = decision != null
                 ? DurableSamplingDecision.Intent.resolved(decision)
                 : DurableSamplingDecision.Intent.deferred(canonicalTraceId);
@@ -260,8 +260,10 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
             // Retain the ended root as a flush marker even if an onEnd processor throws during Start.
             executionRootSpan = root;
         }
-        // A visible plain replacement keeps its documented ancestor-flag fallback, without SDK-wide overrides.
-        if (executionRootSpan != null && OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)) {
+        // An unresolved plain fallback uses the real root's decision; explicit/ambient decisions and the
+        // legacy remote-parent path retain their existing behavior. Plain samplers still own each child decision.
+        if (executionRootSpan != null
+                && (OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider) || decision == null)) {
             execCtx = new ExecutionTraceContext(executionRootSpan.getSpanContext());
         }
         executionTrace = new ExecutionTrace(canonicalTraceId, execCtx.traceFlags());
@@ -457,6 +459,8 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         // created earlier, at onUserFunctionStart/onOperationStart). onOperationEnd's start timestamp can be a later
         // re-observed value than the start captured at onOperationStart, so take the minimum of the two.
         var startTimestamp = earliest(capturedStart, info.startTimestamp());
+        // Use the known end when no start was observed; retain any existing start even if clocks disagree.
+        if (startTimestamp == null) startTimestamp = info.endTimestamp();
         if (startTimestamp != null) {
             spanBuilder.setStartTimestamp(startTimestamp);
         }
@@ -477,16 +481,7 @@ public class ExecutionOtelPlugin implements DurableExecutionPlugin {
         if (info.attempt() != null) {
             span.setAttribute(DURABLE_ATTEMPT_NUMBER, info.attempt().longValue());
         }
-        if (info.error() != null) {
-            span.setStatus(StatusCode.ERROR, info.error().getMessage());
-            span.recordException(info.error());
-        } else if ("SUCCEEDED".equals(info.status()) || info.status() == null) {
-            // Only stamp OK on genuine success. onOperationEnd fires for every terminal status, and
-            // extractErrorFromOperation returns null for CANCELLED (always) and for FAILED/TIMED_OUT/STOPPED with no
-            // attached error object — those carry a non-null, non-SUCCEEDED status and must stay UNSET. A null status
-            // is a successful statusless virtual (FLAT CONTEXT) operation, which is OK.
-            span.setStatus(StatusCode.OK);
-        }
+        OtelPluginSupport.applyOperationStatus(span, info, info.endTimestamp());
 
         endSpan(span, info.endTimestamp());
     }
