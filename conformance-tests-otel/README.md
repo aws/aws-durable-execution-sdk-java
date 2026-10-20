@@ -36,8 +36,9 @@ and checks the actual user-span parents.
 
 Root handler probes preserve a valid same-trace ambient Lambda parent. Otherwise
 the plugin activates its canonical Invocation/Workflow context on the handler
-thread and restores it in the same-thread end hook. The plugin requires the
-core's 2.2.2 lifecycle capability; older cores are rejected during configuration.
+thread and restores it in the same-thread end hook. The plugin requires a core with the
+same-thread invocation-hook lifecycle capability; unsupported cores are rejected
+during configuration.
 Nested callbacks retain their named context or attempt parents. Execution-view
 context placeholders can be valid without recording, so probes do not require
 `isRecording()`.
