@@ -177,6 +177,27 @@ class FinalCollectionAuditTest(unittest.TestCase):
                 self.collect_suite()
         self.assertIn("warm-final", self.failures()["warm"][0])
 
+    def reject_changed_warm_cohort(self, base, threads):
+        final_snapshot = self.prepare_warm_collection()
+        self.events.append({**final_snapshot, "threads": 50})
+        self.events = [{**entry, "sequence": entry["sequence"] + 100,
+                        "nanos": entry["nanos"] + 100_000_000} for entry in self.events]
+        for kind, offset in [("WRAPPER_ENTER", 1), ("ROOT_ENTER", 2), ("ROOT_EXIT", 3),
+                             ("SNAPSHOT", 4), ("WRAPPER_RETURN", 5)]:
+            self.events.append(event(kind, base + offset, "extra-request", marker="warm",
+                                     status="SUCCEEDED", fixture="default2", runId="run",
+                                     executionArn="arn:warm", liveTasks=0, liveRoots=0,
+                                     queued=0, threads=threads))
+        with self.assertRaisesRegex(AssertionError, "final collection"):
+            self.collect_suite()
+        self.assertIn("Original warm request cohort changed", self.failures()["warm"][0])
+
+    def test_later_request_cannot_replace_the_pinned_final_snapshot(self):
+        self.reject_changed_warm_cohort(120, 20)
+
+    def test_earlier_request_cannot_replace_the_pinned_baseline_snapshot(self):
+        self.reject_changed_warm_cohort(20, 100)
+
 
 if __name__ == "__main__":
     unittest.main()

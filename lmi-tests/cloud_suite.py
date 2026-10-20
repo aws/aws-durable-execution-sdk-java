@@ -861,7 +861,9 @@ def incomplete_warm_snapshots(cloud, items):
         events = cloud.events_for(item)
         if selected(events, "WRAPPER_ENTER") or selected(events, "WRAPPER_RETURN"):
             warm_environment(events, item["warmEnvironment"])
-        for identity in expected | request_identities(events):
+        require(request_identities(events) <= expected,
+                "Original warm request cohort changed after collecting delayed evidence")
+        for identity in expected:
             marker, environment, request_id = identity
             trace = request_trace(events, marker, request_id, environment)
             returns, snapshots = selected(trace, "WRAPPER_RETURN"), selected(trace, "SNAPSHOT")

@@ -16,6 +16,8 @@ requires one snapshot before every matching wrapper return, including the final
 successful replay return, and allows one 30-second collection window for delayed
 measurements. Missing evidence is a collection error. Resource comparisons use
 those original snapshots and retain the existing zero-work and +16-thread limits.
+Newly discovered request identities invalidate the warm cohort instead of moving
+its original baseline or final measurement to another request.
 
 ## Test design
 
