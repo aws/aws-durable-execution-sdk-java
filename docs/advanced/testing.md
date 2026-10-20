@@ -37,6 +37,30 @@ var runner = LocalDurableTestRunner.create(Order.class, (order, ctx) -> {
 });
 ```
 
+### Replay State in Local Tests
+
+The local runner's invocation input and its `GetDurableExecutionState` view omit
+descendants of a `SUCCEEDED` or `FAILED` CONTEXT unless that context closed with
+`ReplayChildren: true`. Every ancestor is checked: a running intermediate context
+or an inner context that retains children does not override a completed ancestor
+that omits them. Root operations and operations with unknown parents remain visible.
+
+Only the closing update determines `ReplayChildren`. `START` does not record the
+option, and a close without it records `false`. A large child-context result can
+use retained children to rebuild its result on replay; already-completed steps
+still consume their stored results.
+
+This filtering applies to the state delivered to the SDK. Test results,
+`runner.getOperation(...)`, history, checkpoint response updates, and
+`UpdatedOperationIds` retain all their operation records or IDs. An updated ID can
+therefore refer to an operation omitted from the invocation input; the ID alone
+does not provide its missing metadata. The local state API returns a single page.
+
+Operation names must still remain deterministic. Pruning can prevent the SDK from
+detecting a changed child name when it consumes a cached parent result. Tests of
+name-mismatch detection should also cover retained children and running contexts,
+where the service still provides the relevant checkpoint metadata.
+
 ### Inspecting Operations
 
 ```java
