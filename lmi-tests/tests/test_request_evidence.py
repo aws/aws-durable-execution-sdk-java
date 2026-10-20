@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cloud_support import PreconditionError, assert_lifecycle, assert_overlap
-from cloud_suite import (assert_request_lifecycles, cleanup_progress_observed, overlap_case, replay_case, runtime_requests_drained,
+from cloud_suite import (assert_request_lifecycles, cleanup_progress_observed, execute_case, overlap_case, replay_case, runtime_requests_drained,
                          wait_for_runtime_quiescence)
 from test_evidence import event
 
@@ -146,10 +146,16 @@ class SuspensionCleanupTest(unittest.TestCase):
     def heartbeat(self, request="healthy", environment="jvm"):
         return event("HEARTBEAT", 11, request, environment, marker="case-healthy", epochMillis=11)
 
-    def run_case(self, events, delayed=(), refresh_delayed=()):
+    def run_case(self, events, delayed=(), refresh_delayed=(), cleanup_duplicate=False):
         cloud = Mock()
         cloud.events = dict(enumerate(events))
-        cloud.launch.side_effect = lambda fixture, scenario, marker, **kwargs: {"marker": marker}
+        cloud.invocations = []
+        cloud.manifest = {"invocationTimeout": 60}
+        def launch(fixture, scenario, marker, **kwargs):
+            item = {"marker": marker, "scenario": scenario}
+            cloud.invocations.append(item)
+            return item
+        cloud.launch.side_effect = launch
         cloud.events_for.side_effect = lambda item: [e for e in cloud.events.values() if e["marker"] == item["marker"]]
         refresh_count = 0
         def refresh(fixture):
@@ -174,8 +180,20 @@ class SuspensionCleanupTest(unittest.TestCase):
         cloud.poll.side_effect = poll
         with patch("cloud_suite.uuid.uuid4", return_value=Mock(hex="case")), \
              patch("cloud_suite.time.monotonic", side_effect=count(step=10)), patch("cloud_suite.time.sleep"):
+            if cleanup_duplicate:
+                def cleanup(*args):
+                    cloud.events[len(cloud.events)] = event(
+                        "BODY", 20.5, "resume", marker=self.marker, name="success", value=self.marker)
+                with patch("cloud_suite.cleanup_case", side_effect=cleanup):
+                    return execute_case(cloud, "default2", lambda: replay_case(cloud, "default2", "suspend"))
             replay_case(cloud, "default2", "suspend")
         return cloud
+
+    def test_replay_body_delivered_after_the_case_assertion_is_rechecked(self):
+        primary, cleanup = self.run_case(self.evidence() + [self.heartbeat()], cleanup_duplicate=True)
+        self.assertIsInstance(primary, AssertionError)
+        self.assertIn("body ran 2 times", str(primary))
+        self.assertIsNone(cleanup)
 
     def test_heartbeat_between_cleanups_does_not_prove_progress_during_cleanup(self):
         with self.assertRaisesRegex(AssertionError, "Evidence deadline exceeded"):

@@ -14,6 +14,7 @@ import software.amazon.lambda.durable.exception.InvokeFailedException;
 import software.amazon.lambda.durable.exception.InvokeStoppedException;
 import software.amazon.lambda.durable.exception.InvokeTimedOutException;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.plugin.PropagationInput;
 import software.amazon.lambda.durable.serde.SerDes;
 
 /**
@@ -64,13 +65,25 @@ public class InvokeOperation<T, I> extends SerializableDurableOperation<T> {
     }
 
     private void startInvocation() {
+        var serializedPayload = payloadSerDes.serialize(this.payload, serDesContext("invoke-payload"));
+        var options = ChainedInvokeOptions.builder().functionName(functionName).tenantId(invokeConfig.tenantId());
+        var plugins = getContext().getDurableConfig().getPluginRunner();
+        if (!plugins.isEmpty()) {
+            // onOperationStart has already established the calling operation's span. Only a new START
+            // collects metadata; replay consumes the persisted outcome without recomputing it.
+            var metadata = plugins.providePropagationMetadata(new PropagationInput(
+                    executionManager.getDurableExecutionArn(),
+                    getOperationId(),
+                    getContext().getParentId(),
+                    functionName));
+            if (metadata != null && metadata.xAmznTraceId() != null) {
+                options.xAmznTraceId(metadata.xAmznTraceId());
+            }
+        }
         var update = OperationUpdate.builder()
                 .action(OperationAction.START)
-                .chainedInvokeOptions(ChainedInvokeOptions.builder()
-                        .functionName(functionName)
-                        .tenantId(invokeConfig.tenantId())
-                        .build())
-                .payload(payloadSerDes.serialize(this.payload, serDesContext("invoke-payload")));
+                .chainedInvokeOptions(options.build())
+                .payload(serializedPayload);
 
         sendOperationUpdate(update);
     }

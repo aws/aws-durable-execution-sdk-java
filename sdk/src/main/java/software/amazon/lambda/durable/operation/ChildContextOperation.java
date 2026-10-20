@@ -253,7 +253,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
         // throw a general failed exception if a user exception is not reconstructed
         return switch (getSubType()) {
-            case WAIT_FOR_CALLBACK -> handleWaitForCallbackFailure();
+            case WAIT_FOR_CALLBACK -> handleWaitForCallbackFailure(op);
             case MAP_ITERATION -> new MapIterationFailedException(op);
             case PARALLEL_BRANCH -> new ParallelBranchFailedException(op);
             case RUN_IN_CHILD_CONTEXT, WITH_RETRY -> new ChildContextFailedException(op);
@@ -274,7 +274,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
                 .build();
     }
 
-    private Throwable handleWaitForCallbackFailure() {
+    private Throwable handleWaitForCallbackFailure(Operation failedContext) {
         var childrenOps = getChildOperations();
         var callbackOp = childrenOps.stream()
                 .filter(o -> o.type() == OperationType.CALLBACK)
@@ -284,32 +284,35 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
                 .filter(o -> o.type() == OperationType.STEP)
                 .findFirst()
                 .orElse(null);
-        if (callbackOp != null) {
-            // if callback failed
-            if (isTerminalStatus(callbackOp.status())) {
-                switch (callbackOp.status()) {
-                    case FAILED -> {
-                        return new CallbackFailedException(callbackOp);
-                    }
-                    case TIMED_OUT -> {
-                        return new CallbackTimeoutException(callbackOp);
-                    }
-                }
-            }
+        var knownFailure = knownWaitForCallbackFailure(callbackOp, submitterOp);
+        if (knownFailure != null) return knownFailure;
 
-            // if submitter failed
-            if (submitterOp != null
-                    && isTerminalStatus(submitterOp.status())
-                    && submitterOp.status() != OperationStatus.SUCCEEDED) {
-                var stepError = submitterOp.stepDetails().error();
-                if (StepInterruptedException.isStepInterruptedException(stepError)) {
-                    return new CallbackSubmitterException(callbackOp, new StepInterruptedException(submitterOp));
-                } else {
-                    return new CallbackSubmitterException(callbackOp, new StepFailedException(submitterOp));
-                }
-            }
+        // Completed child contexts may replay without their nested operations.
+        // Report the stored context failure without guessing its callback/submitter
+        // category or fabricating the child operation that is no longer available.
+        if (callbackOp == null
+                || callbackOp.callbackDetails() == null
+                || submitterOp == null
+                || submitterOp.stepDetails() == null) {
+            return new ChildContextFailedException(failedContext);
         }
 
         return new IllegalStateException("Unknown waitForCallback status");
+    }
+
+    private Throwable knownWaitForCallbackFailure(Operation callbackOp, Operation submitterOp) {
+        if (callbackOp == null || callbackOp.callbackDetails() == null) return null;
+        if (callbackOp.status() == OperationStatus.FAILED) return new CallbackFailedException(callbackOp);
+        if (callbackOp.status() == OperationStatus.TIMED_OUT) return new CallbackTimeoutException(callbackOp);
+        if (submitterOp == null
+                || submitterOp.stepDetails() == null
+                || !isTerminalStatus(submitterOp.status())
+                || submitterOp.status() == OperationStatus.SUCCEEDED) return null;
+
+        var stepError = submitterOp.stepDetails().error();
+        var stepFailure = StepInterruptedException.isStepInterruptedException(stepError)
+                ? new StepInterruptedException(submitterOp)
+                : new StepFailedException(submitterOp);
+        return new CallbackSubmitterException(callbackOp, stepFailure);
     }
 }

@@ -32,7 +32,7 @@ import software.amazon.lambda.durable.testing.TestResult;
  * in memory, simulating the durable execution backend without AWS infrastructure.
  */
 public class LocalMemoryExecutionClient implements DurableExecutionClient {
-    // use LinkedHashMap to keep insertion order
+    // Keep insertion order. Individual accesses synchronize internally; use a getAllOperations() snapshot for streams.
     private final Map<String, Operation> existingOperations = Collections.synchronizedMap(new LinkedHashMap<>());
     private final EventProcessor eventProcessor = new EventProcessor();
     private final List<OperationUpdate> operationUpdates = new CopyOnWriteArrayList<>();
@@ -85,8 +85,10 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     @Override
     public GetDurableExecutionStateResponse getExecutionState(String arn, String checkpointToken, String marker) {
-        // local runner doesn't use this API at all
-        throw new UnsupportedOperationException("getExecutionState is not supported");
+        // A single page of service-visible state. Checkpoint responses and inspection retain the full store.
+        return GetDurableExecutionStateResponse.builder()
+                .operations(ReplayChildrenPruning.visibleOperations(getAllOperations()))
+                .build();
     }
 
     /** Get all operation updates that have been sent to this client. Useful for testing and verification. */
@@ -130,7 +132,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     /** Returns the operation with the given name, or null if not found. */
     public Operation getOperationByName(String name) {
-        return existingOperations.values().stream()
+        return getAllOperations().stream()
                 .filter(op -> name.equals(op.name()))
                 .findFirst()
                 .orElse(null);
@@ -138,7 +140,9 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
 
     /** Returns all operations currently stored. */
     public List<Operation> getAllOperations() {
-        return existingOperations.values().stream().toList();
+        synchronized (existingOperations) {
+            return List.copyOf(existingOperations.values());
+        }
     }
 
     /**
@@ -159,7 +163,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     /** Build TestResult with the execution identity needed to inspect context-aware operation payloads. */
     public <O> TestResult<O> toTestResult(
             DurableExecutionOutput output, TypeToken<O> resultType, SerDes serDes, String executionArn) {
-        var testOperations = existingOperations.values().stream()
+        var testOperations = getAllOperations().stream()
                 .filter(op -> op.type() != OperationType.EXECUTION)
                 .map(op -> new TestOperation(op, eventProcessor.getEventsForOperation(op.id()), serDes, executionArn))
                 .toList();
@@ -261,7 +265,7 @@ public class LocalMemoryExecutionClient implements DurableExecutionClient {
     }
 
     private Operation findOperationByCallbackId(String callbackId) {
-        return existingOperations.values().stream()
+        return getAllOperations().stream()
                 .filter(op -> op.callbackDetails() != null
                         && callbackId.equals(op.callbackDetails().callbackId()))
                 .findFirst()
