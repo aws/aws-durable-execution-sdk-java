@@ -370,7 +370,8 @@ class PluginIntegrationTest {
 
         // The end hook is the only point at which a plugin can flush: releasePlugins() calls nothing on the
         // instances it drops and the contract has no close(). An exit that skips it therefore discards the whole
-        // invocation's telemetry -- Insight's record and every exporter's flush, and both OTel plugins' spans --
+        // invocation's telemetry -- Durable Execution Telemetry's record and every exporter's flush, and both OTel
+        // plugins' spans --
         // and can leave a record queued for a pump that exports it after this invocation has returned.
         assertEquals(1, plugin.invocationStarts.size());
         assertEquals(1, plugin.invocationEnds.size(), "a start hook must not be left without its end hook");

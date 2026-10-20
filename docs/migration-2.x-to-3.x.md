@@ -205,11 +205,11 @@ DurableConfig.builder().withPlugins(InvocationOtelPlugin.factory()).build();
 
 The same applies to `ExecutionOtelPlugin` and to the overloads that take an `SdkTracerProviderBuilder` and an `OtelPluginConfig`. See the [OTel plugin README](../otel-plugin/README.md#configuration) for the full set.
 
-`WorkflowInsight.workflowInsight(config)` now returns a `DurableExecutionPluginFactory` instead of a `DurableExecutionPlugin`, so the registration source line is unchanged:
+`DurableExecutionTelemetry.durableExecutionTelemetry(config)` now returns a `DurableExecutionPluginFactory` instead of a `DurableExecutionPlugin`, so the registration source line is unchanged:
 
 ```java
 DurableConfig.builder()
-        .withPlugins(WorkflowInsight.workflowInsight(config))
+        .withPlugins(DurableExecutionTelemetry.durableExecutionTelemetry(config))
         .build();
 ```
 
