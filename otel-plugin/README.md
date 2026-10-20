@@ -120,6 +120,20 @@ If you configure your own `SdkTracerProviderBuilder`, add the OpenTelemetry SDK 
 </dependency>
 ```
 
+## Chained-invoke propagation
+
+Both views provide the calling operation's X-Ray context to the SDK's synchronous collector. New invoke START
+checkpoints carry that context in the flat optional `ChainedInvokeOptions.XAmznTraceId` field. The root POM's
+AWS SDK for Java 2.56.0 provides the generated typed setter. Deployed parent/child trace behavior still requires
+cloud validation. See [the implemented path and validation status](../docs/advanced/propagation-metadata.md).
+
+Execution-view operation spans are deferred until completion. Their placeholders can provide sampling metadata only
+with a visible provider using the SDK's `DurableSampler`, as configured by the application-owned builder constructor.
+Replacement samplers and opaque provider/agent facades therefore cause this view to abstain; the backend's existing
+omitted-header fallback applies. Invocation view uses the actual started operation span's flags; before that span is
+available, it applies the same sampling-policy restriction. Neither path changes
+the customer's sampler or creates a span just to obtain a sampling decision.
+
 ## Fallback execution roots
 
 When the backend supplies no complete remote parent and the installed SDK sampler selects `RECORD_AND_SAMPLE`,
