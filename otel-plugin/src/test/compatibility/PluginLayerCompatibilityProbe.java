@@ -34,7 +34,7 @@ public class PluginLayerCompatibilityProbe {
     private static final String HEADER = "Root=1-6955b900-123456789012345678901234;Parent=" + PARENT + ";Sampled=1";
     private static final String CAPABILITY_DIAGNOSTIC =
             "This OpenTelemetry plugin requires same-thread invocation hooks from the Durable Execution"
-                    + " core (2.2.2 lifecycle capability). Upgrade the core together with the plugin layer.";
+                    + " core. Upgrade the core together with the plugin layer.";
 
     public static void main(String[] args) throws Exception {
         if (args.length == 1 && args[0].equals("--self-test")) {

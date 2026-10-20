@@ -280,7 +280,8 @@ scope is restored in `finally`. On a core that satisfies the same-thread lifecyc
 the plugin retains the legacy carrier fallback. Header support adds no further provider API or dependency requirement;
 consuming the LMI field requires both updated core and plugin. Shared plugin-instance concurrency remains the separate factory-lifetime change.
 
-**Record source compatibility boundary:** `InvocationInfo` now has eight components. Its previous 4-, 5-, 6- and
+**Record source compatibility boundary:** This shape change is intended for the next major release.
+`InvocationInfo` now has eight components. Its previous 4-, 5-, 6- and
 7-argument constructors and seven accessors remain; the old constructors set the new field to null. Existing constructor
 source and compiled calls continue to work. Previously compiled seven-component record patterns also continue to run,
 but recompiling that pattern against the new record requires an eighth binding, such as `var xRayTraceId`:

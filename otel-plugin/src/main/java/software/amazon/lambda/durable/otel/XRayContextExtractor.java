@@ -52,7 +52,7 @@ public class XRayContextExtractor implements ContextExtractor {
         try {
             return info.xRayTraceId();
         } catch (NoSuchMethodError olderCore) {
-            // New plugin layers still work on a released core whose InvocationInfo has no optional field accessor.
+            // Preserve extractor compatibility when InvocationInfo predates the optional accessor.
             return null;
         }
     }
