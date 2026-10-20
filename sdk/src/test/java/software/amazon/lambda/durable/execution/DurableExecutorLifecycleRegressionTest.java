@@ -187,6 +187,7 @@ class DurableExecutorLifecycleRegressionTest {
         var release = new CountDownLatch(1);
         var ended = new CountDownLatch(1);
         var manager = new AtomicReference<ExecutionManager>();
+        var handlerThread = new AtomicReference<Thread>();
         var bodies = new AtomicInteger();
         var users = Executors.newFixedThreadPool(running ? 2 : 1);
         var callers = Executors.newSingleThreadExecutor();
@@ -204,6 +205,7 @@ class DurableExecutorLifecycleRegressionTest {
         try {
             var invocation = callers.submit(() -> execute(config, (value, context) -> {
                 manager.set(((DurableContextImpl) context).getExecutionManager());
+                handlerThread.set(Thread.currentThread());
                 context.stepAsync("held", String.class, step -> {
                     bodies.incrementAndGet();
                     entered.countDown();
@@ -221,6 +223,11 @@ class DurableExecutorLifecycleRegressionTest {
                 return "root-result";
             }));
             await(submitted);
+            // Exercise cancellation of an owner the drain is already awaiting. Cancellation completed before the
+            // wait begins need not select the same delivery-failure path as interruption of that existing wait.
+            var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (System.nanoTime() < deadline && !awaitingHandlerCompletion(handlerThread.get())) Thread.onSpinWait();
+            assertTrue(awaitingHandlerCompletion(handlerThread.get()));
             var task = manager.get().getActiveExecutorTasks().stream()
                     .filter(handle -> handle.role() == ExecutorTaskHandle.Role.STEP)
                     .findFirst()
@@ -338,6 +345,14 @@ class DurableExecutorLifecycleRegressionTest {
             assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS));
             assertTrue(callers.awaitTermination(5, TimeUnit.SECONDS));
         }
+    }
+
+    private static boolean awaitingHandlerCompletion(Thread thread) {
+        var stack = Arrays.asList(thread.getStackTrace());
+        return stack.stream().anyMatch(frame -> frame.getMethodName().equals("awaitUserHandler"))
+                && stack.stream()
+                        .anyMatch(frame -> frame.getClassName().equals("java.util.concurrent.CompletableFuture")
+                                && frame.getMethodName().equals("waitingGet"));
     }
 
     private static JacksonSerDes failingErrorSerializer(RuntimeException failure) {
