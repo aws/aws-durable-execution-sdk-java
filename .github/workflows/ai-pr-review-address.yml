@@ -25,7 +25,7 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    uses: aws/aws-durable-execution-ci/.github/workflows/ai-work-item-resolver.yml@8ea82196db65b5b0dd67f0b72bb03fa2fa9cf65b # v0.4.0
+    uses: aws/aws-durable-execution-ci/.github/workflows/ai-work-item-resolver.yml@8a06a1e5c82083a9224af9d489ddd030be44d978 # v0.5.0
     with:
       work-scope: review
       upload-work-items: true

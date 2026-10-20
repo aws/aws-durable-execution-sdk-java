@@ -88,9 +88,10 @@ public class OperationProcessor {
     private static ContextDetails buildContextDetails(OperationUpdate update) {
         var detailsBuilder = ContextDetails.builder().result(update.payload()).error(update.error());
 
-        if (update.contextOptions() != null
-                && Boolean.TRUE.equals(update.contextOptions().replayChildren())) {
-            detailsBuilder.replayChildren(true);
+        if (update.action() == OperationAction.SUCCEED || update.action() == OperationAction.FAIL) {
+            // The service ignores this option on START. Only the closing update determines retention.
+            detailsBuilder.replayChildren(update.contextOptions() != null
+                    && Boolean.TRUE.equals(update.contextOptions().replayChildren()));
         }
 
         return detailsBuilder.build();

@@ -421,9 +421,10 @@ public class LocalDurableTestRunner<I, O> {
         }
         var executionOp = executionOpBuilder.build();
 
-        // Load previous non-EXECUTION operations; the single merged EXECUTION operation above already represents the
-        // execution's state.
-        var existingOps = storage.getAllOperations().stream()
+        // Invocation input follows the same child-retention rule as GetDurableExecutionState. The inspection store
+        // remains complete; the single merged EXECUTION operation above already represents the execution's state.
+        var checkpointToken = UUID.randomUUID().toString();
+        var existingOps = storage.getExecutionState(executionArn, checkpointToken, null).operations().stream()
                 .filter(op -> op.type() != OperationType.EXECUTION)
                 .toList();
         var allOps = new ArrayList<>(List.of(executionOp));
@@ -435,7 +436,7 @@ public class LocalDurableTestRunner<I, O> {
 
         return new DurableExecutionInput(
                 executionArn,
-                UUID.randomUUID().toString(),
+                checkpointToken,
                 CheckpointUpdatedExecutionState.builder().operations(allOps).build(),
                 updatedOperationIds);
     }
