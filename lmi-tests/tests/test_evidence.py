@@ -585,10 +585,13 @@ class EvidenceTest(unittest.TestCase):
         cloud.launch.side_effect = lambda fixture, scenario, marker, target=None: {
             "marker": marker, "scenario": scenario}
         cloud.events_for.side_effect = lambda item: [
-            {"kind": "WRAPPER_ENTER", "marker": item["marker"], "environment": "jvm"},
-            {"kind": "WRAPPER_RETURN", "marker": item["marker"], "environment": "jvm"},
+            {"kind": "WRAPPER_ENTER", "marker": item["marker"], "environment": "jvm",
+             "requestId": item["marker"], "sequence": 0},
+            {"kind": "WRAPPER_RETURN", "marker": item["marker"], "environment": "jvm",
+             "requestId": item["marker"], "sequence": 2},
             {"kind": "SNAPSHOT", "marker": item["marker"], "environment": "jvm",
-             "liveTasks": 0, "liveRoots": 0, "queued": 0, "threads": 10, "sequence": 1}]
+             "requestId": item["marker"], "liveTasks": 0, "liveRoots": 0,
+             "queued": 0, "threads": 10, "sequence": 1}]
         warm_case(cloud, "default2")
         replay_items = [call.args[2] for call in wait_status.call_args_list]
         self.assertEqual(3, len(replay_items))
