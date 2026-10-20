@@ -80,6 +80,6 @@ public class TestUtils {
                     return null;
                 })
                 .when(manager)
-                .executeOperationTask(any(), any());
+                .executeOperationTask(any(), any(), any());
     }
 }

@@ -356,7 +356,12 @@ public abstract class BaseDurableOperation {
             }
         };
         try {
-            executionManager.executeOperationTask(this, observed);
+            executionManager.executeOperationTask(this, observed, failure -> {
+                // A task cancelled before entry has no worker finally block to release its active registration.
+                if (operationId != null) executionManager.cancelThreadRegistration(operationId);
+                if (failure != null) completion.completeExceptionally(failure);
+                else completion.complete(null);
+            });
         } catch (Throwable failure) {
             // No accepted task will settle a rejected submission. Complete the published future so shutdown cannot
             // wait forever, and remove its reservation without turning submission failure into suspension.

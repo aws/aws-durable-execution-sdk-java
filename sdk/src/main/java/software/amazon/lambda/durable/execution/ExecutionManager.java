@@ -26,8 +26,10 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -347,21 +349,33 @@ public class ExecutionManager implements SafeCloseable {
         return submitOperationTask(operation, action, false);
     }
 
-    /** Tracks an operation wrapper while retaining its intentional fatal escape on the actual worker. */
-    public void executeOperationTask(BaseDurableOperation operation, Runnable command) {
-        submitOperationTask(operation, command, true);
+    /** Tracks an operation wrapper and settles skipped owners only after their registered task has exited. */
+    public void executeOperationTask(
+            BaseDurableOperation operation, Runnable command, Consumer<Throwable> onUnstartedExit) {
+        var started = new AtomicBoolean();
+        ExecutorTaskHandle<Void> task = registerExecutorTask(
+                operationRole(operation),
+                operation,
+                durableConfig.getExecutorService(),
+                () -> {
+                    started.set(true);
+                    command.run();
+                    return null;
+                },
+                true);
+        task.exit().thenRun(() -> {
+            if (!started.get()) {
+                // A queued cancellation can exit without entering the operation's wrapper. Logical cancellation
+                // of an already-running action must not settle that owner's private completion early.
+                task.completion().whenComplete((ignored, failure) -> onUnstartedExit.accept(failure));
+            }
+        });
     }
 
     private CompletableFuture<Void> submitOperationTask(
             BaseDurableOperation operation, Runnable action, boolean preserveWorkerFailure) {
-        var role = operation.getType() == OperationType.STEP
-                ? ExecutorTaskHandle.Role.STEP
-                : switch (operation.getSubType()) {
-                    case MAP, PARALLEL -> ExecutorTaskHandle.Role.COORDINATOR;
-                    default -> ExecutorTaskHandle.Role.CHILD_CONTEXT;
-                };
         return submitExecutorTask(
-                role,
+                operationRole(operation),
                 operation,
                 durableConfig.getExecutorService(),
                 () -> {
@@ -369,6 +383,15 @@ public class ExecutionManager implements SafeCloseable {
                     return null;
                 },
                 preserveWorkerFailure);
+    }
+
+    private static ExecutorTaskHandle.Role operationRole(BaseDurableOperation operation) {
+        return operation.getType() == OperationType.STEP
+                ? ExecutorTaskHandle.Role.STEP
+                : switch (operation.getSubType()) {
+                    case MAP, PARALLEL -> ExecutorTaskHandle.Role.COORDINATOR;
+                    default -> ExecutorTaskHandle.Role.CHILD_CONTEXT;
+                };
     }
 
     private <T> CompletableFuture<T> submitExecutorTask(
@@ -398,6 +421,16 @@ public class ExecutionManager implements SafeCloseable {
             ExecutorService executor,
             Supplier<T> action,
             boolean preserveWorkerFailure) {
+        return registerExecutorTask(role, operation, executor, action, preserveWorkerFailure)
+                .completion();
+    }
+
+    private <T> ExecutorTaskHandle<T> registerExecutorTask(
+            ExecutorTaskHandle.Role role,
+            BaseDurableOperation operation,
+            ExecutorService executor,
+            Supplier<T> action,
+            boolean preserveWorkerFailure) {
         ExecutorTaskHandle<T> task;
         synchronized (admissionLock) {
             requireTaskAdmission(operation);
@@ -409,7 +442,7 @@ public class ExecutionManager implements SafeCloseable {
 
         try {
             dispatchExecutorTask(task, action, executor, preserveWorkerFailure);
-            return task.completion();
+            return task;
         } catch (RuntimeException | Error failure) {
             task.submissionFailed(failure);
             throw failure;

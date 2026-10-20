@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.*;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
@@ -43,6 +44,7 @@ class OperationOwnerInterruptionTest {
             when(context.getDurableConfig())
                     .thenReturn(
                             DurableConfig.builder().withExecutorService(workers).build());
+            TestUtils.executeOperationTasks(manager, context);
             var operation = new TestOperation(context);
             operation.run(() -> {
                 firstOwner.set(Thread.currentThread());
@@ -105,6 +107,7 @@ class OperationOwnerInterruptionTest {
             when(context.getDurableConfig())
                     .thenReturn(
                             DurableConfig.builder().withExecutorService(workers).build());
+            TestUtils.executeOperationTasks(manager, context);
             var operation = new TestOperation(context);
             operation.run(() -> await(releaseBody));
             var completion = operation.getRunningUserHandler();

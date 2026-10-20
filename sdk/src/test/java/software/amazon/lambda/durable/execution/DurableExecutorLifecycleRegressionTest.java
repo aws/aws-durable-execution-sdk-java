@@ -32,6 +32,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -174,6 +176,76 @@ class DurableExecutorLifecycleRegressionTest {
             userExecutor.shutdownNow();
             assertTrue(caller.awaitTermination(5, TimeUnit.SECONDS), "Invocation executor did not terminate");
             assertTrue(userExecutor.awaitTermination(5, TimeUnit.SECONDS), "User executor did not terminate");
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void cancelledExecutorTaskRetainsActualExitBoundary(boolean running) throws Exception {
+        var submitted = new CountDownLatch(1);
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var ended = new CountDownLatch(1);
+        var manager = new AtomicReference<ExecutionManager>();
+        var bodies = new AtomicInteger();
+        var users = Executors.newFixedThreadPool(running ? 2 : 1);
+        var callers = Executors.newSingleThreadExecutor();
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withExecutorService(users)
+                .withCheckpointDelay(Duration.ZERO)
+                .withPlugins(info -> new DurableExecutionPlugin() {
+                    @Override
+                    public void onInvocationEnd(InvocationEndInfo end) {
+                        ended.countDown();
+                    }
+                })
+                .build();
+        try {
+            var invocation = callers.submit(() -> execute(config, (value, context) -> {
+                manager.set(((DurableContextImpl) context).getExecutionManager());
+                context.stepAsync("held", String.class, step -> {
+                    bodies.incrementAndGet();
+                    entered.countDown();
+                    while (release.getCount() != 0) {
+                        try {
+                            release.await();
+                        } catch (InterruptedException ignored) {
+                            // This test owner deliberately keeps running after cancellation until explicitly released.
+                        }
+                    }
+                    return "stored";
+                });
+                if (running) await(entered);
+                submitted.countDown();
+                return "root-result";
+            }));
+            await(submitted);
+            var task = manager.get().getActiveExecutorTasks().stream()
+                    .filter(handle -> handle.role() == ExecutorTaskHandle.Role.STEP)
+                    .findFirst()
+                    .orElseThrow();
+            assertTrue(task.cancel(true));
+            if (running) {
+                assertThrows(TimeoutException.class, () -> invocation.get(100, TimeUnit.MILLISECONDS));
+                assertEquals(1, ended.getCount(), "Logical cancellation must not let End overtake actual task exit");
+                release.countDown();
+                assertEquals(
+                        ExecutionStatus.SUCCEEDED,
+                        invocation.get(5, TimeUnit.SECONDS).status());
+            } else {
+                var failure = assertThrows(ExecutionException.class, () -> invocation.get(5, TimeUnit.SECONDS));
+                assertInstanceOf(IllegalStateException.class, failure.getCause());
+            }
+            assertEquals(running ? 1 : 0, bodies.get());
+            assertEquals(0, ended.getCount());
+            assertTrue(task.exit().isDone());
+        } finally {
+            release.countDown();
+            users.shutdownNow();
+            callers.shutdownNow();
+            assertTrue(users.awaitTermination(5, TimeUnit.SECONDS));
+            assertTrue(callers.awaitTermination(5, TimeUnit.SECONDS));
         }
     }
 
