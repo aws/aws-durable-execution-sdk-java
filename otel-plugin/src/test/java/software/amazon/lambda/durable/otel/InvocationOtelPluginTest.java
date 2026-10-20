@@ -4,6 +4,8 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -24,9 +26,11 @@ import io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizer;
 import io.opentelemetry.sdk.autoconfigure.spi.AutoConfigurationCustomizerProvider;
 import io.opentelemetry.sdk.autoconfigure.spi.ConfigProperties;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
+import io.opentelemetry.sdk.testing.time.TestClock;
 import io.opentelemetry.sdk.trace.IdGenerator;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
+import io.opentelemetry.sdk.trace.SpanProcessor;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.time.Instant;
 import java.util.List;
@@ -780,9 +784,7 @@ class InvocationOtelPluginTest {
 
     @Test
     void operationEnd_withNonSuccessStatusAndNoError_leavesOperationSpanUnset() {
-        // onOperationEnd fires for every terminal status. A CANCELLED operation (or an error-less
-        // FAILED/TIMED_OUT/STOPPED) carries a non-null, non-SUCCEEDED status with a null error. It must NOT be
-        // stamped OK — the span status stays UNSET.
+        // Cancellation without diagnostic details retains UNSET; it is not blanket-classified as failure.
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         plugin.onOperationStart(
@@ -811,9 +813,8 @@ class InvocationOtelPluginTest {
     }
 
     @Test
-    void operationEnd_withoutMatchingStart_nonSuccessStatusAndNoError_leavesContinuationSpanUnset() {
-        // Same guard on the continuation-span branch (operation completed between invocations): an error-less
-        // TIMED_OUT terminal status must NOT be stamped OK.
+    void operationEnd_withoutMatchingStart_timeoutWithoutError_setsError() {
+        // An explicit timeout remains an error even when the backend supplied no exception details.
         plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
 
         plugin.onOperationEnd(new OperationEndInfo(
@@ -836,7 +837,8 @@ class InvocationOtelPluginTest {
                 .filter(s -> s.getName().contains("callback"))
                 .findFirst()
                 .orElseThrow();
-        assertEquals(StatusCode.UNSET, continuationSpan.getStatus().getStatusCode());
+        assertEquals(StatusCode.ERROR, continuationSpan.getStatus().getStatusCode());
+        assertTrue(continuationSpan.getEvents().isEmpty());
     }
 
     @Test
@@ -1015,17 +1017,38 @@ class InvocationOtelPluginTest {
 
     @Test
     void invocationEnd_closesNestedSpansChildFirst() {
+        var start = Instant.parse("2026-01-01T00:00:00Z");
+        var clock = TestClock.create(start);
+        // Drive time with actual end callbacks; independent real span clock anchors can differ slightly.
+        var clockAdvancer = mock(SpanProcessor.class, CALLS_REAL_METHODS);
+        when(clockAdvancer.isEndRequired()).thenReturn(true);
+        doAnswer(invocation -> {
+                    clock.advance(1, TimeUnit.NANOSECONDS);
+                    return null;
+                })
+                .when(clockAdvancer)
+                .onEnd(any());
+        var timedPlugin = new InvocationOtelPlugin(
+                SdkTracerProvider.builder()
+                        .setClock(clock)
+                        .addSpanProcessor(SimpleSpanProcessor.create(spanExporter))
+                        .addSpanProcessor(clockAdvancer),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(false)
+                        .build());
         var parentId = "op-parent";
         var childId = "op-child";
-        plugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, Instant.now()));
-        plugin.onOperationStart(new OperationInfo(
-                parentId, "parent-context", "CONTEXT", "RunInChildContext", null, Instant.now(), null, null, false));
-        plugin.onOperationStart(
-                new OperationInfo(childId, "child-step", "STEP", "Step", parentId, Instant.now(), null, null, false));
-        plugin.onUserFunctionStart(
-                new UserFunctionStartInfo(childId, "child-step", "STEP", "Step", parentId, Instant.now(), false, 1));
+        timedPlugin.onInvocationStart(new InvocationInfo("req-1", "arn:exec1", true, start));
+        timedPlugin.onOperationStart(new OperationInfo(
+                parentId, "parent-context", "CONTEXT", "RunInChildContext", null, start, null, null, false));
+        timedPlugin.onOperationStart(
+                new OperationInfo(childId, "child-step", "STEP", "Step", parentId, start, null, null, false));
+        timedPlugin.onUserFunctionStart(
+                new UserFunctionStartInfo(childId, "child-step", "STEP", "Step", parentId, start, false, 1));
 
-        plugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
+        clock.advance(1, TimeUnit.SECONDS);
+        timedPlugin.onInvocationEnd(new InvocationEndInfo("req-1", "arn:exec1", true, InvocationStatus.PENDING, null));
 
         var parentSpan = spanByName("parent-context");
         var childSpan = spanByName("child-step");
@@ -1038,10 +1061,10 @@ class InvocationOtelPluginTest {
                 spans.indexOf(childSpan) < spans.indexOf(parentSpan),
                 "Child operation span must be exported before its parent operation span");
         assertTrue(
-                attemptSpan.getEndEpochNanos() <= childSpan.getEndEpochNanos(),
+                attemptSpan.getEndEpochNanos() < childSpan.getEndEpochNanos(),
                 "Attempt span must end before its operation span");
         assertTrue(
-                childSpan.getEndEpochNanos() <= parentSpan.getEndEpochNanos(),
+                childSpan.getEndEpochNanos() < parentSpan.getEndEpochNanos(),
                 "Child operation span must end before its parent operation span");
     }
 

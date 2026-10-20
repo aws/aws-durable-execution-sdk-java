@@ -18,6 +18,7 @@ import software.amazon.lambda.durable.config.WaitForCallbackConfig;
 import software.amazon.lambda.durable.config.WaitForConditionConfig;
 import software.amazon.lambda.durable.config.WithRetryConfig;
 import software.amazon.lambda.durable.context.BaseContext;
+import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.model.MapResult;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
 
@@ -549,6 +550,10 @@ public interface DurableContext extends BaseContext {
      * <p>Combines a step (to run the submitter) and a callback (to receive the external result) in a child context. The
      * submitter receives a callback ID that external systems use to report completion.
      *
+     * <p>If a failed child is replayed without its nested operation details and its original exception cannot be
+     * reconstructed, {@link ChildContextFailedException} carries the stored context failure. The SDK does not guess
+     * whether the missing callback or submitter caused it, and does not rerun the completed child.
+     *
      * @param <T> the result type
      * @param name the unique operation name within this context
      * @param resultType the result class for deserialization
@@ -624,6 +629,9 @@ public interface DurableContext extends BaseContext {
      * <p>This is the core waitForCallbackAsync implementation. All other waitForCallback/waitForCallbackAsync overloads
      * delegate here. Internally creates a child context containing a callback operation and a step that runs the
      * submitter function.
+     *
+     * <p>Retrieving a failed replay's result can report {@link ChildContextFailedException} when nested operation
+     * details are no longer available and the original exception cannot be reconstructed.
      *
      * @param <T> the result type
      * @param name the unique operation name within this context
