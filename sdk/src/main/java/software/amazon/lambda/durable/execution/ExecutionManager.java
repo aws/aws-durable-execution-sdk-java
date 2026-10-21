@@ -1140,6 +1140,7 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private void checkInvocationAdmission() {
+        rethrowPluginFatalIfPresent();
         if (invocationReported || lifecycleFailure.get() != null) {
             var failure = lifecycleFailure.get();
             throw failure != null ? failure : lifecycleFailure("Invocation has already returned", null);
