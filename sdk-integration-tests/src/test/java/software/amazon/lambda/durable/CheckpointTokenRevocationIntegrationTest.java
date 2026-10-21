@@ -46,7 +46,7 @@ class CheckpointTokenRevocationIntegrationTest {
     void acceptedStepOutcomeIsReportedToPluginsAfterResume(boolean fail) {
         var calls = new AtomicInteger();
         var plugin = new RecordingPlugin();
-        var config = DurableConfig.builder().withPlugins(plugin).build();
+        var config = DurableConfig.builder().withPlugins(ignoredInfo -> plugin).build();
         var runner = createPausedRunner(fail, calls, config);
 
         assertEquals(ExecutionStatus.PENDING, runner.runUntilComplete("input").getStatus());

@@ -109,7 +109,7 @@ class ContinuationFailurePublicProbeTest {
                 .withCheckpointDelay(Duration.ZERO)
                 .withPollingStrategy(attempt -> Duration.ZERO);
         if (withPlugin)
-            builder.withPlugins(new DurableExecutionPlugin() {
+            builder.withPlugins(invocation -> new DurableExecutionPlugin() {
                 public void onInvocationEnd(InvocationEndInfo info) {
                     ends.add(info);
                 }

@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -148,10 +148,10 @@ class SamplingProcessorIsolationTest {
                         return ContextPropagators.noop();
                     }
                 });
-                var plugin = (DurableExecutionPlugin)
+                var factory = (DurableExecutionPluginFactory)
                         Class.forName("software.amazon.lambda.durable.otel." + pluginName, true, appLoader)
-                                .getConstructor()
-                                .newInstance();
+                                .getMethod("factory")
+                                .invoke(null);
                 var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/test/id";
                 var previousAmbient = Span.current();
                 var ambient = appProvider
@@ -161,7 +161,9 @@ class SamplingProcessorIsolationTest {
                 assertFalse(ambient.isRecording(), "The app provider drops unrelated spans outside the callback");
                 try (var ambientScope = ambient.makeCurrent()) {
                     for (var first : new boolean[] {true, false}) {
-                        plugin.onInvocationStart(new InvocationInfo("request", arn, first, Instant.EPOCH));
+                        var info = new InvocationInfo("request", arn, first, Instant.EPOCH);
+                        var plugin = factory.createPlugin(info);
+                        plugin.onInvocationStart(info);
                         plugin.onInvocationEnd(
                                 new InvocationEndInfo("request", arn, first, InvocationStatus.PENDING, null));
                         assertSame(ambient, Span.current(), "Plugin cleanup must preserve the caller's ambient span");

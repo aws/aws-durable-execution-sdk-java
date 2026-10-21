@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import software.amazon.lambda.durable.telemetry.internal.FatalErrors;
 
 /** Minimal JSON helper for emitting telemetry records and measuring their serialized size. */
 public final class Json {
@@ -38,6 +39,7 @@ public final class Json {
         try {
             return MAPPER.writeValueAsString(value);
         } catch (JsonProcessingException e) {
+            FatalErrors.rethrow(e);
             throw new IllegalStateException("failed to serialize telemetry record", e);
         }
     }
@@ -49,6 +51,7 @@ public final class Json {
         try {
             return MAPPER.writer(PRETTY_PRINTER).writeValueAsString(value);
         } catch (JsonProcessingException e) {
+            FatalErrors.rethrow(e);
             throw new IllegalStateException("failed to serialize telemetry record", e);
         }
     }
@@ -66,6 +69,7 @@ public final class Json {
         try {
             return MAPPER.writeValueAsString(value).getBytes(StandardCharsets.UTF_8).length;
         } catch (JsonProcessingException e) {
+            FatalErrors.rethrow(e);
             return null;
         }
     }
@@ -105,6 +109,8 @@ public final class Json {
         try {
             return MAPPER.convertValue(value, Object.class);
         } catch (IllegalArgumentException e) {
+            // convertValue transports Jackson serialization failures in IllegalArgumentException.
+            if (e.getCause() instanceof JsonProcessingException) FatalErrors.rethrow(e.getCause());
             throw new IllegalStateException("failed to copy telemetry record content", e);
         }
     }

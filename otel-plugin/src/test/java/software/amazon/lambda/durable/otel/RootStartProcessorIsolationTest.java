@@ -25,7 +25,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -65,8 +65,9 @@ class RootStartProcessorIsolationTest {
                         null,
                         rootRecordOnly ? ExtractedContext.Sampling.UNDECIDED : ExtractedContext.Sampling.SAMPLED))
                 .build();
-        DurableExecutionPlugin plugin =
-                executionView ? new ExecutionOtelPlugin(builder, config) : new InvocationOtelPlugin(builder, config);
+        DurableExecutionPluginFactory factory = executionView
+                ? ExecutionOtelPlugin.factory(builder, config)
+                : InvocationOtelPlugin.factory(builder, config);
         // Rebuilding this configured builder shares the plugin-installed generator; the other branch exercises the
         // same thread-scoped bridge through an independent generator instance.
         try (var unrelated = sharedGenerator
@@ -79,16 +80,18 @@ class RootStartProcessorIsolationTest {
             observer.tracer = unrelated.get("processor");
             var original = Context.current();
             assertControl(observer.tracer, sampled);
-            invoke(plugin, true);
-            invoke(plugin, false);
+            invoke(factory, true);
+            invoke(factory, false);
             assertControl(observer.tracer, sampled);
             assertSame(original, Context.current());
             assertObservations(observer, sampled, rootRecordOnly);
         }
     }
 
-    private static void invoke(DurableExecutionPlugin plugin, boolean first) {
-        plugin.onInvocationStart(new InvocationInfo("request", ARN, first, START));
+    private static void invoke(DurableExecutionPluginFactory factory, boolean first) {
+        var info = new InvocationInfo("request", ARN, first, START);
+        var plugin = factory.createPlugin(info);
+        plugin.onInvocationStart(info);
         plugin.onInvocationEnd(new InvocationEndInfo("request", ARN, first, InvocationStatus.PENDING, null));
     }
 

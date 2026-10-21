@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -24,6 +26,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
@@ -44,7 +47,7 @@ class HandlerMdcIntegrationTest {
             executor.submit(() -> MDC.setContextMap(workerMdc)).get(5, TimeUnit.SECONDS);
             MDC.setContextMap(callerMdc);
             runWithoutPlugins(executor, outcome);
-            // The existing logger clears MDC once entered; failed input never enters that scope.
+            // No-plugin setup does not own MDC before the durable logger scope is established.
             var expectedWorker = outcome.equals("inputFailure") ? workerMdc : Map.<String, String>of();
             assertRestored(executor, expectedWorker, callerMdc);
         } finally {
@@ -54,12 +57,72 @@ class HandlerMdcIntegrationTest {
         }
     }
 
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void noPluginInputFailurePreservesAmbientMdcBeforeLoggerScope(boolean direct, boolean ambient) throws Exception {
+        var delegate = Executors.newSingleThreadExecutor();
+        var executor = new AbstractExecutorService() {
+            public void execute(Runnable task) {
+                if (direct) task.run();
+                else delegate.execute(task);
+            }
+
+            public void shutdown() {
+                delegate.shutdown();
+            }
+
+            public List<Runnable> shutdownNow() {
+                return delegate.shutdownNow();
+            }
+
+            public boolean isShutdown() {
+                return delegate.isShutdown();
+            }
+
+            public boolean isTerminated() {
+                return delegate.isTerminated();
+            }
+
+            public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+                return delegate.awaitTermination(timeout, unit);
+            }
+        };
+        var previous = MDC.getCopyOfContextMap();
+        var workerMap = ambient ? ambientMdc() : Map.<String, String>of();
+        var callerMap = direct ? workerMap : Map.of("caller", "retained");
+        var bodies = new AtomicInteger();
+        try {
+            executor.submit(() -> MDC.setContextMap(workerMap)).get(3, TimeUnit.SECONDS);
+            MDC.setContextMap(callerMap);
+            var config = DurableConfig.builder()
+                    .withExecutorService(executor)
+                    .withSerDes(failingInputSerDes())
+                    .build();
+            assertTrue(config.getPluginFactories().isEmpty());
+            var runner = LocalDurableTestRunner.create(
+                    String.class,
+                    (input, context) -> {
+                        bodies.incrementAndGet();
+                        return "unreachable";
+                    },
+                    config);
+            assertEquals(ExecutionStatus.FAILED, runner.run("input").getStatus());
+            assertEquals(0, bodies.get());
+            assertRestored(executor, workerMap, callerMap);
+        } finally {
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(3, TimeUnit.SECONDS));
+            if (previous == null) MDC.clear();
+            else MDC.setContextMap(previous);
+        }
+    }
+
     private static void runWithoutPlugins(ExecutorService executor, String outcome) {
         var config = DurableConfig.builder()
                 .withExecutorService(executor)
                 .withSerDes(outcome.equals("inputFailure") ? failingInputSerDes() : new JacksonSerDes())
                 .build();
-        assertTrue(config.getPluginRunner().isEmpty());
+        assertTrue(config.getPluginFactories().isEmpty());
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, ctx) -> {
@@ -153,9 +216,9 @@ class HandlerMdcIntegrationTest {
                 .contextExtractor(
                         () -> new ExtractedContext(TRACE_ID, "1234567890123456", ExtractedContext.Sampling.SAMPLED))
                 .build();
-        DurableExecutionPlugin plugin = executionView
-                ? new ExecutionOtelPlugin(SdkTracerProvider.builder(), settings)
-                : new InvocationOtelPlugin(SdkTracerProvider.builder(), settings);
+        DurableExecutionPluginFactory plugin = executionView
+                ? ExecutionOtelPlugin.factory(SdkTracerProvider.builder(), settings)
+                : InvocationOtelPlugin.factory(SdkTracerProvider.builder(), settings);
         return DurableConfig.builder()
                 .withExecutorService(executor)
                 .withPlugins(plugin)
@@ -217,7 +280,7 @@ class HandlerMdcIntegrationTest {
             worker.submit(() -> MDC.setContextMap(ambient)).get(3, TimeUnit.SECONDS);
             var config = DurableConfig.builder()
                     .withExecutorService(worker)
-                    .withPlugins(plugin)
+                    .withPlugins(info -> plugin)
                     .withSerDes(outcome.equals("inputFailure") ? failingInputSerDes() : new JacksonSerDes())
                     .build();
             var runner = LocalDurableTestRunner.create(

@@ -26,7 +26,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class VisibleReplacementSdkSpanPolicyTest {
@@ -41,6 +41,7 @@ class VisibleReplacementSdkSpanPolicyTest {
             String view, boolean rootSamples, String upstream, boolean expectedSampled) {
         var oldHeader = System.getProperty("com.amazonaws.xray.traceHeader");
         var rootPolicySnapshots = new AtomicInteger();
+        var actualRootEvaluations = new AtomicInteger();
         var invocations = new AtomicInteger();
         var sideEffects = new AtomicInteger();
         var header = "Root=1-6955b900-123456789012345678901234";
@@ -55,8 +56,9 @@ class VisibleReplacementSdkSpanPolicyTest {
                     Attributes attributes,
                     List<LinkData> links) {
                 assertFalse(Span.fromContext(parent).getSpanContext().isValid());
-                // Count the SDK's root-policy snapshot, excluding normal provider sampling for a real synthetic-root
-                // export on branches that implement it. No exactly-once promise is made for a plain provider.
+                // A real fallback root performs the provider's root evaluation; no preliminary Workflow probe
+                // should consume a second decision. Descendant policy and explicit header controls stay below.
+                if (name.equals("DurableExecutionRoot")) actualRootEvaluations.incrementAndGet();
                 if (!name.equals("DurableExecutionRoot")
                         && attributes.get(AttributeKey.stringKey("durable.execution.arn")) != null) {
                     rootPolicySnapshots.incrementAndGet();
@@ -86,8 +88,8 @@ class VisibleReplacementSdkSpanPolicyTest {
                     return ContextPropagators.noop();
                 }
             });
-            DurableExecutionPlugin plugin =
-                    view.equals("invocation") ? new InvocationOtelPlugin() : new ExecutionOtelPlugin();
+            DurableExecutionPluginFactory plugin =
+                    view.equals("invocation") ? InvocationOtelPlugin.factory() : ExecutionOtelPlugin.factory();
             var runner = LocalDurableTestRunner.create(
                     String.class,
                     (input, context) -> {
@@ -116,7 +118,8 @@ class VisibleReplacementSdkSpanPolicyTest {
                 assertTrue(
                         sdkSpans.stream().allMatch(span -> span.getSpanContext().isSampled()));
             } else assertTrue(sdkSpans.isEmpty(), sdkSpans.toString());
-            assertEquals(upstream.equals("root") ? invocations.get() : 0, rootPolicySnapshots.get());
+            assertEquals(0, rootPolicySnapshots.get());
+            assertEquals(invocations.get(), actualRootEvaluations.get());
             assertEquals(1, sideEffects.get());
         } finally {
             GlobalOpenTelemetry.resetForTest();

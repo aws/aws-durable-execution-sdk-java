@@ -44,11 +44,13 @@ class OperationOrderingTest {
 
     private DurableExecutionTelemetryRecord emitStart(Map<String, OperationChangeItemInfo> ops) {
         var exporter = new CapturingExporter();
-        var plugin = (DurableExecutionTelemetry.TelemetryPlugin)
+        var plugin = Executions.plugin(
                 DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
                         .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_CHANGE)
                         .addExporter(exporter)
-                        .build());
+                        .build()),
+                ARN,
+                START);
         plugin.onInvocationStart(new InvocationInfo("req", ARN, true, START, "in", ops, Map.of()));
         plugin.drainExports();
         return exporter.records.get(0);

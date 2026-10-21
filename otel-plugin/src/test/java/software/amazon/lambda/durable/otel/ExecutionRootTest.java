@@ -37,7 +37,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -252,10 +252,10 @@ class ExecutionRootTest {
                     .enableMdc(false)
                     .contextExtractor(() -> new ExtractedContext(TRACE, null, ExtractedContext.Sampling.SAMPLED))
                     .build();
-            DurableExecutionPlugin plugin = executionView
-                    ? new ExecutionOtelPlugin(builder, config)
-                    : new InvocationOtelPlugin(builder, config);
-            invoke(plugin, ARN, true, InvocationStatus.PENDING);
+            DurableExecutionPluginFactory factory = executionView
+                    ? ExecutionOtelPlugin.factory(builder, config)
+                    : InvocationOtelPlugin.factory(builder, config);
+            invoke(factory, ARN, true, InvocationStatus.PENDING);
             assertTrue(named(exporter.getFinishedSpanItems(), "DurableExecutionRoot")
                     .getSpanContext()
                     .isSampled());
@@ -331,29 +331,34 @@ class ExecutionRootTest {
                 .orElseThrow();
     }
 
-    private static void invoke(DurableExecutionPlugin plugin, String arn, boolean first, InvocationStatus status) {
-        invoke(plugin, arn, first, status, START);
+    private static void invoke(
+            DurableExecutionPluginFactory factory, String arn, boolean first, InvocationStatus status) {
+        invoke(factory, arn, first, status, START);
     }
 
     private static void invoke(
-            DurableExecutionPlugin plugin, String arn, boolean first, InvocationStatus status, Instant start) {
-        plugin.onInvocationStart(new InvocationInfo("request", arn, first, start));
+            DurableExecutionPluginFactory factory, String arn, boolean first, InvocationStatus status, Instant start) {
+        var info = new InvocationInfo("request", arn, first, start);
+        var plugin = factory.createPlugin(info);
+        plugin.onInvocationStart(info);
         plugin.onInvocationEnd(new InvocationEndInfo("request", arn, first, status, null));
     }
 
-    private static DurableExecutionPlugin plugin(
+    private static DurableExecutionPluginFactory plugin(
             boolean executionView, InMemorySpanExporter exporter, ExtractedContext extracted, Sampler sampler) {
         var builder =
                 SdkTracerProvider.builder().setSampler(sampler).addSpanProcessor(SimpleSpanProcessor.create(exporter));
         return plugin(executionView, builder, extracted);
     }
 
-    private static DurableExecutionPlugin plugin(
+    private static DurableExecutionPluginFactory plugin(
             boolean executionView, SdkTracerProviderBuilder builder, ExtractedContext extracted) {
         var config = OtelPluginConfig.builder()
                 .contextExtractor(() -> extracted)
                 .enableMdc(false)
                 .build();
-        return executionView ? new ExecutionOtelPlugin(builder, config) : new InvocationOtelPlugin(builder, config);
+        return executionView
+                ? ExecutionOtelPlugin.factory(builder, config)
+                : InvocationOtelPlugin.factory(builder, config);
     }
 }

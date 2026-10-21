@@ -113,12 +113,14 @@ class MutableNumberIsolationTest {
             }
         };
         var good = new CapturingExporter();
-        var plugin = (DurableExecutionTelemetry.TelemetryPlugin)
+        var plugin = Executions.plugin(
                 DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
                         .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_CHANGE)
                         .addExporter(mutating)
                         .addExporter(good)
-                        .build());
+                        .build()),
+                ARN,
+                START);
 
         AtomicInteger topLevel = new AtomicInteger(3);
         List<Object> list = new ArrayList<>();

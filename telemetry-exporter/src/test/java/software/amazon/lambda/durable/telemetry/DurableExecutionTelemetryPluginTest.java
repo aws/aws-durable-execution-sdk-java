@@ -45,9 +45,9 @@ class DurableExecutionTelemetryPluginTest {
             2, Duration.ofSeconds(1), Duration.ofSeconds(1), 2.0, JitterStrategy.NONE);
 
     private DurableConfig configWith(CapturingExporter exporter, DurableExecutionTelemetryConfig.Builder cfg) {
-        var plugin = DurableExecutionTelemetry.durableExecutionTelemetry(
+        var factory = DurableExecutionTelemetry.durableExecutionTelemetry(
                 cfg.addExporter(exporter).build());
-        return DurableConfig.builder().withPlugins(plugin).build();
+        return DurableConfig.builder().withPlugins(factory).build();
     }
 
     private OperationRecord op(DurableExecutionTelemetryRecord rec, String name) {

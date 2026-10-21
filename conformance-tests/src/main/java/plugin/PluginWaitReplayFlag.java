@@ -35,7 +35,9 @@ public class PluginWaitReplayFlag extends DurableHandler<Object, List<String>> {
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder().withPlugins(new WaitReplayFlagPlugin()).build();
+        return DurableConfig.builder()
+                .withPlugins(info -> new WaitReplayFlagPlugin())
+                .build();
     }
 
     @Override

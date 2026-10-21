@@ -276,7 +276,7 @@ class DurableExecutorLifecycleTest {
     }
 
     private DurableConfig.Builder config() {
-        return DurableConfig.builder().withDurableExecutionClient(client).withPlugins(plugin);
+        return DurableConfig.builder().withDurableExecutionClient(client).withPlugins(ignoredInfo -> plugin);
     }
 
     private DurableExecutionOutput execute(DurableConfig config, BiFunction<String, DurableContext, String> handler) {

@@ -7,12 +7,14 @@ import static software.amazon.lambda.durable.otel.SpanAttributes.DURABLE_EXECUTI
 import static software.amazon.lambda.durable.otel.SpanAttributes.DURABLE_EXECUTION_SYNTHETIC_ROOT;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.TraceState;
+import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
-import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.context.propagation.ContextPropagators;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.data.LinkData;
@@ -22,13 +24,14 @@ import io.opentelemetry.sdk.trace.samplers.Sampler;
 import io.opentelemetry.sdk.trace.samplers.SamplingDecision;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -42,7 +45,8 @@ class ExecutionRootParityTest {
     @ValueSource(booleans = {false, true})
     void sampledAnchorEndsBeforeTheStartHookReturns(boolean executionView) {
         try (var exporter = InMemorySpanExporter.create()) {
-            var plugin = plugin(executionView, exporter, Sampler.alwaysOn());
+            var factory = plugin(executionView, exporter, Sampler.alwaysOn());
+            var plugin = factory.createPlugin(start(true));
             plugin.onInvocationStart(start(true));
             var roots = roots(exporter);
             assertEquals(1, roots.size(), "The anchor is available to processors before handler execution");
@@ -74,8 +78,9 @@ class ExecutionRootParityTest {
             };
         });
         try (var exporter = InMemorySpanExporter.create()) {
-            var plugin = plugin(executionView, exporter, sampler);
+            var factory = plugin(executionView, exporter, sampler);
             for (var first : new boolean[] {true, false}) {
+                var plugin = factory.createPlugin(start(first));
                 plugin.onInvocationStart(start(first));
                 plugin.onInvocationEnd(end(first));
             }
@@ -110,7 +115,8 @@ class ExecutionRootParityTest {
     @ValueSource(booleans = {false, true})
     void recordOnlyStillRecordsChildrenWithoutAnAnchor(boolean executionView) {
         try (var exporter = InMemorySpanExporter.create()) {
-            var plugin = plugin(executionView, exporter, sampler(name -> SamplingResult.recordOnly()));
+            var factory = plugin(executionView, exporter, sampler(name -> SamplingResult.recordOnly()));
+            var plugin = factory.createPlugin(start(true));
             plugin.onInvocationStart(start(true));
             plugin.onInvocationEnd(end(false));
             assertTrue(roots(exporter).isEmpty());
@@ -135,10 +141,14 @@ class ExecutionRootParityTest {
                                 : SamplingResult.drop()))
                         .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                         .build()) {
-            GlobalOpenTelemetry.set(
-                    OpenTelemetrySdk.builder().setTracerProvider(provider).build());
-            DurableExecutionPlugin plugin =
-                    executionView ? new ExecutionOtelPlugin(config()) : new InvocationOtelPlugin(config());
+            GlobalOpenTelemetry.set(visibleProvider(provider));
+            assertSame(
+                    provider,
+                    OtelPluginSupport.tryResolveGlobalProvider("test", "test").sdkTracerProvider());
+            assertFalse(provider.getSampler() instanceof DurableSampler);
+            DurableExecutionPluginFactory factory =
+                    executionView ? ExecutionOtelPlugin.factory(config()) : InvocationOtelPlugin.factory(config());
+            var plugin = factory.createPlugin(start(true));
             plugin.onInvocationStart(start(true));
             plugin.onInvocationEnd(end(false));
             assertEquals(sampleAnchor ? 1 : 0, roots(exporter).size());
@@ -153,14 +163,104 @@ class ExecutionRootParityTest {
         }
     }
 
-    private static DurableExecutionPlugin plugin(
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void plainFallbackQuotaIsSpentOnlyOnActualSpanCreation(boolean executionView) {
+        GlobalOpenTelemetry.resetForTest();
+        OtelPluginAutoConfigurationState.markInstalled();
+        var calls = new ArrayList<String>();
+        try (var exporter = InMemorySpanExporter.create();
+                var provider = SdkTracerProvider.builder()
+                        .setIdGenerator(new DeterministicIdGenerator())
+                        .setSampler(sampler(name -> {
+                            calls.add(name);
+                            return calls.size() == 1 ? SamplingResult.recordAndSample() : SamplingResult.drop();
+                        }))
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+                        .build()) {
+            GlobalOpenTelemetry.set(visibleProvider(provider));
+            assertSame(
+                    provider,
+                    OtelPluginSupport.tryResolveGlobalProvider("test", "test").sdkTracerProvider());
+            assertFalse(provider.getSampler() instanceof DurableSampler);
+            DurableExecutionPluginFactory factory =
+                    executionView ? ExecutionOtelPlugin.factory(config()) : InvocationOtelPlugin.factory(config());
+            var plugin = factory.createPlugin(start(true));
+            plugin.onInvocationStart(start(true));
+            plugin.onInvocationEnd(end(false));
+            assertEquals(List.of("DurableExecutionRoot", "Invocation", "Workflow"), calls);
+            assertEquals(
+                    1, roots(exporter).size(), "The first real span receives the sampler's one available decision");
+        } finally {
+            GlobalOpenTelemetry.resetForTest();
+            OtelPluginAutoConfigurationState.resetInstalledForTest();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void completeRemoteParentRetainsItsLegacyAncestorPolicy(boolean executionView) {
+        GlobalOpenTelemetry.resetForTest();
+        OtelPluginAutoConfigurationState.markInstalled();
+        var calls = new ArrayList<String>();
+        var traceId = "6955b900123456789012345678901234";
+        var parentId = "1234567890123456";
+        try (var exporter = InMemorySpanExporter.create();
+                var provider = SdkTracerProvider.builder()
+                        .setIdGenerator(new DeterministicIdGenerator())
+                        .setSampler(sampler(name -> {
+                            calls.add(name);
+                            return SamplingResult.recordAndSample();
+                        }))
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+                        .build()) {
+            GlobalOpenTelemetry.set(visibleProvider(provider));
+            assertSame(
+                    provider,
+                    OtelPluginSupport.tryResolveGlobalProvider("test", "test").sdkTracerProvider());
+            var config = OtelPluginConfig.builder()
+                    .enableMdc(false)
+                    .contextExtractor(() -> new ExtractedContext(traceId, parentId))
+                    .build();
+            DurableExecutionPluginFactory factory =
+                    executionView ? ExecutionOtelPlugin.factory(config) : InvocationOtelPlugin.factory(config);
+            var plugin = factory.createPlugin(start(true));
+            plugin.onInvocationStart(start(true));
+            plugin.onInvocationEnd(end(false));
+            assertEquals(List.of("Workflow", "Invocation", "Workflow"), calls);
+            assertTrue(roots(exporter).isEmpty(), "The complete remote parent remains externally owned");
+            var spans = exporter.getFinishedSpanItems();
+            assertEquals(2, spans.size());
+            assertTrue(spans.stream().allMatch(span -> traceId.equals(span.getTraceId())));
+            assertTrue(spans.stream().allMatch(span -> parentId.equals(span.getParentSpanId())));
+        } finally {
+            GlobalOpenTelemetry.resetForTest();
+            OtelPluginAutoConfigurationState.resetInstalledForTest();
+        }
+    }
+
+    private static OpenTelemetry visibleProvider(SdkTracerProvider provider) {
+        return new OpenTelemetry() {
+            public TracerProvider getTracerProvider() {
+                return provider;
+            }
+
+            public ContextPropagators getPropagators() {
+                return ContextPropagators.noop();
+            }
+        };
+    }
+
+    private static DurableExecutionPluginFactory plugin(
             boolean executionView, InMemorySpanExporter exporter, Sampler sampler) {
         var builder = SdkTracerProvider.builder()
                 .setSampler(sampler)
                 .addSpanProcessor(SimpleSpanProcessor.builder(exporter)
                         .setExportUnsampledSpans(true)
                         .build());
-        return executionView ? new ExecutionOtelPlugin(builder, config()) : new InvocationOtelPlugin(builder, config());
+        return executionView
+                ? ExecutionOtelPlugin.factory(builder, config())
+                : InvocationOtelPlugin.factory(builder, config());
     }
 
     private static OtelPluginConfig config() {

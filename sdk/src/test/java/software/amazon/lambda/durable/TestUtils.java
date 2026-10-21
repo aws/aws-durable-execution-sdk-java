@@ -10,6 +10,8 @@ import java.util.List;
 import java.util.UUID;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
+import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.OperationIdGenerator;
 
 public class TestUtils {
@@ -69,5 +71,15 @@ public class TestUtils {
 
     public static String hashOperationId(String rawId) {
         return OperationIdGenerator.hashOperationId(rawId);
+    }
+
+    /** Makes a mocked ExecutionManager execute operation tasks like the real manager. */
+    public static void executeOperationTasks(ExecutionManager manager, DurableContextImpl context) {
+        doAnswer(invocation -> {
+                    context.getDurableConfig().getExecutorService().execute(invocation.getArgument(1));
+                    return null;
+                })
+                .when(manager)
+                .executeOperationTask(any(), any(), any());
     }
 }
