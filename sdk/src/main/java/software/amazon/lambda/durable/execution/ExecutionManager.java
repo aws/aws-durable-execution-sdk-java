@@ -245,16 +245,61 @@ public class ExecutionManager implements SafeCloseable {
             this.executorService = config.getExecutorService();
             this.ownsExecutorService = false;
         }
-        if (ownsExecutorService && executorService.isShutdown()) {
-            throw new IllegalStateException("Invocation executor factory returned a shutdown executor");
-        }
-        if (ownsExecutorService && !ACTIVE_INVOCATION_EXECUTORS.add(executorService)) {
+        var leaseAcquired = ownsExecutorService && ACTIVE_INVOCATION_EXECUTORS.add(executorService);
+        if (ownsExecutorService && !leaseAcquired) {
             throw new IllegalStateException("Invocation executor factory returned an executor already in use");
         }
-        logger.debug("DurableExecution.execute() called");
-        logger.debug("DurableExecutionArn: {}", durableExecutionArn);
-        logger.debug("Initial operations count: {}", operationStorage.size());
-        logger.debug("EXECUTION operation found: {}", executionOp.id());
+        try {
+            if (ownsExecutorService && executorService.isShutdown()) {
+                throw new IllegalStateException("Invocation executor factory returned a shutdown executor");
+            }
+            logger.debug("DurableExecution.execute() called");
+            logger.debug("DurableExecutionArn: {}", durableExecutionArn);
+            logger.debug("Initial operations count: {}", operationStorage.size());
+            logger.debug("EXECUTION operation found: {}", executionOp.id());
+        } catch (Throwable initializationFailure) {
+            if (leaseAcquired) initializationFailure = cleanupFailedExecutorInitialization(initializationFailure);
+            ExceptionHelper.sneakyThrow(initializationFailure);
+        }
+    }
+
+    private Throwable cleanupFailedExecutorInitialization(Throwable initializationFailure) {
+        var deadline = cleanupDeadlineNanos();
+        try {
+            Throwable cleanupFailure;
+            try {
+                // No SDK work has been dispatched. Avoid repeating the state callback that failed validation.
+                cleanupFailure = attemptOwnedExecutorShutdown(deadline, null);
+            } catch (Throwable failure) {
+                cleanupFailure = failure;
+            }
+            var selected = combineOwnedExecutorFailures(initializationFailure, cleanupFailure);
+            return cleanupFailure == null ? selected : forceStopRejectedExecutor(deadline, selected);
+        } finally {
+            ACTIVE_INVOCATION_EXECUTORS.remove(executorService);
+            restoreCleanupInterrupt();
+        }
+    }
+
+    private Throwable forceStopRejectedExecutor(long deadline, Throwable priorFailure) {
+        var failure = priorFailure;
+        try {
+            executorService.shutdownNow();
+        } catch (Throwable shutdownFailure) {
+            failure = combineOwnedExecutorFailures(failure, shutdownFailure);
+        }
+        try {
+            if (!executorService.awaitTermination(remainingNanos(deadline), TimeUnit.NANOSECONDS))
+                failure = combineOwnedExecutorFailures(
+                        failure, lifecycleFailure("Rejected invocation executor did not terminate", null));
+        } catch (InterruptedException interrupted) {
+            cleanupInterrupted.set(true);
+            failure = combineOwnedExecutorFailures(
+                    failure, lifecycleFailure("Interrupted while disposing rejected invocation executor", interrupted));
+        } catch (Throwable terminationFailure) {
+            failure = combineOwnedExecutorFailures(failure, terminationFailure);
+        }
+        return failure;
     }
 
     private static String resolveInvocationId(Context lambdaContext, String durableExecutionArn) {
