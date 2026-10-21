@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
-import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import io.opentelemetry.api.GlobalOpenTelemetry;
@@ -17,7 +17,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.ServiceLoader;
-import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.model.ExecutionStatus;
@@ -26,9 +25,8 @@ import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
-import software.amazon.lambda.durable.testing.TestResult;
 
-/** Compiled against the actual released 2.2.1 SPI, then run unchanged in fresh matrix JVMs. */
+/** Compiled against the current 3.x factory API, then run in fresh JVMs with each visible OTel API. */
 public final class InstalledApiProbe {
     private static final AtomicInteger HEALTHY_CREATED = new AtomicInteger();
     private static final AtomicInteger HEALTHY_STARTS = new AtomicInteger();
@@ -44,9 +42,8 @@ public final class InstalledApiProbe {
         logs.start();
         root.addAppender(logs);
         try {
-            if (Boolean.parseBoolean(args[7])) assertOldCoreRejected(view);
-            else exercise(view, Boolean.parseBoolean(args[5]), Boolean.parseBoolean(args[6]), logs);
-            System.out.println("COMPAT_PASS " + view + " negative=" + args[5] + " api=" + args[2]
+            exercise(view, Boolean.parseBoolean(args[5]), logs);
+            System.out.println("COMPAT_PASS " + view + " api=" + args[2]
                     + " core=" + args[0] + " plugin=" + args[1]);
         } finally {
             root.detachAppender(logs);
@@ -64,61 +61,20 @@ public final class InstalledApiProbe {
                 .map(ServiceLoader.Provider::get)
                 .filter(value -> value.getName().equals(args[4]))
                 .findFirst().orElseThrow();
-        check(provider.getApiVersion() == DurableExecutionPluginProvider.API_VERSION, "released SPI version");
-        checkSource(provider.getPluginType(), Path.of(args[1]));
+        checkSource(provider.getClass(), Path.of(args[1]));
+        checkSource(LocalDurableTestRunner.class, Path.of(args[6]));
     }
 
-    private static void assertOldCoreRejected(String view) throws Exception {
-        var provider = ServiceLoader.load(DurableExecutionPluginProvider.class).stream()
-                .map(ServiceLoader.Provider::get).filter(value -> value.getName().equals(view))
-                .findFirst().orElseThrow();
-        expectCoreRejection(provider::createPlugin);
-        var constructors = provider.getPluginType().getConstructors();
-        check(constructors.length == 4, "exercise every published plugin constructor");
-        for (var constructor : constructors) {
-            var types = constructor.getParameterTypes();
-            var parameters = new Object[types.length];
-            for (int i = 0; i < types.length; i++) {
-                parameters[i] = types[i].getName().endsWith("OtelPluginConfig")
-                        ? types[i].getMethod("defaults").invoke(null) : SdkTracerProvider.builder();
-            }
-            expectCoreRejection(() -> constructor.newInstance(parameters));
-        }
-        var handlerCalls = new AtomicInteger();
-        expectCoreRejection(() -> createRunner(handlerCalls, new AtomicInteger()));
-        check(handlerCalls.get() == 0 && HEALTHY_STARTS.get() == 0 && HEALTHY_ENDS.get() == 0,
-                "configuration rejection must precede handler execution and lifecycle hooks");
-        System.out.println("CORE_LIFECYCLE_REJECTION_CONFIRMED " + view);
-    }
-
-    private static void expectCoreRejection(Callable<?> construction) {
-        Throwable rejected = null;
-        try {
-            construction.call();
-        } catch (Throwable failure) {
-            rejected = failure;
-        }
-        check(rejected != null, "new plugin silently accepted the released core without its lifecycle guarantee");
-        for (var failure = rejected; failure != null; failure = failure.getCause()) {
-            if (failure instanceof IllegalStateException && failure.getMessage() != null
-                    && failure.getMessage().contains("requires same-thread invocation hooks")) return;
-        }
-        throw new AssertionError("missing explicit core compatibility diagnostic", rejected);
-    }
-
-    private static void exercise(String view, boolean negative, boolean compatible, ListAppender<ILoggingEvent> logs) {
+    private static void exercise(String view, boolean compatible, ListAppender<ILoggingEvent> logs) {
         GlobalOpenTelemetry.resetForTest();
         // Reproduce #763's documented visible-API skew, not a claim of a deployed agent test.
         OtelPluginAutoConfigurationState.markInstalled();
         var handlerCalls = new AtomicInteger();
         var sideEffects = new AtomicInteger();
         var runner = createRunner(handlerCalls, sideEffects);
-        check(HEALTHY_CREATED.get() == 1, "existing SPI must create the healthy plugin once per configuration");
+        check(HEALTHY_CREATED.get() == 0, "configuration must not create an invocation-owned plugin");
         var first = runner.run("compatibility-input");
-        if (negative) {
-            assertNegative(first, handlerCalls, sideEffects);
-            return;
-        }
+        check(HEALTHY_CREATED.get() == 1, "first invocation must create its healthy plugin");
         check(first.getStatus() == ExecutionStatus.PENDING, "plugin failure must preserve first invocation");
         check(HEALTHY_STARTS.get() == 1 && HEALTHY_ENDS.get() == 1 && handlerCalls.get() == 1,
                 "healthy plugin and handler must run");
@@ -143,18 +99,6 @@ public final class InstalledApiProbe {
         });
     }
 
-    private static void assertNegative(
-            TestResult<String> result, AtomicInteger handlerCalls, AtomicInteger sideEffects) {
-        check(result.getStatus() == ExecutionStatus.FAILED, "old/old older API must reproduce customer failure");
-        var failure = result.getError().orElseThrow();
-        check(failure.errorType().endsWith("NoSuchMethodError")
-                        && failure.errorMessage().contains("GlobalOpenTelemetry.isSet"),
-                "negative control must reproduce the exact unsupported API: " + failure);
-        check(HEALTHY_STARTS.get() == 0 && handlerCalls.get() == 0 && sideEffects.get() == 0,
-                "old linkage failure must precede the healthy start hook and handler");
-        System.out.println("NEGATIVE_CONTROL_REPRODUCED NoSuchMethodError GlobalOpenTelemetry.isSet");
-    }
-
     private static void resumeAndCheck(LocalDurableTestRunner<String, String> runner, String view, boolean compatible,
             AtomicInteger handlerCalls, AtomicInteger sideEffects) {
         var exporter = InMemorySpanExporter.create();
@@ -167,7 +111,7 @@ public final class InstalledApiProbe {
             check(HEALTHY_STARTS.get() == 2 && HEALTHY_ENDS.get() == 2 && handlerCalls.get() == 2,
                     "healthy hooks and handler must remain active on resume");
             check(sideEffects.get() == 1, "completed user step must not repeat on resume");
-            check(HEALTHY_CREATED.get() == 1, "resume must preserve the existing 2.x plugin instance lifetime");
+            check(HEALTHY_CREATED.get() == 2, "resume must create a new invocation-owned healthy plugin");
             var spans = exporter.getFinishedSpanItems();
             if (compatible) check(spans.stream().anyMatch(span -> span.getName().equals("Workflow")),
                     "compatible global provider must export Workflow spans in " + view);
@@ -191,19 +135,13 @@ public final class InstalledApiProbe {
         return tracing;
     }
 
-    /** A real old-SPI service provider, discovered alongside the actual released/candidate OTel provider. */
+    /** A real factory service provider, discovered alongside the current OTel provider. */
     public static final class HealthyProvider implements DurableExecutionPluginProvider {
         @Override
         public String getName() { return "compat-healthy"; }
 
         @Override
-        public int getApiVersion() { return API_VERSION; }
-
-        @Override
-        public Class<? extends DurableExecutionPlugin> getPluginType() { return HealthyPlugin.class; }
-
-        @Override
-        public DurableExecutionPlugin createPlugin() {
+        public DurableExecutionPlugin createPlugin(InvocationInfo info) {
             HEALTHY_CREATED.incrementAndGet();
             return new HealthyPlugin();
         }

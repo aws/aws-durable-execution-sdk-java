@@ -1,39 +1,33 @@
 # Installed OpenTelemetry API compatibility
 
-Run after building the SDK and OTel plugin:
+Run after building the current core, testing SDK, and OTel plugin:
 
 ```sh
 python3 .github/scripts/verify_otel_api_compatibility.py
 ```
 
-The driver resolves real released core, testing, and plugin **2.2.1** artifacts
-through Maven. It compiles one probe against the released SPI and runs fresh JVMs
-with old/old, new/old, old/new, and new/new core/plugin pairs, in both OTel views,
-using actual API/context **1.49.0** and **1.66.0** jars. Candidate jars come from
-the reactor build, or explicit `--new-core` / `--new-plugin` paths.
+This 3.x branch compiles its service-provider probe against the current factory
+API. It runs the current core, plugin, and testing SDK together in fresh JVMs,
+in both OTel views, with actual OpenTelemetry API/context **1.49.0** and **1.66.0**.
+The four required cases check:
 
-The sixteen required cases verify:
+- Core, plugin, testing SDK, API, and context classes load from the intended jars.
+- ServiceLoader discovers real providers; configuration creates no invocation
+  instances, and each initial/resumed invocation creates its own healthy plugin.
+- An unsupported visible API disables the affected instrumentation with a
+  diagnostic while healthy hooks, handler output, and completed-step replay work.
+- Early global-provider lookup does not install a no-op global. Later registration
+  succeeds, and API 1.66 exports real Workflow spans after resume.
 
-- Selected core, plugin, API, and context classes load from the intended jars.
-- The existing service-provider API discovers and creates a healthy plugin, with
-  the same instance lifetime across suspension/resume.
-- Old/old plus API 1.49 reproduces the exact `GlobalOpenTelemetry.isSet`
-  `NoSuchMethodError` and customer failure, before healthy start hooks/user code.
-- Fixed combinations isolate that mismatch, report a diagnostic, and preserve
-  healthy hooks, handler output, and completed-step replay behavior.
-- An early unsupported/uninitialized global provider does not install a no-op
-  global: subsequent registration must succeed. API 1.66 then exports real
-  Workflow spans; unsupported API 1.49 disables the affected instrumentation.
+The independent fixture POM resolves the common dependency graph from released
+2.2.1 artifacts. The driver **replaces all three durable artifacts** with the
+current reactor jars before compiling or running. Explicit `--new-core`,
+`--new-plugin`, and `--new-testing` paths are available for an identical built tree.
+No 2.x/3.x interoperability is claimed: 3.x requires rebuilt factory providers.
+The 2.x branch retains its separate sixteen-case old/new compatibility matrix.
 
-Resolution, compilation, timeout, and probe failures all fail the command. There
-is no network-dependent skip. Logs, artifact SHA-256 hashes, negative-control
-results, and the case summary are written to `target/otel-api-compatibility`.
-The fixture POM is independent of the reactor and changes no production version
-or dependency floor.
-
-This matrix reproduces visible-API/classpath skew with real artifacts. Its test
-marker enables the documented plugin auto-configuration path; it does **not**
-claim to deploy or validate every Java-agent version. Actual agent validation
-must identify the released agent version, extension jar, visible API, runtime,
-and observed behavior separately. Provider registration remains fail-fast for
-invalid configuration; the fixture does not introduce invocation factories.
+Resolution, compilation, timeout, and probe failures fail the command; there is
+no network-dependent skip. Logs, jar hashes, and results go to
+`target/otel-api-compatibility`. No production dependencies or versions change.
+This is a visible-API test with an explicit auto-configuration marker, not a
+claim of deployed Java-agent coverage.

@@ -99,7 +99,7 @@ class InvocationPreparationAdmissionProbeTest {
                 .withSerDes(serializer)
                 .withCheckpointDelay(Duration.ZERO)
                 .withPollingStrategy(attempt -> Duration.ofMillis(1))
-                .withPlugins(new DurableExecutionPlugin() {
+                .withPlugins(ignoredInfo -> new DurableExecutionPlugin() {
                     public void onInvocationEnd(InvocationEndInfo info) {
                         ends.add(info);
                     }
@@ -215,7 +215,7 @@ class InvocationPreparationAdmissionProbeTest {
                     .withDurableExecutionClient(client)
                     .withExecutorService(workers)
                     .withCheckpointDelay(Duration.ZERO)
-                    .withPlugins(new DurableExecutionPlugin() {
+                    .withPlugins(ignoredInfo -> new DurableExecutionPlugin() {
                         public void onInvocationEnd(InvocationEndInfo info) {
                             ends.add(info);
                         }

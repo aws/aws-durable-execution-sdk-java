@@ -78,22 +78,24 @@ class InvocationWorkerContextCleanupProbeTest {
                     .contextExtractor(() -> null)
                     .enableMdc(false)
                     .build();
-            DurableExecutionPlugin otel = executionView
-                    ? new ExecutionOtelPlugin(builder, pluginConfig)
-                    : new InvocationOtelPlugin(builder, pluginConfig);
+            DurableExecutionPluginFactory otel = executionView
+                    ? ExecutionOtelPlugin.factory(builder, pluginConfig)
+                    : InvocationOtelPlugin.factory(builder, pluginConfig);
             var config = DurableConfig.builder()
                     .withDurableExecutionClient(client)
                     .withExecutorService(workers)
                     .withCheckpointDelay(Duration.ZERO)
-                    .withPlugins(otel, new DurableExecutionPlugin() {
-                        public void onInvocationEnd(InvocationEndInfo info) {
-                            ended.countDown();
-                        }
+                    .withPlugins(
+                            ignoredInfo -> new DurableExecutionPlugin() {
+                                public void onInvocationEnd(InvocationEndInfo info) {
+                                    ended.countDown();
+                                }
 
-                        public void onOperationEnd(OperationEndInfo info) {
-                            if (ended.getCount() == 0) lateOperationEnds.incrementAndGet();
-                        }
-                    })
+                                public void onOperationEnd(OperationEndInfo info) {
+                                    if (ended.getCount() == 0) lateOperationEnds.incrementAndGet();
+                                }
+                            },
+                            otel)
                     .build();
             try {
                 var call = caller.submit(() -> DurableExecutor.execute(
@@ -255,9 +257,9 @@ class InvocationWorkerContextCleanupProbeTest {
                     .contextExtractor(() -> null)
                     .enableMdc(false)
                     .build();
-            DurableExecutionPlugin otel = executionView
-                    ? new ExecutionOtelPlugin(builder, pluginConfig)
-                    : new InvocationOtelPlugin(builder, pluginConfig);
+            DurableExecutionPluginFactory otel = executionView
+                    ? ExecutionOtelPlugin.factory(builder, pluginConfig)
+                    : InvocationOtelPlugin.factory(builder, pluginConfig);
             Thread firstWorker = null;
             for (var round = 0; round < 2; round++) {
                 var running = new CountDownLatch(1);
@@ -269,11 +271,13 @@ class InvocationWorkerContextCleanupProbeTest {
                         .withExecutorService(dispatch)
                         .withDurableExecutionClient(new LocalMemoryExecutionClient())
                         .withCheckpointDelay(Duration.ZERO)
-                        .withPlugins(otel, new DurableExecutionPlugin() {
-                            public void onInvocationEnd(InvocationEndInfo info) {
-                                ended.countDown();
-                            }
-                        })
+                        .withPlugins(
+                                ignoredInfo -> new DurableExecutionPlugin() {
+                                    public void onInvocationEnd(InvocationEndInfo info) {
+                                        ended.countDown();
+                                    }
+                                },
+                                otel)
                         .build();
                 try {
                     var call = caller.submit(() -> DurableExecutor.execute(

@@ -3,16 +3,17 @@
 package software.amazon.lambda.durable.plugin;
 
 /**
- * Service provider interface for dynamically loading {@link DurableExecutionPlugin} implementations.
+ * A {@link DurableExecutionPluginFactory} that can be discovered through {@link java.util.ServiceLoader} and selected
+ * by name.
  *
  * <p>Provider JARs register implementations in
- * {@code META-INF/services/software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider}. The SDK only creates
- * plugins from providers explicitly selected through {@code DURABLE_EXECUTION_PLUGINS}.
+ * {@code META-INF/services/software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider}. The SDK only uses
+ * providers explicitly selected through {@code DURABLE_EXECUTION_PLUGINS}; selection is by {@link #getName()}.
+ *
+ * <p>A provider is itself the per-invocation factory: {@link #createPlugin(InvocationInfo)} is called once per
+ * invocation, and the returned instance serves only that invocation.
  */
-public interface DurableExecutionPluginProvider {
-
-    /** Current version of the dynamic plugin provider contract. */
-    int API_VERSION = 1;
+public interface DurableExecutionPluginProvider extends DurableExecutionPluginFactory {
 
     /**
      * Returns the stable name used to select this provider.
@@ -20,25 +21,4 @@ public interface DurableExecutionPluginProvider {
      * @return non-empty provider name
      */
     String getName();
-
-    /**
-     * Returns the provider API version this implementation supports.
-     *
-     * @return provider API version
-     */
-    int getApiVersion();
-
-    /**
-     * Returns the concrete plugin type created by this provider.
-     *
-     * @return plugin implementation class
-     */
-    Class<? extends DurableExecutionPlugin> getPluginType();
-
-    /**
-     * Creates the plugin instance.
-     *
-     * @return plugin instance
-     */
-    DurableExecutionPlugin createPlugin();
 }

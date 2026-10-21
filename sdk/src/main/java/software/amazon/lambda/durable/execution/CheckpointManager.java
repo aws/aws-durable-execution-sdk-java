@@ -13,6 +13,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
@@ -47,6 +48,7 @@ class CheckpointManager {
     private final BooleanSupplier tryStartCheckpointProcessing;
     private final Runnable onCheckpointProcessingFinish;
     private final Runnable onTokenRevoked;
+    private final Object checkpointLock = new Object();
     private volatile String checkpointToken;
     private boolean pollingStopped; // Guarded by pollingFutures.
     /**
@@ -71,6 +73,63 @@ class CheckpointManager {
             BooleanSupplier tryStartCheckpointProcessing,
             Runnable onCheckpointProcessingFinish,
             Runnable onTokenRevoked) {
+        this(
+                config,
+                durableExecutionArn,
+                checkpointToken,
+                callback,
+                tryStartCheckpointProcessing,
+                onCheckpointProcessingFinish,
+                onTokenRevoked,
+                () -> null);
+    }
+
+    CheckpointManager(
+            DurableConfig config,
+            String durableExecutionArn,
+            String checkpointToken,
+            Consumer<List<Operation>> callback,
+            BooleanSupplier tryStartCheckpointProcessing,
+            Runnable finishCheckpointProcessing) {
+        this(
+                config,
+                durableExecutionArn,
+                checkpointToken,
+                callback,
+                tryStartCheckpointProcessing,
+                finishCheckpointProcessing,
+                () -> {},
+                () -> null);
+    }
+
+    CheckpointManager(
+            DurableConfig config,
+            String durableExecutionArn,
+            String checkpointToken,
+            Consumer<List<Operation>> callback,
+            BooleanSupplier tryStartCheckpointProcessing,
+            Runnable finishCheckpointProcessing,
+            Supplier<Error> pluginFatal) {
+        this(
+                config,
+                durableExecutionArn,
+                checkpointToken,
+                callback,
+                tryStartCheckpointProcessing,
+                finishCheckpointProcessing,
+                () -> {},
+                pluginFatal);
+    }
+
+    CheckpointManager(
+            DurableConfig config,
+            String durableExecutionArn,
+            String checkpointToken,
+            Consumer<List<Operation>> callback,
+            BooleanSupplier tryStartCheckpointProcessing,
+            Runnable onCheckpointProcessingFinish,
+            Runnable onTokenRevoked,
+            Supplier<Error> pluginFatal) {
         this.config = config;
         this.durableExecutionArn = durableExecutionArn;
         this.callback = callback;
@@ -79,7 +138,11 @@ class CheckpointManager {
         this.onCheckpointProcessingFinish = onCheckpointProcessingFinish;
         this.onTokenRevoked = onTokenRevoked;
         this.checkpointApiRequestDelayedBatcher = new ApiRequestDelayedBatcher<>(
-                MAX_ITEM_COUNT, MAX_BATCH_SIZE_BYTES, CheckpointManager::estimateSize, this::checkpointBatch);
+                MAX_ITEM_COUNT,
+                MAX_BATCH_SIZE_BYTES,
+                CheckpointManager::estimateSize,
+                this::checkpointBatch,
+                pluginFatal);
     }
 
     /** Returns {@code true} once the service has withdrawn this invocation's checkpoint token. */
@@ -162,26 +225,33 @@ class CheckpointManager {
 
         // the delay is the polling interval minus the time already elapsed in the current attempt
         var delay = pollingStrategy.computeDelay(attempt).minus(Duration.between(startTime, Instant.now()));
-        return checkpointApiRequestDelayedBatcher.submit(null, delay).thenCompose(v -> {
-            if (future.isDone()) {
-                return CompletableFuture.completedFuture(null);
-            }
-            var now = Instant.now();
-            if (Duration.between(startTime, now).compareTo(pollingStrategy.computeDelay(attempt)) > 0) {
-                // It has exceeded the previous attempt duration, starting a new attempt
-                return pollForUpdateInternal(future, attempt + 1, now, pollingStrategy);
-            } else {
-                // continue the previous attempt. The future was completed just because
-                // it was batched with other checkpoint API calls.
-                return pollForUpdateInternal(future, attempt, startTime, pollingStrategy);
-            }
-        });
+        return checkpointApiRequestDelayedBatcher
+                .submit(null, delay)
+                .whenComplete((ignored, failure) -> {
+                    var fatal = checkpointApiRequestDelayedBatcher.getFatalFailure();
+                    if (failure != null && fatal != null) future.completeExceptionally(fatal);
+                })
+                .thenCompose(v -> {
+                    if (future.isDone()) {
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    var now = Instant.now();
+                    if (Duration.between(startTime, now).compareTo(pollingStrategy.computeDelay(attempt)) > 0) {
+                        // It has exceeded the previous attempt duration, starting a new attempt
+                        return pollForUpdateInternal(future, attempt + 1, now, pollingStrategy);
+                    } else {
+                        // continue the previous attempt. The future was completed just because
+                        // it was batched with other checkpoint API calls.
+                        return pollForUpdateInternal(future, attempt, startTime, pollingStrategy);
+                    }
+                });
     }
 
     /** Cancels all polling futures and waits for all pending checkpoint requests to complete */
     void shutdown() {
         // complete all polling futures with an exception
-        stopPolling(new IllegalStateException("CheckpointManager shutdown"));
+        var fatal = checkpointApiRequestDelayedBatcher.getFatalFailure();
+        stopPolling(fatal != null ? fatal : new IllegalStateException("CheckpointManager shutdown"));
         // wait for all non-polling checkpoint requests to complete
         checkpointApiRequestDelayedBatcher.shutdown();
     }
@@ -204,6 +274,7 @@ class CheckpointManager {
      * nextMarker)
      */
     List<Operation> fetchAllPages(CheckpointUpdatedExecutionState checkpointUpdatedExecutionState) {
+        rethrowFatalIfAborted();
         List<Operation> operations = new ArrayList<>();
         if (checkpointUpdatedExecutionState == null) {
             return operations;
@@ -213,10 +284,12 @@ class CheckpointManager {
         }
         var nextMarker = checkpointUpdatedExecutionState.nextMarker();
         while (nextMarker != null && !nextMarker.isEmpty()) {
+            rethrowFatalIfAborted();
             var startTime = System.nanoTime();
             try {
                 var response = config.getDurableExecutionClient()
                         .getExecutionState(durableExecutionArn, checkpointToken, nextMarker);
+                rethrowFatalIfAborted();
                 logger.debug(
                         "Durable getExecutionState API called (latency={}ns): {}.",
                         System.nanoTime() - startTime,
@@ -231,12 +304,14 @@ class CheckpointManager {
     }
 
     private void checkpointBatch(List<OperationUpdate> updates) {
-        synchronized (pollingFutures) {
-            // A READY recheck can complete a poll before its scheduled batch. Keep only consumers still waiting.
-            pollingFutures.entrySet().removeIf(entry -> {
-                entry.getValue().removeIf(CompletableFuture::isDone);
-                return entry.getValue().isEmpty();
-            });
+        synchronized (checkpointLock) {
+            // Keep backend serialization separate from the poller registry so abort never waits on I/O.
+            synchronized (pollingFutures) {
+                pollingFutures.entrySet().removeIf(entry -> {
+                    entry.getValue().removeIf(CompletableFuture::isDone);
+                    return entry.getValue().isEmpty();
+                });
+            }
             // filter the null values from pollers
             var request = updates.stream().filter(Objects::nonNull).toList();
 
@@ -254,7 +329,7 @@ class CheckpointManager {
             // Starting the backend request is coordinated with the last-thread suspension decision. Once suspension
             // wins that race, no later poll/checkpoint may advance backend state behind the PENDING response.
             if (!tryStartCheckpointProcessing.getAsBoolean()) {
-                if (!request.isEmpty()) {
+                if (!request.isEmpty() && checkpointApiRequestDelayedBatcher.getFatalFailure() == null) {
                     logger.error(
                             "Checkpoint invariant violation: skipping {} operation updates because execution has already"
                                     + " completed",
@@ -277,9 +352,12 @@ class CheckpointManager {
     private void checkpointRequest(List<OperationUpdate> request) {
         var startTime = System.nanoTime();
         logger.debug("Calling durable checkpoint API with {} updates: {}", request.size(), request);
+        rethrowFatalIfAborted();
         var response = config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);
+        rethrowFatalIfAborted();
         logger.debug("Durable checkpoint API called (latency={}ns): {}.", System.nanoTime() - startTime, response);
 
+        rethrowFatalIfAborted();
         checkpointToken = response.checkpointToken();
         if (checkpointToken == null) {
             handleMissingToken(request);
@@ -319,13 +397,19 @@ class CheckpointManager {
         var processStartTime = System.nanoTime();
         int completedFutures = 0;
         logger.debug("Processing {} operations. ({} pending pollers)", operations.size(), pollingFutures.size());
+        rethrowFatalIfAborted();
         callback.accept(operations);
+        rethrowFatalIfAborted();
 
         for (var operation : operations) {
-            var pollers = pollingFutures.remove(operation.id());
+            rethrowFatalIfAborted();
+            List<CompletableFuture<Operation>> pollers;
+            synchronized (pollingFutures) {
+                pollers = pollingFutures.remove(operation.id());
+            }
             if (pollers != null) {
                 completedFutures += pollers.size();
-                pollers.forEach(poller -> poller.complete(operation));
+                completePollers(pollers, operation);
             }
         }
         logger.debug(
@@ -335,14 +419,65 @@ class CheckpointManager {
                 System.nanoTime() - processStartTime);
     }
 
+    void abortPending(Error fatal) {
+        checkpointApiRequestDelayedBatcher.abortPending(fatal);
+    }
+
+    private void completePollers(List<CompletableFuture<Operation>> pollers, Operation operation) {
+        for (int index = 0; index < pollers.size(); index++) {
+            var fatal = checkpointApiRequestDelayedBatcher.getFatalFailure();
+            if (fatal != null) {
+                // These observers are detached from the registry. An earlier completion callback can abort the
+                // invocation, so settle every undelivered observer before leaving this batch with the same fatal.
+                for (int remaining = index; remaining < pollers.size(); remaining++) {
+                    pollers.get(remaining).completeExceptionally(fatal);
+                }
+                throw fatal;
+            }
+            pollers.get(index).complete(operation);
+        }
+    }
+
+    private void rethrowFatalIfAborted() {
+        var fatal = checkpointApiRequestDelayedBatcher.getFatalFailure();
+        if (fatal != null) throw fatal;
+    }
+
     private static int estimateSize(OperationUpdate update) {
         if (update == null) {
             return 0;
         }
-        return update.id().length()
+        long size = (long) update.id().length()
                 + update.type().toString().length()
                 + update.action().toString().length()
                 + (update.payload() != null ? update.payload().length() : 0)
                 + 100;
+        var options = update.chainedInvokeOptions();
+        if (options != null) {
+            size += ",\"ChainedInvokeOptions\":{}".length();
+            size += jsonStringFieldSize("FunctionName", options.functionName());
+            size += jsonStringFieldSize("TenantId", options.tenantId());
+            size += jsonStringFieldSize("XAmznTraceId", options.xAmznTraceId());
+        }
+        return (int) Math.min(size, Integer.MAX_VALUE);
+    }
+
+    /** Include UTF-8 and JSON escaping; conservatively allow a comma before every optional field. */
+    private static long jsonStringFieldSize(String name, String value) {
+        if (value == null) return 0;
+        long size = name.length() + 6L; // comma, quoted key, colon, and quoted value
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (character < 0x20 || character >= 0x80) {
+                // Allow the longest JSON escape per UTF-16 unit. The Lambda marshaller escapes surrogate
+                // pairs as two six-byte escapes, rather than emitting a four-byte UTF-8 code point.
+                size += 6;
+            } else if (character == '"' || character == '\\') {
+                size += 2;
+            } else {
+                size++;
+            }
+        }
+        return size;
     }
 }
