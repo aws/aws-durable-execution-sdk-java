@@ -1867,9 +1867,17 @@ public class ExecutionManager implements SafeCloseable {
                 omitted.addAll(aliases);
                 aliases.forEach(alias -> Collections.addAll(pending, alias.getSuppressed()));
             } else {
-                combineCompletionFailure(primary, diagnostic);
+                retainWrapperDiagnostic(primary, diagnostic);
             }
         }
+    }
+
+    private static void retainWrapperDiagnostic(Throwable primary, Throwable diagnostic) {
+        // This transfers diagnostics from a discarded wrapper; it must not select a different failure.
+        for (var retained : primary.getSuppressed()) {
+            if (retained == diagnostic) return;
+        }
+        primary.addSuppressed(diagnostic);
     }
 
     private static List<Throwable> ownedAliasWrappers(
