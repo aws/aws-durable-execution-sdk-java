@@ -37,25 +37,33 @@ class InvocationCleanupBoundaryTest {
     @SuppressWarnings("removal")
     void cleanupBudgetCannotReplaceSelectedJvmFatal(boolean threadDeath) throws Exception {
         var users = Executors.newSingleThreadExecutor();
+        var callers = Executors.newSingleThreadExecutor();
         var manager = manager(users, context(2_000));
         var entered = new CountDownLatch(1);
+        var cancelled = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         Error fatal = threadDeath ? new ThreadDeath() : new InternalError("selected fatal");
         try {
             manager.submitRootTask(() -> {
                 entered.countDown();
-                awaitIgnoringInterrupt(release);
+                awaitIgnoringInterrupt(release, cancelled);
                 return "ignored";
             });
             await(entered);
             var task = manager.getActiveExecutorTasks().get(0);
-            assertSame(fatal, manager.finishInvocation(fatal));
-            assertFalse(task.exit().isDone(), "The fixture deliberately retains an uncooperative owner");
+            var finished = callers.submit(() -> manager.finishInvocation(fatal));
+            await(cancelled);
+            assertThrows(TimeoutException.class, () -> finished.get(3, TimeUnit.SECONDS));
+            assertFalse(task.exit().isDone(), "The cleanup budget cannot stand in for the owner's actual exit");
+            release.countDown();
+            assertSame(fatal, finished.get(5, TimeUnit.SECONDS));
+            assertTrue(task.exit().isDone());
             assertTrue(Arrays.stream(fatal.getSuppressed()).anyMatch(ExecutionManager::isLifecycleFailure));
             assertEquals(ExecutionManager.LifecycleState.CLOSED, manager.getLifecycleState());
         } finally {
             release.countDown();
             stop(users);
+            stop(callers);
             manager.close();
         }
     }
@@ -229,7 +237,7 @@ class InvocationCleanupBoundaryTest {
     }
 
     @Test
-    void lateOwnerEndRestoresScopeBeforeTheSameWorkerIsReused() throws Exception {
+    void ownerEndFinishesBeforeCallerReturnAndRestoresScopeBeforeWorkerReuse() throws Exception {
         var users = Executors.newSingleThreadExecutor();
         var callers = Executors.newSingleThreadExecutor();
         var scope = new ThreadLocal<String>();
@@ -241,6 +249,7 @@ class InvocationCleanupBoundaryTest {
         var release = new CountDownLatch(1);
         var end = new CountDownLatch(1);
         var lateBodies = new AtomicInteger();
+        var cancelled = new CountDownLatch(1);
         var plugin = new DurableExecutionPlugin() {
             @Override
             public void onInvocationStart(InvocationInfo info) {
@@ -273,7 +282,7 @@ class InvocationCleanupBoundaryTest {
                     TypeToken.get(String.class),
                     (value, ctx) -> {
                         entered.countDown();
-                        awaitIgnoringInterrupt(release);
+                        awaitIgnoringInterrupt(release, cancelled);
                         assertThrows(
                                 UnrecoverableDurableExecutionException.class,
                                 () -> ctx.step("late", String.class, step -> {
@@ -284,13 +293,15 @@ class InvocationCleanupBoundaryTest {
                     },
                     config));
             await(entered);
+            await(cancelled);
+            assertThrows(TimeoutException.class, () -> invocation.get(3, TimeUnit.SECONDS));
+            assertEquals(0, ended.get(), "The caller cannot run End on a different thread to force cleanup");
+            release.countDown();
             assertInstanceOf(
                     UnrecoverableDurableExecutionException.class,
                     assertThrows(ExecutionException.class, () -> invocation.get(5, TimeUnit.SECONDS))
                             .getCause());
-            assertEquals(0, ended.get(), "The caller cannot run End on a different thread to force cleanup");
-            release.countDown();
-            await(end);
+            assertEquals(0, end.getCount(), "The owner's End must finish before the SDK caller returns");
             assertEquals(InvocationStatus.RETRYING, endStatus.get());
             assertEquals(1, ended.get());
             assertEquals(0, lateBodies.get());
@@ -304,7 +315,7 @@ class InvocationCleanupBoundaryTest {
     }
 
     @Test
-    void terminalAckDoesNotHideAvailableFatalDuringTimedCheckpointCleanup() throws Exception {
+    void terminalAckWaitsForAdmittedPublicationThenPropagatesEndFatal() throws Exception {
         var users = Executors.newSingleThreadExecutor();
         var callers = Executors.newSingleThreadExecutor();
         var releaseChange = new CountDownLatch(1);
@@ -350,6 +361,9 @@ class InvocationCleanupBoundaryTest {
                     (value, ctx) -> "x".repeat(6 * 1024 * 1024 + 100),
                     config));
             await(changeEntered);
+            assertThrows(TimeoutException.class, () -> invocation.get(3, TimeUnit.SECONDS));
+            assertEquals(1, fatalDelivered.getCount(), "End cannot overtake admitted checkpoint publication");
+            releaseChange.countDown();
             var thrown = assertThrows(ExecutionException.class, () -> invocation.get(5, TimeUnit.SECONDS));
             assertSame(
                     fatal,
@@ -480,10 +494,15 @@ class InvocationCleanupBoundaryTest {
     }
 
     private static void awaitIgnoringInterrupt(CountDownLatch latch) {
+        awaitIgnoringInterrupt(latch, new CountDownLatch(0));
+    }
+
+    private static void awaitIgnoringInterrupt(CountDownLatch latch, CountDownLatch interrupted) {
         while (latch.getCount() > 0) {
             try {
                 latch.await();
             } catch (InterruptedException ignored) {
+                interrupted.countDown();
                 // This bounded fixture is released in finally; it models an uncooperative customer callback.
             }
         }
