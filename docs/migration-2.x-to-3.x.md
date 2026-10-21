@@ -380,9 +380,20 @@ A useful pre-deployment check is to run one execution locally with the provider 
 
 ## Artifact version boundary
 
-This factory migration builds as `3.0.0-SNAPSHOT`; it must not be published under a 2.x Maven coordinate.
-The release workflow also requires a major version bump for the `BREAKING`-labeled PR. Existing 2.x consumers
-continue to use the separately maintained instance-registration API and compatible plugin layers.
+Use version `3.0.0` for the factory API. The Java reactor and release workflow use the same version for all four
+artifacts under `software.amazon.lambda.durable`:
+
+| Component | Maven artifact | Version |
+| --- | --- | --- |
+| Core SDK | `aws-durable-execution-sdk-java` | `3.0.0` |
+| Testing SDK | `aws-durable-execution-sdk-java-testing` | `3.0.0` |
+| OpenTelemetry plugin | `aws-durable-execution-sdk-java-plugin-otel` | `3.0.0` |
+| Preview Telemetry Exporter | `aws-durable-execution-sdk-java-plugin-telemetry-exporter` | `3.0.0` |
+
+Upgrade the core, testing library and plugin/provider artifacts together. The factory migration must not be published
+under a 2.x Maven coordinate or combined with 2.x plugin/provider JARs. Existing 2.x consumers continue to use the
+separately maintained instance-registration API and compatible plugin layers. The Telemetry Exporter remains preview;
+its shared version number does not change its stability contract.
 
 ## Fatal invocation failures
 
