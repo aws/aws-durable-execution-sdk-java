@@ -96,8 +96,12 @@ public class DurableExecutor {
                         : null;
                 if (ExecutionManager.isFatal(completedFailure)) ExceptionHelper.sneakyThrow(completedFailure);
                 if (ExecutionManager.isFatal(finalFailure)) ExceptionHelper.sneakyThrow(finalFailure);
-                if (ExecutionManager.isLifecycleFailure(finalFailure) && manager.isTerminalExecutionAcknowledged())
+                if (ExecutionManager.isLifecycleFailure(finalFailure) && manager.isTerminalExecutionAcknowledged()) {
+                    // ACK outranks a lifecycle cutoff, not an unrelated failure already reported by delivery.
+                    if (completedFailure != null && !ExecutionManager.isLifecycleFailure(completedFailure))
+                        ExceptionHelper.sneakyThrow(completedFailure);
                     return DurableExecutionOutput.success("");
+                }
                 if (finalFailure != null && (selected.failure() != null || finalFailure != originalFailure))
                     ExceptionHelper.sneakyThrow(finalFailure);
                 return completion.join();
