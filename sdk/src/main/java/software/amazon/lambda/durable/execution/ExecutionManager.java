@@ -1689,7 +1689,16 @@ public class ExecutionManager implements SafeCloseable {
         return finishInvocation(originalFailure, false);
     }
 
+    Throwable finishInvocation(Throwable originalFailure, CompletableFuture<?> completedRoot) {
+        return finishInvocation(originalFailure, false, completedRoot);
+    }
+
     private Throwable finishInvocation(Throwable originalFailure, boolean closeObservation) {
+        return finishInvocation(originalFailure, closeObservation, null);
+    }
+
+    private Throwable finishInvocation(
+            Throwable originalFailure, boolean closeObservation, CompletableFuture<?> completedRoot) {
         if (cleanupFinished) return originalFailure;
         beginDraining();
         var hardDeadline = cleanupDeadlineNanos();
@@ -1709,6 +1718,13 @@ public class ExecutionManager implements SafeCloseable {
             failure = signalLifecycleFailure(problem);
         } finally {
             failure = finishActualInvocationCleanup(failure);
+            if (completedRoot != null && completedRoot.isDone() && getInvocationFatal() == null) {
+                var rootFailure =
+                        completedRoot.handle((ignored, problem) -> problem).join();
+                // MDC restoration runs after End. Keep its fatal local so cleanup can retain later diagnostics
+                // without changing the selected End outcome or publishing new checkpoint/cancellation control.
+                if (isFatal(rootFailure)) failure = combineFailures(rootFailure, failure);
+            }
             try {
                 failure = shutdownOwnedExecutor(hardDeadline, failure);
             } catch (Throwable shutdownFailure) {

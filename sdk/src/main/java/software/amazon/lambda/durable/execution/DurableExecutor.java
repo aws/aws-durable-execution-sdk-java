@@ -88,7 +88,7 @@ public class DurableExecutor {
                         ? selected.failure()
                         : ExceptionHelper.unwrapInvocationFailure(
                                 selected.result().failure());
-                var finalFailure = manager.finishInvocation(originalFailure);
+                var finalFailure = manager.finishInvocation(originalFailure, completion);
                 var completedFailure = completion.isDone()
                         ? completion
                                 .handle((ignored, failure) -> ExceptionHelper.unwrapInvocationFailure(failure))
