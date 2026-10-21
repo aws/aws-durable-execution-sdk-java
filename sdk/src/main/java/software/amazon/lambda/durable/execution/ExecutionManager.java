@@ -289,7 +289,7 @@ public class ExecutionManager implements SafeCloseable {
             failure = combineOwnedExecutorFailures(failure, shutdownFailure);
         }
         try {
-            if (!executorService.awaitTermination(remainingNanos(deadline), TimeUnit.NANOSECONDS))
+            if (!awaitOwnedExecutorTermination(deadline))
                 failure = combineOwnedExecutorFailures(
                         failure, lifecycleFailure("Invocation executor did not terminate during forced cleanup", null));
         } catch (InterruptedException interrupted) {
@@ -300,6 +300,13 @@ public class ExecutionManager implements SafeCloseable {
             failure = combineOwnedExecutorFailures(failure, terminationFailure);
         }
         return failure;
+    }
+
+    private boolean awaitOwnedExecutorTermination(long deadline) throws InterruptedException {
+        var terminated = executorService.awaitTermination(remainingNanos(deadline), TimeUnit.NANOSECONDS);
+        // A later state-query failure must not retain an executor whose termination was already confirmed.
+        if (terminated) ACTIVE_INVOCATION_EXECUTORS.remove(executorService);
+        return terminated;
     }
 
     private static String resolveInvocationId(Context lambdaContext, String durableExecutionArn) {
@@ -1772,11 +1779,11 @@ public class ExecutionManager implements SafeCloseable {
             if (!getActiveExecutorTasks().isEmpty()) {
                 executorService.shutdownNow();
             }
-            if (executorService.awaitTermination(remainingNanos(executorDeadline), TimeUnit.NANOSECONDS)) {
+            if (awaitOwnedExecutorTermination(executorDeadline)) {
                 return priorFailure;
             }
             executorService.shutdownNow();
-            if (executorService.awaitTermination(remainingNanos(executorDeadline), TimeUnit.NANOSECONDS)) {
+            if (awaitOwnedExecutorTermination(executorDeadline)) {
                 return priorFailure;
             }
             return combineFailures(
