@@ -15,6 +15,7 @@ import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -51,6 +52,7 @@ class OwnedInvocationExecutorLifecycleTest {
         });
         var runtime = Executors.newSingleThreadExecutor();
         var startThread = new AtomicReference<Thread>();
+        var stepThread = new AtomicReference<Thread>();
         var endThread = new AtomicReference<Thread>();
         var callerThread = new AtomicReference<Thread>();
         var endEntered = new CountDownLatch(1);
@@ -80,12 +82,16 @@ class OwnedInvocationExecutorLifecycleTest {
                         input(),
                         context(),
                         TypeToken.get(String.class),
-                        (value, durable) -> durable.step("step", String.class, step -> value),
+                        (value, durable) -> durable.step("step", String.class, step -> {
+                            stepThread.set(Thread.currentThread());
+                            return value;
+                        }),
                         config);
             });
             assertTrue(endEntered.await(5, TimeUnit.SECONDS));
             assertSame(startThread.get(), endThread.get());
             assertTrue(ownedThreads.contains(startThread.get()), "Plugin-enabled roots must use the owned executor");
+            assertTrue(ownedThreads.contains(stepThread.get()), "Operation wrappers must use the owned executor");
             assertNotSame(callerThread.get(), endThread.get());
             assertFalse(owned.isShutdown(), "The handler-owned End hook must run before executor shutdown");
             assertFalse(response.isDone(), "The runtime caller must wait for End");
@@ -96,6 +102,53 @@ class OwnedInvocationExecutorLifecycleTest {
         } finally {
             releaseEnd.countDown();
             stop(runtime);
+            stop(owned);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void rootStepAndNestedChildUseTheInvocationSelectedExecutor(boolean pluginsEnabled) throws Exception {
+        var ownedThreads = ConcurrentHashMap.<Thread>newKeySet();
+        var observedThreads = new CopyOnWriteArrayList<Thread>();
+        // Root, child and nested step can wait on each other; give this scoped routing test enough capacity.
+        var owned = Executors.newFixedThreadPool(4, action -> {
+            var thread = new Thread(action, "routing-owned");
+            ownedThreads.add(thread);
+            return thread;
+        });
+        var builder = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withInvocationExecutorFactory(() -> owned);
+        if (pluginsEnabled) builder.withPlugins(new DurableExecutionPlugin() {});
+        try {
+            var response = DurableExecutor.execute(
+                    input(),
+                    context(),
+                    TypeToken.get(String.class),
+                    (value, durable) -> {
+                        observedThreads.add(Thread.currentThread());
+                        durable.step("root-step", String.class, step -> {
+                            observedThreads.add(Thread.currentThread());
+                            return value;
+                        });
+                        return durable.runInChildContext("child", String.class, child -> {
+                            observedThreads.add(Thread.currentThread());
+                            return child.step("nested-step", String.class, step -> {
+                                observedThreads.add(Thread.currentThread());
+                                return value;
+                            });
+                        });
+                    },
+                    builder.build());
+            assertEquals(ExecutionStatus.SUCCEEDED, response.status());
+            assertEquals("\"input\"", response.result());
+            assertEquals(4, observedThreads.size());
+            assertTrue(
+                    ownedThreads.containsAll(observedThreads),
+                    "Root, step, child and nested operation code must all use the invocation-selected executor");
+            assertTrue(owned.isTerminated());
+        } finally {
             stop(owned);
         }
     }
