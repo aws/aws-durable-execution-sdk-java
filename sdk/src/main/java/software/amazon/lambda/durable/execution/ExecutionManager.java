@@ -1586,12 +1586,11 @@ public class ExecutionManager implements SafeCloseable {
             failure = drainInvocationTasks(originalFailure, hardDeadline);
         } catch (InterruptedException interrupted) {
             cleanupInterrupted.set(true);
-            failure = lifecycleFailure("Interrupted while draining invocation tasks", interrupted);
-            signalLifecycleFailure(failure);
+            failure = signalLifecycleFailure(
+                    lifecycleFailure("Interrupted while draining invocation tasks", interrupted));
             failure = settleInterruptedCleanup(hardDeadline, true, failure);
         } catch (RuntimeException problem) {
-            failure = problem;
-            signalLifecycleFailure(failure);
+            failure = signalLifecycleFailure(problem);
         } finally {
             failure = finishActualInvocationCleanup(failure);
             cleanupFinished = true;
@@ -1616,8 +1615,8 @@ public class ExecutionManager implements SafeCloseable {
         var retrying = abortFailure != null;
         if (retrying) signalLifecycleFailure(abortFailure);
         else if (!awaitTasksUntil(minDeadline(taskDeadline, MAX_GRACEFUL_DRAIN_DURATION), false)) {
-            var failure = lifecycleFailure("Invocation user work exceeded its graceful cleanup budget", null);
-            signalLifecycleFailure(failure);
+            var failure = signalLifecycleFailure(
+                    lifecycleFailure("Invocation user work exceeded its graceful cleanup budget", null));
             awaitTasksUntil(minDeadline(taskDeadline, MAX_CANCELLATION_DRAIN_DURATION), true);
             return failure;
         }
@@ -1625,9 +1624,8 @@ public class ExecutionManager implements SafeCloseable {
         // within the remaining overall cleanup budget rather than charging an exporter to the user-work grace cap.
         if (awaitTasksUntil(retrying ? minDeadline(taskDeadline, MAX_CANCELLATION_DRAIN_DURATION) : taskDeadline, true))
             return null;
-        var failure = lifecycleFailure("Invocation lifecycle did not exit before the cleanup deadline", null);
-        signalLifecycleFailure(failure);
-        return failure;
+        return signalLifecycleFailure(
+                lifecycleFailure("Invocation lifecycle did not exit before the cleanup deadline", null));
     }
 
     private boolean awaitTasksUntil(long deadline, boolean includeRootLifecycle) throws InterruptedException {
@@ -1707,15 +1705,19 @@ public class ExecutionManager implements SafeCloseable {
         cleanupInterrupted.remove();
     }
 
-    private void signalLifecycleFailure(Throwable failure) {
+    private Throwable signalLifecycleFailure(Throwable failure) {
         if (failure instanceof UnrecoverableDurableExecutionException problem
-                && LIFECYCLE_ERROR_TYPE.equals(problem.getErrorObject().errorType()))
+                && LIFECYCLE_ERROR_TYPE.equals(problem.getErrorObject().errorType())) {
             lifecycleFailure.compareAndSet(null, problem);
+            // End and the caller share the first selected lifecycle failure; keep later cleanup diagnostics.
+            failure = combineFailures(lifecycleFailure.get(), failure);
+        }
         // Interruption must precede arbitrary inline completion observers.
         var current = currentExecutorTask.get();
         getActiveExecutorTasks().stream().filter(task -> task != current).forEach(task -> task.cancel(true));
         executionExceptionFuture.completeExceptionally(failure);
         stopAllOperations(failure);
+        return failure;
     }
 
     <T> InvocationOutcome<T> awaitInvocationOutcome(CompletableFuture<T> future) {
