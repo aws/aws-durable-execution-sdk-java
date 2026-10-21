@@ -107,8 +107,11 @@ public class DurableExecutor {
                 // Preserve the stored failure after control precedence; newer JDKs wrap join() cancellation.
                 if (completedFailure != null) ExceptionHelper.sneakyThrow(completedFailure);
                 return completion.join();
-            } catch (CompletionException failure) {
-                ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapInvocationFailure(failure));
+            } catch (Throwable failure) {
+                var originalFailure = ExceptionHelper.unwrapInvocationFailure(failure);
+                // Finalize synchronous admission/dispatch failures before automatic close observes them again.
+                var finalFailure = manager.finishInvocation(originalFailure);
+                ExceptionHelper.sneakyThrow(finalFailure != null ? finalFailure : originalFailure);
                 return null;
             } finally {
                 manager.markInvocationReported();
