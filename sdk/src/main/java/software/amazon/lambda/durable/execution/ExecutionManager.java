@@ -1703,6 +1703,7 @@ public class ExecutionManager implements SafeCloseable {
         beginDraining();
         var hardDeadline = cleanupDeadlineNanos();
         Throwable failure = null;
+        Throwable completionFatal = null;
         if (Thread.interrupted()) cleanupInterrupted.set(true);
         try {
             if (cleanupInterrupted.get() && !getActiveExecutorTasks().isEmpty())
@@ -1723,7 +1724,10 @@ public class ExecutionManager implements SafeCloseable {
                         completedRoot.handle((ignored, problem) -> problem).join();
                 // MDC restoration runs after End. Keep its fatal local so cleanup can retain later diagnostics
                 // without changing the selected End outcome or publishing new checkpoint/cancellation control.
-                if (isFatal(rootFailure)) failure = combineFailures(rootFailure, failure);
+                if (isFatal(rootFailure)) {
+                    completionFatal = rootFailure;
+                    failure = combineCompletionFailure(rootFailure, failure);
+                }
             }
             try {
                 failure = shutdownOwnedExecutor(hardDeadline, failure);
@@ -1744,9 +1748,19 @@ public class ExecutionManager implements SafeCloseable {
         var selectedFailure = isFatal(originalFailure) || recordedFailure == null ? originalFailure : recordedFailure;
         if (failure == null) return selectedFailure;
         // Cleanup can return a later lifecycle failure without signaling it; retain the latched invocation failure.
-        return isFatal(selectedFailure) || (recordedFailure != null && isLifecycleFailure(failure))
-                ? combineFailures(selectedFailure, failure)
+        if (isFatal(selectedFailure) || (recordedFailure != null && isLifecycleFailure(failure)))
+            return combineFailures(selectedFailure, failure);
+        return failure == completionFatal
+                ? combineCompletionFailure(failure, selectedFailure)
                 : combineFailures(failure, selectedFailure);
+    }
+
+    private static Throwable combineCompletionFailure(Throwable completionFatal, Throwable additional) {
+        // The completed root may already carry this same delivery failure from MDC restoration handling.
+        for (var diagnostic : completionFatal.getSuppressed()) {
+            if (diagnostic == additional) return completionFatal;
+        }
+        return combineFailures(completionFatal, additional);
     }
 
     private Throwable shutdownOwnedExecutor(long hardDeadline, Throwable priorFailure) {
