@@ -1790,7 +1790,8 @@ public class ExecutionManager implements SafeCloseable {
         try {
             drain.finish();
         } catch (Throwable failure) {
-            return combineFailures(priorFailure, ExceptionHelper.unwrapCompletableFuture(failure));
+            // Keep shutdown's transport wrapper: close can run while its fatal cause already escapes the body.
+            return combineFailures(priorFailure, failure);
         }
         return priorFailure;
     }
