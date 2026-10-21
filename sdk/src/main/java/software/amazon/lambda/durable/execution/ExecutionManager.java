@@ -1611,6 +1611,7 @@ public class ExecutionManager implements SafeCloseable {
                 failure = shutdownOwnedExecutor(hardDeadline, failure);
             } catch (Throwable shutdownFailure) {
                 // Executor callbacks, including fallback shutdown and state queries, must not skip finalization.
+                shutdownFailure = ExceptionHelper.unwrapInvocationFailure(shutdownFailure);
                 failure = combineFailures(failure, shutdownFailure);
                 var firstFatal = getInvocationFatal();
                 if (firstFatal != null) failure = combineFailures(firstFatal, failure);
@@ -1655,6 +1656,8 @@ public class ExecutionManager implements SafeCloseable {
             return combineFailures(
                     priorFailure, lifecycleFailure("Interrupted while shutting down invocation executor", interrupted));
         } catch (RuntimeException failure) {
+            var cause = ExceptionHelper.unwrapInvocationFailure(failure);
+            if (isFatal(cause)) ExceptionHelper.sneakyThrow(cause);
             return combineFailures(priorFailure, lifecycleFailure("Invocation executor shutdown failed", failure));
         } finally {
             if (executorService.isShutdown()) {

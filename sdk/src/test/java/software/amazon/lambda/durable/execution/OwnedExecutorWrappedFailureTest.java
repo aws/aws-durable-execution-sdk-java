@@ -21,7 +21,7 @@ import software.amazon.lambda.durable.plugin.*;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 @Timeout(15)
-class IndependentWrappedOwnedFatalTest {
+class OwnedExecutorWrappedFailureTest {
     @ParameterizedTest
     @CsvSource({"false, false, true", "true, false, true", "false, true, true", "true, true, true", "true, false, false"
     })
