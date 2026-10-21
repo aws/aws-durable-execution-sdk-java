@@ -92,6 +92,9 @@ class OwnedExecutorSetupFailureTest {
         FATAL,
         WRAPPED_FATAL,
         SAME_FATAL,
+        NESTED_WRAPPED_FATAL,
+        CHANGING_FATAL_CAUSE,
+        THROWING_FATAL_CAUSE,
         APPLICATION_WRAPPER
     }
 
@@ -115,18 +118,65 @@ class OwnedExecutorSetupFailureTest {
         "ORDINARY,NONE,false", "ORDINARY,NONE,true",
         "ORDINARY,ORDINARY,false", "ORDINARY,ORDINARY,true",
         "APPLICATION_WRAPPER,NONE,false", "APPLICATION_WRAPPER,NONE,true",
-        "APPLICATION_WRAPPER,FATAL,false", "APPLICATION_WRAPPER,FATAL,true"
+        "APPLICATION_WRAPPER,FATAL,false", "APPLICATION_WRAPPER,FATAL,true",
+        "WRAPPED_FATAL,NONE,false", "WRAPPED_FATAL,NONE,true",
+        "NESTED_WRAPPED_FATAL,NONE,false", "NESTED_WRAPPED_FATAL,NONE,true",
+        "NESTED_WRAPPED_FATAL,FATAL,false", "NESTED_WRAPPED_FATAL,FATAL,true",
+        "CHANGING_FATAL_CAUSE,NONE,false", "CHANGING_FATAL_CAUSE,NONE,true",
+        "THROWING_FATAL_CAUSE,NONE,false", "THROWING_FATAL_CAUSE,NONE,true"
     })
     void postManagerSetupFailureIsExplicitlyFinalized(Setup setup, Cleanup cleanup, boolean plugins) throws Exception {
         var setupFatal = new InternalError("first setup fatal");
+        var wrapperDiagnostic = new IllegalArgumentException("setup wrapper diagnostic");
+        var nestedDiagnostic = new IllegalStateException("nested setup wrapper diagnostic");
+        var aliasDiagnostic = new IllegalArgumentException("alias wrapper diagnostic");
+        var causeReads = new AtomicInteger();
         Throwable setupFailure = switch (setup) {
             case ORDINARY -> new IllegalStateException("second request ID read failed");
             case FATAL, SAME_FATAL -> setupFatal;
             case WRAPPED_FATAL -> new CompletionException(setupFatal);
+            case NESTED_WRAPPED_FATAL -> {
+                var inner = new ExecutionException(setupFatal);
+                inner.addSuppressed(nestedDiagnostic);
+                var alias = new CompletionException(setupFatal);
+                alias.addSuppressed(aliasDiagnostic);
+                inner.addSuppressed(alias);
+                yield new CompletionException(inner);
+            }
+            case CHANGING_FATAL_CAUSE ->
+                new CompletionException("changing cause", null) {
+                    @Override
+                    public synchronized Throwable getCause() {
+                        return causeReads.incrementAndGet() == 1
+                                ? setupFatal
+                                : new IllegalStateException("second read");
+                    }
+                };
+            case THROWING_FATAL_CAUSE ->
+                new CompletionException("fatal cause accessor", null) {
+                    @Override
+                    public synchronized Throwable getCause() {
+                        causeReads.incrementAndGet();
+                        throw setupFatal;
+                    }
+                };
             case APPLICATION_WRAPPER ->
                 new ExecutionException("application setup failure", new IllegalStateException("application cause"));
         };
-        var setupIsFatal = setup == Setup.FATAL || setup == Setup.SAME_FATAL || setup == Setup.WRAPPED_FATAL;
+        var wrappedFatal = setup == Setup.WRAPPED_FATAL
+                || setup == Setup.NESTED_WRAPPED_FATAL
+                || setup == Setup.CHANGING_FATAL_CAUSE
+                || setup == Setup.THROWING_FATAL_CAUSE;
+        var setupIsFatal = setup == Setup.FATAL || setup == Setup.SAME_FATAL || wrappedFatal;
+        if (wrappedFatal) {
+            setupFailure.addSuppressed(wrapperDiagnostic);
+            // Raw and observed-wrapper aliases must not create a cycle when their diagnostics transfer.
+            setupFailure.addSuppressed(setupFatal);
+            if (setup == Setup.NESTED_WRAPPED_FATAL) {
+                setupFailure.getCause().addSuppressed(setupFailure);
+                setupFailure.addSuppressed(nestedDiagnostic);
+            }
+        }
         Error cleanupFatal = setup == Setup.SAME_FATAL
                 ? setupFatal
                 : cleanup == Cleanup.THREAD_DEATH ? new ThreadDeath() : new InternalError("owned cleanup fatal");
@@ -201,6 +251,28 @@ class OwnedExecutorSetupFailureTest {
                 assertTrue(
                         contains(observed, cleanup == Cleanup.ORDINARY ? cleanupFailure : cleanupFatal),
                         "Retain later cleanup diagnostics");
+            if (wrappedFatal) {
+                assertEquals(
+                        1,
+                        Arrays.stream(observed.getSuppressed())
+                                .filter(e -> e == wrapperDiagnostic)
+                                .count());
+                assertFalse(contains(observed, setupFailure), "Do not attach a wrapper that points back to the fatal");
+                if (setup == Setup.NESTED_WRAPPED_FATAL) {
+                    assertEquals(
+                            1,
+                            Arrays.stream(observed.getSuppressed())
+                                    .filter(e -> e == nestedDiagnostic)
+                                    .count());
+                    assertEquals(
+                            1,
+                            Arrays.stream(observed.getSuppressed())
+                                    .filter(e -> e == aliasDiagnostic)
+                                    .count());
+                }
+                if (setup == Setup.CHANGING_FATAL_CAUSE || setup == Setup.THROWING_FATAL_CAUSE)
+                    assertEquals(1, causeReads.get(), "Inspect each recognized setup wrapper cause only once");
+            }
             assertEquals(2, requests.get(), "The failure must occur after the manager claimed its executor");
             assertEquals(1, factoryCalls.get());
             assertEquals(1, shutdowns.get(), "Automatic close must not repeat explicit finalization");
