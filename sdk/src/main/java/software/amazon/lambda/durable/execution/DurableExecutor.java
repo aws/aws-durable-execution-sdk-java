@@ -86,12 +86,12 @@ public class DurableExecutor {
                 var selected = manager.awaitInvocationOutcome(ready);
                 var originalFailure = selected.failure() != null
                         ? selected.failure()
-                        : ExceptionHelper.unwrapCompletableFuture(
+                        : ExceptionHelper.unwrapInvocationFailure(
                                 selected.result().failure());
                 var finalFailure = manager.finishInvocation(originalFailure);
                 var completedFailure = completion.isDone()
                         ? completion
-                                .handle((ignored, failure) -> ExceptionHelper.unwrapCompletableFuture(failure))
+                                .handle((ignored, failure) -> ExceptionHelper.unwrapInvocationFailure(failure))
                                 .join()
                         : null;
                 if (ExecutionManager.isFatal(completedFailure)) ExceptionHelper.sneakyThrow(completedFailure);
@@ -106,7 +106,7 @@ public class DurableExecutor {
                     ExceptionHelper.sneakyThrow(finalFailure);
                 return completion.join();
             } catch (CompletionException failure) {
-                ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(failure));
+                ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapInvocationFailure(failure));
                 return null;
             } finally {
                 manager.markInvocationReported();
@@ -181,7 +181,7 @@ public class DurableExecutor {
                     // No terminal response exists yet, so the service must retry this invocation. Plugins still
                     // need their end hook. Classifying this as a handler failure would mark the execution FAILED,
                     // so it is reported as a delivery failure: RETRYING, then the original exception is rethrown.
-                    var selectedFailure = ExceptionHelper.unwrapCompletableFuture(selected.failure());
+                    var selectedFailure = ExceptionHelper.unwrapInvocationFailure(selected.failure());
                     if (ExecutionManager.isFatal(selectedFailure)) {
                         if (selectedFailure != drainFailure) selectedFailure.addSuppressed(drainFailure);
                         return failDelivery(selectedFailure);
@@ -262,7 +262,7 @@ public class DurableExecutor {
             } catch (Throwable deliveryFailure) {
                 // Checkpointing a large result fails with SuspendExecutionException when the token is already gone.
                 // That is a suspension, not a delivery error, so it reports PENDING rather than RETRYING.
-                if (ExceptionHelper.unwrapCompletableFuture(deliveryFailure) instanceof SuspendExecutionException) {
+                if (ExceptionHelper.unwrapInvocationFailure(deliveryFailure) instanceof SuspendExecutionException) {
                     return finishFailure(new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE));
                 }
                 return failDelivery(deliveryFailure);

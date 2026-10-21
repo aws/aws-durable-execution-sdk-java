@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -60,6 +61,26 @@ class AcknowledgedDeliveryFailureTest {
         assertNull(observed.output());
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void causelessMetadataFailureRetainsItsIdentity(boolean interruptCaller) throws Exception {
+        var failure = new CompletionException("metadata failure without a cause", null);
+        var observed = run(failure, interruptCaller);
+        assertSame(failure, observed.failure(), "A non-null delivery error must not become successful ACK delivery");
+        assertNull(observed.output());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void applicationExecutionExceptionRemainsTheDeliveryFailure(boolean interruptCaller) throws Exception {
+        var applicationFailure = new ExecutionException("application wrapper", new IllegalStateException("metadata"));
+        try (var fixture = new Fixture(new CompletionException(applicationFailure), applicationFailure)) {
+            var observed = fixture.observe(interruptCaller);
+            assertSame(applicationFailure, observed.failure());
+            assertNull(observed.output());
+        }
+    }
+
     @Test
     void metadataFailureWithoutCallerInterruptionStillEscapes() throws Exception {
         var failure = new IllegalStateException("metadata store failed");
@@ -96,12 +117,16 @@ class AcknowledgedDeliveryFailureTest {
         private final AtomicBoolean callerInterrupted = new AtomicBoolean();
         private final AtomicInteger endCalls = new AtomicInteger();
         private final AtomicReference<List<OperationUpdate>> updates = new AtomicReference<>();
-        private final RuntimeException metadataFailure;
+        private final Throwable expectedFailure;
         private final DurableExecutionClient client;
         private final DurableConfig config;
 
         private Fixture(RuntimeException metadataFailure) {
-            this.metadataFailure = metadataFailure;
+            this(metadataFailure, metadataFailure);
+        }
+
+        private Fixture(RuntimeException metadataFailure, Throwable expectedFailure) {
+            this.expectedFailure = expectedFailure;
             client = client(metadataFailure, updates);
             config = DurableConfig.builder()
                     .withExecutorService(users)
@@ -147,9 +172,9 @@ class AcknowledgedDeliveryFailureTest {
         private Observed observe(boolean interruptCaller) throws Exception {
             var invocation = invoke();
             assertTrue(enteredEnd.await(5, TimeUnit.SECONDS), "The controlled End hook must start");
-            var status = metadataFailure == null ? InvocationStatus.SUCCEEDED : InvocationStatus.RETRYING;
+            var status = expectedFailure == null ? InvocationStatus.SUCCEEDED : InvocationStatus.RETRYING;
             assertEquals(status, endInfo.get().invocationStatus());
-            assertSame(metadataFailure, endInfo.get().executionError());
+            assertSame(expectedFailure, endInfo.get().executionError());
             if (interruptCaller) caller.get().interrupt();
             else releaseEnd.countDown();
             var observed = resultOf(invocation);
