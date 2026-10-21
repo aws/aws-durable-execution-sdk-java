@@ -356,6 +356,14 @@ public class ExecutionManager implements SafeCloseable {
             operationCompletionLocks.put(operationId, completionLock);
             registeredOperations.put(operationId, operation);
         }
+        // Cancellation can publish outside admissionLock and miss an operation inserted after its broadcast.
+        // Recheck after publication and release this operation's waiters before rejecting its constructor.
+        try {
+            checkInvocationAdmission();
+        } catch (RuntimeException | Error failure) {
+            operation.getCompletionFuture().completeExceptionally(failure);
+            throw failure;
+        }
         // Revocation is published before existing operations are suspended. Check after insertion so an
         // operation registered too late for that notification still releases its waiters.
         if (isCheckpointTokenRevoked()) {
@@ -465,6 +473,9 @@ public class ExecutionManager implements SafeCloseable {
         }
 
         try {
+            // The lifecycle fence can race task insertion after the check under admissionLock. The catch below
+            // settles actual-exit tracking if cancellation's task snapshot did not contain this registration.
+            checkInvocationAdmission();
             dispatchExecutorTask(task, action, executor, preserveWorkerFailure);
             return task;
         } catch (RuntimeException | Error failure) {
@@ -1356,6 +1367,7 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private void requireOperationAdmission() {
+        checkInvocationAdmission();
         var task = currentExecutorTask.get();
         if (lifecycleState == LifecycleState.DRAINING
                 && task != null
@@ -1370,6 +1382,7 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private void requireTaskAdmission(BaseDurableOperation operation) {
+        checkInvocationAdmission();
         if (lifecycleState == LifecycleState.DRAINING
                 && operation != null
                 && registeredOperations.get(operation.getOperationId()) == operation) {
@@ -1380,7 +1393,6 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private void requireOpen(String workType) {
-        checkInvocationAdmission();
         if (lifecycleState != LifecycleState.OPEN) {
             throw rejected(workType);
         }
