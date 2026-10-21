@@ -1161,6 +1161,7 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private void checkInvocationAdmission() {
+        rethrowPluginFatalIfPresent();
         if (invocationReported || lifecycleFailure.get() != null) {
             var failure = lifecycleFailure.get();
             throw failure != null ? failure : lifecycleFailure("Invocation has already returned", null);
@@ -1665,11 +1666,11 @@ public class ExecutionManager implements SafeCloseable {
                         - CHECKPOINT_CLEANUP_RESERVE.toNanos()
                         - (ownsExecutorService ? EXECUTOR_SHUTDOWN_RESERVE.toNanos() : 0));
         var recordedFailure = lifecycleFailure.get();
-        var abortFailure = isFatal(originalFailure)
-                ? originalFailure
-                : recordedFailure != null
-                        ? recordedFailure
-                        : isLifecycleFailure(originalFailure) ? originalFailure : null;
+        // Fatal publication already stops operation peers. Retain the root/scope owner's cleanup allowance;
+        // only lifecycle cutoffs or interruption require immediate registry cancellation.
+        var abortFailure = recordedFailure != null
+                ? recordedFailure
+                : isLifecycleFailure(originalFailure) ? originalFailure : null;
         var retrying = abortFailure != null;
         if (retrying) signalLifecycleFailure(abortFailure);
         else if (!awaitTasksUntil(minDeadline(taskDeadline, MAX_GRACEFUL_DRAIN_DURATION), false)) {
