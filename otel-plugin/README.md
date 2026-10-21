@@ -222,7 +222,12 @@ is used without reading stale global context. An unavailable accessor, or only L
 default, is represented by null and retains ordinary system-property then environment fallback. A malformed captured
 header also never adopts the global carrier. No global header is modified.
 
-The header is the eighth `InvocationInfo` record component, carrying forward the 2.x metadata fix. Existing 4-, 5-, 6-
+Capture is skipped when no plugin factories are registered. A nonfatal failure from an available runtime accessor
+also becomes authoritative absence, so it cannot reuse another invocation's global trace or sampling decision.
+Direct JVM-fatal errors propagate with their original identity, as do fatal errors wrapped in a `CompletionException`,
+`ExecutionException`, `InvocationTargetException`, or `UndeclaredThrowableException`.
+
+In 3.x, the header is the eighth `InvocationInfo` record component. Existing 4-, 5-, 6-
 and 7-argument constructors remain and default the optional header to null. Existing compiled constructor/accessor calls
 and seven-component record patterns remain compatible; recompiling a seven-component record pattern requires an eighth
 binding. Reflection sees eight components, and record equality/hash calculation includes the header. `toString()` omits it.
