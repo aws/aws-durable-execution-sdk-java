@@ -5,19 +5,23 @@ package software.amazon.lambda.durable.execution;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -25,6 +29,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -165,8 +170,9 @@ class ExecutionManagerAdmissionTest {
         }
     }
 
-    @Test
-    void stuckCheckpointAdmissionCannotExceedCleanupDeadline() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void stuckCheckpointAdmissionWaitsPastCleanupDeadlineAfterSelectingRetry(boolean interrupted) throws Exception {
         manager.close();
         var context = mock(Context.class);
         when(context.getRemainingTimeInMillis()).thenReturn(500);
@@ -183,15 +189,30 @@ class ExecutionManagerAdmissionTest {
         try {
             var admission = callers.submit(() -> manager.pollForOperationUpdates("pending"));
             await(admissionEntered);
-            var shutdown = callers.submit(() -> manager.finishInvocation(null));
-            var failure =
-                    assertInstanceOf(UnrecoverableDurableExecutionException.class, shutdown.get(5, TimeUnit.SECONDS));
+            var restoredInterrupt = new AtomicBoolean();
+            var shutdown = callers.submit(() -> {
+                var outcome = manager.awaitInvocationOutcome(new CompletableFuture<>());
+                if (interrupted) Thread.currentThread().interrupt();
+                try {
+                    return manager.finishInvocation(outcome.failure());
+                } finally {
+                    restoredInterrupt.set(Thread.interrupted());
+                }
+            });
+            callers.submit(this::awaitClosedAdmission).get(5, TimeUnit.SECONDS);
+            var failure = assertInstanceOf(UnrecoverableDurableExecutionException.class, manager.getLifecycleFailure());
             assertTrue(failure.isRetryable());
             assertInstanceOf(TimeoutException.class, failure.getCause());
-            assertEquals(ExecutionManager.LifecycleState.CLOSED, manager.getLifecycleState());
+            // The cutoff selects RETRYING and fences admission, but cannot skip an already-admitted enqueue.
+            assertThrows(TimeoutException.class, () -> shutdown.get(600, TimeUnit.MILLISECONDS));
             assertThrows(RejectedExecutionException.class, () -> manager.sendOperationUpdate(update()));
+            verify(client, never()).checkpoint(any(), any(), any());
             releaseAdmission.countDown();
-            admission.get(5, TimeUnit.SECONDS).cancel(false);
+            var poll = admission.get(5, TimeUnit.SECONDS);
+            assertSame(failure, shutdown.get(5, TimeUnit.SECONDS));
+            assertEquals(interrupted, restoredInterrupt.get());
+            assertTrue(poll.isCompletedExceptionally());
+            verify(client, never()).checkpoint(any(), any(), any());
         } finally {
             releaseAdmission.countDown();
         }
@@ -245,7 +266,10 @@ class ExecutionManagerAdmissionTest {
     @ValueSource(booleans = {false, true})
     void admittedContextTasksCanRegisterDescendantsWithoutLeakingAdmission(boolean coordinator) throws Exception {
         var executor = Executors.newSingleThreadExecutor();
+        manager.close();
         when(config.getExecutorService()).thenReturn(executor);
+        manager = createManager();
+        manager.registerActiveThread(null);
         var parent =
                 contextOperation("parent", coordinator ? OperationSubType.MAP : OperationSubType.RUN_IN_CHILD_CONTEXT);
         var descendant = step("descendant");
@@ -290,7 +314,10 @@ class ExecutionManagerAdmissionTest {
                 })
                 .when(inline)
                 .execute(any(Runnable.class));
+        manager.close();
         when(config.getExecutorService()).thenReturn(inline);
+        manager = createManager();
+        manager.registerActiveThread(null);
         var other = createManager();
         var parent = contextOperation("parent", OperationSubType.RUN_IN_CHILD_CONTEXT);
         var nested = contextOperation("nested", OperationSubType.RUN_IN_CHILD_CONTEXT);

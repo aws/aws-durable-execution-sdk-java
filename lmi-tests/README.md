@@ -19,6 +19,15 @@ those original snapshots and retain the existing zero-work and +16-thread limits
 Newly discovered request identities invalidate the warm cohort instead of moving
 its original baseline or final measurement to another request.
 
+The current deadline controls fence admission and request cooperative cancellation,
+but the SDK still awaits actual owner cleanup, admitted transport and the matching
+invocation End before returning. Non-cooperative work can therefore keep the
+runtime caller blocked beyond its deadline. This remains a partial change for
+[#726](https://github.com/aws/aws-durable-execution-sdk-java/issues/726), not proof
+that every desired LMI lifecycle bound is satisfied. The acceptance limits below
+remain unchanged; local tests do not replace a deployed cloud acceptance run, and
+eventual cleanup cannot turn an earlier lifecycle violation into a pass.
+
 ## Test design
 
 * Each fixture is a published durable function with LMI invocation concurrency
@@ -217,7 +226,7 @@ barrier diagnostics never authorize a retry. Every attempted cohort remains in
 the escape ledger, so a later successful cohort cannot hide an earlier pool escape.
 
 `timeouts/*.json` distinguishes server timeout logs from an SDK deadline
-cancellation that returns early with an invocation error. A client HTTP timeout
+cancellation reported as an invocation error after owner cleanup. A client HTTP timeout
 is a collection error. Deadline victims use asynchronous service invocation so a
 longer durable retry does not consume the driver HTTP timeout; invocation
 outcomes come from request-correlated runtime logs. Invocation request failures

@@ -19,7 +19,7 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.exception.DurableOperationException;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -70,11 +70,12 @@ class TerminalOperationStatusTest {
                     .enableMdc(false)
                     .contextExtractor(() -> null)
                     .build();
-            DurableExecutionPlugin plugin = executionView
-                    ? new ExecutionOtelPlugin(builder, settings)
-                    : new InvocationOtelPlugin(builder, settings);
+            DurableExecutionPluginFactory factory = executionView
+                    ? ExecutionOtelPlugin.factory(builder, settings)
+                    : InvocationOtelPlugin.factory(builder, settings);
             var start = Instant.parse("2026-10-14T00:00:00Z");
-            plugin.onInvocationStart(new InvocationInfo("request", "arn:status", !matchingStart, start));
+            var plugin =
+                    Invocations.started(factory, new InvocationInfo("request", "arn:status", !matchingStart, start));
             if (matchingStart)
                 plugin.onOperationStart(new OperationInfo(
                         "op", "status-target", "CALLBACK", "Callback", null, start, null, null, false));

@@ -29,6 +29,7 @@ import software.amazon.lambda.durable.execution.OperationIdGenerator;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.OperationEndInfo;
 
 @Timeout(15)
@@ -98,9 +99,9 @@ class BackendOperationTimingTest {
                     .enableMdc(false)
                     .contextExtractor(() -> null)
                     .build();
-            DurableExecutionPlugin otel = executionView
-                    ? new ExecutionOtelPlugin(builder, settings)
-                    : new InvocationOtelPlugin(builder, settings);
+            DurableExecutionPluginFactory otel = executionView
+                    ? ExecutionOtelPlugin.factory(builder, settings)
+                    : InvocationOtelPlugin.factory(builder, settings);
             var ends = new CopyOnWriteArrayList<OperationEndInfo>();
             var observer = new DurableExecutionPlugin() {
                 public void onOperationEnd(OperationEndInfo info) {
@@ -110,7 +111,7 @@ class BackendOperationTimingTest {
             var caught = new AtomicInteger();
             var config = DurableConfig.builder()
                     .withDurableExecutionClient(client)
-                    .withPlugins(otel, observer)
+                    .withPlugins(otel, ignored -> observer)
                     .build();
             for (int invocation = 0; invocation < 2; invocation++) {
                 var firstLive = live && invocation == 0;

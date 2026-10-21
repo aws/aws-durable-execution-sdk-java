@@ -238,7 +238,7 @@ class MdcFatalInitializationTest {
                 }
             };
             var configuration =
-                    DurableConfig.builder().withExecutorService(workers).withPlugins(plugin);
+                    DurableConfig.builder().withExecutorService(workers).withPlugins(invocation -> plugin);
             if (overrideSerDes != null) configuration.withSerDes(overrideSerDes);
             var runner = LocalDurableTestRunner.create(
                     String.class,

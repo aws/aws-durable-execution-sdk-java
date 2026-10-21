@@ -67,8 +67,8 @@ public class InvokeOperation<T, I> extends SerializableDurableOperation<T> {
     private void startInvocation() {
         var serializedPayload = payloadSerDes.serialize(this.payload, serDesContext("invoke-payload"));
         var options = ChainedInvokeOptions.builder().functionName(functionName).tenantId(invokeConfig.tenantId());
-        var plugins = getContext().getDurableConfig().getPluginRunner();
-        if (!plugins.isEmpty()) {
+        var plugins = executionManager.getPluginRunner();
+        if (plugins != null && !plugins.isEmpty()) {
             // onOperationStart has already established the calling operation's span. Only a new START
             // collects metadata; replay consumes the persisted outcome without recomputing it.
             var metadata = plugins.providePropagationMetadata(new PropagationInput(

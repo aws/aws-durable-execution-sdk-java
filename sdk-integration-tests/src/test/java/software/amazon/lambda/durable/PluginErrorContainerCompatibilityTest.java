@@ -59,7 +59,7 @@ class PluginErrorContainerCompatibilityTest {
                 String.class,
                 (input, context) -> context.waitForCallback(
                         "listener-error", String.class, (callbackId, step) -> submissions.incrementAndGet()),
-                DurableConfig.builder().withPlugins(listener).build());
+                DurableConfig.builder().withPlugins(ignored -> listener).build());
         assertEquals(ExecutionStatus.PENDING, runner.run("input").getStatus());
         var callbackName = "listener-error-callback";
         runner.failCallback(runner.getCallbackId(callbackName), error);

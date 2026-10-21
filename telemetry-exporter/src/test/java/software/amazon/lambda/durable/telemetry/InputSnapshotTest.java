@@ -13,7 +13,6 @@ import java.util.Map;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -64,8 +63,12 @@ class InputSnapshotTest {
     @Test
     void handlerMutationAfterStartDoesNotCorruptCachedInputSnapshot() {
         var exporter = new CapturingExporter();
-        DurableExecutionPlugin plugin = DurableExecutionTelemetry.durableExecutionTelemetry(
-                DurableExecutionTelemetryConfig.builder().addExporter(exporter).build());
+        var plugin = Executions.plugin(
+                DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
+                        .addExporter(exporter)
+                        .build()),
+                ARN,
+                START);
 
         // A mutable input whose nested list the handler mutates after the invocation has started.
         List<Object> items = new ArrayList<>();
@@ -99,14 +102,16 @@ class InputSnapshotTest {
             return v;
         };
         var exporter = new CapturingExporter();
-        var plugin = (DurableExecutionTelemetry.TelemetryPlugin)
+        var plugin = Executions.plugin(
                 DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
                         .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_CHANGE)
                         .content(ContentConfig.builder()
                                 .inputTransform(mutatingTransform)
                                 .build())
                         .addExporter(exporter)
-                        .build());
+                        .build()),
+                ARN,
+                START);
 
         List<Object> items = new ArrayList<>();
         items.add("a");

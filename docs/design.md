@@ -152,18 +152,25 @@ public class MyHandler extends DurableHandler<Input, Output> {
 
 ### Thread Pool Architecture
 
+Each invocation tracks logical task outcomes separately from actual task exit.
+Deadline and cleanup cutoffs fence admission and request cooperative cancellation,
+while finalization still waits for admitted work and in-flight transport to finish.
+The matching invocation End runs on its owner, and the runtime caller waits for
+that owner and End before returning. Code that ignores interruption can therefore
+outlast the policy budget; see [invocation deadline cleanup](advanced/configuration.md#invocation-deadline-cleanup).
+
 The SDK uses two separate thread pools with distinct responsibilities:
 
 **User Executor (`DurableConfig.executorService`):**
-- Runs the root handler, steps, and child-context user code
+- Runs the root handler, steps, child-context user code, and map/parallel coordination
 - Configurable via `DurableConfig.builder().withExecutorService()`
 - Caller-owned and shared across invocations; the SDK never shuts it down
 - Default: cached daemon thread pool
 
 **Invocation Executor Factory (`DurableConfig.invocationExecutorFactory`):**
 - Optional alternative to the shared user executor
-- Creates one executor per invocation for all root, step, and child-context user code
-- SDK-owned: the invocation caller requests shutdown after normal handler/End completion and awaits termination within its cleanup budget; uncooperative tasks can outlive that budget
+- Creates one executor per invocation for all root, step, child-context user code, and map/parallel coordination
+- SDK-owned: the invocation caller waits for actual admitted work and End before requesting executor shutdown, including after cancellation. Non-cooperative work can delay that shutdown beyond the policy budget. Executor termination is observed with any cleanup time that remains.
 - Must return a fresh executor and cannot be combined with `withExecutorService()`
 
 **Internal Executor (`InternalExecutor.INSTANCE`):**

@@ -5,13 +5,16 @@ package software.amazon.lambda.durable.execution;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +55,8 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.OperationChangeInfo;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 
@@ -67,13 +72,20 @@ class ExecutionManagerTest {
         client = TestUtils.createMockClient();
         var initialState =
                 CheckpointUpdatedExecutionState.builder().operations(operations).build();
-        return new ExecutionManager(
+        var manager = new ExecutionManager(
                 new DurableExecutionInput(EXECUTION_ARN, "test-token", initialState),
                 DurableConfig.builder()
                         .withDurableExecutionClient(client)
-                        .withPlugins(plugins)
+                        .withPlugins(Arrays.stream(plugins)
+                                .map(plugin -> (DurableExecutionPluginFactory) info -> plugin)
+                                .toArray(DurableExecutionPluginFactory[]::new))
                         .build(),
                 null);
+        if (plugins.length != 0)
+            manager.getPluginRunner()
+                    .onInvocationStart(new InvocationInfo(
+                            null, EXECUTION_ARN, false, Instant.EPOCH, null, Map.of(), Map.of(), null));
+        return manager;
     }
 
     @SuppressWarnings("removal")
@@ -953,25 +965,65 @@ class ExecutionManagerTest {
     }
 
     @Test
+    void scopeFatalDoesNotHideAnUnrelatedShutdownFailure() throws Exception {
+        var manager = createManager(List.of(executionOp()));
+        var checkpoint = mock(CheckpointManager.class);
+        var checkpointField = ExecutionManager.class.getDeclaredField("checkpointManager");
+        checkpointField.setAccessible(true);
+        checkpointField.set(manager, checkpoint);
+        var unrelated = new CompletionException(new IllegalStateException("unrelated shutdown failure"));
+        doThrow(unrelated).when(checkpoint).shutdown();
+        assertNull(manager.getInvocationFatal());
+        manager.recordHandlerScopeFatal(new InternalError("late owner failure"));
+        assertSame(unrelated, assertThrows(CompletionException.class, manager::close));
+    }
+
+    @Test
+    void scopeFatalRetainsItsShutdownCause() throws Exception {
+        var manager = createManager(List.of(executionOp()));
+        var checkpoint = mock(CheckpointManager.class);
+        var checkpointField = ExecutionManager.class.getDeclaredField("checkpointManager");
+        checkpointField.setAccessible(true);
+        checkpointField.set(manager, checkpoint);
+        var fatal = new InternalError("early owner failure");
+        doThrow(new CompletionException(fatal)).when(checkpoint).shutdown();
+        manager.recordHandlerScopeFatal(fatal);
+        assertSame(fatal, manager.getInvocationFatal());
+        assertSame(
+                fatal, assertThrows(CompletionException.class, manager::close).getCause());
+    }
+
+    @Test
     void checkpointDeliveryIsAtomicWithOperationRegistration() throws Exception {
         var manager = createManager(List.of(executionOp(), stepOp("step", OperationStatus.PENDING)));
         var durableContext = mock(DurableContextImpl.class);
         when(durableContext.getExecutionManager()).thenReturn(manager);
         var publicationReached = new CountDownLatch(1);
         var allowPublication = new CountDownLatch(1);
-        var idCalls = new AtomicInteger();
-        var terminalOperation = mock(Operation.class);
-        when(terminalOperation.id()).thenAnswer(invocation -> {
-            if (idCalls.incrementAndGet() == 3) {
-                publicationReached.countDown();
-                assertTrue(allowPublication.await(5, TimeUnit.SECONDS));
+        var terminalOperation = stepOp("step", OperationStatus.SUCCEEDED).toBuilder()
+                .name("step")
+                .subType(OperationSubType.STEP.getValue())
+                .build();
+        var storageField = ExecutionManager.class.getDeclaredField("operationStorage");
+        storageField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        var storage = (Map<String, Operation>) storageField.get(manager);
+        // Block the actual publication, not an incidental number of Operation.id() reads.
+        storageField.set(manager, new ConcurrentHashMap<String, Operation>(storage) {
+            @Override
+            public Operation put(String id, Operation value) {
+                if (value == terminalOperation) {
+                    publicationReached.countDown();
+                    try {
+                        assertTrue(allowPublication.await(5, TimeUnit.SECONDS));
+                    } catch (InterruptedException failure) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(failure);
+                    }
+                }
+                return super.put(id, value);
             }
-            return "step";
         });
-        when(terminalOperation.name()).thenReturn("step");
-        when(terminalOperation.type()).thenReturn(OperationType.STEP);
-        when(terminalOperation.subType()).thenReturn(OperationSubType.STEP.getValue());
-        when(terminalOperation.status()).thenReturn(OperationStatus.SUCCEEDED);
 
         class TestOperation extends BaseDurableOperation {
             TestOperation() {
@@ -1222,6 +1274,70 @@ class ExecutionManagerTest {
                     .computeIfAbsent(operationId, ignored -> Collections.synchronizedList(new ArrayList<>()))
                     .add(lock);
             return lock;
+        }
+    }
+
+    @Test
+    void interruptedDrainStillJoinsEveryStageAndAttemptsCheckpointShutdown() throws Exception {
+        var manager = createManager(List.of(executionOp()));
+        manager.registerActiveThread("root");
+        var checkpoint = mock(CheckpointManager.class);
+        var field = ExecutionManager.class.getDeclaredField("checkpointManager");
+        field.setAccessible(true);
+        field.set(manager, checkpoint);
+        var peer = new CompletableFuture<Void>();
+        var operation = mock(BaseDurableOperation.class);
+        when(operation.getOperationId()).thenReturn("peer");
+        when(operation.getRunningUserHandler()).thenReturn(peer);
+        manager.registerOperation(operation);
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var drainerReady = new CountDownLatch(1);
+        var drainer = new AtomicReference<Thread>();
+        var interruptedAfterDrain = new AtomicBoolean();
+        var workers = Executors.newSingleThreadExecutor();
+        var caller = Executors.newSingleThreadExecutor();
+        var continuation = manager.runCheckpointContinuation(
+                () -> {
+                    entered.countDown();
+                    try {
+                        assertTrue(release.await(5, TimeUnit.SECONDS));
+                    } catch (InterruptedException error) {
+                        throw new AssertionError(error);
+                    }
+                },
+                workers);
+        try {
+            assertTrue(entered.await(3, TimeUnit.SECONDS));
+            var closing = caller.submit(() -> {
+                drainer.set(Thread.currentThread());
+                drainerReady.countDown();
+                try {
+                    manager.drainOperations();
+                } finally {
+                    interruptedAfterDrain.set(Thread.currentThread().isInterrupted());
+                    Thread.interrupted();
+                }
+            });
+            assertTrue(drainerReady.await(3, TimeUnit.SECONDS));
+            drainer.get().interrupt();
+            assertThrows(TimeoutException.class, () -> closing.get(100, TimeUnit.MILLISECONDS));
+            release.countDown();
+            continuation.get(3, TimeUnit.SECONDS);
+            assertThrows(TimeoutException.class, () -> closing.get(100, TimeUnit.MILLISECONDS));
+            peer.complete(null);
+            var failure = assertThrows(ExecutionException.class, () -> closing.get(3, TimeUnit.SECONDS));
+            assertInstanceOf(IllegalStateException.class, failure.getCause());
+            assertInstanceOf(InterruptedException.class, failure.getCause().getCause());
+            assertTrue(interruptedAfterDrain.get());
+            verify(checkpoint).shutdown();
+        } finally {
+            release.countDown();
+            peer.complete(null);
+            workers.shutdownNow();
+            caller.shutdownNow();
+            assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS));
+            assertTrue(caller.awaitTermination(3, TimeUnit.SECONDS));
         }
     }
 }

@@ -115,7 +115,7 @@ class ContinuationFatalPublicProbeTest {
                 .withCheckpointDelay(Duration.ZERO)
                 .withPollingStrategy(attempt -> Duration.ZERO);
         if (withPlugin)
-            builder.withPlugins(new DurableExecutionPlugin() {
+            builder.withPlugins(invocation -> new DurableExecutionPlugin() {
                 public void onInvocationEnd(InvocationEndInfo info) {
                     ends.add(info);
                     if (info.invocationStatus() == InvocationStatus.RETRYING && endFailure != null) throw endFailure;
@@ -188,12 +188,17 @@ class ContinuationFatalPublicProbeTest {
                 assertSame(endFailure, callerFailure, "Existing Root End JVM-fatal precedence remains");
                 assertTrue(endEscaped.await(3, TimeUnit.SECONDS));
                 assertSame(endFailure, endOwnerFailure.get());
-                assertEquals(1, endFailure.getSuppressed().length);
-                retry = assertInstanceOf(
-                        UnrecoverableDurableExecutionException.class, endFailure.getSuppressed()[0]);
+                // Major resource closure may additionally retain its own CompletionException diagnostic.
+                retry = Arrays.stream(endFailure.getSuppressed())
+                        .filter(UnrecoverableDurableExecutionException.class::isInstance)
+                        .map(UnrecoverableDurableExecutionException.class::cast)
+                        .findFirst()
+                        .orElseThrow(() -> new AssertionError("Missing original retry control"));
             } else {
                 retry = assertInstanceOf(UnrecoverableDurableExecutionException.class, callerFailure);
-                if (endFailure != null) assertArrayEquals(new Throwable[] {endFailure}, retry.getSuppressed());
+                // Factory API 2 contains ordinary End Errors; they do not replace or attach to retry control.
+                if (endFailure != null)
+                    assertFalse(Arrays.asList(retry.getSuppressed()).contains(endFailure));
             }
             assertTrue(retry.isRetryable());
             assertSame(fatal, retry.getCause());

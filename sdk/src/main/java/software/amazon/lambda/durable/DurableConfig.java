@@ -25,8 +25,7 @@ import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequ
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
 import software.amazon.lambda.durable.logging.LoggerConfig;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
-import software.amazon.lambda.durable.plugin.ExclusivePluginGroup;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.retry.PollingStrategy;
@@ -104,17 +103,17 @@ public final class DurableConfig {
     private final Duration checkpointDelay;
     private final boolean deserializeAfterSerialization;
     private final boolean checkpointEmptyMap;
-    private final PluginRunner pluginRunner;
+    private final List<DurableExecutionPluginFactory> pluginFactories;
 
     private DurableConfig(Builder builder) {
         if (builder.executorService != null && builder.invocationExecutorFactory != null) {
             throw new IllegalArgumentException(
                     "ExecutorService and invocation executor factory cannot both be configured");
         }
-        var plugins = builder.loadDynamicPlugins
-                ? DynamicPluginLoader.loadConfiguredPlugins(builder.plugins)
-                : List.copyOf(builder.plugins);
-        this.pluginRunner = plugins.isEmpty() ? PluginRunner.noOp() : new PluginRunner(plugins);
+        this.pluginFactories = builder.loadDynamicPlugins
+                ? DynamicPluginLoader.loadConfiguredPluginFactories(builder.pluginFactories)
+                : List.copyOf(builder.pluginFactories);
+        PluginRunner.validateExclusiveGroups(this.pluginFactories);
         this.durableExecutionClient = Objects.requireNonNullElseGet(
                 builder.durableExecutionClient, DurableConfig::createDefaultDurableExecutionClient);
         this.serDes = Objects.requireNonNullElseGet(builder.serDes, JacksonSerDes::new);
@@ -239,23 +238,23 @@ public final class DurableConfig {
     }
 
     /**
-     * Gets the plugin runner that dispatches lifecycle events to registered plugins.
+     * Gets the plugin factories registered via the builder or loaded dynamically, in dispatch order.
      *
-     * <p>Returns a no-op runner if no plugins were registered via the builder or loaded dynamically.
+     * <p>Each factory is called once per Lambda invocation to create that invocation's plugin instance; the SDK never
+     * shares a plugin instance across invocations.
      *
-     * @return PluginRunner instance (never null)
+     * @return immutable list of plugin factories (never null, possibly empty)
      */
-    public PluginRunner getPluginRunner() {
-        return pluginRunner;
+    public List<DurableExecutionPluginFactory> getPluginFactories() {
+        return pluginFactories;
     }
 
     /**
-     * Copies this configuration into a builder, preserving the effective plugin instances without repeating dynamic
-     * discovery.
+     * Copies effective factory registrations without repeating environment discovery.
      *
-     * <p>The returned builder never performs dynamic discovery, including after {@code withPlugins} replaces its
-     * complete plugin list. Calling {@code withPlugins()} with no arguments therefore removes every plugin from the
-     * copy. Use {@link #builder()} to create a fresh configuration that reads {@code DURABLE_EXECUTION_PLUGINS}.
+     * <p>The copied builder never performs dynamic discovery, including after {@code withPlugins} replaces its complete
+     * factory list. Calling {@code withPlugins()} removes all factories. Use {@link #builder()} for a fresh
+     * configuration that reads {@code DURABLE_EXECUTION_PLUGINS}.
      */
     public Builder toBuilder() {
         var builder = new Builder()
@@ -271,7 +270,7 @@ public final class DurableConfig {
         } else {
             builder.withExecutorService(executorService);
         }
-        builder.plugins = new ArrayList<>(pluginRunner.getPlugins());
+        builder.pluginFactories = new ArrayList<>(pluginFactories);
         builder.loadDynamicPlugins = false;
         return builder;
     }
@@ -373,7 +372,7 @@ public final class DurableConfig {
         private Duration checkpointDelay;
         private boolean deserializeAfterSerialization = true;
         private boolean checkpointEmptyMap = false;
-        private List<DurableExecutionPlugin> plugins = new ArrayList<>();
+        private List<DurableExecutionPluginFactory> pluginFactories = new ArrayList<>();
         private boolean loadDynamicPlugins = true;
 
         public Builder() {}
@@ -454,9 +453,10 @@ public final class DurableConfig {
          *
          * <p>The factory is called once by each {@code DurableExecutor.execute()} call and may be called concurrently
          * on Lambda Managed Instances. It must return a fresh, non-null {@link ExecutorService}; the SDK shuts that
-         * executor down and awaits termination within the invocation cleanup budget. Running code that ignores
-         * interruption may outlive that budget. Do not return an executor shared with another invocation or application
-         * component. This option cannot be combined with {@link #withExecutorService(ExecutorService)}.
+         * executor down only after actual admitted work and End finish, then observes termination within the remaining
+         * cleanup budget. Running code that ignores interruption may delay shutdown beyond that budget. Do not return
+         * an executor shared with another invocation or application component. This option cannot be combined with
+         * {@link #withExecutorService(ExecutorService)}.
          *
          * @param invocationExecutorFactory factory for invocation-owned executors
          * @return This builder
@@ -531,34 +531,33 @@ public final class DurableConfig {
         }
 
         /**
-         * Registers one or more plugins for lifecycle event instrumentation.
+         * Registers one or more plugin factories for lifecycle event instrumentation.
          *
-         * <p>Plugins receive hooks at invocation, operation, and user function boundaries. Errors thrown by plugins are
-         * isolated and never disrupt SDK execution.
+         * <p>Each factory is called once per Lambda invocation, with that invocation's {@code InvocationInfo}, and the
+         * instance it returns receives only that invocation's hooks. Plugin instances can therefore keep per-invocation
+         * state in plain fields even when the execution environment runs several executions concurrently.
          *
-         * <p>The effective list, including environment-selected plugins, may contain at most one plugin instance from
-         * each {@link ExclusivePluginGroup exclusive group}. Conflicts, including repeated explicit instances of the
-         * same class, are rejected by {@link #build()}. An environment-selected exclusive implementation is not
-         * constructed again when its exact concrete type is already explicitly configured. Unrelated plugins retain
-         * their existing registration behavior.
+         * <p>Plugins receive hooks at invocation, operation, and user function boundaries. Non-fatal factory/hook
+         * failures and null factory results are logged and skipped. {@link VirtualMachineError} and {@link ThreadDeath}
+         * propagate, including when wrapped by asynchronous completion/future exceptions.
          *
-         * <p>Calling this method replaces any previously registered plugins. Hooks use registration order, except
+         * <p>Calling this method replaces any previously registered factories. Hooks use registration order, except
          * invocation end, which uses reverse order under the same-thread lifecycle contract. A fresh builder combines
-         * this explicit list with environment-selected plugins. On a builder returned by
+         * this explicit list with environment-selected factories. On a builder returned by
          * {@link DurableConfig#toBuilder()}, this method replaces the complete resolved list and dynamic discovery
          * remains disabled, including when the replacement list is empty.
          *
-         * @param plugins the plugins to register
+         * @param pluginFactories the plugin factories to register
          * @return This builder
-         * @throws NullPointerException if any plugin is null
+         * @throws NullPointerException if any factory is null
          */
-        public Builder withPlugins(DurableExecutionPlugin... plugins) {
-            Objects.requireNonNull(plugins, "Plugins array cannot be null");
-            var newPlugins = new ArrayList<DurableExecutionPlugin>(plugins.length);
-            for (var plugin : plugins) {
-                newPlugins.add(Objects.requireNonNull(plugin, "Plugin cannot be null"));
+        public Builder withPlugins(DurableExecutionPluginFactory... pluginFactories) {
+            Objects.requireNonNull(pluginFactories, "Plugins array cannot be null");
+            var newFactories = new ArrayList<DurableExecutionPluginFactory>(pluginFactories.length);
+            for (var pluginFactory : pluginFactories) {
+                newFactories.add(Objects.requireNonNull(pluginFactory, "Plugin cannot be null"));
             }
-            this.plugins = newPlugins;
+            this.pluginFactories = newFactories;
             return this;
         }
 
@@ -566,7 +565,6 @@ public final class DurableConfig {
          * Builds the DurableConfig instance.
          *
          * @return Immutable DurableConfig instance
-         * @throws IllegalStateException if plugin discovery or exclusive-group configuration is invalid
          */
         public DurableConfig build() {
             return new DurableConfig(this);

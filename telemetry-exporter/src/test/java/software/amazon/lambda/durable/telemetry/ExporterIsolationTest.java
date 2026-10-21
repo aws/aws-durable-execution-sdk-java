@@ -69,15 +69,17 @@ class ExporterIsolationTest {
     void firstExporterMutationsDoNotLeakIntoLaterExporter() {
         var mutating = new MutatingExporter();
         var good = new CapturingExporter();
-        var plugin = (DurableExecutionTelemetry.TelemetryPlugin) DurableExecutionTelemetry.durableExecutionTelemetry(
-                DurableExecutionTelemetryConfig.builder()
+        var plugin = Executions.plugin(
+                DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
                         .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_CHANGE)
                         .content(ContentConfig.builder()
                                 .addOverride(OperationOverride.withResult("compute", r -> r))
                                 .build())
                         .addExporter(mutating)
                         .addExporter(good)
-                        .build());
+                        .build()),
+                ARN,
+                START);
 
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("k", "v");

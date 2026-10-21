@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -17,12 +18,15 @@ import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -35,6 +39,7 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.TypeToken;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
@@ -73,7 +78,7 @@ class OwnedInvocationExecutorLifecycleTest {
         var config = DurableConfig.builder()
                 .withDurableExecutionClient(TestUtils.createMockClient())
                 .withInvocationExecutorFactory(() -> owned)
-                .withPlugins(plugin)
+                .withPlugins(ignoredInfo -> plugin)
                 .build();
         try {
             var response = runtime.submit(() -> {
@@ -106,6 +111,69 @@ class OwnedInvocationExecutorLifecycleTest {
         }
     }
 
+    @Test
+    void interruptedCallerStillWaitsForEndBeforeShuttingDownOwnedExecutor() throws Exception {
+        var owned = Executors.newFixedThreadPool(2);
+        var runtime = Executors.newSingleThreadExecutor();
+        var callerThread = new AtomicReference<Thread>();
+        var callerInterrupted = new AtomicBoolean();
+        var endEntered = new CountDownLatch(1);
+        var endInterrupted = new CountDownLatch(1);
+        var releaseEnd = new CountDownLatch(1);
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withInvocationExecutorFactory(() -> owned)
+                .withPlugins(ignoredInfo -> new DurableExecutionPlugin() {
+                    @Override
+                    public void onInvocationEnd(InvocationEndInfo info) {
+                        endEntered.countDown();
+                        awaitIgnoringInterruptions(releaseEnd, endInterrupted);
+                    }
+                })
+                .build();
+        try {
+            var response = runtime.submit(() -> {
+                callerThread.set(Thread.currentThread());
+                try {
+                    return DurableExecutor.execute(
+                            input(), context(), TypeToken.get(String.class), (value, durable) -> value, config);
+                } finally {
+                    callerInterrupted.set(Thread.interrupted());
+                }
+            });
+            assertTrue(endEntered.await(5, TimeUnit.SECONDS));
+            callerThread.get().interrupt();
+            assertTrue(endInterrupted.await(5, TimeUnit.SECONDS));
+            assertThrows(TimeoutException.class, () -> response.get(1200, TimeUnit.MILLISECONDS));
+            assertFalse(owned.isShutdown(), "Cancellation cannot move executor shutdown ahead of actual End exit");
+            releaseEnd.countDown();
+            var failure = assertInstanceOf(
+                    UnrecoverableDurableExecutionException.class,
+                    assertThrows(ExecutionException.class, () -> response.get(5, TimeUnit.SECONDS))
+                            .getCause());
+            assertTrue(failure.isRetryable());
+            assertInstanceOf(InterruptedException.class, failure.getCause());
+            assertTrue(callerInterrupted.get());
+            assertTrue(owned.isTerminated());
+        } finally {
+            releaseEnd.countDown();
+            stop(runtime);
+            stop(owned);
+        }
+    }
+
+    private static void awaitIgnoringInterruptions(CountDownLatch release, CountDownLatch interrupted) {
+        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (true) {
+            try {
+                assertTrue(release.await(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS));
+                return;
+            } catch (InterruptedException ignored) {
+                interrupted.countDown();
+            }
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void rootStepAndNestedChildUseTheInvocationSelectedExecutor(boolean pluginsEnabled) throws Exception {
@@ -120,7 +188,7 @@ class OwnedInvocationExecutorLifecycleTest {
         var builder = DurableConfig.builder()
                 .withDurableExecutionClient(TestUtils.createMockClient())
                 .withInvocationExecutorFactory(() -> owned);
-        if (pluginsEnabled) builder.withPlugins(new DurableExecutionPlugin() {});
+        if (pluginsEnabled) builder.withPlugins(ignoredInfo -> new DurableExecutionPlugin() {});
         try {
             var response = DurableExecutor.execute(
                     input(),
@@ -165,7 +233,7 @@ class OwnedInvocationExecutorLifecycleTest {
         var builder = DurableConfig.builder()
                 .withDurableExecutionClient(TestUtils.createMockClient())
                 .withInvocationExecutorFactory(() -> owned);
-        if (pluginsEnabled) builder.withPlugins(new DurableExecutionPlugin() {});
+        if (pluginsEnabled) builder.withPlugins(ignoredInfo -> new DurableExecutionPlugin() {});
         var config = builder.build();
         try {
             assertThrows(

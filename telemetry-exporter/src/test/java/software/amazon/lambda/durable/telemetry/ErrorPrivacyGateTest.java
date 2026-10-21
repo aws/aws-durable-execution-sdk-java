@@ -14,7 +14,6 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -64,13 +63,15 @@ class ErrorPrivacyGateTest {
     }
 
     private DurableExecutionTelemetryRecord runFailedExecution(boolean includeErrors, CapturingExporter exporter) {
-        DurableExecutionPlugin plugin =
+        var plugin = Executions.plugin(
                 DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
                         .content(ContentConfig.builder()
                                 .includeErrors(includeErrors)
                                 .build())
                         .addExporter(exporter)
-                        .build());
+                        .build()),
+                ARN,
+                START);
         plugin.onInvocationStart(new InvocationInfo("req", ARN, true, START, "in", failingOp(), Map.of()));
         plugin.onInvocationEnd(new InvocationEndInfo(
                 "req",

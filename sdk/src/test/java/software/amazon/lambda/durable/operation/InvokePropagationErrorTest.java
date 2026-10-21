@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -25,6 +26,8 @@ import software.amazon.lambda.durable.config.InvokeConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.OperationInfo;
 import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.plugin.PropagationInput;
@@ -131,7 +134,11 @@ class InvokePropagationErrorTest {
     private static DurableContext context(ExecutionManager manager, List<DurableExecutionPlugin> plugins) {
         when(manager.getDurableExecutionArn()).thenReturn("execution-arn");
         var config = mock(DurableConfig.class);
-        when(config.getPluginRunner()).thenReturn(new PluginRunner(plugins));
+        var runner = new PluginRunner(plugins.stream()
+                .map(plugin -> (DurableExecutionPluginFactory) ignored -> plugin)
+                .toList());
+        runner.onInvocationStart(new InvocationInfo("request", "execution-arn", true, Instant.EPOCH));
+        when(manager.getPluginRunner()).thenReturn(runner);
         when(config.getSerDes()).thenReturn(new JacksonSerDes());
         return DurableContextImpl.createRootContext(manager, config, null);
     }

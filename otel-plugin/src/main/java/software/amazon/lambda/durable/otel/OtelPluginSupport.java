@@ -22,13 +22,12 @@ import java.util.Collections;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.exception.DurableOperationException;
-import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.plugin.OperationEndInfo;
 
-/** Shared provider setup, sampling resolution, and invocation cleanup support. */
+/** Shared utilities for the OTel plugins' ADOT Java agent SPI path. */
 final class OtelPluginSupport {
 
-    /** Always runs invocation cleanup without hiding an earlier failure or a later JVM fatal. */
+    /** Always attempt provider cleanup, retaining the approved plugin-local failure precedence. */
     static void finishWithRootCleanup(Runnable finish, Runnable cleanup) {
         Throwable primary = null;
         try {
@@ -59,37 +58,34 @@ final class OtelPluginSupport {
         return 1;
     }
 
-    /** Applies the base lifecycle's scope restoration with the same cleanup failure precedence. */
-    static void runInvocationEnd(Scope scope, Runnable end) {
-        finishWithRootCleanup(end, () -> {
-            if (scope != null) scope.close();
-        });
-    }
-
-    /** Rejects an older core before a plugin builds a provider or activates thread-local context. */
-    static void requireSameThreadInvocationHooks() {
-        var message = "This OpenTelemetry plugin requires same-thread invocation hooks from the Durable Execution"
-                + " core. Upgrade the core together with the plugin layer.";
-        try {
-            if (!DurableExecutor.supportsSameThreadInvocationHooks()) throw new IllegalStateException(message);
-        } catch (NoSuchMethodError missingCapability) {
-            throw new IllegalStateException(message, missingCapability);
-        }
-    }
-
     private static final Logger logger = LoggerFactory.getLogger(OtelPluginSupport.class);
 
     private OtelPluginSupport() {}
 
-    /** A visible replacement sampler cannot consume our bridge; an opaque agent provider may still need it. */
-    static boolean usesDurableSamplingBridge(SdkTracerProvider provider) {
-        // This identifies only the cross-loader wire consumer; context-key ownership still requires instanceof.
-        return provider == null || provider.getSampler().getClass().getName().equals(DurableSampler.class.getName());
+    /** Keeps finalization on another thread from consuming an operation owner's eventual scope cleanup. */
+    static Scope onOwnerThread(Scope scope) {
+        var owner = Thread.currentThread();
+        return new Scope() {
+            // Only the owner can read or mutate this flag; other threads return before accessing it.
+            private boolean closed;
+
+            @Override
+            public void close() {
+                if (Thread.currentThread() != owner || closed) return;
+                closed = true;
+                scope.close();
+            }
+        };
     }
 
     /** Only the same DurableSampler class copy can consume this loader's parent-context holder. */
     static boolean usesLocalDurableSampler(SdkTracerProvider provider) {
         return provider != null && provider.getSampler() instanceof DurableSampler;
+    }
+
+    /** A visible replacement sampler cannot consume our bridge; an opaque agent provider may still need it. */
+    static boolean usesDurableSamplingBridge(SdkTracerProvider provider) {
+        return provider == null || provider.getSampler().getClass().getName().equals(DurableSampler.class.getName());
     }
 
     /** Terminal backend status and exception details are independent telemetry signals. */
@@ -176,7 +172,7 @@ final class OtelPluginSupport {
      *       sampled span yields {@code RECORD_AND_SAMPLE}; an unsampled but recording span yields {@code RECORD_ONLY}
      *       (its spans still reach processors); only an unsampled, non-recording span yields {@code DROP};
      *   <li><b>Application-owned provider: configured sampler, once.</b> When the tracer provider is reachable (the
-     *       two-argument constructor path), its sampler is read directly and evaluated a single time with
+     *       application-owned provider path), its sampler is read directly and evaluated a single time with
      *       {@code ROOT_CONTEXT} (so a parent-based sampler applies its root policy), the canonical trace ID, span
      *       name, and attributes, and its full result is returned;
      *   <li><b>Java-agent path: defer to the installed sampler.</b> When the provider is not visible

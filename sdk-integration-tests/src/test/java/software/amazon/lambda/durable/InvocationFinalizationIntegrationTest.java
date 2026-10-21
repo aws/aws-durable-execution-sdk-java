@@ -63,7 +63,7 @@ class InvocationFinalizationIntegrationTest {
                         await(releaseFinally);
                     }
                 },
-                DurableConfig.builder().withPlugins(plugin).build());
+                DurableConfig.builder().withPlugins(ignoredInfo -> plugin).build());
         var caller = Executors.newSingleThreadExecutor();
         try {
             var response = caller.submit(() -> runner.run("input"));
@@ -106,7 +106,7 @@ class InvocationFinalizationIntegrationTest {
                         if (throwsInFinally) throw new IllegalStateException("finally failed");
                     }
                 },
-                DurableConfig.builder().withPlugins(plugin).build());
+                DurableConfig.builder().withPlugins(ignoredInfo -> plugin).build());
         var caller = Executors.newSingleThreadExecutor();
         try {
             var response = caller.submit(() -> runner.run("input"));
@@ -172,7 +172,7 @@ class InvocationFinalizationIntegrationTest {
         var original = retryError();
         var plugin = new RecordingPlugin();
         var builder = DurableConfig.builder().withExecutorService(workers);
-        if (withPlugin) builder.withPlugins(plugin);
+        if (withPlugin) builder.withPlugins(ignoredInfo -> plugin);
         var runner = LocalDurableTestRunner.create(
                 String.class,
                 (input, context) -> {
@@ -343,7 +343,7 @@ class InvocationFinalizationIntegrationTest {
                     context.wait("pause", Duration.ofSeconds(1));
                     return result;
                 },
-                DurableConfig.builder().withPlugins(plugin).build());
+                DurableConfig.builder().withPlugins(ignoredInfo -> plugin).build());
 
         var output = runner.runUntilComplete("input");
 
