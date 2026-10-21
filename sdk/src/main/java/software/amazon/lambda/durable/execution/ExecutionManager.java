@@ -1631,9 +1631,33 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private Throwable shutdownOwnedExecutor(long hardDeadline, Throwable priorFailure) {
-        if (!ownsExecutorService) {
-            return priorFailure;
+        if (!ownsExecutorService) return priorFailure;
+        Throwable result = priorFailure;
+        Throwable thrown = null;
+        try {
+            result = attemptOwnedExecutorShutdown(hardDeadline, priorFailure);
+        } catch (Throwable failure) {
+            thrown = failure;
         }
+        try {
+            if (executorService.isShutdown()) ACTIVE_INVOCATION_EXECUTORS.remove(executorService);
+        } catch (Throwable stateFailure) {
+            // The lease query must not replace the shutdown attempt's fatal or erase its diagnostics.
+            thrown = combineOwnedExecutorFailures(thrown != null ? thrown : result, stateFailure);
+        }
+        // Preserve the outer finalizer's first-fatal and explicit-close observation handling.
+        if (thrown != null) ExceptionHelper.sneakyThrow(thrown);
+        return result;
+    }
+
+    private static Throwable combineOwnedExecutorFailures(Throwable earlier, Throwable later) {
+        var earlierCause = ExceptionHelper.unwrapInvocationFailure(earlier);
+        var laterCause = ExceptionHelper.unwrapInvocationFailure(later);
+        return combineFailures(
+                isFatal(earlierCause) ? earlierCause : earlier, isFatal(laterCause) ? laterCause : later);
+    }
+
+    private Throwable attemptOwnedExecutorShutdown(long hardDeadline, Throwable priorFailure) {
         var executorDeadline = Math.max(System.nanoTime(), hardDeadline - CHECKPOINT_CLEANUP_RESERVE.toNanos());
         try {
             executorService.shutdown();
@@ -1659,10 +1683,6 @@ public class ExecutionManager implements SafeCloseable {
             var cause = ExceptionHelper.unwrapInvocationFailure(failure);
             if (isFatal(cause)) ExceptionHelper.sneakyThrow(cause);
             return combineFailures(priorFailure, lifecycleFailure("Invocation executor shutdown failed", failure));
-        } finally {
-            if (executorService.isShutdown()) {
-                ACTIVE_INVOCATION_EXECUTORS.remove(executorService);
-            }
         }
     }
 
