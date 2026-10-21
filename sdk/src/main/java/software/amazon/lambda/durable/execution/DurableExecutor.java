@@ -77,9 +77,9 @@ public class DurableExecutor {
             BiFunction<I, DurableContext, O> handler,
             DurableConfig config) {
         try (var manager = new ExecutionManager(input, config, lambdaContext)) {
-            manager.registerActiveThread(ROOT_THREAD_ID);
-            var invocation = new Invocation<>(input, lambdaContext, inputType, handler, config, manager);
             try {
+                manager.registerActiveThread(ROOT_THREAD_ID);
+                var invocation = new Invocation<>(input, lambdaContext, inputType, handler, config, manager);
                 var completion = invocation.execute();
                 var ready = invocation.outcome.applyToEither(
                         completion.handle((ignored, failure) -> new Outcome<O>(null, failure)), Function.identity());
@@ -109,7 +109,7 @@ public class DurableExecutor {
                 return completion.join();
             } catch (Throwable failure) {
                 var originalFailure = ExceptionHelper.unwrapInvocationFailure(failure);
-                // Finalize synchronous admission/dispatch failures before automatic close observes them again.
+                // Finalize synchronous setup/admission/dispatch failures before automatic close observes them again.
                 var finalFailure = manager.finishInvocation(originalFailure);
                 ExceptionHelper.sneakyThrow(finalFailure != null ? finalFailure : originalFailure);
                 return null;
