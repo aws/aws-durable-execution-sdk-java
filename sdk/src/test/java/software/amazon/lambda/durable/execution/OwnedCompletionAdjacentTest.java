@@ -40,11 +40,22 @@ class OwnedCompletionAdjacentTest {
         run(false, false);
     }
 
+    @Test
+    void callerCutoffDoesNotDuplicateTheSerializerUsedAsShutdownFailure() throws Exception {
+        run(false, false, true);
+    }
+
     private static void run(boolean acknowledged, boolean cleanupFatal) throws Exception {
+        run(acknowledged, cleanupFatal, false);
+    }
+
+    private static void run(boolean acknowledged, boolean cleanupFatal, boolean sameError) throws Exception {
         var delivery = new IllegalStateException("late delivery failure");
-        Throwable shutdown = cleanupFatal
-                ? new InternalError("later owned shutdown fatal")
-                : new IllegalStateException("later owned shutdown failure");
+        Throwable shutdown = sameError
+                ? delivery
+                : cleanupFatal
+                        ? new InternalError("later owned shutdown fatal")
+                        : new IllegalStateException("later owned shutdown failure");
         var injected = new AtomicBoolean(true);
         var shutdownCalls = new AtomicInteger();
         var users = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>()) {
