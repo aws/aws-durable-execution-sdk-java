@@ -174,7 +174,7 @@ public class DurableExecutor {
                 return finishInvocation(selected.value(), selected.failure());
             };
             // Cleanup is awaited even without plugins. Keep that path free of plugin MDC handling.
-            if (plugins.isEmpty()) return manager.submitRootTask(task);
+            if (plugins.isEmpty()) return supplyWithoutPlugins(task, manager::executeRootTask);
             return supplyHandler(task, this::finishFailure, manager::executeRootTask);
         }
 
@@ -352,6 +352,25 @@ public class DurableExecutor {
             if (failure == null) future.complete(value);
             else future.completeExceptionally(failure);
         }
+    }
+
+    /** Keeps final owner results observable even when invocation cleanup cancels the executor task. */
+    @SuppressWarnings("removal")
+    private static <T> CompletableFuture<T> supplyWithoutPlugins(Supplier<T> task, Executor executor) {
+        var result = new CompletableFuture<T>();
+        Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
+            var outcome = Outcome.capture(task);
+            try {
+                rethrowLifecycleFatal(outcome.failure());
+            } catch (VirtualMachineError | ThreadDeath fatal) {
+                result.completeExceptionally(fatal);
+                throw fatal;
+            } finally {
+                outcome.complete(result);
+            }
+        };
+        executor.execute(work);
+        return result;
     }
 
     @SuppressWarnings("removal")

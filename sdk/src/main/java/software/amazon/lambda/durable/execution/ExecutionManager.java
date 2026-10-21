@@ -1019,8 +1019,15 @@ public class ExecutionManager implements SafeCloseable {
             var failure = lifecycleFailure.get();
             throw failure != null ? failure : lifecycleFailure("Invocation has already returned", null);
         }
-        if (deadlineNanos != null && remainingNanos(deadlineNanos - EXECUTION_DEADLINE_HEADROOM.toNanos()) == 0)
-            throw lifecycleFailure("Invocation deadline reached before user work", new TimeoutException());
+        if (deadlineNanos != null && remainingNanos(deadlineNanos - EXECUTION_DEADLINE_HEADROOM.toNanos()) == 0) {
+            var failure = lifecycleFailure("Invocation deadline reached before user work", new TimeoutException());
+            // An existing suspension/termination already owns the outcome; still reject this later admission.
+            if (executionExceptionFuture.isCompletedExceptionally()) throw failure;
+            // This check may hold admissionLock. Latch without running cancellation/completion observers here,
+            // so catching the rejection cannot turn the invocation into a successful fallback.
+            lifecycleFailure.compareAndSet(null, failure);
+            throw lifecycleFailure.get();
+        }
     }
 
     private void checkCheckpointRequestAllowed() {
