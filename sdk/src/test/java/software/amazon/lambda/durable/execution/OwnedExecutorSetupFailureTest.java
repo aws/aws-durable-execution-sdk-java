@@ -95,7 +95,11 @@ class OwnedExecutorSetupFailureTest {
         NESTED_WRAPPED_FATAL,
         CHANGING_FATAL_CAUSE,
         THROWING_FATAL_CAUSE,
-        APPLICATION_WRAPPER
+        APPLICATION_WRAPPER,
+        WRAPPED_ORDINARY,
+        NESTED_WRAPPED_ORDINARY,
+        CHANGING_ORDINARY_CAUSE,
+        COMPLETED_APPLICATION_WRAPPER
     }
 
     enum Cleanup {
@@ -123,10 +127,25 @@ class OwnedExecutorSetupFailureTest {
         "NESTED_WRAPPED_FATAL,NONE,false", "NESTED_WRAPPED_FATAL,NONE,true",
         "NESTED_WRAPPED_FATAL,FATAL,false", "NESTED_WRAPPED_FATAL,FATAL,true",
         "CHANGING_FATAL_CAUSE,NONE,false", "CHANGING_FATAL_CAUSE,NONE,true",
-        "THROWING_FATAL_CAUSE,NONE,false", "THROWING_FATAL_CAUSE,NONE,true"
+        "THROWING_FATAL_CAUSE,NONE,false", "THROWING_FATAL_CAUSE,NONE,true",
+        "WRAPPED_ORDINARY,NONE,false", "WRAPPED_ORDINARY,NONE,true",
+        "WRAPPED_ORDINARY,ORDINARY,false", "WRAPPED_ORDINARY,ORDINARY,true",
+        "WRAPPED_ORDINARY,FATAL,false", "WRAPPED_ORDINARY,FATAL,true",
+        "NESTED_WRAPPED_ORDINARY,NONE,false", "NESTED_WRAPPED_ORDINARY,NONE,true",
+        "NESTED_WRAPPED_ORDINARY,FATAL,false", "NESTED_WRAPPED_ORDINARY,FATAL,true",
+        "CHANGING_ORDINARY_CAUSE,NONE,false", "CHANGING_ORDINARY_CAUSE,NONE,true",
+        "COMPLETED_APPLICATION_WRAPPER,NONE,false", "COMPLETED_APPLICATION_WRAPPER,NONE,true",
+        "COMPLETED_APPLICATION_WRAPPER,FATAL,false", "COMPLETED_APPLICATION_WRAPPER,FATAL,true"
     })
     void postManagerSetupFailureIsExplicitlyFinalized(Setup setup, Cleanup cleanup, boolean plugins) throws Exception {
         var setupFatal = new InternalError("first setup fatal");
+        var setupOrdinary = new IllegalStateException("nonfatal setup cause");
+        var applicationCause = new CompletionException(new IllegalStateException("application cause"));
+        var innerApplicationDiagnostic = new IllegalArgumentException("retained cause diagnostic");
+        applicationCause.addSuppressed(innerApplicationDiagnostic);
+        var applicationWrapper = new ExecutionException("application setup failure", applicationCause);
+        var applicationDiagnostic = new IllegalStateException("retained application diagnostic");
+        applicationWrapper.addSuppressed(applicationDiagnostic);
         var wrapperDiagnostic = new IllegalArgumentException("setup wrapper diagnostic");
         var nestedDiagnostic = new IllegalStateException("nested setup wrapper diagnostic");
         var aliasDiagnostic = new IllegalArgumentException("alias wrapper diagnostic");
@@ -160,19 +179,46 @@ class OwnedExecutorSetupFailureTest {
                         throw setupFatal;
                     }
                 };
-            case APPLICATION_WRAPPER ->
-                new ExecutionException("application setup failure", new IllegalStateException("application cause"));
+            case APPLICATION_WRAPPER -> applicationWrapper;
+            case COMPLETED_APPLICATION_WRAPPER -> new CompletionException(applicationWrapper);
+            case WRAPPED_ORDINARY -> new CompletionException(setupOrdinary);
+            case NESTED_WRAPPED_ORDINARY -> {
+                var inner = new CompletionException(setupOrdinary);
+                inner.addSuppressed(nestedDiagnostic);
+                var alias = new CompletionException(setupOrdinary);
+                alias.addSuppressed(aliasDiagnostic);
+                inner.addSuppressed(alias);
+                yield new CompletionException(inner);
+            }
+            case CHANGING_ORDINARY_CAUSE ->
+                new CompletionException("changing nonfatal cause", null) {
+                    @Override
+                    public synchronized Throwable getCause() {
+                        return causeReads.incrementAndGet() == 1
+                                ? setupOrdinary
+                                : new IllegalStateException("second read");
+                    }
+                };
         };
         var wrappedFatal = setup == Setup.WRAPPED_FATAL
                 || setup == Setup.NESTED_WRAPPED_FATAL
                 || setup == Setup.CHANGING_FATAL_CAUSE
                 || setup == Setup.THROWING_FATAL_CAUSE;
+        var wrappedOrdinary = setup == Setup.WRAPPED_ORDINARY
+                || setup == Setup.NESTED_WRAPPED_ORDINARY
+                || setup == Setup.CHANGING_ORDINARY_CAUSE
+                || setup == Setup.COMPLETED_APPLICATION_WRAPPER;
         var setupIsFatal = setup == Setup.FATAL || setup == Setup.SAME_FATAL || wrappedFatal;
-        if (wrappedFatal) {
+        var selectedSetup = setupIsFatal
+                ? setupFatal
+                : setup == Setup.COMPLETED_APPLICATION_WRAPPER
+                        ? applicationWrapper
+                        : wrappedOrdinary ? setupOrdinary : setupFailure;
+        if (wrappedFatal || wrappedOrdinary) {
             setupFailure.addSuppressed(wrapperDiagnostic);
             // Raw and observed-wrapper aliases must not create a cycle when their diagnostics transfer.
-            setupFailure.addSuppressed(setupFatal);
-            if (setup == Setup.NESTED_WRAPPED_FATAL) {
+            setupFailure.addSuppressed(selectedSetup);
+            if (setup == Setup.NESTED_WRAPPED_FATAL || setup == Setup.NESTED_WRAPPED_ORDINARY) {
                 setupFailure.getCause().addSuppressed(setupFailure);
                 setupFailure.addSuppressed(nestedDiagnostic);
             }
@@ -244,33 +290,49 @@ class OwnedExecutorSetupFailureTest {
                 assertSame(
                         cleanupFatal, observed, "A cleanup JVM fatal must outrank an earlier nonfatal setup failure");
             } else if (cleanup == Cleanup.NONE) {
-                assertSame(setupFailure, observed);
+                assertSame(selectedSetup, observed);
             }
-            assertTrue(contains(observed, setupIsFatal ? setupFatal : setupFailure), "Retain setup diagnostics");
+            assertTrue(contains(observed, selectedSetup), "Retain setup diagnostics");
             if (cleanupFailure != null)
                 assertTrue(
                         contains(observed, cleanup == Cleanup.ORDINARY ? cleanupFailure : cleanupFatal),
                         "Retain later cleanup diagnostics");
-            if (wrappedFatal) {
+            if (setup == Setup.APPLICATION_WRAPPER || setup == Setup.COMPLETED_APPLICATION_WRAPPER) {
+                assertSame(applicationCause, applicationWrapper.getCause());
+                assertArrayEquals(new Throwable[] {innerApplicationDiagnostic}, applicationCause.getSuppressed());
+                assertTrue(contains(observed, applicationDiagnostic));
+                assertTrue(contains(observed, innerApplicationDiagnostic));
+                assertEquals(setup == Setup.APPLICATION_WRAPPER ? 1 : 2, applicationWrapper.getSuppressed().length);
+                assertSame(applicationDiagnostic, applicationWrapper.getSuppressed()[0]);
+                assertFalse(
+                        Arrays.asList(applicationWrapper.getSuppressed()).contains(innerApplicationDiagnostic),
+                        "Do not promote diagnostics from the still-reachable application cause");
+            }
+            if (wrappedFatal || wrappedOrdinary) {
+                assertTrue(contains(observed, wrapperDiagnostic), "The final winner must retain setup diagnostics");
                 assertEquals(
                         1,
-                        Arrays.stream(observed.getSuppressed())
+                        Arrays.stream(selectedSetup.getSuppressed())
                                 .filter(e -> e == wrapperDiagnostic)
                                 .count());
-                assertFalse(contains(observed, setupFailure), "Do not attach a wrapper that points back to the fatal");
-                if (setup == Setup.NESTED_WRAPPED_FATAL) {
+                assertFalse(
+                        contains(observed, setupFailure),
+                        "Do not attach a wrapper that points back to the selected cause");
+                if (setup == Setup.NESTED_WRAPPED_FATAL || setup == Setup.NESTED_WRAPPED_ORDINARY) {
                     assertEquals(
                             1,
-                            Arrays.stream(observed.getSuppressed())
+                            Arrays.stream(selectedSetup.getSuppressed())
                                     .filter(e -> e == nestedDiagnostic)
                                     .count());
                     assertEquals(
                             1,
-                            Arrays.stream(observed.getSuppressed())
+                            Arrays.stream(selectedSetup.getSuppressed())
                                     .filter(e -> e == aliasDiagnostic)
                                     .count());
                 }
-                if (setup == Setup.CHANGING_FATAL_CAUSE || setup == Setup.THROWING_FATAL_CAUSE)
+                if (setup == Setup.CHANGING_FATAL_CAUSE
+                        || setup == Setup.THROWING_FATAL_CAUSE
+                        || setup == Setup.CHANGING_ORDINARY_CAUSE)
                     assertEquals(1, causeReads.get(), "Inspect each recognized setup wrapper cause only once");
             }
             assertEquals(2, requests.get(), "The failure must occur after the manager claimed its executor");
