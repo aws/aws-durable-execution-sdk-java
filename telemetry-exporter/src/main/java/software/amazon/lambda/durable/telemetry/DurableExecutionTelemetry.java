@@ -160,16 +160,62 @@ public final class DurableExecutionTelemetry {
         // Operation and execution snapshot errors are exposed wrapped: operation failures as DurableOperationException
         // and unrecoverable execution failures as UnrecoverableDurableExecutionException. The wrapper's own
         // class/message would lose the original checkpointed failure identity. When the checkpointed ErrorObject is
-        // present (from either wrapper), derive name/message from its errorType/errorMessage, falling back to the
-        // throwable's own fields for any value the ErrorObject leaves null.
+        // present (from either wrapper), derive the message from its errorMessage, falling back to the throwable's
+        // own message when the ErrorObject leaves it null. The name follows errorName.
         ErrorObject error = extractErrorObject(t);
-        if (error != null) {
-            String name =
-                    error.errorType() != null ? error.errorType() : t.getClass().getSimpleName();
-            String message = error.errorMessage() != null ? error.errorMessage() : t.getMessage();
-            return new ErrorInfo(name, message);
+        String message = error != null && error.errorMessage() != null ? error.errorMessage() : t.getMessage();
+        return new ErrorInfo(errorName(t, error), message);
+    }
+
+    /**
+     * Returns the cross-SDK {@code error.name}: the simple type name of the error the user's code threw (for example
+     * {@code PaymentError}), with no package and no enclosing-class {@code $} prefix. An SDK wrapper with a live cause
+     * reports the cause's simple name; otherwise a wrapper reports the last segment of its checkpointed
+     * {@code errorType} (which the core SDK writes as {@code Class.getName()}), so a replayed failure gets the same
+     * name as the live one. Any other throwable — including an SDK exception with no user error behind it — reports its
+     * own simple name.
+     */
+    static String errorName(Throwable t, ErrorObject error) {
+        return errorName(t, error, 0);
+    }
+
+    private static final int MAX_CAUSE_DEPTH = 16;
+
+    private static String errorName(Throwable t, ErrorObject error, int depth) {
+        if (t instanceof DurableOperationException || t instanceof UnrecoverableDurableExecutionException) {
+            Throwable cause = t.getCause();
+            if (cause != null && cause != t) {
+                // A wrapped wrapper resolves through its own cause/errorType; the depth bound guards a cyclic chain.
+                return depth < MAX_CAUSE_DEPTH
+                        ? errorName(cause, extractErrorObject(cause), depth + 1)
+                        : simpleName(cause.getClass());
+            }
+            if (error != null && error.errorType() != null && !error.errorType().isBlank()) {
+                return simpleTypeName(error.errorType());
+            }
         }
-        return new ErrorInfo(t.getClass().getSimpleName(), t.getMessage());
+        return simpleName(t.getClass());
+    }
+
+    /**
+     * {@link Class#getSimpleName()}, except for anonymous and local classes, whose simple name is empty or differs from
+     * the checkpointed type name; those use the last segment of {@link Class#getName()} so live and replayed failures
+     * agree.
+     */
+    static String simpleName(Class<?> type) {
+        String simple = type.getSimpleName();
+        if (simple.isEmpty() || type.isAnonymousClass() || type.isLocalClass()) {
+            return simpleTypeName(type.getName());
+        }
+        return simple;
+    }
+
+    /** Returns the part of a type name after the last {@code '.'} and the last {@code '$'}. */
+    static String simpleTypeName(String typeName) {
+        String trimmed = typeName.trim();
+        int cut = Math.max(trimmed.lastIndexOf('.'), trimmed.lastIndexOf('$'));
+        String last = trimmed.substring(cut + 1);
+        return last.isEmpty() ? trimmed : last;
     }
 
     /**

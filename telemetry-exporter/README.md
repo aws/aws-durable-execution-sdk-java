@@ -190,8 +190,21 @@ one event per record to `{logStreamPrefix}YYYY/MM/DD` (IAM: `logs:CreateLogStrea
   it is deliberately *not* a type-preserving clone. Mutating the argument is safe (it cannot corrupt
   the cached input snapshot or any later emission), and a transform that throws omits the field and
   logs the failure rather than silently dropping it or failing the execution.
-- **`includeErrors`** gates **both** the execution-level error and each operation-level error; with
-  `includeErrors(false)` neither is emitted, so a sensitive failure message never reaches a record.
+- **`includeErrors`** gates only the per-operation errors (`operations[].error` and
+  `operationsByName.<name>.error`), as in the JS exporter. With `includeErrors(false)` the
+  execution-level `error` is still emitted, so a FAILED record keeps its failure reason.
+- **`error.name`** is the simple type name of the error the user's code threw (for example
+  `PaymentError`): no package, no enclosing-class `$` prefix. The same rule applies to the
+  execution `error`, `operations[].error` and `operationsByName.<name>.error`, and a failure gets
+  the same name whether it happens live or is replayed from a checkpoint (the last segment of the
+  checkpointed `errorType`). When no user error is involved, the SDK exception's simple name is
+  used. `error.message` is unchanged.
+- **`LambdaLogExporter` line shape.** Each record is printed to stdout as one Lambda JSON log line,
+  `{"timestamp":"<UTC, 3 fraction digits>Z","level":"INFO","message":"<compact record JSON>"}`,
+  because the JS readers of this destination filter on `level` and parse `message`. The Node
+  runtime adds this envelope around `console.log`; Java `System.out` is not wrapped, and Lambda
+  does not re-wrap a line that is already JSON. `maxRecordSizeBytes` is measured on the record
+  (`render`), not on the envelope, which adds escaping plus about 70 bytes.
 - **Non-fatal plugin failures are isolated.** Record construction, snapshotting, transforms,
   truncation and exporter render/export/flush contain and log ordinary failures, including
   `AssertionError` and optional-dependency `NoClassDefFoundError`. `VirtualMachineError` and

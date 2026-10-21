@@ -381,10 +381,9 @@ final class TelemetryPlugin implements DurableExecutionPlugin {
                 output,
                 content == null || content.includeOutput(),
                 content == null ? null : content.outputTransform());
-        // Honor ContentConfig.includeErrors for the execution-level error exactly as for operation-level errors
-        // below: with includeErrors(false) no execution error is emitted, so a sensitive failure message never
-        // reaches a record. Without this gate the execution error leaked even when errors were disabled.
-        if (settings.includeErrors && error != null) {
+        // The execution-level error is always kept, matching the JS exporter: ContentConfig.includeErrors gates only
+        // the per-operation errors below, so a FAILED record still says why it failed.
+        if (error != null) {
             record.error = DurableExecutionTelemetry.toErrorInfo(error);
         }
         record.operations = buildOperationRecords(operations);

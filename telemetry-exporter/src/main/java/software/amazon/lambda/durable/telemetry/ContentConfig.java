@@ -12,9 +12,9 @@ import software.amazon.lambda.durable.annotations.Experimental;
  *
  * <p>Mirrors the JS {@code ContentConfig}. {@code input}/{@code output} may be included as-is, excluded, or
  * transformed; all three are honored — the plugin reads execution input from {@code InvocationInfo.executionInput()}
- * and output from {@code InvocationEndInfo.executionResult()}. {@code includeErrors} is honored for <em>both</em> the
- * execution-level error and the per-operation error: with {@code includeErrors(false)} neither is emitted.
- * Per-operation result opt-in is honored via {@link OperationOverride#withResult} (see
+ * and output from {@code InvocationEndInfo.executionResult()}. {@code includeErrors} gates only the per-operation
+ * errors, as in JS: with {@code includeErrors(false)} operation errors are omitted and the execution-level error is
+ * kept. Per-operation result opt-in is honored via {@link OperationOverride#withResult} (see
  * {@code OperationChangeItemInfo.result()}).
  *
  * <p><b>Transform value shape.</b> The {@code inputTransform} and {@code outputTransform} functions receive a

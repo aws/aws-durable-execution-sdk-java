@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -20,10 +21,9 @@ import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
 
 /**
- * Fix 1 — error privacy gate. {@code ContentConfig.includeErrors(false)} must suppress <em>both</em> the
- * execution-level error and every operation-level error, so a sensitive failure message never reaches an emitted record
- * — in the canonical {@code operations} array rendering or the {@code operationsByName} rendering. Before the fix the
- * operation error was gated but the execution error leaked unconditionally.
+ * Error gate. {@code ContentConfig.includeErrors(false)} suppresses every operation-level error — in the canonical
+ * {@code operations} array rendering and the {@code operationsByName} rendering — and keeps the execution-level
+ * {@code error}, matching the JS exporter.
  */
 class ErrorPrivacyGateTest {
 
@@ -88,20 +88,27 @@ class ErrorPrivacyGateTest {
     }
 
     @Test
-    void includeErrorsFalseSuppressesBothErrorsAndKeepsSecretsOutOfBothRenderings() {
+    void includeErrorsFalseDropsOperationErrorsAndKeepsExecutionError() {
         var exporter = new CapturingExporter();
         var rec = runFailedExecution(false, exporter);
 
         assertEquals("FAILED", rec.status());
-        assertNull(rec.error, "execution-level error suppressed by includeErrors:false");
+        assertNotNull(rec.error, "execution-level error kept with includeErrors:false (as in JS)");
+        assertEquals("RuntimeException", rec.error.name());
+        assertEquals(EXEC_SECRET, rec.error.message());
         assertNull(rec.operations().get(0).error(), "operation-level error suppressed by includeErrors:false");
 
         String arrayJson = Json.stringify(rec.toWireMap());
         String byNameJson = Json.stringify(rec.toByNameWireMap());
-        assertFalse(arrayJson.contains(EXEC_SECRET), "no execution secret in the operations-array JSON");
-        assertFalse(arrayJson.contains(OP_SECRET), "no operation secret in the operations-array JSON");
-        assertFalse(byNameJson.contains(EXEC_SECRET), "no execution secret in the operationsByName JSON");
-        assertFalse(byNameJson.contains(OP_SECRET), "no operation secret in the operationsByName JSON");
+        assertTrue(arrayJson.contains(EXEC_SECRET), "execution error in the operations-array JSON");
+        assertFalse(arrayJson.contains(OP_SECRET), "no operation error in the operations-array JSON");
+        assertTrue(byNameJson.contains(EXEC_SECRET), "execution error in the operationsByName JSON");
+        assertFalse(byNameJson.contains(OP_SECRET), "no operation error in the operationsByName JSON");
+        @SuppressWarnings("unchecked")
+        var byName = (Map<String, Object>) rec.toByNameWireMap().get("operationsByName");
+        @SuppressWarnings("unchecked")
+        var entry = (Map<String, Object>) byName.get("failing-step");
+        assertFalse(entry.containsKey("error"), "no operationsByName.<n>.error with includeErrors:false");
     }
 
     @Test
