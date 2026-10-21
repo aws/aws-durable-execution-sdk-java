@@ -1718,7 +1718,9 @@ public class ExecutionManager implements SafeCloseable {
         } catch (RuntimeException problem) {
             failure = signalLifecycleFailure(problem);
         } finally {
-            failure = finishActualInvocationCleanup(failure);
+            failure = finishActualInvocationCleanup(failure, ownsExecutorService && !closeObservation);
+            if (ownsExecutorService && !closeObservation && failure != null && failure == getInvocationFatal())
+                completionFatal = failure;
             if (completedRoot != null && completedRoot.isDone() && getInvocationFatal() == null) {
                 var rootFailure =
                         completedRoot.handle((ignored, problem) -> problem).join();
@@ -2031,7 +2033,7 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     /** Cutoffs request cancellation; actual owner, continuation, and transport completion remain mandatory. */
-    private Throwable finishActualInvocationCleanup(Throwable priorFailure) {
+    private Throwable finishActualInvocationCleanup(Throwable priorFailure, boolean retainRecordedFatal) {
         var drain = new DrainFailure(true);
         drain.run(() -> stopCheckpointContinuations(drain));
         drain.run(() -> awaitActualInvocationTasks(drain));
@@ -2040,10 +2042,36 @@ public class ExecutionManager implements SafeCloseable {
         try {
             drain.finish();
         } catch (Throwable failure) {
+            var recordedFatal = retainRecordedFatal ? getInvocationFatal() : null;
+            if (recordedFatal != null && isRecordedFatalAlias(failure, recordedFatal))
+                return combineRecordedFatal(recordedFatal, priorFailure, failure);
             // Keep shutdown's transport wrapper: close can run while its fatal cause already escapes the body.
             return combineFailures(priorFailure, failure);
         }
         return priorFailure;
+    }
+
+    private static boolean isRecordedFatalAlias(Throwable failure, Error fatal) {
+        var type = failure.getClass();
+        return (type == CompletionException.class || type == ExecutionException.class) && failure.getCause() == fatal;
+    }
+
+    private static Throwable combineRecordedFatal(Error fatal, Throwable priorFailure, Throwable observation) {
+        var pending = new ArrayList<Throwable>();
+        if (priorFailure != null) pending.add(priorFailure);
+        pending.add(observation);
+        var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        for (var index = 0; index < pending.size(); index++) {
+            var diagnostic = pending.get(index);
+            if (diagnostic == fatal || !seen.add(diagnostic)) continue;
+            if (isRecordedFatalAlias(diagnostic, fatal)) {
+                // Omit the observation carrier, which points back to this fatal, but keep its diagnostics.
+                Collections.addAll(pending, diagnostic.getSuppressed());
+            } else {
+                combineCompletionFailure(fatal, diagnostic);
+            }
+        }
+        return fatal;
     }
 
     private void awaitActualInvocationTasks(DrainFailure drain) {

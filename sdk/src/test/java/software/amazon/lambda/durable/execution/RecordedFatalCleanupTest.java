@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.execution;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -34,7 +35,8 @@ class RecordedFatalCleanupTest {
         FATAL,
         WRAPPED_FATAL,
         SAME_FATAL,
-        WRAPPED_SAME_FATAL
+        WRAPPED_SAME_FATAL,
+        WRAPPER_DIAGNOSTICS
     }
 
     static Stream<Arguments> cases() {
@@ -52,9 +54,11 @@ class RecordedFatalCleanupTest {
         Error first = death ? new ThreadDeath() : new InternalError("fatal output serialization");
         var ordinary = new IllegalStateException("ordinary owned shutdown failure");
         var laterFatal = new InternalError("later owned shutdown fatal");
+        var wrapperDiagnostic = new IllegalArgumentException("transport-wrapper diagnostic");
+        var nestedDiagnostic = new IllegalArgumentException("nested observation diagnostic");
         Throwable shutdownFailure = switch (cleanup) {
             case NONE -> null;
-            case ORDINARY -> ordinary;
+            case ORDINARY, WRAPPER_DIAGNOSTICS -> ordinary;
             case FATAL -> laterFatal;
             case WRAPPED_FATAL -> new CompletionException(laterFatal);
             case SAME_FATAL -> first;
@@ -117,6 +121,9 @@ class RecordedFatalCleanupTest {
                             TypeToken.get(String.class),
                             (value, context) -> {
                                 manager.set(((DurableContextImpl) context).getExecutionManager());
+                                if (cleanup == Cleanup.WRAPPER_DIAGNOSTICS)
+                                    assertDoesNotThrow(() -> decorateShutdownObservation(
+                                            manager.get(), first, wrapperDiagnostic, nestedDiagnostic));
                                 bodies.incrementAndGet();
                                 return "output";
                             },
@@ -134,8 +141,12 @@ class RecordedFatalCleanupTest {
                 assertEquals(InvocationStatus.RETRYING, end.get().invocationStatus());
                 assertSame(first, end.get().executionError());
             }
-            if (cleanup == Cleanup.ORDINARY)
+            if (cleanup == Cleanup.ORDINARY || cleanup == Cleanup.WRAPPER_DIAGNOSTICS)
                 assertTrue(contains(first, ordinary), "Retain the ordinary shutdown diagnostic on the recorded fatal");
+            if (cleanup == Cleanup.WRAPPER_DIAGNOSTICS) {
+                assertTrue(contains(first, wrapperDiagnostic));
+                assertTrue(contains(first, nestedDiagnostic));
+            }
             if (cleanup == Cleanup.FATAL || cleanup == Cleanup.WRAPPED_FATAL)
                 assertTrue(contains(first, laterFatal), "Retain the later cleanup fatal");
             assertAcyclic(first, Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>()));
@@ -143,6 +154,30 @@ class RecordedFatalCleanupTest {
             pool.shutdownNow();
             assertTrue(pool.awaitTermination(3, TimeUnit.SECONDS));
         }
+    }
+
+    private static void decorateShutdownObservation(
+            ExecutionManager manager, Error fatal, Throwable diagnostic, Throwable nestedDiagnostic)
+            throws ReflectiveOperationException {
+        var field = ExecutionManager.class.getDeclaredField("checkpointManager");
+        field.setAccessible(true);
+        var checkpointManager = spy((CheckpointManager) field.get(manager));
+        doAnswer(call -> {
+                    try {
+                        call.callRealMethod();
+                        return null;
+                    } catch (CompletionException observation) {
+                        assertSame(fatal, observation.getCause(), "Decorate the actual shutdown observation");
+                        observation.addSuppressed(diagnostic);
+                        var nested = new CompletionException(fatal);
+                        nested.addSuppressed(nestedDiagnostic);
+                        observation.addSuppressed(nested);
+                        throw observation;
+                    }
+                })
+                .when(checkpointManager)
+                .shutdown();
+        field.set(manager, checkpointManager);
     }
 
     private static boolean contains(Throwable root, Throwable expected) {
