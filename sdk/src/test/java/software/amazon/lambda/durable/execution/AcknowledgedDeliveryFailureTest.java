@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -57,6 +58,15 @@ class AcknowledgedDeliveryFailureTest {
                 : new IllegalStateException("metadata store failed");
         var observed = run(failure, true);
         assertSame(failure, observed.failure(), "Terminal ACK must not hide an unrelated delivery failure");
+        assertNull(observed.output());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void causelessMetadataFailureRetainsItsIdentity(boolean interruptCaller) throws Exception {
+        var failure = new CompletionException("metadata failure without a cause", null);
+        var observed = run(failure, interruptCaller);
+        assertSame(failure, observed.failure(), "A non-null delivery error must not become successful ACK delivery");
         assertNull(observed.output());
     }
 

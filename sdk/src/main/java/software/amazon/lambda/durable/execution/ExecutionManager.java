@@ -1070,10 +1070,10 @@ public class ExecutionManager implements SafeCloseable {
         try {
             checkpointManager.shutdown();
         } catch (Throwable transportFailure) {
-            failure = combineFailures(failure, ExceptionHelper.unwrapCompletableFuture(transportFailure));
+            failure = combineFailures(failure, ExceptionHelper.unwrapInvocationFailure(transportFailure));
         }
         var completedFailure = future.isDone()
-                ? future.handle((ignored, problem) -> ExceptionHelper.unwrapCompletableFuture(problem))
+                ? future.handle((ignored, problem) -> ExceptionHelper.unwrapInvocationFailure(problem))
                         .join()
                 : null;
         if (isFatal(completedFailure)) ExceptionHelper.sneakyThrow(completedFailure);
@@ -1097,7 +1097,7 @@ public class ExecutionManager implements SafeCloseable {
         } catch (TimeoutException timeout) {
             return lifecycleFailure("Checkpoint completion exceeded the invocation deadline", timeout);
         } catch (ExecutionException failure) {
-            return ExceptionHelper.unwrapCompletableFuture(failure.getCause());
+            return ExceptionHelper.unwrapInvocationFailure(failure.getCause());
         }
     }
 
@@ -1129,7 +1129,7 @@ public class ExecutionManager implements SafeCloseable {
             try {
                 executionExceptionFuture.join();
             } catch (CompletionException stopped) {
-                ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(stopped));
+                ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapInvocationFailure(stopped));
             }
         }
         checkInvocationAdmission();
@@ -1719,7 +1719,7 @@ public class ExecutionManager implements SafeCloseable {
             lifecycleFailure.compareAndSet(null, failure);
             return new InvocationOutcome<>(null, failure);
         } catch (ExecutionException failure) {
-            return new InvocationOutcome<>(null, ExceptionHelper.unwrapCompletableFuture(failure.getCause()));
+            return new InvocationOutcome<>(null, ExceptionHelper.unwrapInvocationFailure(failure.getCause()));
         }
     }
 
