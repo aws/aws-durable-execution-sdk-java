@@ -16,7 +16,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -51,15 +51,16 @@ class OperationExceptionTimingTest {
                     .enableMdc(false)
                     .contextExtractor(() -> null)
                     .build();
-            DurableExecutionPlugin plugin = executionView
-                    ? new ExecutionOtelPlugin(builder, settings)
-                    : new InvocationOtelPlugin(builder, settings);
+            DurableExecutionPluginFactory factory = executionView
+                    ? ExecutionOtelPlugin.factory(builder, settings)
+                    : InvocationOtelPlugin.factory(builder, settings);
             var start = path.equals("missing-start") || path.equals("no-end") || path.equals("zero-end")
                     ? null
                     : Instant.ofEpochSecond(path.equals("late-start") ? 30 : 10);
             var end =
                     path.equals("no-end") ? null : path.equals("zero-end") ? Instant.EPOCH : Instant.ofEpochSecond(20);
-            plugin.onInvocationStart(new InvocationInfo("request", "arn:timing", true, Instant.ofEpochSecond(1)));
+            var plugin = Invocations.started(
+                    factory, new InvocationInfo("request", "arn:timing", true, Instant.ofEpochSecond(1)));
             if (path.equals("live") || path.equals("late-start"))
                 plugin.onOperationStart(new OperationInfo(
                         "operation", "timing-target", "CALLBACK", "Callback", null, start, null, null, false));

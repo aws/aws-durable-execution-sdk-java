@@ -7,10 +7,13 @@ import static org.junit.jupiter.api.Assertions.*;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.plugin.PropagationInput;
 import software.amazon.lambda.durable.plugin.PropagationMetadata;
@@ -28,6 +31,7 @@ class PropagationCollectorDiagnosticsTest {
                     plugin("private-first"),
                     plugin("private-second"),
                     plugin("private-third")));
+            runner.onInvocationStart(new InvocationInfo("request", "arn", true, Instant.EPOCH));
             assertEquals(
                     "private-first",
                     runner.providePropagationMetadata(new PropagationInput("arn", "op", null, "target"))
@@ -49,8 +53,8 @@ class PropagationCollectorDiagnosticsTest {
         }
     }
 
-    private static DurableExecutionPlugin plugin(String header) {
-        return new DurableExecutionPlugin() {
+    private static DurableExecutionPluginFactory plugin(String header) {
+        return ignored -> new DurableExecutionPlugin() {
             @Override
             public PropagationMetadata providePropagationMetadata(PropagationInput input) {
                 return new PropagationMetadata(header);

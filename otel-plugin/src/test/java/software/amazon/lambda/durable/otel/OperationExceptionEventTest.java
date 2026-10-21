@@ -166,8 +166,9 @@ class OperationExceptionEventTest {
                     .enableMdc(false)
                     .contextExtractor(() -> null)
                     .build();
-            var plugin = new ExecutionOtelPlugin(builder, config);
-            plugin.onInvocationStart(new InvocationInfo("request", "arn:diagnostic", true, Instant.ofEpochSecond(1)));
+            var factory = ExecutionOtelPlugin.factory(builder, config);
+            var plugin = Invocations.started(
+                    factory, new InvocationInfo("request", "arn:diagnostic", true, Instant.ofEpochSecond(1)));
             plugin.onOperationEnd(new OperationEndInfo(
                     "op",
                     NAME,

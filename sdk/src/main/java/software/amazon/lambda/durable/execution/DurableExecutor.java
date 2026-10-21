@@ -125,10 +125,12 @@ public class DurableExecutor {
         private final String requestId;
         private final String executionArn;
         private final boolean isFirstInvocation;
+        private final String xRayTraceId;
         private I userInput;
         private boolean started;
         private boolean ended;
         private CompletableFuture<Outcome<O>> outcome;
+        private final AtomicReference<Error> losingBodyFatal = new AtomicReference<>();
 
         private Invocation(
                 DurableExecutionInput input,
@@ -142,7 +144,9 @@ public class DurableExecutor {
             this.handler = handler;
             this.config = config;
             this.manager = manager;
-            plugins = config.getPluginRunner();
+            plugins = manager.getPluginRunner();
+            // Read on the runtime caller before executor dispatch: LMI carriers can be thread-local.
+            xRayTraceId = plugins.isEmpty() ? null : RuntimeTraceHeader.capture(lambdaContext);
             requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             executionArn = input.durableExecutionArn();
             isFirstInvocation = !manager.isReplaying();
@@ -154,10 +158,19 @@ public class DurableExecutor {
             // termination can win while the handler is still unwinding; its finally block must not replace it.
             outcome = manager.runUntilCompleteOrSuspend(body).handle(Outcome<O>::new);
             Supplier<DurableExecutionOutput> task = () -> {
-                var handlerOutcome = Outcome.capture(this::invokeHandler);
+                var bodyOutcome = Outcome.capture(this::invokeHandler);
                 manager.markRootHandlerExited();
-                handlerOutcome.complete(body);
+                bodyOutcome.complete(body);
                 var selected = outcome.join();
+                var selectedCause = ExceptionHelper.unwrapInvocationFailure(selected.failure());
+                if (bodyOutcome.failure() != null
+                        && manager.getInvocationFatal() == null
+                        && (selectedCause instanceof SuspendExecutionException
+                                || selectedCause instanceof UnrecoverableDurableExecutionException)) {
+                    var bodyCause = ExceptionHelper.unwrapInvocationFailure(bodyOutcome.failure());
+                    if (isFatal(bodyCause)) losingBodyFatal.set((Error) bodyCause);
+                }
+                if (isFatal(selectedCause)) manager.recordInvocationFatal((Error) selectedCause);
                 // The handler has settled, but its operations may still be running or still have checkpoints queued.
                 // Drain them here so every checkpoint response, including one that withdraws the token, is observed
                 // before the terminal decision below. Later polls therefore cannot change that decision.
@@ -174,12 +187,14 @@ public class DurableExecutor {
                         return failDelivery(selectedFailure);
                     }
                     return failDelivery(drainFailure);
+                } catch (Error fatal) {
+                    return failDelivery(fatal);
                 }
                 return finishInvocation(selected.value(), selected.failure());
             };
             // Cleanup is awaited even without plugins. Keep that path free of plugin MDC handling.
-            if (plugins.isEmpty()) return supplyWithoutPlugins(task, manager::executeRootTask);
-            return supplyHandler(task, this::finishFailure, manager::executeRootTask);
+            if (plugins.isEmpty()) return supplyWithoutPlugins(task, manager::executeRootTask, losingBodyFatal::get);
+            return supplyHandler(task, this::finishFailure, manager::executeRootTask, losingBodyFatal::get);
         }
 
         private O invokeHandler() {
@@ -198,7 +213,14 @@ public class DurableExecutor {
             var context = DurableContextImpl.createRootContext(manager, config, lambdaContext);
             DurableContextImpl.setCurrentContext(context);
             try (var ignored = DurableLogger.attachContext()) {
-                return handler.apply(userInput, context);
+                return plugins.runHandler(
+                        () -> {
+                            manager.checkUserFunctionExecutionAllowed();
+                            return handler.apply(userInput, context);
+                        },
+                        () -> {},
+                        manager::recordHandlerScopeFatal,
+                        manager::recordRootHandlerFatal);
             }
         }
 
@@ -213,12 +235,15 @@ public class DurableExecutor {
                     PluginInfoConverter.toOperationItemMap(
                             manager.getOperationsSnapshot(), manager.getInitialOperationIds()),
                     PluginInfoConverter.toOperationItemMap(
-                            manager.getUpdatedOperationsSnapshot(), manager.getInitialOperationIds()));
+                            manager.getUpdatedOperationsSnapshot(), manager.getInitialOperationIds()),
+                    xRayTraceId);
             started = true;
             plugins.onInvocationStart(info);
         }
 
         private DurableExecutionOutput finishInvocation(O value, Throwable failure) {
+            var fatal = manager.getInvocationFatal();
+            if (fatal != null) return finishFailure(fatal);
             if (manager.isInvocationReported())
                 return failDelivery(
                         manager.getLifecycleFailure() != null
@@ -229,7 +254,7 @@ public class DurableExecutor {
             // a handler failure, and a retryable failure, so it is checked before any of them.
             if (manager.isCheckpointTokenRevoked())
                 return finishFailure(new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE));
-            if (failure != null) return finishFailure(ExceptionHelper.unwrapCompletableFuture(failure));
+            if (failure != null) return finishFailure(ExceptionHelper.unwrapInvocationFailure(failure));
             DurableExecutionOutput output;
             try {
                 var payload = config.getSerDes().serialize(value);
@@ -247,6 +272,7 @@ public class DurableExecutor {
         }
 
         private DurableExecutionOutput finishFailure(Throwable cause) {
+            if (isFatal(cause)) manager.recordInvocationFatal((Error) cause);
             if (cause instanceof SuspendExecutionException) {
                 var invalidSuspension = manager.getInvalidSuspensionException();
                 if (invalidSuspension != null) cause = invalidSuspension;
@@ -268,6 +294,7 @@ public class DurableExecutor {
         private DurableExecutionOutput finishTerminalFailure(Throwable cause) {
             DurableExecutionOutput output;
             try {
+                logger.debug("Execution failed: {}", cause.getMessage());
                 output = DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
             } catch (Throwable deliveryFailure) {
                 return failDelivery(deliveryFailure);
@@ -279,7 +306,8 @@ public class DurableExecutor {
         private DurableExecutionOutput failDelivery(Throwable deliveryFailure) {
             // Serialization/checkpointing did not produce a terminal response. Close plugin resources with RETRYING
             // before preserving the original delivery failure for the Lambda caller.
-            var cause = ExceptionHelper.unwrapCompletableFuture(deliveryFailure);
+            var cause = ExceptionHelper.unwrapInvocationFailure(deliveryFailure);
+            if (isFatal(cause)) manager.recordInvocationFatal((Error) cause);
             try {
                 fireOnInvocationEnd(InvocationStatus.RETRYING, cause, null);
             } catch (Error endFailure) {
@@ -292,8 +320,8 @@ public class DurableExecutor {
         private void fireOnInvocationEnd(InvocationStatus status, Throwable error, Object result) {
             if (!started || ended) return;
             ended = true;
-            // An uncooperative root may exit after the caller's timeout. Its owner still owes Start's scopes one
-            // matching End; this cleanup must not reopen durable work or prepare another execution result.
+            // End stays on its actual owner, including after a cutoff requested cancellation. The defensive
+            // reported-state guard must never reopen work or prepare another execution result.
             if (manager.isInvocationReported()
                     && !manager.isTerminalExecutionAcknowledged()
                     && !ExecutionManager.isFatal(error)) {
@@ -334,8 +362,14 @@ public class DurableExecutor {
         return preparation;
     }
 
+    @SuppressWarnings("removal")
+    private static boolean isFatal(Throwable failure) {
+        return failure instanceof VirtualMachineError || failure instanceof ThreadDeath;
+    }
+
     private static InvocationStatus failureStatus(Throwable failure) {
         if (failure instanceof SuspendExecutionException) return InvocationStatus.PENDING;
+        if (isFatal(failure)) return InvocationStatus.RETRYING;
         if (failure instanceof UnrecoverableDurableExecutionException unrecoverable && unrecoverable.isRetryable()) {
             return InvocationStatus.RETRYING;
         }
@@ -358,19 +392,18 @@ public class DurableExecutor {
         }
     }
 
-    /** Keeps final owner results observable even when invocation cleanup cancels the executor task. */
-    @SuppressWarnings("removal")
-    private static <T> CompletableFuture<T> supplyWithoutPlugins(Supplier<T> task, Executor executor) {
+    private static <T> CompletableFuture<T> supplyWithoutPlugins(
+            Supplier<T> task, Executor executor, Supplier<Error> losingBodyFatal) {
         var result = new CompletableFuture<T>();
+        var caller = Thread.currentThread();
         Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
             var outcome = Outcome.capture(task);
-            try {
-                rethrowLifecycleFatal(outcome.failure());
-            } catch (VirtualMachineError | ThreadDeath fatal) {
-                result.completeExceptionally(fatal);
-                throw fatal;
-            } finally {
-                outcome.complete(result);
+            outcome.complete(result);
+            if (Thread.currentThread() != caller) {
+                var failure = ExceptionHelper.unwrapInvocationFailure(outcome.failure());
+                if (isFatal(failure)) ExceptionHelper.sneakyThrow(failure);
+                var discardedFatal = losingBodyFatal.get();
+                if (discardedFatal != null) throw discardedFatal;
             }
         };
         executor.execute(work);
@@ -379,7 +412,11 @@ public class DurableExecutor {
 
     @SuppressWarnings("removal")
     private static <T> CompletableFuture<T> supplyHandler(
-            Supplier<T> task, Function<Throwable, T> initializationFailure, Executor executor) {
+            Supplier<T> task,
+            Function<Throwable, T> initializationFailure,
+            Executor executor,
+            Supplier<Error> losingBodyFatal) {
+        var caller = Thread.currentThread();
         var result = new CompletableFuture<T>();
         var classifiedWorkerFailure = new AtomicReference<Throwable>();
         Runnable work = (Runnable & CompletableFuture.AsynchronousCompletionTask) () -> {
@@ -431,6 +468,10 @@ public class DurableExecutor {
             } finally {
                 // Ordinary restoration failures retain the selected outcome. A fatal has already settled result.
                 outcome.complete(result);
+                if (Thread.currentThread() != caller) {
+                    var discardedFatal = losingBodyFatal.get();
+                    if (discardedFatal != null) throw discardedFatal;
+                }
             }
         };
         try {

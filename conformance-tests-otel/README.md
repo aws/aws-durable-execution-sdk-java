@@ -35,13 +35,11 @@ SDK spans. The shared validator determines the canonical trace from SDK spans
 and checks the actual user-span parents.
 
 Root handler probes preserve a valid same-trace ambient Lambda parent. Otherwise
-the plugin activates its canonical Invocation/Workflow context on the handler
-thread and restores it in the same-thread end hook. The plugin requires a core with the
-same-thread invocation-hook lifecycle capability; unsupported cores are rejected
-during configuration.
-Nested callbacks retain their named context or attempt parents. Execution-view
-context placeholders can be valid without recording, so probes do not require
-`isRecording()`.
+the per-invocation plugin activates its canonical Invocation/Workflow context on the handler
+thread through its explicit handler scope and restores it on that same thread before End.
+Use the matching 3.x core and plugin factory API. Nested callbacks retain their named context
+or attempt parents. Execution-view context placeholders can be valid without recording, so
+probes do not require `isRecording()`.
 
 Case 23 uses the public step attempt number and checkpointed condition state;
 it has no mutable warm-container markers. Its helper and virtual child run

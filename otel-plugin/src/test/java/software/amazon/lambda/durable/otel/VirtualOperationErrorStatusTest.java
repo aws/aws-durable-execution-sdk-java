@@ -27,6 +27,7 @@ import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -85,7 +86,9 @@ class VirtualOperationErrorStatusTest {
                         context.wait("pause", Duration.ofSeconds(1));
                         return "handled";
                     },
-                    DurableConfig.builder().withPlugins(plugin, listener).build());
+                    DurableConfig.builder()
+                            .withPlugins(plugin, ignored -> listener)
+                            .build());
             assertEquals(ExecutionStatus.PENDING, runner.run("input").getStatus());
             assertEquals(
                     ExecutionStatus.SUCCEEDED, runner.runUntilComplete("input").getStatus());
@@ -141,8 +144,9 @@ class VirtualOperationErrorStatusTest {
             })
     void missingStartInvocationSegmentRetainsVirtualFailure(String outcome) {
         try (var exporter = InMemorySpanExporter.create()) {
-            var plugin = plugin(false, exporter);
-            plugin.onInvocationStart(new InvocationInfo("request", "arn:virtual", true, Instant.EPOCH));
+            var factory = plugin(false, exporter);
+            var plugin =
+                    Invocations.started(factory, new InvocationInfo("request", "arn:virtual", true, Instant.EPOCH));
             plugin.onOperationEnd(new OperationEndInfo(
                     "virtual",
                     NAME,
@@ -170,13 +174,15 @@ class VirtualOperationErrorStatusTest {
         }
     }
 
-    private static DurableExecutionPlugin plugin(boolean executionView, InMemorySpanExporter exporter) {
+    private static DurableExecutionPluginFactory plugin(boolean executionView, InMemorySpanExporter exporter) {
         var provider = SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter));
         var config = OtelPluginConfig.builder()
                 .enableMdc(false)
                 .contextExtractor(() -> null)
                 .build();
-        return executionView ? new ExecutionOtelPlugin(provider, config) : new InvocationOtelPlugin(provider, config);
+        return executionView
+                ? ExecutionOtelPlugin.factory(provider, config)
+                : InvocationOtelPlugin.factory(provider, config);
     }
 
     private static RuntimeException failure(String outcome) {

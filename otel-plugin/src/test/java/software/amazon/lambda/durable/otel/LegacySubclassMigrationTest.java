@@ -8,23 +8,18 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Instant;
 import javax.tools.ToolProvider;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
-import software.amazon.lambda.durable.plugin.InvocationEndInfo;
-import software.amazon.lambda.durable.plugin.InvocationInfo;
-import software.amazon.lambda.durable.plugin.InvocationStatus;
 
-class LegacySubclassScopeCompatibilityTest {
+class LegacySubclassMigrationTest {
     @TempDir
     Path directory;
 
     @ParameterizedTest
     @CsvSource({"Invocation,false", "Invocation,true", "Execution,false", "Execution,true"})
-    void preservesOldSubclassMethodsAndUnrelatedDefaults(String view, boolean ownMethod) throws Exception {
+    void requiresFactoryMigrationForOldCompiledSubclasses(String view, boolean ownMethod) throws Exception {
         var baseline = Files.createDirectories(directory.resolve("baseline"));
         var classes = Files.createDirectories(directory.resolve("classes"));
         var baseName = view + "OtelPlugin";
@@ -64,17 +59,12 @@ class LegacySubclassScopeCompatibilityTest {
                         source.toString()));
         try (var loader = new URLClassLoader(
                 new URL[] {classes.toUri().toURL()}, getClass().getClassLoader())) {
-            var type = loader.loadClass("LegacySubclass");
-            var plugin = (DurableExecutionPlugin) type.getConstructor().newInstance();
-            plugin.onInvocationStart(new InvocationInfo("req", "arn", true, Instant.now()));
-            plugin.onInvocationEnd(new InvocationEndInfo("req", "arn", true, InvocationStatus.SUCCEEDED, null));
-            assertEquals(0, type.getField("opened").get(null), "SDK must not invoke an unrelated subclass resource");
-            type.getMethod("originalCall").invoke(plugin);
-            assertEquals(
-                    1, type.getField("opened").get(null), "new SDK members must not shadow an application default");
-            assertEquals(1, type.getField("closed").get(null));
+            assertThrows(
+                    IncompatibleClassChangeError.class,
+                    () -> loader.loadClass("LegacySubclass"),
+                    "3.x view implementations are final; old subclasses must migrate to factories");
         }
-        assertEquals(
+        assertNotEquals(
                 0,
                 compiler.run(
                         null,

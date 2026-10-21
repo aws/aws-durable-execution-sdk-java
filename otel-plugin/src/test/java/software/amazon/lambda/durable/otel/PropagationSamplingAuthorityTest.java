@@ -23,7 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -88,9 +88,9 @@ class PropagationSamplingAuthorityTest {
                     .contextExtractor(() -> null)
                     .enableMdc(false)
                     .build();
-            DurableExecutionPlugin plugin =
-                    executionView ? new ExecutionOtelPlugin(config) : new InvocationOtelPlugin(config);
-            var runner = new PluginRunner(List.of(plugin));
+            DurableExecutionPluginFactory factory =
+                    executionView ? ExecutionOtelPlugin.factory(config) : InvocationOtelPlugin.factory(config);
+            var runner = new PluginRunner(List.of(factory));
             var start = Instant.parse("2026-10-14T00:00:00Z");
             var arn = "arn:aws:lambda:us-east-1:123456789012:function:parent/durable-execution/test/id";
             var input = new PropagationInput(arn, "invoke-id", null, "target:live");

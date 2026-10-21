@@ -219,7 +219,7 @@ class InvocationDeadlineReviewRegressionTest {
                 .withCheckpointDelay(Duration.ZERO)
                 .withSerDes(serializer);
         if (plugins)
-            builder.withPlugins(new DurableExecutionPlugin() {
+            builder.withPlugins(ignoredInfo -> new DurableExecutionPlugin() {
                 @Override
                 public void onInvocationEnd(InvocationEndInfo info) {
                     end.set(info);

@@ -29,6 +29,7 @@ import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.UserFunctionEndInfo;
@@ -62,9 +63,9 @@ class ExternalCompletionConformanceHandlerTest {
                     .contextExtractor(() -> null)
                     .enableMdc(false)
                     .build();
-            DurableExecutionPlugin otel = executionView
-                    ? new ExecutionOtelPlugin(provider, options)
-                    : new InvocationOtelPlugin(provider, options);
+            DurableExecutionPluginFactory otel = executionView
+                    ? ExecutionOtelPlugin.factory(provider, options)
+                    : InvocationOtelPlugin.factory(provider, options);
             var ends = new CopyOnWriteArrayList<InvocationEndInfo>();
             var markerBodies = new AtomicInteger();
             var observer = new DurableExecutionPlugin() {
@@ -83,7 +84,7 @@ class ExternalCompletionConformanceHandlerTest {
                     handler::handleRequest,
                     DurableConfig.builder()
                             .withExecutorService(workers)
-                            .withPlugins(otel, observer)
+                            .withPlugins(otel, ignored -> observer)
                             .build());
             Map<String, Object> event = Map.of("scenario", "external-callback-completion-replay");
             var first = runner.run(event);

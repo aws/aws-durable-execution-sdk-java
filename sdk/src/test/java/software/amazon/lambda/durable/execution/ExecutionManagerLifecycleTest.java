@@ -469,7 +469,7 @@ class ExecutionManagerLifecycleTest {
         var config = DurableConfig.builder()
                 .withDurableExecutionClient(TestUtils.createMockClient())
                 .withExecutorService(users)
-                .withPlugins(new DurableExecutionPlugin() {
+                .withPlugins(ignoredInfo -> new DurableExecutionPlugin() {
                     @Override
                     public void onInvocationEnd(InvocationEndInfo info) {
                         invocationEnded.countDown();

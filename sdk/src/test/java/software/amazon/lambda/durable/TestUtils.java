@@ -8,7 +8,6 @@ import static org.mockito.Mockito.*;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.context.DurableContextImpl;
@@ -76,8 +75,11 @@ public class TestUtils {
 
     /** Makes a mocked ExecutionManager execute operation tasks like the real manager. */
     public static void executeOperationTasks(ExecutionManager manager, DurableContextImpl context) {
-        when(manager.submitOperationTask(any(), any()))
-                .thenAnswer(invocation -> CompletableFuture.runAsync(
-                        invocation.getArgument(1), context.getDurableConfig().getExecutorService()));
+        doAnswer(invocation -> {
+                    context.getDurableConfig().getExecutorService().execute(invocation.getArgument(1));
+                    return null;
+                })
+                .when(manager)
+                .executeOperationTask(any(), any(), any());
     }
 }

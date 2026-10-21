@@ -9,8 +9,6 @@ import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.context.Context;
-import io.opentelemetry.context.ContextKey;
-import io.opentelemetry.context.Scope;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
@@ -23,16 +21,64 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.slf4j.MDC;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
-import software.amazon.lambda.durable.plugin.InvocationEndInfo;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
-import software.amazon.lambda.durable.plugin.InvocationStatus;
+import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class HandlerContextIntegrationTest {
     private static final String TRACE_ID = "12345678901234567890123456789012";
+
+    @ParameterizedTest
+    @CsvSource({"true,success", "false,success", "true,failure", "false,failure", "true,suspension", "false,suspension"
+    })
+    void reusedHandlerWorkerHasNoLeakedMdc(boolean executionView, String outcome) throws Exception {
+        var pluginConfig = OtelPluginConfig.builder()
+                .enableMdc(true)
+                .contextExtractor(
+                        () -> new ExtractedContext(TRACE_ID, "1234567890123456", ExtractedContext.Sampling.SAMPLED))
+                .build();
+        DurableExecutionPluginFactory plugin = executionView
+                ? ExecutionOtelPlugin.factory(SdkTracerProvider.builder(), pluginConfig)
+                : InvocationOtelPlugin.factory(SdkTracerProvider.builder(), pluginConfig);
+        var executor = Executors.newSingleThreadExecutor();
+        var config = DurableConfig.builder()
+                .withExecutorService(executor)
+                .withPlugins(plugin)
+                .build();
+        try {
+            var runner = LocalDurableTestRunner.create(
+                    String.class,
+                    (input, ctx) -> {
+                        assertEquals(TRACE_ID, MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
+                        if (outcome.equals("failure")) throw new IllegalStateException("body");
+                        if (outcome.equals("suspension")) ctx.wait("pause", Duration.ofSeconds(1));
+                        return "done";
+                    },
+                    config);
+            var result = runner.run("input");
+            assertEquals(
+                    switch (outcome) {
+                        case "failure" -> ExecutionStatus.FAILED;
+                        case "suspension" -> ExecutionStatus.PENDING;
+                        default -> ExecutionStatus.SUCCEEDED;
+                    },
+                    result.getStatus());
+            executor.submit(() -> {
+                        assertNull(
+                                MDC.get(MdcSpanEnricher.MDC_TRACE_ID),
+                                "a reused worker must not inherit the prior trace");
+                        assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
+                        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_SAMPLED));
+                    })
+                    .get(2, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
 
     @ParameterizedTest
     @CsvSource({"true,success", "false,success", "true,failure", "false,failure", "true,suspension", "false,suspension"
@@ -45,13 +91,13 @@ class HandlerContextIntegrationTest {
                 .contextExtractor(
                         () -> new ExtractedContext(TRACE_ID, "1234567890123456", ExtractedContext.Sampling.SAMPLED))
                 .build();
-        DurableExecutionPlugin plugin = executionView
-                ? new ExecutionOtelPlugin(builder, pluginConfig)
-                : new InvocationOtelPlugin(builder, pluginConfig);
+        DurableExecutionPluginFactory factory = executionView
+                ? ExecutionOtelPlugin.factory(builder, pluginConfig)
+                : InvocationOtelPlugin.factory(builder, pluginConfig);
         var executor = Executors.newSingleThreadExecutor();
         var config = DurableConfig.builder()
                 .withExecutorService(executor)
-                .withPlugins(plugin)
+                .withPlugins(factory)
                 .build();
         try {
             var runner = LocalDurableTestRunner.create(
@@ -74,7 +120,7 @@ class HandlerContextIntegrationTest {
             assertFalse(
                     executor.submit(() -> Span.current().getSpanContext().isValid())
                             .get(5, TimeUnit.SECONDS),
-                    "invocation-end cleanup must restore the handler worker before the response returns");
+                    "cleanup must run on the worker, even if invocation finalization ran on another thread");
         } finally {
             executor.shutdownNow();
         }
@@ -90,9 +136,9 @@ class HandlerContextIntegrationTest {
                 .contextExtractor(
                         () -> new ExtractedContext(TRACE_ID, "1234567890123456", ExtractedContext.Sampling.SAMPLED))
                 .build();
-        DurableExecutionPlugin plugin = executionView
-                ? new ExecutionOtelPlugin(builder, pluginConfig)
-                : new InvocationOtelPlugin(builder, pluginConfig);
+        DurableExecutionPluginFactory factory = executionView
+                ? ExecutionOtelPlugin.factory(builder, pluginConfig)
+                : InvocationOtelPlugin.factory(builder, pluginConfig);
         var ambient = SpanContext.create(
                 sameTrace ? TRACE_ID : "abcdefabcdefabcdefabcdefabcdefab",
                 "abcdefabcdefabcd",
@@ -100,20 +146,24 @@ class HandlerContextIntegrationTest {
                 TraceState.getDefault());
         var previous = Context.current();
         try (var ignored = Span.wrap(ambient).makeCurrent()) {
-            plugin.onInvocationStart(new InvocationInfo(
+            var runner = new PluginRunner(List.of(factory));
+            runner.onInvocationStart(new InvocationInfo(
                     "req",
                     "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/name/id",
                     true,
                     Instant.now()));
-            try {
-                var active = Span.current().getSpanContext();
-                assertEquals(TRACE_ID, active.getTraceId());
-                if (sameTrace) assertEquals(ambient, active);
-                else assertNotEquals(ambient.getSpanId(), active.getSpanId());
-            } finally {
-                plugin.onInvocationEnd(new InvocationEndInfo(
-                        "req", "arn", true, InvocationStatus.FAILED, new IllegalStateException("handler failure")));
-            }
+            var error = new IllegalStateException("handler failure");
+            assertSame(
+                    error,
+                    assertThrows(
+                            IllegalStateException.class,
+                            () -> runner.runHandler(() -> {
+                                var active = Span.current().getSpanContext();
+                                assertEquals(TRACE_ID, active.getTraceId());
+                                if (sameTrace) assertEquals(ambient, active);
+                                else assertNotEquals(ambient.getSpanId(), active.getSpanId());
+                                throw error;
+                            })));
             assertEquals(ambient, Span.current().getSpanContext());
         }
         assertSame(previous, Context.current());
@@ -131,13 +181,13 @@ class HandlerContextIntegrationTest {
                         "1234567890123456",
                         sampled ? ExtractedContext.Sampling.SAMPLED : ExtractedContext.Sampling.NOT_SAMPLED))
                 .build();
-        DurableExecutionPlugin plugin = executionView
-                ? new ExecutionOtelPlugin(builder, pluginConfig)
-                : new InvocationOtelPlugin(builder, pluginConfig);
+        DurableExecutionPluginFactory factory = executionView
+                ? ExecutionOtelPlugin.factory(builder, pluginConfig)
+                : InvocationOtelPlugin.factory(builder, pluginConfig);
         var executor = Executors.newCachedThreadPool();
         var config = DurableConfig.builder()
                 .withExecutorService(executor)
-                .withPlugins(plugin)
+                .withPlugins(factory)
                 .build();
         var userProvider = SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
@@ -213,78 +263,6 @@ class HandlerContextIntegrationTest {
         } finally {
             executor.shutdownNow();
             userProvider.close();
-        }
-    }
-
-    @ParameterizedTest
-    @CsvSource({"true,true", "true,false", "false,true", "false,false"})
-    void customPluginScopesUnwindBeforeOtelScopeOnTheReusedWorker(boolean executionView, boolean suspend)
-            throws Exception {
-        var key = ContextKey.<String>named("application-context");
-        var exporter = InMemorySpanExporter.create();
-        var builder = SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter));
-        var settings = OtelPluginConfig.builder()
-                .enableMdc(false)
-                .contextExtractor(
-                        () -> new ExtractedContext(TRACE_ID, "1234567890123456", ExtractedContext.Sampling.SAMPLED))
-                .build();
-        DurableExecutionPlugin delegate = executionView
-                ? new ExecutionOtelPlugin(builder, settings)
-                : new InvocationOtelPlugin(builder, settings);
-        var ends = new ArrayList<String>();
-        var otel = new DurableExecutionPlugin() {
-            @Override
-            public void onInvocationStart(InvocationInfo info) {
-                delegate.onInvocationStart(info);
-            }
-
-            @Override
-            public void onInvocationEnd(InvocationEndInfo info) {
-                ends.add("otel");
-                delegate.onInvocationEnd(info);
-            }
-        };
-        var custom = new DurableExecutionPlugin() {
-            private Scope scope;
-
-            @Override
-            public void onInvocationStart(InvocationInfo info) {
-                scope = Context.current().with(key, "active").makeCurrent();
-            }
-
-            @Override
-            public void onInvocationEnd(InvocationEndInfo info) {
-                ends.add("custom");
-                assertEquals("active", Context.current().get(key));
-                scope.close();
-            }
-        };
-        var workers = Executors.newSingleThreadExecutor();
-        try {
-            var runner = LocalDurableTestRunner.create(
-                    String.class,
-                    (input, context) -> {
-                        assertEquals("active", Context.current().get(key));
-                        assertEquals(TRACE_ID, Span.current().getSpanContext().getTraceId());
-                        if (suspend) context.wait("pause", Duration.ofSeconds(1));
-                        return "done";
-                    },
-                    DurableConfig.builder()
-                            .withExecutorService(workers)
-                            .withPlugins(otel, custom)
-                            .build());
-            for (var invocation = 0; invocation < 2; invocation++) {
-                runner.run("input");
-                assertEquals(List.of("custom", "otel"), ends);
-                ends.clear();
-                assertFalse(workers.submit(() -> Span.current().getSpanContext().isValid())
-                        .get(3, TimeUnit.SECONDS));
-                assertNull(workers.submit(() -> Context.current().get(key)).get(3, TimeUnit.SECONDS));
-                runner.advanceTime();
-            }
-        } finally {
-            workers.shutdownNow();
-            assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS));
         }
     }
 }

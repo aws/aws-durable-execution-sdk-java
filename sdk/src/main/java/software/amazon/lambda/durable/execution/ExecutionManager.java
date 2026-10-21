@@ -28,8 +28,10 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -47,6 +49,7 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.SafeCloseable;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
+import software.amazon.lambda.durable.plugin.PluginRunner;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -80,7 +83,8 @@ public class ExecutionManager implements SafeCloseable {
     private static final Duration EXECUTION_DEADLINE_HEADROOM = Duration.ofMillis(500);
     // Leave a final margin for response serialization and return through the Lambda runtime wrapper.
     private static final Duration RESPONSE_HEADROOM = Duration.ofMillis(100);
-    // Lambda always supplies a deadline; this cap also keeps local/null-context cleanup bounded.
+    // Lambda supplies a deadline. This fallback limits the initial cancellation phase for local/null contexts;
+    // actual owner and transport exit are still awaited without a hard return bound.
     private static final Duration MAX_CLEANUP_DURATION = Duration.ofSeconds(30);
     private static final Duration MAX_GRACEFUL_DRAIN_DURATION = Duration.ofSeconds(5);
     private static final Duration MAX_CANCELLATION_DRAIN_DURATION = Duration.ofSeconds(1);
@@ -115,6 +119,14 @@ public class ExecutionManager implements SafeCloseable {
     private final DurableConfig durableConfig;
     private final Set<String> updatedOperationIdsSinceLastInvocation;
     private final Set<String> initialOperationIds;
+
+    // ===== Plugins =====
+    // Created per invocation, alongside this manager: the runner materializes one plugin instance per configured
+    // factory when the invocation starts and releases the runner's references in close(). Started operation owners
+    // retain only their matching cleanup recipients until they unwind, until the invocation drain has joined their
+    // actual task.
+    private final PluginRunner pluginRunner;
+    private final AtomicReference<Error> pluginFatal;
 
     // ===== Invocation Lifecycle =====
     private final Object admissionLock = new Object();
@@ -165,7 +177,17 @@ public class ExecutionManager implements SafeCloseable {
     private final CheckpointManager checkpointManager;
 
     public ExecutionManager(DurableExecutionInput input, DurableConfig config, Context lambdaContext) {
+        this(input, config, lambdaContext, new AtomicReference<>());
+    }
+
+    ExecutionManager(
+            DurableExecutionInput input,
+            DurableConfig config,
+            Context lambdaContext,
+            AtomicReference<Error> pluginFatal) {
         durableConfig = config;
+        this.pluginFatal = pluginFatal;
+        this.pluginRunner = new PluginRunner(config.getPluginFactories(), this::failFromPlugin);
         this.durableExecutionArn = input.durableExecutionArn();
         this.lambdaContext = lambdaContext;
         this.invocationId = resolveInvocationId(lambdaContext, durableExecutionArn);
@@ -184,6 +206,7 @@ public class ExecutionManager implements SafeCloseable {
                 this::tryStartCheckpointProcessing,
                 this::finishCheckpointProcessing,
                 this::signalSuspension,
+                pluginFatal::get,
                 this::checkCheckpointRequestAllowed);
 
         this.operationStorage = checkpointManager.fetchAllPages(input.initialExecutionState()).stream()
@@ -231,7 +254,18 @@ public class ExecutionManager implements SafeCloseable {
         var remainingNanos = TimeUnit.MILLISECONDS.toNanos(remainingMillis);
         var now = System.nanoTime();
         return now > Long.MAX_VALUE - remainingNanos ? Long.MAX_VALUE : now + remainingNanos;
-    } // ===== State Management =====
+    }
+
+    // ===== State Management =====
+
+    /**
+     * Returns this invocation's plugin dispatcher. Scoped to this manager, i.e. to this invocation.
+     *
+     * @return PluginRunner instance (never null)
+     */
+    public PluginRunner getPluginRunner() {
+        return pluginRunner;
+    }
 
     /** Returns the ARN of the durable execution being managed. */
     public String getDurableExecutionArn() {
@@ -336,16 +370,52 @@ public class ExecutionManager implements SafeCloseable {
 
     /** Submits an operation handler and records its executor task separately from its logical result. */
     public CompletableFuture<Void> submitOperationTask(BaseDurableOperation operation, Runnable action) {
-        var role = operation.getType() == OperationType.STEP
+        return submitOperationTask(operation, action, false);
+    }
+
+    /** Tracks an operation wrapper and settles skipped owners only after their registered task has exited. */
+    public void executeOperationTask(
+            BaseDurableOperation operation, Runnable command, Consumer<Throwable> onUnstartedExit) {
+        var started = new AtomicBoolean();
+        ExecutorTaskHandle<Void> task = registerExecutorTask(
+                operationRole(operation),
+                operation,
+                durableConfig.getExecutorService(),
+                () -> {
+                    started.set(true);
+                    command.run();
+                    return null;
+                },
+                true);
+        task.exit().thenRun(() -> {
+            if (!started.get()) {
+                // A queued cancellation can exit without entering the operation's wrapper. Logical cancellation
+                // of an already-running action must not settle that owner's private completion early.
+                task.completion().whenComplete((ignored, failure) -> onUnstartedExit.accept(failure));
+            }
+        });
+    }
+
+    private CompletableFuture<Void> submitOperationTask(
+            BaseDurableOperation operation, Runnable action, boolean preserveWorkerFailure) {
+        return submitExecutorTask(
+                operationRole(operation),
+                operation,
+                durableConfig.getExecutorService(),
+                () -> {
+                    action.run();
+                    return null;
+                },
+                preserveWorkerFailure);
+    }
+
+    private static ExecutorTaskHandle.Role operationRole(BaseDurableOperation operation) {
+        return operation.getType() == OperationType.STEP
                 ? ExecutorTaskHandle.Role.STEP
                 : switch (operation.getSubType()) {
                     case MAP, PARALLEL -> ExecutorTaskHandle.Role.COORDINATOR;
                     default -> ExecutorTaskHandle.Role.CHILD_CONTEXT;
                 };
-        return submitExecutorTask(role, operation, durableConfig.getExecutorService(), () -> {
-            action.run();
-            return null;
-        });
     }
 
     private <T> CompletableFuture<T> submitExecutorTask(
@@ -375,6 +445,16 @@ public class ExecutionManager implements SafeCloseable {
             ExecutorService executor,
             Supplier<T> action,
             boolean preserveWorkerFailure) {
+        return registerExecutorTask(role, operation, executor, action, preserveWorkerFailure)
+                .completion();
+    }
+
+    private <T> ExecutorTaskHandle<T> registerExecutorTask(
+            ExecutorTaskHandle.Role role,
+            BaseDurableOperation operation,
+            ExecutorService executor,
+            Supplier<T> action,
+            boolean preserveWorkerFailure) {
         ExecutorTaskHandle<T> task;
         synchronized (admissionLock) {
             requireTaskAdmission(operation);
@@ -386,7 +466,7 @@ public class ExecutionManager implements SafeCloseable {
 
         try {
             dispatchExecutorTask(task, action, executor, preserveWorkerFailure);
-            return task.completion();
+            return task;
         } catch (RuntimeException | Error failure) {
             task.submissionFailed(failure);
             throw failure;
@@ -457,15 +537,11 @@ public class ExecutionManager implements SafeCloseable {
     // ===== Checkpoint Completion Handler =====
     /** Called by CheckpointManager when a checkpoint completes. Updates operationStorage and notify operations . */
     void onCheckpointComplete(List<Operation> newOperations) {
-        var updatedOperations = new ArrayList<Operation>();
+        if (!pluginRunner.isEmpty()) notifyCheckpointChangesBeforeCompletion(newOperations);
+
         newOperations.forEach(op -> {
-            // Detect a status change against the previously stored operation
-            var previous = operationStorage.get(op.id());
-            if (previous == null || previous.status() != op.status()) {
-                updatedOperations.add(op);
-            }
-            // Publish the updated state and notify its waiter atomically. Otherwise, a waiter can observe the terminal
-            // state before its completion future is completed and attempt to suspend with no pending operations.
+            // Keep storage publication and waiter notification atomic: publishing terminal state ahead of completion
+            // can make a waiter attempt to suspend despite there being no pending operation.
             registeredOperations.compute(op.id(), (id, registeredOperation) -> {
                 if (registeredOperation == null) {
                     operationStorage.put(op.id(), op);
@@ -475,14 +551,28 @@ public class ExecutionManager implements SafeCloseable {
                 return registeredOperation;
             });
         });
+    }
 
-        // Fire onOperationChange when a checkpoint response changed one or more operations. Only plugins read
-        // the change info, and building it converts every stored operation. So skip it when no plugin is registered.
-        var pluginRunner = durableConfig.getPluginRunner();
-        if (!updatedOperations.isEmpty() && !pluginRunner.isEmpty()) {
+    private void notifyCheckpointChangesBeforeCompletion(List<Operation> newOperations) {
+        var updatedOperations = new ArrayList<Operation>();
+        var checkpointSnapshot = new HashMap<>(operationStorage);
+        for (var operation : newOperations) {
+            var previous = checkpointSnapshot.put(operation.id(), operation);
+            if (previous == null || previous.status() != operation.status()) {
+                updatedOperations.add(operation);
+            }
+        }
+
+        // Observe the complete response before releasing any terminal waiter. A fatal observer failure must stop
+        // this checkpoint's continuation work. The payload sees new state without publishing terminal storage early.
+        if (!updatedOperations.isEmpty()) {
             var requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
             pluginRunner.onOperationChange(PluginInfoConverter.toOperationChangeInfo(
-                    requestId, durableExecutionArn, updatedOperations, operationStorage.values(), initialOperationIds));
+                    requestId,
+                    durableExecutionArn,
+                    updatedOperations,
+                    checkpointSnapshot.values(),
+                    initialOperationIds));
         }
     }
 
@@ -747,9 +837,16 @@ public class ExecutionManager implements SafeCloseable {
         }
     }
 
+    /** Removes work that was never accepted by its executor; the dispatch caller propagates the submission error. */
+    public void cancelThreadRegistration(String threadId) {
+        synchronized (activeThreads) {
+            activeThreads.remove(threadId);
+        }
+    }
+
     boolean tryStartCheckpointProcessing() {
         synchronized (activeThreads) {
-            if (executionExceptionFuture.isDone()) {
+            if (executionExceptionFuture.isDone() || pluginFatal.get() != null) {
                 return false;
             }
             checkpointRequestsInFlight++;
@@ -899,7 +996,8 @@ public class ExecutionManager implements SafeCloseable {
         return !closing
                 && activeThreads.isEmpty()
                 && checkpointRequestsInFlight == 0
-                && !executionExceptionFuture.isDone();
+                && !executionExceptionFuture.isDone()
+                && pluginFatal.get() == null;
     }
 
     private void preSuspendCheck() {
@@ -966,18 +1064,40 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     void awaitCheckpointCompletion(CompletableFuture<Void> future) {
+        var failure = observeCheckpointUntilDeadline(future);
+        // A cutoff may settle the logical observation early. Main's End contract still requires admitted
+        // transport and its publication callbacks to finish before the owner finalizes the invocation.
+        try {
+            checkpointManager.shutdown();
+        } catch (Throwable transportFailure) {
+            failure = combineFailures(failure, ExceptionHelper.unwrapCompletableFuture(transportFailure));
+        }
+        var completedFailure = future.isDone()
+                ? future.handle((ignored, problem) -> ExceptionHelper.unwrapCompletableFuture(problem))
+                        .join()
+                : null;
+        if (isFatal(completedFailure)) ExceptionHelper.sneakyThrow(completedFailure);
+        if (isFatal(failure)) ExceptionHelper.sneakyThrow(failure);
+        if (completedFailure != null && !isLifecycleFailure(completedFailure))
+            ExceptionHelper.sneakyThrow(completedFailure);
+        if (checkpointManager.isTerminalExecutionAcknowledged()) return;
+        if (failure != null) ExceptionHelper.sneakyThrow(failure);
+        future.join();
+    }
+
+    private Throwable observeCheckpointUntilDeadline(CompletableFuture<Void> future) {
         var deadline =
                 deadlineNanos == null ? addToNow(MAX_CLEANUP_DURATION) : deadlineNanos - RESPONSE_HEADROOM.toNanos();
         try {
             future.get(remainingNanos(deadline), TimeUnit.NANOSECONDS);
+            return null;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
-            throw lifecycleFailure("Interrupted while waiting for checkpoint completion", interrupted);
+            return lifecycleFailure("Interrupted while waiting for checkpoint completion", interrupted);
         } catch (TimeoutException timeout) {
-            if (!checkpointManager.isTerminalExecutionAcknowledged())
-                throw lifecycleFailure("Checkpoint completion exceeded the invocation deadline", timeout);
+            return lifecycleFailure("Checkpoint completion exceeded the invocation deadline", timeout);
         } catch (ExecutionException failure) {
-            ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(failure.getCause()));
+            return ExceptionHelper.unwrapCompletableFuture(failure.getCause());
         }
     }
 
@@ -1004,6 +1124,7 @@ public class ExecutionManager implements SafeCloseable {
 
     /** Fences actual user callbacks, including callbacks delayed inside a plugin start hook. */
     public void checkUserFunctionExecutionAllowed() {
+        rethrowPluginFatalIfPresent();
         if (executionExceptionFuture.isCompletedExceptionally()) {
             try {
                 executionExceptionFuture.join();
@@ -1031,20 +1152,29 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private void checkCheckpointRequestAllowed() {
+        rethrowPluginFatalIfPresent();
         if (invocationReported || lifecycleFailure.get() != null) {
             var failure = lifecycleFailure.get();
             throw failure != null ? failure : lifecycleFailure("Invocation has already returned", null);
         }
-        if (deadlineNanos != null && remainingNanos(deadlineNanos - RESPONSE_HEADROOM.toNanos()) == 0)
-            throw lifecycleFailure("Invocation deadline reached before checkpoint I/O", new TimeoutException());
+        if (deadlineNanos != null && remainingNanos(deadlineNanos - RESPONSE_HEADROOM.toNanos()) == 0) {
+            var failure = lifecycleFailure("Invocation deadline reached before checkpoint I/O", new TimeoutException());
+            if (executionExceptionFuture.isCompletedExceptionally()) throw failure;
+            lifecycleFailure.compareAndSet(null, failure);
+            throw lifecycleFailure.get();
+        }
     }
 
     // ===== Utilities =====
     /** Shutdown the checkpoint batcher. */
     @Override
     public void close() {
-        var failure = finishInvocation(null);
-        if (failure != null) ExceptionHelper.sneakyThrow(failure);
+        try {
+            var failure = finishInvocation(null);
+            if (failure != null) ExceptionHelper.sneakyThrow(failure);
+        } finally {
+            pluginRunner.releasePlugins();
+        }
     }
 
     /**
@@ -1053,33 +1183,120 @@ public class ExecutionManager implements SafeCloseable {
      * second call finds no running handlers and an already-stopped batcher.
      */
     void drainOperations() {
+        // Closing admission can skip queued continuations. Stop their owners before joining user handlers,
+        // or a child waiting on a skipped continuation would prevent the drain from completing.
         beginDraining();
-        var hardDeadline = cleanupDeadlineNanos();
-        Throwable failure = null;
-        if (Thread.interrupted()) cleanupInterrupted.set(true);
-        try {
-            if (cleanupInterrupted.get()) throw new InterruptedException("Handler was interrupted before draining");
-            stopCheckpointContinuationsUntil(hardDeadline);
-            waitForRunningUserHandlersUntil(hardDeadline);
-            if (!awaitTasksUntil(hardDeadline, false))
-                failure = lifecycleFailure("Operation tasks exceeded the cleanup deadline", new TimeoutException());
-        } catch (InterruptedException interrupted) {
-            cleanupInterrupted.set(true);
-            failure = new IllegalStateException("Interrupted while draining invocation operations", interrupted);
-            // An interrupted owner drain is not itself an invocation deadline. Keep already-admitted work able to
-            // finish and checkpoint during the remaining budget; the caller still cancels if that budget expires.
-            failure = settleInterruptedCleanup(hardDeadline, false, failure);
-        } catch (RuntimeException problem) {
-            failure = problem;
-        } finally {
-            failure = stopCheckpointAdmission(hardDeadline, failure);
-            failure = shutdownCheckpoints(hardDeadline, failure);
-            closeLifecycle();
-            restoreCleanupInterrupt();
+        var drain = new DrainFailure();
+        drain.run(() -> stopCheckpointContinuations(drain));
+        drain.run(() -> waitForRunningUserHandlers(drain));
+        drain.run(() -> drainExecutorTasks(drain));
+        drain.run(() -> closeLifecycle(drain));
+        drain.run(this::validateExecutorPool);
+        drain.run(checkpointManager::shutdown);
+        drain.finish();
+    }
+
+    private void stopCheckpointContinuations(DrainFailure drain) {
+        List<BaseDurableOperation> owners;
+        synchronized (activeThreads) {
+            closing = true;
+            owners = new ArrayList<>(checkpointContinuations.values());
         }
-        if (failure != null) {
-            signalLifecycleFailure(failure);
-            ExceptionHelper.sneakyThrow(failure);
+        owners.forEach(owner -> drain.run(() -> stopContinuationOwner(owner)));
+        synchronized (activeThreads) {
+            while (!checkpointContinuations.isEmpty()) {
+                try {
+                    // wait releases this monitor so tasks can finish and release their registrations. No user work
+                    // or future join is performed while holding the coordination monitor.
+                    activeThreads.wait();
+                } catch (InterruptedException interrupted) {
+                    drain.interrupted("Interrupted while waiting for checkpoint continuations", interrupted);
+                }
+            }
+        }
+    }
+
+    private void waitForRunningUserHandlers(DrainFailure drain) {
+        for (var operation : registeredOperations.values()) {
+            drain.run(() -> awaitUserHandler(operation, drain));
+        }
+    }
+
+    private void awaitUserHandler(BaseDurableOperation operation, DrainFailure drain) {
+        var completion = operation.getRunningUserHandler();
+        if (completion == null) return;
+        while (!completion.isDone()) {
+            try {
+                completion.get();
+            } catch (InterruptedException interrupted) {
+                // get clears the flag. Finish all owned work before restoring it and reporting RETRYING.
+                drain.interrupted(
+                        "Interrupted while waiting for user handler " + operation.getOperationId(), interrupted);
+            } catch (CancellationException cancelled) {
+                drain.record(new IllegalStateException(
+                        "User handler observation cancelled: " + operation.getOperationId(), cancelled));
+                return;
+            } catch (Exception completedExceptionally) {
+                return; // The real owner settled exceptionally; its selected outcome is handled separately.
+            }
+        }
+    }
+
+    /** Retains cleanup failures while every required stage gets its finalization opportunity. */
+    private static final class DrainFailure {
+        private Throwable failure;
+        private boolean fatal;
+        private boolean interrupted;
+        private final boolean lifecycleInterruptions;
+
+        private DrainFailure() {
+            this(false);
+        }
+
+        private DrainFailure(boolean lifecycleInterruptions) {
+            this.lifecycleInterruptions = lifecycleInterruptions;
+        }
+
+        void run(Runnable stage) {
+            try {
+                stage.run();
+            } catch (Throwable problem) {
+                record(problem);
+            }
+        }
+
+        void interrupted(String message, InterruptedException problem) {
+            if (!interrupted)
+                record(
+                        lifecycleInterruptions
+                                ? lifecycleFailure(message, problem)
+                                : new IllegalStateException(message, problem));
+            interrupted = true;
+        }
+
+        void preserveInterrupt() {
+            interrupted = true;
+        }
+
+        @SuppressWarnings("removal")
+        void record(Throwable problem) {
+            var cause = ExceptionHelper.unwrapInvocationFailure(problem);
+            boolean nextFatal = cause instanceof VirtualMachineError || cause instanceof ThreadDeath;
+            // Keep a transport wrapper intact: close may run while the same fatal already escapes the body.
+            // Throwing that fatal object again from try-with-resources would trigger self-suppression.
+            var next = problem;
+            if (failure == null || nextFatal && !fatal) {
+                if (failure != null && failure != next) next.addSuppressed(failure);
+                failure = next;
+                fatal = nextFatal;
+            } else if (failure != next) {
+                failure.addSuppressed(next);
+            }
+        }
+
+        void finish() {
+            if (interrupted) Thread.currentThread().interrupt();
+            if (failure != null) ExceptionHelper.sneakyThrow(failure);
         }
     }
 
@@ -1091,9 +1308,19 @@ public class ExecutionManager implements SafeCloseable {
         }
     }
 
-    private void closeLifecycle() {
+    private void closeLifecycle(DrainFailure drain) {
         synchronized (admissionLock) {
             lifecycleState = LifecycleState.CLOSED;
+            // Admission must stop before the final flush, including calls admitted before CLOSED but not yet enqueued.
+            while (checkpointAdmissionsInFlight > 0) {
+                try {
+                    admissionLock.wait();
+                } catch (InterruptedException e) {
+                    // Preserve the existing checkpoint-admission contract: finish its enqueue without
+                    // turning the caller's interrupt into a new execution failure.
+                    drain.preserveInterrupt();
+                }
+            }
         }
     }
 
@@ -1159,6 +1386,40 @@ public class ExecutionManager implements SafeCloseable {
                 "Invocation " + invocationId + " is " + lifecycleState + "; cannot admit new " + workType);
     }
 
+    private void drainExecutorTasks(DrainFailure drain) {
+        while (true) {
+            var tasks = operationTasksToDrain();
+            if (tasks.isEmpty()) return;
+            for (var task : tasks) awaitTaskExit(task, drain);
+        }
+    }
+
+    private List<ExecutorTaskHandle<?>> operationTasksToDrain() {
+        synchronized (admissionLock) {
+            var tasks = activeExecutorTasks.values().stream()
+                    .filter(task -> task.role() != ExecutorTaskHandle.Role.ROOT)
+                    .toList();
+            if (tasks.isEmpty()) {
+                // Close under the submission lock so no task can enter after the final empty snapshot.
+                lifecycleState = LifecycleState.CLOSED;
+            }
+            return tasks;
+        }
+    }
+
+    private void awaitTaskExit(ExecutorTaskHandle<?> task, DrainFailure drain) {
+        while (!task.exit().isDone()) {
+            try {
+                task.exit().get();
+            } catch (InterruptedException e) {
+                drain.interrupted("Interrupted while draining operation task: " + task.operationId(), e);
+            } catch (ExecutionException e) {
+                drain.record(new IllegalStateException("Could not drain operation task: " + task.operationId(), e));
+                return;
+            }
+        }
+    }
+
     private void validateExecutorPool() {
         // double check if the thread pool is empty
         if (durableConfig.getExecutorService() instanceof ThreadPoolExecutor threadPoolExecutor) {
@@ -1211,6 +1472,56 @@ public class ExecutionManager implements SafeCloseable {
         return executionExceptionFuture.isCompletedExceptionally();
     }
 
+    Error getInvocationFatal() {
+        return pluginFatal.get();
+    }
+
+    /** Reports a selected fatal and requests cooperative peer cancellation before the invocation drains. */
+    void recordInvocationFatal(Error fatal) {
+        failFromPlugin(fatal);
+    }
+
+    private void failFromPlugin(Error fatal) {
+        var original = recordPluginFatal(fatal);
+        executionExceptionFuture.completeExceptionally(original);
+        stopAllOperations(original);
+        checkpointManager.abortPending(original);
+    }
+
+    /** Reports a root body fatal before owned cleanup without replacing already-selected suspension/retry control. */
+    Error recordRootHandlerFatal(Error fatal) {
+        // Reuse the existing first-completion channel. A losing body-finally failure is not an instrumentation fatal.
+        if (!executionExceptionFuture.completeExceptionally(fatal)) return null;
+        var original = recordPluginFatal(fatal);
+        stopAllOperations(original);
+        checkpointManager.abortPending(original);
+        return original;
+    }
+
+    /** Stops pending work while leaving the root worker responsible for completing its scope cleanup. */
+    void recordHandlerScopeFatal(Error fatal) {
+        var original = recordPluginFatal(fatal);
+        // Publish control immediately; the root handler still owns cleanup and End before returning.
+        executionExceptionFuture.completeExceptionally(original);
+        stopAllOperations(original);
+        checkpointManager.abortPending(original);
+    }
+
+    private Error recordPluginFatal(Error fatal) {
+        pluginFatal.compareAndSet(null, fatal);
+        var original = pluginFatal.get();
+        synchronized (activeThreads) {
+            activeThreads.notifyAll();
+        }
+        return original;
+    }
+
+    /** Once plugin instrumentation has failed fatally, do not retry or persist unrelated operation outcomes. */
+    public void rethrowPluginFatalIfPresent() {
+        var fatal = pluginFatal.get();
+        if (fatal != null) throw fatal;
+    }
+
     public IllegalDurableOperationException getInvalidSuspensionException() {
         return invalidSuspensionException;
     }
@@ -1220,7 +1531,10 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private void stopAllOperations(Throwable cause) {
-        registeredOperations.values().forEach(op -> op.getCompletionFuture().completeExceptionally(cause));
+        registeredOperations.values().forEach(op -> {
+            op.getCompletionFuture().completeExceptionally(cause);
+            if (pluginFatal.get() != null) op.interruptRunningUserHandler();
+        });
     }
 
     /**
@@ -1262,9 +1576,7 @@ public class ExecutionManager implements SafeCloseable {
             failure = problem;
             signalLifecycleFailure(failure);
         } finally {
-            failure = stopCheckpointAdmission(hardDeadline, failure);
-            failure = shutdownCheckpoints(hardDeadline, failure);
-            closeLifecycle();
+            failure = finishActualInvocationCleanup(failure);
             cleanupFinished = true;
             restoreCleanupInterrupt();
         }
@@ -1351,61 +1663,6 @@ public class ExecutionManager implements SafeCloseable {
                 TimeUnit.NANOSECONDS.timedWait(activeThreads, remaining);
             }
         }
-    }
-
-    private void waitForRunningUserHandlersUntil(long deadline) throws InterruptedException {
-        for (var operation : registeredOperations.values()) {
-            var task = operation.getRunningUserHandler();
-            if (task == null || task.isDone()) continue;
-            try {
-                task.get(remainingNanos(deadline), TimeUnit.NANOSECONDS);
-            } catch (CancellationException cancelled) {
-                if (!isExecutionCompletedExceptionally())
-                    throw lifecycleFailure("Operation observation cancelled while draining", cancelled);
-                // Logical cancellation is not exit; the tracked task exit signal is still awaited below.
-            } catch (ExecutionException ignored) {
-                // The operation's durable outcome is selected separately; cleanup observes physical task exit below.
-            } catch (TimeoutException timeout) {
-                throw lifecycleFailure("Operation handler exceeded the cleanup deadline", timeout);
-            }
-        }
-    }
-
-    private Throwable stopCheckpointAdmission(long deadline, Throwable priorFailure) {
-        synchronized (admissionLock) {
-            lifecycleState = LifecycleState.CLOSED;
-            while (checkpointAdmissionsInFlight > 0) {
-                var remaining = remainingNanos(deadline);
-                if (remaining == 0)
-                    return combineFailures(
-                            priorFailure,
-                            lifecycleFailure("Checkpoint admission exceeded cleanup budget", new TimeoutException()));
-                try {
-                    TimeUnit.NANOSECONDS.timedWait(admissionLock, remaining);
-                } catch (InterruptedException interrupted) {
-                    cleanupInterrupted.set(true);
-                }
-            }
-        }
-        return priorFailure;
-    }
-
-    private Throwable shutdownCheckpoints(long deadline, Throwable priorFailure) {
-        try {
-            checkpointManager.shutdown(remainingDuration(deadline));
-        } catch (InterruptedException interrupted) {
-            cleanupInterrupted.set(true);
-            return combineFailures(
-                    priorFailure, lifecycleFailure("Interrupted while shutting down checkpoints", interrupted));
-        } catch (TimeoutException failure) {
-            return combineFailures(
-                    priorFailure, lifecycleFailure("Checkpoint shutdown exceeded cleanup budget", failure));
-        } catch (ExecutionException failure) {
-            return combineFailures(priorFailure, ExceptionHelper.unwrapCompletableFuture(failure.getCause()));
-        } catch (RuntimeException failure) {
-            return combineFailures(priorFailure, lifecycleFailure("Checkpoint shutdown failed", failure));
-        }
-        return priorFailure;
     }
 
     private Throwable settleInterruptedCleanup(long deadline, boolean includeRoot, Throwable primary) {
@@ -1521,5 +1778,34 @@ public class ExecutionManager implements SafeCloseable {
 
     private static Duration remainingDuration(long deadline) {
         return Duration.ofNanos(remainingNanos(deadline));
+    }
+
+    /** Cutoffs request cancellation; actual owner, continuation, and transport completion remain mandatory. */
+    private Throwable finishActualInvocationCleanup(Throwable priorFailure) {
+        var drain = new DrainFailure(true);
+        drain.run(() -> stopCheckpointContinuations(drain));
+        drain.run(() -> awaitActualInvocationTasks(drain));
+        drain.run(() -> closeLifecycle(drain));
+        drain.run(checkpointManager::shutdown);
+        try {
+            drain.finish();
+        } catch (Throwable failure) {
+            return combineFailures(priorFailure, ExceptionHelper.unwrapCompletableFuture(failure));
+        }
+        return priorFailure;
+    }
+
+    private void awaitActualInvocationTasks(DrainFailure drain) {
+        while (true) {
+            List<ExecutorTaskHandle<?>> tasks;
+            synchronized (admissionLock) {
+                tasks = getActiveExecutorTasks();
+                if (tasks.isEmpty()) {
+                    lifecycleState = LifecycleState.CLOSED;
+                    return;
+                }
+            }
+            for (var task : tasks) awaitTaskExit(task, drain);
+        }
     }
 }

@@ -20,7 +20,7 @@ public class PluginTerminalFailure extends DurableHandler<Object, String> {
     @Override
     protected DurableConfig createConfiguration() {
         return DurableConfig.builder()
-                .withPlugins(new ConformanceLoggingPlugin("CONFPLUGIN"))
+                .withPlugins(info -> new ConformanceLoggingPlugin("CONFPLUGIN"))
                 .build();
     }
 

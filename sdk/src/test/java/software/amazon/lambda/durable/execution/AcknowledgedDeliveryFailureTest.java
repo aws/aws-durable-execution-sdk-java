@@ -107,7 +107,7 @@ class AcknowledgedDeliveryFailureTest {
                     .withExecutorService(users)
                     .withDurableExecutionClient(client)
                     .withCheckpointDelay(Duration.ZERO)
-                    .withPlugins(this)
+                    .withPlugins(ignoredInfo -> this)
                     .build();
         }
 

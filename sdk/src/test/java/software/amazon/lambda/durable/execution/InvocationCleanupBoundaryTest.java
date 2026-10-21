@@ -265,7 +265,7 @@ class InvocationCleanupBoundaryTest {
             var config = DurableConfig.builder()
                     .withExecutorService(users)
                     .withDurableExecutionClient(TestUtils.createMockClient())
-                    .withPlugins(plugin)
+                    .withPlugins(ignoredInvocation -> plugin)
                     .build();
             var invocation = callers.submit(() -> DurableExecutor.execute(
                     input(),
@@ -340,7 +340,7 @@ class InvocationCleanupBoundaryTest {
             var config = DurableConfig.builder()
                     .withExecutorService(users)
                     .withDurableExecutionClient(client)
-                    .withPlugins(plugin)
+                    .withPlugins(ignoredInvocation -> plugin)
                     .withCheckpointDelay(Duration.ZERO)
                     .build();
             var invocation = callers.submit(() -> DurableExecutor.execute(

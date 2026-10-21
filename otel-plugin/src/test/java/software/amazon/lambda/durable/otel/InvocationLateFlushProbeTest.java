@@ -42,7 +42,7 @@ class InvocationLateFlushProbeTest {
                 var batch = BatchSpanProcessor.builder(exporter)
                         .setScheduleDelay(Duration.ofDays(1))
                         .build()) {
-            var otel = new InvocationOtelPlugin(
+            var otel = InvocationOtelPlugin.factory(
                     SdkTracerProvider.builder().addSpanProcessor(batch),
                     OtelPluginConfig.builder()
                             .contextExtractor(() -> null)
@@ -52,15 +52,17 @@ class InvocationLateFlushProbeTest {
                     .withDurableExecutionClient(client)
                     .withExecutorService(workers)
                     .withCheckpointDelay(Duration.ZERO)
-                    .withPlugins(otel, new DurableExecutionPlugin() {
-                        public void onInvocationEnd(InvocationEndInfo info) {
-                            ended.countDown();
-                        }
+                    .withPlugins(
+                            ignoredInfo -> new DurableExecutionPlugin() {
+                                public void onInvocationEnd(InvocationEndInfo info) {
+                                    ended.countDown();
+                                }
 
-                        public void onOperationEnd(OperationEndInfo info) {
-                            if (ended.getCount() == 0) lateOperationEnds.incrementAndGet();
-                        }
-                    })
+                                public void onOperationEnd(OperationEndInfo info) {
+                                    if (ended.getCount() == 0) lateOperationEnds.incrementAndGet();
+                                }
+                            },
+                            otel)
                     .build();
             try {
                 var call = caller.submit(() -> DurableExecutor.execute(

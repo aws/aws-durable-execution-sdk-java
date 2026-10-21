@@ -22,6 +22,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -151,9 +152,10 @@ class OtelPropagationMetadataTest {
                             sampled ? ExtractedContext.Sampling.SAMPLED : ExtractedContext.Sampling.NOT_SAMPLED);
                 })
                 .build();
-        DurableExecutionPlugin plugin =
-                executionView ? new ExecutionOtelPlugin(builder, config) : new InvocationOtelPlugin(builder, config);
-        return new Fixture(new PluginRunner(List.of(new DurableExecutionPlugin() {}, plugin)), exporter);
+        DurableExecutionPluginFactory factory = executionView
+                ? ExecutionOtelPlugin.factory(builder, config)
+                : InvocationOtelPlugin.factory(builder, config);
+        return new Fixture(new PluginRunner(List.of(info -> new DurableExecutionPlugin() {}, factory)), exporter);
     }
 
     private static OperationInfo operation(boolean replay) {

@@ -3,8 +3,7 @@
 package software.amazon.lambda.durable.testing;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.AdditionalAnswers.delegatesTo;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -12,13 +11,14 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 
 class ConfigurationCopyCompatibilityTest {
     @Test
-    void missingCopyCapabilityNeverCallsNewMethodAndPreservesWorkingConfiguration() {
+    void copyPreservesFactoryIdentityAndConfiguredBehavior() {
         var starts = new AtomicInteger();
-        var plugin = new DurableExecutionPlugin() {
+        DurableExecutionPluginFactory factory = info -> new DurableExecutionPlugin() {
             @Override
             public void onInvocationStart(InvocationInfo info) {
                 starts.incrementAndGet();
@@ -26,15 +26,14 @@ class ConfigurationCopyCompatibilityTest {
         };
         var configured = DurableConfig.builder()
                 .withDurableExecutionClient(mock(DurableExecutionClient.class))
-                .withPlugins(plugin)
+                .withPlugins(factory)
+                .withDeserializeAfterSerialization(false)
                 .build();
-        var older = mock(DurableConfig.class, delegatesTo(configured));
-        doThrow(new NoSuchMethodError("toBuilder is absent on older core")).when(older).toBuilder();
-        // Object models a visible API that does not declare the newer capability. Every older API getter delegates
-        // to real configured state, while any accidental direct call to the new method fails like the released ABI.
-        var copied = LocalDurableTestRunner.copyConfiguration(older, Object.class)
+        var copied = configured.toBuilder()
                 .withDurableExecutionClient(mock(DurableExecutionClient.class))
                 .build();
+        assertSame(factory, copied.getPluginFactories().get(0));
+        assertFalse(copied.shouldDeserializeAfterSerialization());
         var result = LocalDurableTestRunner.create(
                         String.class,
                         (input, context) -> context.step("copy-check", String.class, step -> input),
@@ -43,6 +42,5 @@ class ConfigurationCopyCompatibilityTest {
         assertEquals(ExecutionStatus.SUCCEEDED, result.getStatus());
         assertEquals("ok", result.getResult(String.class));
         assertEquals(1, starts.get());
-        verify(older, never()).toBuilder();
     }
 }

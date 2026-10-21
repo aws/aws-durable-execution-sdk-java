@@ -55,11 +55,13 @@ class JsonJavaTimeTest {
     @Test
     void pluginOutputWithInstantInInputSerializesInsteadOfDropping() {
         var exporter = new CapturingExporter();
-        var plugin = (DurableExecutionTelemetry.TelemetryPlugin)
+        var plugin = Executions.plugin(
                 DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
                         .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_CHANGE)
                         .addExporter(exporter)
-                        .build());
+                        .build()),
+                ARN,
+                START);
 
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("startedAt", TS);

@@ -35,7 +35,7 @@ class InvocationClockContainmentTest {
             }
         };
         try (var exporter = InMemorySpanExporter.create()) {
-            var plugin = new InvocationOtelPlugin(
+            var factory = InvocationOtelPlugin.factory(
                     SdkTracerProvider.builder().setClock(clock).addSpanProcessor(SimpleSpanProcessor.create(exporter)),
                     OtelPluginConfig.builder()
                             .contextExtractor(() -> null)
@@ -43,7 +43,9 @@ class InvocationClockContainmentTest {
                             .build());
             var start = Instant.ofEpochSecond(10);
             var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/clock/execution";
-            plugin.onInvocationStart(new InvocationInfo("request", arn, true, start));
+            var info = new InvocationInfo("request", arn, true, start);
+            var plugin = factory.createPlugin(info);
+            plugin.onInvocationStart(info);
             plugin.onOperationStart(new OperationInfo(
                     "parent", "parent", "CONTEXT", "WaitForCallback", null, start, null, null, false));
             plugin.onOperationStart(
@@ -88,7 +90,7 @@ class InvocationClockContainmentTest {
     @Test
     void endedParentRetainsItsCachedContextForAReplayedChildWithoutReexport() {
         try (var exporter = InMemorySpanExporter.create()) {
-            var plugin = new InvocationOtelPlugin(
+            var factory = InvocationOtelPlugin.factory(
                     SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
                     OtelPluginConfig.builder()
                             .contextExtractor(() -> null)
@@ -96,7 +98,9 @@ class InvocationClockContainmentTest {
                             .build());
             var start = Instant.now();
             var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/fallback/execution";
-            plugin.onInvocationStart(new InvocationInfo("request", arn, false, start));
+            var info = new InvocationInfo("request", arn, false, start);
+            var plugin = factory.createPlugin(info);
+            plugin.onInvocationStart(info);
             plugin.onOperationStart(new OperationInfo(
                     "parent", "parent", "CONTEXT", "RunInChildContext", null, start, null, null, true));
             plugin.onOperationEnd(new OperationEndInfo(

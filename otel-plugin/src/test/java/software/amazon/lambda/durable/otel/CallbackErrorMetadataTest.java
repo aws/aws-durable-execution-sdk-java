@@ -21,6 +21,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.OperationEndInfo;
@@ -106,9 +107,9 @@ class CallbackErrorMetadataTest {
                     .contextExtractor(() -> null)
                     .enableMdc(false)
                     .build();
-            DurableExecutionPlugin otel = executionView
-                    ? new ExecutionOtelPlugin(provider, options)
-                    : new InvocationOtelPlugin(provider, options);
+            DurableExecutionPluginFactory otel = executionView
+                    ? ExecutionOtelPlugin.factory(provider, options)
+                    : InvocationOtelPlugin.factory(provider, options);
             var starts = new CopyOnWriteArrayList<InvocationInfo>();
             var ends = new CopyOnWriteArrayList<InvocationEndInfo>();
             var operationEnds = new CopyOnWriteArrayList<OperationEndInfo>();
@@ -133,7 +134,9 @@ class CallbackErrorMetadataTest {
                     String.class,
                     (input, context) -> context.waitForCallback(
                             "external-failure", String.class, (callbackId, step) -> submitterCalls.incrementAndGet()),
-                    DurableConfig.builder().withPlugins(otel, observer).build());
+                    DurableConfig.builder()
+                            .withPlugins(otel, ignored -> observer)
+                            .build());
             assertEquals(ExecutionStatus.PENDING, runner.run("input").getStatus());
             var callbackId = runner.getCallbackId(CALLBACK);
             if (timeout) runner.timeoutCallback(callbackId);

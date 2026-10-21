@@ -85,7 +85,7 @@ class InvocationEndAdmissionTest {
             }
         };
         var exporter = InMemorySpanExporter.create();
-        var otel = new InvocationOtelPlugin(
+        var otel = InvocationOtelPlugin.factory(
                 SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
                 OtelPluginConfig.builder()
                         .contextExtractor(() -> null)
@@ -118,7 +118,7 @@ class InvocationEndAdmissionTest {
                 if (ending.get()) lateHooks.incrementAndGet();
             }
         };
-        // The merged lifecycle unwinds End in reverse order, so OTel must be registered after the gate.
+        // The lifecycle unwinds End in reverse order, so OTel is registered after the gate.
         // This fixture pauses a continuation after admission. Draining must stop its owner and join the
         // continuation before End. A predicate that already started must finish its checkpoint first.
         var config = DurableConfig.builder()
@@ -126,7 +126,7 @@ class InvocationEndAdmissionTest {
                 .withDurableExecutionClient(client)
                 .withCheckpointDelay(Duration.ZERO)
                 .withPollingStrategy(attempt -> Duration.ZERO)
-                .withPlugins(gate, otel)
+                .withPlugins(ignoredInfo -> gate, otel)
                 .build();
         var caller = Executors.newSingleThreadExecutor();
         try {
