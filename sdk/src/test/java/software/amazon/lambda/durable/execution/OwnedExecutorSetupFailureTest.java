@@ -7,16 +7,25 @@ import static org.mockito.Mockito.*;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.TestContext;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.InvocationEndInfo;
+import software.amazon.lambda.durable.plugin.InvocationInfo;
+import software.amazon.lambda.durable.util.ExceptionHelper;
 
 class OwnedExecutorSetupFailureTest {
     @SuppressWarnings("removal")
@@ -76,6 +85,218 @@ class OwnedExecutorSetupFailureTest {
             owned.shutdownNow();
             assertTrue(owned.awaitTermination(3, TimeUnit.SECONDS));
         }
+    }
+
+    enum Setup {
+        ORDINARY,
+        FATAL,
+        WRAPPED_FATAL,
+        SAME_FATAL,
+        APPLICATION_WRAPPER
+    }
+
+    enum Cleanup {
+        NONE,
+        ORDINARY,
+        FATAL,
+        THREAD_DEATH,
+        WRAPPED_FATAL
+    }
+
+    @SuppressWarnings("removal")
+    @ParameterizedTest
+    @CsvSource({
+        "ORDINARY,FATAL,false", "ORDINARY,FATAL,true",
+        "ORDINARY,THREAD_DEATH,false", "ORDINARY,THREAD_DEATH,true",
+        "ORDINARY,WRAPPED_FATAL,false", "ORDINARY,WRAPPED_FATAL,true",
+        "WRAPPED_FATAL,FATAL,false", "WRAPPED_FATAL,FATAL,true",
+        "FATAL,FATAL,false", "FATAL,FATAL,true",
+        "SAME_FATAL,FATAL,false", "SAME_FATAL,FATAL,true",
+        "ORDINARY,NONE,false", "ORDINARY,NONE,true",
+        "ORDINARY,ORDINARY,false", "ORDINARY,ORDINARY,true",
+        "APPLICATION_WRAPPER,NONE,false", "APPLICATION_WRAPPER,NONE,true",
+        "APPLICATION_WRAPPER,FATAL,false", "APPLICATION_WRAPPER,FATAL,true"
+    })
+    void postManagerSetupFailureIsExplicitlyFinalized(Setup setup, Cleanup cleanup, boolean plugins) throws Exception {
+        var setupFatal = new InternalError("first setup fatal");
+        Throwable setupFailure = switch (setup) {
+            case ORDINARY -> new IllegalStateException("second request ID read failed");
+            case FATAL, SAME_FATAL -> setupFatal;
+            case WRAPPED_FATAL -> new CompletionException(setupFatal);
+            case APPLICATION_WRAPPER ->
+                new ExecutionException("application setup failure", new IllegalStateException("application cause"));
+        };
+        var setupIsFatal = setup == Setup.FATAL || setup == Setup.SAME_FATAL || setup == Setup.WRAPPED_FATAL;
+        Error cleanupFatal = setup == Setup.SAME_FATAL
+                ? setupFatal
+                : cleanup == Cleanup.THREAD_DEATH ? new ThreadDeath() : new InternalError("owned cleanup fatal");
+        Throwable cleanupFailure = switch (cleanup) {
+            case NONE -> null;
+            case ORDINARY -> new IllegalArgumentException("ordinary owned cleanup failure");
+            case FATAL, THREAD_DEATH -> cleanupFatal;
+            case WRAPPED_FATAL -> new CompletionException(cleanupFatal);
+        };
+        var requests = new AtomicInteger();
+        var starts = new AtomicInteger();
+        var ends = new AtomicInteger();
+        var bodies = new AtomicInteger();
+        var factoryCalls = new AtomicInteger();
+        var shutdowns = new AtomicInteger();
+        var owned = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<Runnable>()) {
+            @Override
+            public void shutdown() {
+                shutdowns.incrementAndGet();
+                super.shutdown();
+                if (cleanupFailure != null) ExceptionHelper.sneakyThrow(cleanupFailure);
+            }
+        };
+        assertEquals(1, owned.prestartAllCoreThreads());
+        var runtime = new TestContext("setup-request") {
+            @Override
+            public String getAwsRequestId() {
+                if (requests.incrementAndGet() == 2) ExceptionHelper.sneakyThrow(setupFailure);
+                return super.getAwsRequestId();
+            }
+        };
+        var builder = DurableConfig.builder()
+                .withDurableExecutionClient(TestUtils.createMockClient())
+                .withInvocationExecutorFactory(() -> {
+                    factoryCalls.incrementAndGet();
+                    return owned;
+                });
+        if (plugins)
+            builder.withPlugins(ignored -> new DurableExecutionPlugin() {
+                public void onInvocationStart(InvocationInfo info) {
+                    starts.incrementAndGet();
+                }
+
+                public void onInvocationEnd(InvocationEndInfo info) {
+                    ends.incrementAndGet();
+                }
+            });
+        try {
+            var observed = assertThrows(
+                    Throwable.class,
+                    () -> DurableExecutor.execute(
+                            setupInput(),
+                            runtime,
+                            TypeToken.get(String.class),
+                            (value, context) -> {
+                                bodies.incrementAndGet();
+                                return value;
+                            },
+                            builder.build()));
+            if (setupIsFatal) {
+                assertSame(setupFatal, observed, "The first setup JVM fatal must remain primary");
+            } else if (cleanup == Cleanup.FATAL
+                    || cleanup == Cleanup.THREAD_DEATH
+                    || cleanup == Cleanup.WRAPPED_FATAL) {
+                assertSame(
+                        cleanupFatal, observed, "A cleanup JVM fatal must outrank an earlier nonfatal setup failure");
+            } else if (cleanup == Cleanup.NONE) {
+                assertSame(setupFailure, observed);
+            }
+            assertTrue(contains(observed, setupIsFatal ? setupFatal : setupFailure), "Retain setup diagnostics");
+            if (cleanupFailure != null)
+                assertTrue(
+                        contains(observed, cleanup == Cleanup.ORDINARY ? cleanupFailure : cleanupFatal),
+                        "Retain later cleanup diagnostics");
+            assertEquals(2, requests.get(), "The failure must occur after the manager claimed its executor");
+            assertEquals(1, factoryCalls.get());
+            assertEquals(1, shutdowns.get(), "Automatic close must not repeat explicit finalization");
+            assertEquals(0, bodies.get());
+            assertEquals(0, starts.get());
+            assertEquals(0, ends.get());
+            assertTrue(owned.awaitTermination(3, TimeUnit.SECONDS));
+        } finally {
+            owned.shutdownNow();
+            assertTrue(owned.awaitTermination(3, TimeUnit.SECONDS));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void nonfatalPostManagerSetupStillLeavesSharedExecutorCallerOwned(boolean plugins) throws Exception {
+        var failure = new IllegalStateException("second request ID read failed");
+        var requests = new AtomicInteger();
+        var bodies = new AtomicInteger();
+        var hooks = new AtomicInteger();
+        var shared = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<Runnable>());
+        shared.prestartAllCoreThreads();
+        var runtime = new TestContext("setup-request") {
+            @Override
+            public String getAwsRequestId() {
+                if (requests.incrementAndGet() == 2) throw failure;
+                return super.getAwsRequestId();
+            }
+        };
+        var builder = DurableConfig.builder()
+                .withExecutorService(shared)
+                .withDurableExecutionClient(TestUtils.createMockClient());
+        if (plugins)
+            builder.withPlugins(ignored -> new DurableExecutionPlugin() {
+                public void onInvocationStart(InvocationInfo info) {
+                    hooks.incrementAndGet();
+                }
+
+                public void onInvocationEnd(InvocationEndInfo info) {
+                    hooks.incrementAndGet();
+                }
+            });
+        try {
+            assertSame(
+                    failure,
+                    assertThrows(
+                            Throwable.class,
+                            () -> DurableExecutor.execute(
+                                    setupInput(),
+                                    runtime,
+                                    TypeToken.get(String.class),
+                                    (value, context) -> {
+                                        bodies.incrementAndGet();
+                                        return value;
+                                    },
+                                    builder.build())));
+            assertEquals(2, requests.get());
+            assertEquals(0, bodies.get());
+            assertEquals(0, hooks.get());
+            assertFalse(shared.isShutdown());
+        } finally {
+            shared.shutdownNow();
+            assertTrue(shared.awaitTermination(3, TimeUnit.SECONDS));
+        }
+    }
+
+    private static DurableExecutionInput setupInput() {
+        return new DurableExecutionInput(
+                "arn:execution/setup",
+                "token",
+                CheckpointUpdatedExecutionState.builder()
+                        .operations(Operation.builder()
+                                .id("setup")
+                                .type(OperationType.EXECUTION)
+                                .status(OperationStatus.STARTED)
+                                .startTimestamp(Instant.EPOCH)
+                                .executionDetails(ExecutionDetails.builder()
+                                        .inputPayload("\"input\"")
+                                        .build())
+                                .build())
+                        .build());
+    }
+
+    private static boolean contains(Throwable root, Throwable expected) {
+        var queue = new ArrayDeque<Throwable>();
+        var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        queue.add(root);
+        while (!queue.isEmpty()) {
+            var next = queue.remove();
+            if (next == expected) return true;
+            if (!seen.add(next)) continue;
+            var cause = next.getCause();
+            if (cause != null) queue.add(cause);
+            queue.addAll(Arrays.asList(next.getSuppressed()));
+        }
+        return false;
     }
 
     private abstract static class RuntimeContext implements Context {
