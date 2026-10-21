@@ -1196,7 +1196,7 @@ public class ExecutionManager implements SafeCloseable {
     @Override
     public void close() {
         try {
-            var failure = finishInvocation(null);
+            var failure = finishInvocation(null, true);
             if (failure != null) ExceptionHelper.sneakyThrow(failure);
         } finally {
             pluginRunner.releasePlugins();
@@ -1583,6 +1583,10 @@ public class ExecutionManager implements SafeCloseable {
     }
     /** Called only by the invocation caller, so root exit and owned-executor cleanup never self-join. */
     Throwable finishInvocation(Throwable originalFailure) {
+        return finishInvocation(originalFailure, false);
+    }
+
+    private Throwable finishInvocation(Throwable originalFailure, boolean closeObservation) {
         if (cleanupFinished) return originalFailure;
         beginDraining();
         var hardDeadline = cleanupDeadlineNanos();
@@ -1612,7 +1616,7 @@ public class ExecutionManager implements SafeCloseable {
                 if (firstFatal != null) failure = combineFailures(firstFatal, failure);
                 // Inline execution can already be throwing this fatal through try-with-resources close.
                 // Normal completion keeps the raw fatal ahead of lifecycle/ACK handling.
-                if (invocationReported && isFatal(failure)) failure = new CompletionException(failure);
+                if (closeObservation && isFatal(failure)) failure = new CompletionException(failure);
             }
             cleanupFinished = true;
             restoreCleanupInterrupt();

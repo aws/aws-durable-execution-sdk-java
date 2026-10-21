@@ -18,7 +18,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 
-class IndependentOwnedSetupFailureTest {
+class OwnedExecutorSetupFailureTest {
     @SuppressWarnings("removal")
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
