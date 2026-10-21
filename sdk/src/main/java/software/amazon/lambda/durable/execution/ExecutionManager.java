@@ -269,19 +269,19 @@ public class ExecutionManager implements SafeCloseable {
             Throwable cleanupFailure;
             try {
                 // No SDK work has been dispatched. Avoid repeating the state callback that failed validation.
-                cleanupFailure = attemptOwnedExecutorShutdown(deadline, null);
+                cleanupFailure = attemptOwnedExecutorShutdown(deadline, null, false);
             } catch (Throwable failure) {
                 cleanupFailure = failure;
             }
             var selected = combineOwnedExecutorFailures(initializationFailure, cleanupFailure);
-            return cleanupFailure == null ? selected : forceStopRejectedExecutor(deadline, selected);
+            return cleanupFailure == null ? selected : forceStopOwnedExecutor(deadline, selected);
         } finally {
             ACTIVE_INVOCATION_EXECUTORS.remove(executorService);
             restoreCleanupInterrupt();
         }
     }
 
-    private Throwable forceStopRejectedExecutor(long deadline, Throwable priorFailure) {
+    private Throwable forceStopOwnedExecutor(long deadline, Throwable priorFailure) {
         var failure = priorFailure;
         try {
             executorService.shutdownNow();
@@ -291,11 +291,11 @@ public class ExecutionManager implements SafeCloseable {
         try {
             if (!executorService.awaitTermination(remainingNanos(deadline), TimeUnit.NANOSECONDS))
                 failure = combineOwnedExecutorFailures(
-                        failure, lifecycleFailure("Rejected invocation executor did not terminate", null));
+                        failure, lifecycleFailure("Invocation executor did not terminate during forced cleanup", null));
         } catch (InterruptedException interrupted) {
             cleanupInterrupted.set(true);
             failure = combineOwnedExecutorFailures(
-                    failure, lifecycleFailure("Interrupted while disposing rejected invocation executor", interrupted));
+                    failure, lifecycleFailure("Interrupted while forcing invocation executor shutdown", interrupted));
         } catch (Throwable terminationFailure) {
             failure = combineOwnedExecutorFailures(failure, terminationFailure);
         }
@@ -1731,7 +1731,7 @@ public class ExecutionManager implements SafeCloseable {
         Throwable result = priorFailure;
         Throwable thrown = null;
         try {
-            result = attemptOwnedExecutorShutdown(hardDeadline, priorFailure);
+            result = attemptOwnedExecutorShutdown(hardDeadline, priorFailure, true);
         } catch (Throwable failure) {
             thrown = failure;
         }
@@ -1753,10 +1753,22 @@ public class ExecutionManager implements SafeCloseable {
                 isFatal(earlierCause) ? earlierCause : earlier, isFatal(laterCause) ? laterCause : later);
     }
 
-    private Throwable attemptOwnedExecutorShutdown(long hardDeadline, Throwable priorFailure) {
-        var executorDeadline = Math.max(System.nanoTime(), hardDeadline - CHECKPOINT_CLEANUP_RESERVE.toNanos());
+    private void requestOwnedExecutorShutdown(long deadline, boolean forceOnFailure) {
         try {
             executorService.shutdown();
+        } catch (Throwable shutdownFailure) {
+            if (forceOnFailure) shutdownFailure = forceStopOwnedExecutor(deadline, shutdownFailure);
+            // The existing attempt and outer finalizer still classify the original failure and any later fatal.
+            ExceptionHelper.sneakyThrow(shutdownFailure);
+        }
+    }
+
+    private Throwable attemptOwnedExecutorShutdown(
+            long hardDeadline, Throwable priorFailure, boolean forceOnShutdownFailure) {
+        var executorDeadline = Math.max(System.nanoTime(), hardDeadline - CHECKPOINT_CLEANUP_RESERVE.toNanos());
+        try {
+            // Constructor cleanup already recovers any failed attempt; normal finalization recovers this callback.
+            requestOwnedExecutorShutdown(executorDeadline, forceOnShutdownFailure);
             if (!getActiveExecutorTasks().isEmpty()) {
                 executorService.shutdownNow();
             }
