@@ -90,6 +90,14 @@ class AcknowledgedDeliveryFailureTest {
     }
 
     @Test
+    void metadataCancellationWithoutCallerInterruptionRetainsIdentity() throws Exception {
+        var failure = new CancellationException("metadata request cancelled");
+        var observed = run(failure, false);
+        assertSame(failure, observed.failure());
+        assertNull(observed.output());
+    }
+
+    @Test
     void acknowledgedResultStillWinsOverCallerInterruptionAlone() throws Exception {
         var observed = run(null, true);
         assertNull(observed.failure());

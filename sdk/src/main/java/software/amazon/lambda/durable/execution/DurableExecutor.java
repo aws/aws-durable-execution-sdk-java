@@ -104,6 +104,8 @@ public class DurableExecutor {
                 }
                 if (finalFailure != null && (selected.failure() != null || finalFailure != originalFailure))
                     ExceptionHelper.sneakyThrow(finalFailure);
+                // Preserve the stored failure after control precedence; newer JDKs wrap join() cancellation.
+                if (completedFailure != null) ExceptionHelper.sneakyThrow(completedFailure);
                 return completion.join();
             } catch (CompletionException failure) {
                 ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapInvocationFailure(failure));

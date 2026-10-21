@@ -1117,6 +1117,10 @@ public class ExecutionManager implements SafeCloseable {
             return lifecycleFailure("Interrupted while waiting for checkpoint completion", interrupted);
         } catch (TimeoutException timeout) {
             return lifecycleFailure("Checkpoint completion exceeded the invocation deadline", timeout);
+        } catch (CancellationException cancelled) {
+            // Newer JDKs wrap get() cancellation. Preserve the future's actual failure and still drain transport.
+            return future.handle((ignored, failure) -> ExceptionHelper.unwrapInvocationFailure(failure))
+                    .join();
         } catch (ExecutionException failure) {
             return ExceptionHelper.unwrapInvocationFailure(failure.getCause());
         }
