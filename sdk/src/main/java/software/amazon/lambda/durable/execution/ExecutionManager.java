@@ -1805,8 +1805,15 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     static Throwable normalizeInvocationBoundaryFailure(Throwable failure) {
-        // Setup can fail after the executor lease is claimed; retain diagnostics before discarding fatal wrappers.
-        return normalizeOwnedExecutorFailure(inspectOwnedExecutorFailure(failure), null);
+        var inspected = inspectOwnedExecutorFailure(failure);
+        var discarded = new ArrayList<Throwable>();
+        // A retained application ExecutionException and its cause graph remain intact, including their diagnostics.
+        for (var wrapper : inspected.wrappers()) {
+            if (wrapper == inspected.selected()) break;
+            discarded.add(wrapper);
+        }
+        if (!discarded.isEmpty()) retainOwnedWrapperDiagnostics(inspected.selected(), inspected.selected(), discarded);
+        return inspected.selected();
     }
 
     private record OwnedFailure(Throwable selected, List<Throwable> wrappers) {}
@@ -1845,7 +1852,7 @@ public class ExecutionManager implements SafeCloseable {
         return failure.selected();
     }
 
-    private static void retainOwnedWrapperDiagnostics(Error primary, Error cause, List<Throwable> wrappers) {
+    private static void retainOwnedWrapperDiagnostics(Throwable primary, Throwable cause, List<Throwable> wrappers) {
         var omitted = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
         omitted.addAll(wrappers);
         var pending = new ArrayList<Throwable>();
@@ -1866,7 +1873,7 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private static List<Throwable> ownedAliasWrappers(
-            Throwable failure, Error primary, Error cause, Set<Throwable> omitted) {
+            Throwable failure, Throwable primary, Throwable cause, Set<Throwable> omitted) {
         var aliases = new ArrayList<Throwable>();
         var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
         while (failure != primary && failure != cause && !omitted.contains(failure)) {
