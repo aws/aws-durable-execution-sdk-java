@@ -1315,7 +1315,7 @@ public class ExecutionManager implements SafeCloseable {
                 drain.interrupted(
                         "Interrupted while waiting for user handler " + operation.getOperationId(), interrupted);
             } catch (CancellationException cancelled) {
-                drain.record(new IllegalStateException(
+                drain.record(ownerDrainFailure(
                         "User handler observation cancelled: " + operation.getOperationId(), cancelled));
                 return;
             } catch (Exception completedExceptionally) {
@@ -1324,8 +1324,40 @@ public class ExecutionManager implements SafeCloseable {
         }
     }
 
+    /** Tags only synthetic owner-drain failures created after an invocation cancellation was recorded. */
+    private RuntimeException ownerDrainFailure(String message, Throwable cause) {
+        var diagnostic = new IllegalStateException(message, cause);
+        var lifecycleCause = lifecycleFailure.get();
+        return lifecycleCause == null ? diagnostic : new OwnerDrainFailure(diagnostic, lifecycleCause);
+    }
+
+    private static final class OwnerDrainFailure extends RuntimeException {
+        private final IllegalStateException diagnostic;
+        private final UnrecoverableDurableExecutionException lifecycleCause;
+
+        private OwnerDrainFailure(
+                IllegalStateException diagnostic, UnrecoverableDurableExecutionException lifecycleCause) {
+            super(diagnostic.getMessage(), diagnostic, false, false);
+            this.diagnostic = diagnostic;
+            this.lifecycleCause = lifecycleCause;
+        }
+    }
+
+    static Throwable ownerDrainDiagnostic(Throwable failure) {
+        return failure instanceof OwnerDrainFailure owner ? owner.diagnostic : failure;
+    }
+
+    static Throwable selectOwnerDrainFailure(Throwable failure) {
+        if (!(failure instanceof OwnerDrainFailure owner)) return failure;
+        for (var existing : owner.lifecycleCause.getSuppressed()) {
+            if (existing == owner.diagnostic) return owner.lifecycleCause;
+        }
+        owner.lifecycleCause.addSuppressed(owner.diagnostic);
+        return owner.lifecycleCause;
+    }
+
     /** Retains cleanup failures while every required stage gets its finalization opportunity. */
-    private static final class DrainFailure {
+    private final class DrainFailure {
         private Throwable failure;
         private boolean fatal;
         private boolean interrupted;
@@ -1352,7 +1384,7 @@ public class ExecutionManager implements SafeCloseable {
                 record(
                         lifecycleInterruptions
                                 ? lifecycleFailure(message, problem)
-                                : new IllegalStateException(message, problem));
+                                : ownerDrainFailure(message, problem));
             interrupted = true;
         }
 
@@ -1362,17 +1394,24 @@ public class ExecutionManager implements SafeCloseable {
 
         @SuppressWarnings("removal")
         void record(Throwable problem) {
-            var cause = ExceptionHelper.unwrapInvocationFailure(problem);
+            var nextDiagnostic = ownerDrainDiagnostic(problem);
+            // Inspect wrappers once for fatal priority and aliases; retain the original diagnostic object below.
+            var cause = ExceptionHelper.unwrapAsyncFailure(nextDiagnostic);
             boolean nextFatal = cause instanceof VirtualMachineError || cause instanceof ThreadDeath;
             // Keep a transport wrapper intact: close may run while the same fatal already escapes the body.
             // Throwing that fatal object again from try-with-resources would trigger self-suppression.
             var next = problem;
+            var previousDiagnostic = ownerDrainDiagnostic(failure);
             if (failure == null || nextFatal && !fatal) {
-                if (failure != null && failure != next) next.addSuppressed(failure);
+                if (previousDiagnostic != null && previousDiagnostic != nextDiagnostic)
+                    nextDiagnostic.addSuppressed(previousDiagnostic);
                 failure = next;
                 fatal = nextFatal;
-            } else if (failure != next) {
-                failure.addSuppressed(next);
+            } else if (previousDiagnostic != nextDiagnostic) {
+                // A shutdown re-observation of the same cancellation is not a new diagnostic. Keeping it here
+                // would create lifecycle -> drain -> lifecycle when the owner reports the canonical failure.
+                if (failure instanceof OwnerDrainFailure owner && cause == owner.lifecycleCause) return;
+                previousDiagnostic.addSuppressed(nextDiagnostic);
             }
         }
 

@@ -188,10 +188,11 @@ public class DurableExecutor {
                     // so it is reported as a delivery failure: RETRYING, then the original exception is rethrown.
                     var selectedFailure = ExceptionHelper.unwrapInvocationFailure(selected.failure());
                     if (ExecutionManager.isFatal(selectedFailure)) {
-                        if (selectedFailure != drainFailure) selectedFailure.addSuppressed(drainFailure);
+                        var diagnostic = ExecutionManager.ownerDrainDiagnostic(drainFailure);
+                        if (selectedFailure != diagnostic) selectedFailure.addSuppressed(diagnostic);
                         return failDelivery(selectedFailure);
                     }
-                    return failDelivery(drainFailure);
+                    return failDelivery(ExecutionManager.selectOwnerDrainFailure(drainFailure));
                 } catch (Error fatal) {
                     return failDelivery(fatal);
                 }
