@@ -1602,7 +1602,17 @@ public class ExecutionManager implements SafeCloseable {
             signalLifecycleFailure(failure);
         } finally {
             failure = finishActualInvocationCleanup(failure);
-            failure = shutdownOwnedExecutor(hardDeadline, failure);
+            try {
+                failure = shutdownOwnedExecutor(hardDeadline, failure);
+            } catch (Throwable shutdownFailure) {
+                // Executor callbacks, including fallback shutdown and state queries, must not skip finalization.
+                failure = combineFailures(failure, shutdownFailure);
+                var firstFatal = getInvocationFatal();
+                if (firstFatal != null) failure = combineFailures(firstFatal, failure);
+                // Inline execution can already be throwing this fatal through try-with-resources close.
+                // Normal completion keeps the raw fatal ahead of lifecycle/ACK handling.
+                if (invocationReported && isFatal(failure)) failure = new CompletionException(failure);
+            }
             cleanupFinished = true;
             restoreCleanupInterrupt();
         }
