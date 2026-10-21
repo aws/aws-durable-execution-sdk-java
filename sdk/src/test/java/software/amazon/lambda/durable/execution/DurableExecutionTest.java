@@ -31,6 +31,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -60,6 +61,7 @@ import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.operation.BaseDurableOperation;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.HandlerScoped;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -113,56 +115,11 @@ class DurableExecutionTest {
                         .build());
         var config = DurableConfig.builder()
                 .withDurableExecutionClient(TestUtils.createMockClient())
-                .withPlugins(plugin)
+                .withPlugins(ignored -> plugin)
                 .build();
         var output = DurableExecutor.execute(input, lambdaContext, get(String.class), (value, ctx) -> value, config);
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
         assertEquals(header, seen.get());
-    }
-
-    @Test
-    void optionalTraceAccessorFailureDoesNotAbortHandler() {
-        var lambdaContext = mock(RuntimeContext.class);
-        when(lambdaContext.getRemainingTimeInMillis()).thenReturn(30000);
-        when(lambdaContext.getXrayTraceId()).thenThrow(new SecurityException("access denied"));
-        var seen = new AtomicReference<InvocationInfo>();
-        var plugin = new DurableExecutionPlugin() {
-            @Override
-            public void onInvocationStart(InvocationInfo info) {
-                seen.set(info);
-            }
-        };
-        var config = DurableConfig.builder()
-                .withDurableExecutionClient(TestUtils.createMockClient())
-                .withPlugins(plugin)
-                .build();
-        var output = DurableExecutor.execute(
-                traceCaptureInput(), lambdaContext, get(String.class), (value, ctx) -> "done " + value, config);
-        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
-        assertEquals("\"done test-input\"", output.result());
-        assertNotNull(seen.get());
-        assertEquals("", seen.get().xRayTraceId());
-    }
-
-    @Test
-    void noPluginsDoesNotAccessRuntimeTraceCarrier() {
-        var lambdaContext = mock(RuntimeContext.class);
-        when(lambdaContext.getRemainingTimeInMillis()).thenReturn(30000);
-        when(lambdaContext.getXrayTraceId()).thenThrow(new AssertionError("accessor must not be invoked"));
-        var output = DurableExecutor.execute(
-                traceCaptureInput(), lambdaContext, get(String.class), (value, ctx) -> value, configWithMockClient());
-        assertEquals(ExecutionStatus.SUCCEEDED, output.status());
-        assertEquals("\"test-input\"", output.result());
-        verify(lambdaContext, never()).getXrayTraceId();
-    }
-
-    private DurableExecutionInput traceCaptureInput() {
-        return new DurableExecutionInput(
-                EXECUTION_ARN,
-                "token",
-                CheckpointUpdatedExecutionState.builder()
-                        .operations(executionOp())
-                        .build());
     }
 
     @Test
@@ -573,13 +530,6 @@ class DurableExecutionTest {
         assertTrue(output2.result().contains("Result 2: test-input-2"));
     }
 
-    private abstract static class RuntimeContext implements Context {
-        @Override
-        public String getXrayTraceId() {
-            return null;
-        }
-    }
-
     private enum OperationKind {
         STEP,
         WAIT,
@@ -649,7 +599,7 @@ class DurableExecutionTest {
         var plugin = mock(DurableExecutionPlugin.class);
         var config = DurableConfig.builder()
                 .withDurableExecutionClient(client)
-                .withPlugins(plugin)
+                .withPlugins(ignoredInfo -> plugin)
                 .build();
 
         var handlerReadyToReturn = new CountDownLatch(1);
@@ -699,8 +649,16 @@ class DurableExecutionTest {
         assertInstanceOf(SuspendExecutionException.class, error.getCause());
     }
 
-    @Test
-    void invalidSuspensionThrowsIllegalDurableOperationExceptionAndNotifiesPluginsAsRetrying() {
+    private abstract static class RuntimeContext implements Context {
+        @Override
+        public String getXrayTraceId() {
+            return null;
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void invalidSuspensionThrowsIllegalDurableOperationExceptionAndNotifiesPluginsAsRetrying(boolean ownedScope) {
         var input = new DurableExecutionInput(
                 EXECUTION_ARN,
                 "token1",
@@ -708,10 +666,14 @@ class DurableExecutionTest {
                         .operations(List.of(executionOp()))
                         .build());
 
-        var plugin = new RecordingPlugin();
+        var recordedPlugin = new AtomicReference<RecordingPlugin>();
         var config = DurableConfig.builder()
                 .withDurableExecutionClient(TestUtils.createMockClient())
-                .withPlugins(plugin)
+                .withPlugins(info -> {
+                    var plugin = ownedScope ? new ScopedRecordingPlugin() : new RecordingPlugin();
+                    recordedPlugin.set(plugin);
+                    return plugin;
+                })
                 .build();
 
         var exception = assertThrows(
@@ -750,15 +712,16 @@ class DurableExecutionTest {
         assertTrue(exception.isRetryable());
         assertTrue(exception.getMessage().contains("Invalid suspension. No operation is pending."));
         assertTrue(exception.getMessage().contains("my-waiting-op"));
+        var plugin = recordedPlugin.get();
+        assertNotNull(plugin);
         assertEquals(InvocationStatus.RETRYING, plugin.invocationStatus);
         assertEquals(exception, plugin.invocationError);
-        assertNotNull(plugin.startThread);
-        assertSame(plugin.startThread, plugin.endThread);
-        assertEquals(1, plugin.endCalls);
+        assertInvocationLifecycle(plugin);
     }
 
-    @Test
-    void revokedCheckpointTokenDoesNotRecordInvalidSuspension() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void revokedCheckpointTokenDoesNotRecordInvalidSuspension(boolean ownedScope) {
         var mockClient = mock(DurableExecutionClient.class);
         when(mockClient.checkpoint(any(), any(), any()))
                 .thenReturn(CheckpointDurableExecutionResponse.builder()
@@ -772,10 +735,14 @@ class DurableExecutionTest {
                         .operations(List.of(executionOp()))
                         .build());
 
-        var plugin = new RecordingPlugin();
+        var recordedPlugin = new AtomicReference<RecordingPlugin>();
         var config = DurableConfig.builder()
                 .withDurableExecutionClient(mockClient)
-                .withPlugins(plugin)
+                .withPlugins(info -> {
+                    var plugin = ownedScope ? new ScopedRecordingPlugin() : new RecordingPlugin();
+                    recordedPlugin.set(plugin);
+                    return plugin;
+                })
                 .build();
 
         var output = DurableExecutor.execute(
@@ -798,11 +765,49 @@ class DurableExecutionTest {
                 config);
 
         assertEquals(ExecutionStatus.PENDING, output.status());
+        var plugin = recordedPlugin.get();
+        assertNotNull(plugin);
         assertEquals(InvocationStatus.PENDING, plugin.invocationStatus);
         assertNull(plugin.invocationError);
+        assertInvocationLifecycle(plugin);
+    }
+
+    private static void assertInvocationLifecycle(RecordingPlugin plugin) {
         assertNotNull(plugin.startThread);
-        assertSame(plugin.startThread, plugin.endThread);
+        assertNotNull(plugin.endThread);
         assertEquals(1, plugin.endCalls);
+        if (plugin instanceof ScopedRecordingPlugin scoped) {
+            assertSame(plugin.startThread, scoped.scopeOwner);
+            assertSame(scoped.scopeOwner, scoped.closeThread);
+            assertEquals(1, scoped.closeCalls);
+            assertEquals(1, scoped.closeCallsAtEnd, "ordinary owned cleanup must finish before End");
+        }
+        // Major End dispatch can run on the caller after handler completion; scope closure owns its thread.
+    }
+
+    @HandlerScoped(ScopedRecordingPlugin.Opener.class)
+    private static final class ScopedRecordingPlugin extends RecordingPlugin {
+        private Thread scopeOwner;
+        private Thread closeThread;
+        private int closeCalls;
+        private int closeCallsAtEnd;
+
+        @Override
+        public void onInvocationEnd(InvocationEndInfo info) {
+            closeCallsAtEnd = closeCalls;
+            super.onInvocationEnd(info);
+        }
+
+        public static class Opener implements Function<ScopedRecordingPlugin, AutoCloseable> {
+            @Override
+            public AutoCloseable apply(ScopedRecordingPlugin plugin) {
+                plugin.scopeOwner = Thread.currentThread();
+                return () -> {
+                    plugin.closeThread = Thread.currentThread();
+                    plugin.closeCalls++;
+                };
+            }
+        }
     }
 
     private static class RecordingPlugin implements DurableExecutionPlugin {

@@ -36,13 +36,14 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -141,13 +142,23 @@ class DurableSamplingDecisionClassLoaderTest {
                         return ContextPropagators.noop();
                     }
                 });
-                var plugin = (DurableExecutionPlugin)
+                var factory = (DurableExecutionPluginFactory)
                         Class.forName("software.amazon.lambda.durable.otel." + pluginName, true, appLoader)
-                                .getConstructor()
-                                .newInstance();
+                                .getMethod("factory")
+                                .invoke(null);
                 var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/custom/id";
                 for (var first : new boolean[] {true, false}) {
-                    plugin.onInvocationStart(new InvocationInfo("request", arn, first, Instant.ofEpochSecond(10)));
+                    var info = new InvocationInfo(
+                            "request",
+                            arn,
+                            first,
+                            Instant.ofEpochSecond(10),
+                            null,
+                            Map.of(),
+                            Map.of(),
+                            System.getProperty("com.amazonaws.xray.traceHeader"));
+                    var plugin = factory.createPlugin(info);
+                    plugin.onInvocationStart(info);
                     plugin.onInvocationEnd(new InvocationEndInfo(
                             "request",
                             arn,
@@ -282,17 +293,27 @@ class DurableSamplingDecisionClassLoaderTest {
                         return ContextPropagators.noop();
                     }
                 });
-                var plugin = (DurableExecutionPlugin)
+                var factory = (DurableExecutionPluginFactory)
                         Class.forName("software.amazon.lambda.durable.otel." + pluginName, true, appLoader)
-                                .getConstructor()
-                                .newInstance();
+                                .getMethod("factory")
+                                .invoke(null);
                 var executionCount = sharedTraceExecutions ? 2 : 1;
                 for (var index = 0; index < executionCount; index++) {
                     var executionName = index == 0 ? "first" : "second";
                     var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/" + executionName
                             + "/id";
                     for (var first : new boolean[] {true, false}) {
-                        plugin.onInvocationStart(new InvocationInfo("request", arn, first, Instant.ofEpochSecond(10)));
+                        var info = new InvocationInfo(
+                                "request",
+                                arn,
+                                first,
+                                Instant.ofEpochSecond(10),
+                                null,
+                                Map.of(),
+                                Map.of(),
+                                System.getProperty("com.amazonaws.xray.traceHeader"));
+                        var plugin = factory.createPlugin(info);
+                        plugin.onInvocationStart(info);
                         plugin.onInvocationEnd(
                                 new InvocationEndInfo("request", arn, first, InvocationStatus.PENDING, null));
                     }
@@ -494,10 +515,10 @@ class DurableSamplingDecisionClassLoaderTest {
                         return ContextPropagators.noop();
                     }
                 });
-                var plugin = (DurableExecutionPlugin)
+                var factory = (DurableExecutionPluginFactory)
                         Class.forName("software.amazon.lambda.durable.otel." + pluginName, true, appLoader)
-                                .getConstructor()
-                                .newInstance();
+                                .getMethod("factory")
+                                .invoke(null);
                 var arn = "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/test/id";
                 var previousAmbient = Span.current();
                 var ambient = appProvider
@@ -506,7 +527,17 @@ class DurableSamplingDecisionClassLoaderTest {
                         .startSpan();
                 try (var ambientScope = ambient.makeCurrent()) {
                     for (var first : new boolean[] {true, false}) {
-                        plugin.onInvocationStart(new InvocationInfo("request", arn, first, Instant.EPOCH));
+                        var info = new InvocationInfo(
+                                "request",
+                                arn,
+                                first,
+                                Instant.EPOCH,
+                                null,
+                                Map.of(),
+                                Map.of(),
+                                System.getProperty("com.amazonaws.xray.traceHeader"));
+                        var plugin = factory.createPlugin(info);
+                        plugin.onInvocationStart(info);
                         plugin.onInvocationEnd(
                                 new InvocationEndInfo("request", arn, first, InvocationStatus.PENDING, null));
                         assertSame(ambient, Span.current(), "Plugin cleanup must preserve the caller's ambient span");
@@ -534,7 +565,7 @@ class DurableSamplingDecisionClassLoaderTest {
      * holds its own copies, mirroring the two plugin class loaders) while delegating OpenTelemetry and JDK classes to
      * the parent so those types are shared and interoperable across loaders.
      */
-    private static URLClassLoader pluginClassLoader() {
+    static URLClassLoader pluginClassLoader() {
         var classesDir = DurableSamplingDecisionClassLoaderTest.class
                 .getProtectionDomain()
                 .getCodeSource()

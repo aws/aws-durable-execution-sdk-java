@@ -12,6 +12,7 @@ import io.opentelemetry.sdk.trace.samplers.Sampler;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +52,7 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.DurableExecutionOutput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.OperationInfo;
 import software.amazon.lambda.durable.plugin.PropagationInput;
 import software.amazon.lambda.durable.plugin.PropagationMetadata;
@@ -222,8 +224,9 @@ class InvokePropagationIntegrationTest {
                         "1234567890123456",
                         sampled ? ExtractedContext.Sampling.SAMPLED : ExtractedContext.Sampling.NOT_SAMPLED))
                 .build();
-        DurableExecutionPlugin plugin =
-                executionView ? new ExecutionOtelPlugin(builder, config) : new InvocationOtelPlugin(builder, config);
+        DurableExecutionPluginFactory factory = executionView
+                ? ExecutionOtelPlugin.factory(builder, config)
+                : InvocationOtelPlugin.factory(builder, config);
         var bothInvokes = new CountDownLatch(2);
         var inputs = new CopyOnWriteArrayList<PropagationInput>();
         var startedOperations = new CopyOnWriteArrayList<OperationInfo>();
@@ -246,7 +249,7 @@ class InvokePropagationIntegrationTest {
                 return null;
             }
         };
-        try (var fixture = new Fixture(plugin, observer)) {
+        try (var fixture = new Fixture(factory, ignored -> observer)) {
             fixture.client.autoComplete = true;
             var result = fixture.run((input, context) -> {
                 try (var parallel = context.parallel(
@@ -375,6 +378,12 @@ class InvokePropagationIntegrationTest {
         final DurableConfig config;
 
         Fixture(DurableExecutionPlugin... plugins) {
+            this(Arrays.stream(plugins)
+                    .map(plugin -> (DurableExecutionPluginFactory) ignored -> plugin)
+                    .toArray(DurableExecutionPluginFactory[]::new));
+        }
+
+        Fixture(DurableExecutionPluginFactory... plugins) {
             config = DurableConfig.builder()
                     .withDurableExecutionClient(client)
                     .withExecutorService(executor)

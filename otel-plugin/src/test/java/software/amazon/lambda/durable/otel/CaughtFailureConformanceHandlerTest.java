@@ -414,9 +414,9 @@ class CaughtFailureConformanceHandlerTest {
                     .enableMdc(false)
                     .contextExtractor(() -> null)
                     .build();
-            DurableExecutionPlugin otel = execution
-                    ? new ExecutionOtelPlugin(provider, options)
-                    : new InvocationOtelPlugin(provider, options);
+            DurableExecutionPluginFactory otel = execution
+                    ? ExecutionOtelPlugin.factory(provider, options)
+                    : InvocationOtelPlugin.factory(provider, options);
             var observer = new DurableExecutionPlugin() {
                 public void onOperationEnd(OperationEndInfo info) {
                     operationEnds.add(info);
@@ -443,7 +443,7 @@ class CaughtFailureConformanceHandlerTest {
             };
             config = DurableConfig.builder()
                     .withExecutorService(workers)
-                    .withPlugins(otel, observer)
+                    .withPlugins(otel, ignored -> observer)
                     .build();
             runner = LocalDurableTestRunner.create(
                     new TypeToken<Map<String, Object>>() {}, handler::handleRequest, config);

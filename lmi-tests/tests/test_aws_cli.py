@@ -1,0 +1,124 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Exercise the actual CLI's custom invoke command against a local unsigned endpoint."""
+import json
+from concurrent.futures import Future
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+import shutil
+import sys
+from tempfile import TemporaryDirectory
+import threading
+import unittest
+from unittest.mock import patch
+from urllib.parse import unquote
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import cloud_support
+from cloud_support import Cloud
+
+
+@unittest.skipUnless(shutil.which("aws"), "AWS CLI is required for the local invocation contract test")
+class AwsCliInvocationTest(unittest.TestCase):
+    def test_sync_and_async_invocations_send_payload_bytes_and_preserve_results(self):
+        received = []
+        fail_all = threading.Event()
+        recovered = {"stopped": False}
+        execution_arn = "arn:aws:lambda:us-west-2:123456789012:function:test/durable-execution/test/uuid"
+        function_arn = "arn:aws:lambda:us-west-2:123456789012:function:test:$LATEST.PUBLISHED"
+
+        class Endpoint(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                payload = json.loads(body)
+                invocation_type = self.headers["X-Amz-Invocation-Type"]
+                retry = any(entry[1]["marker"] == payload["marker"] for entry in received)
+                received.append((unquote(self.path), payload, invocation_type, self.headers.get("Authorization"),
+                                 self.headers.get("X-Amz-Durable-Execution-Name")))
+                response = json.dumps(payload["marker"]).encode() if invocation_type == "RequestResponse" else b""
+                # Simulate an accepted request whose response failed, forcing the real CLI to retry.
+                successful = retry and not fail_all.is_set()
+                if not successful:
+                    response = b'{"message":"transient response failure"}'
+                self.send_response((200 if invocation_type == "RequestResponse" else 202) if successful else 503)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response)))
+                self.send_header("X-Amz-Durable-Execution-Arn", execution_arn)
+                self.end_headers()
+                self.wfile.write(response)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Endpoint)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        real_aws = cloud_support.aws
+
+        def local_aws(service, operation, data=None, extra=(), **kwargs):
+            self.assertEqual("lambda", service)
+            if operation == "list-durable-executions-by-function":
+                self.assertIn(data["DurableExecutionName"], {entry[4] for entry in received})
+                self.assertEqual(function_arn.rsplit(":", 1)[0], data["FunctionName"])
+                self.assertEqual("$LATEST.PUBLISHED", data["Qualifier"])
+                return {"DurableExecutions": [{"DurableExecutionName": data["DurableExecutionName"],
+                                               "DurableExecutionArn": execution_arn}]}
+            if operation == "get-durable-execution":
+                return {"Status": "STOPPED" if recovered["stopped"] else "RUNNING"}
+            if operation == "stop-durable-execution":
+                self.assertEqual(execution_arn, data["DurableExecutionArn"])
+                recovered["stopped"] = True
+                return {}
+            self.assertEqual("invoke", operation)
+            kwargs["timeout"] = 5
+            return real_aws(service, operation, data, extra=[*extra,
+                "--endpoint-url", f"http://127.0.0.1:{server.server_port}",
+                "--region", "us-west-2", "--no-sign-request"], **kwargs)
+
+        try:
+            with TemporaryDirectory() as directory, patch("cloud_support.aws", side_effect=local_aws):
+                cloud = Cloud({"runId": "test", "functions": {"default1": {"arn": function_arn}}}, directory)
+                try:
+                    for scenario, invocation_type in [("baseline", "RequestResponse"), ("timeout", "Event")]:
+                        with self.subTest(scenario=scenario):
+                            payload = {"runId": "test", "scenario": scenario, "marker": scenario + "-marker", "cohort": "cohort-λ",
+                                       "controlUrl": "https://example.test/control?signature=example"}
+                            result = cloud._invoke("default1", payload)
+                            path, body, actual_type, authorization, name = received[-1]
+                            self.assertIn(function_arn, path)
+                            self.assertEqual(payload, body)
+                            self.assertEqual(invocation_type, actual_type)
+                            self.assertIsNone(authorization)
+                            attempts = [entry for entry in received if entry[1]["marker"] == payload["marker"]]
+                            self.assertEqual(2, len(attempts))
+                            self.assertEqual({"test-" + payload["marker"]}, {entry[4] for entry in attempts})
+                            self.assertEqual(execution_arn, result["headers"]["DurableExecutionArn"])
+                            self.assertEqual(payload["marker"] if invocation_type == "RequestResponse" else "", result["body"])
+                            report = json.loads((Path(directory) / "invocations" / (payload["marker"] + ".json")).read_text())
+                            self.assertEqual("RETURNED", report["state"])
+                            self.assertEqual(payload["runId"], report["runId"])
+                            self.assertEqual(function_arn, report["functionArn"])
+                    fail_all.set()
+                    payload = {"runId": "test", "marker": "lost", "scenario": "timeout"}
+                    with self.assertRaises(RuntimeError) as failure:
+                        cloud._invoke("default1", payload)
+                    attempts = [entry for entry in received if entry[1]["marker"] == "lost"]
+                    self.assertEqual(2, len(attempts))
+                    self.assertEqual({"test-lost"}, {entry[4] for entry in attempts})
+                    future = Future()
+                    future.set_exception(failure.exception)
+                    final = cloud.stop({"marker": "lost", "fixture": "default1", "future": future}, seconds=5)
+                    self.assertEqual("STOPPED", final["Status"])
+                    report = json.loads((Path(directory) / "invocations/lost.json").read_text())
+                    self.assertEqual("REQUEST_FAILED", report["state"])
+                    self.assertEqual(execution_arn, report["executionArn"])
+                finally:
+                    cloud.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
+if __name__ == "__main__":
+    unittest.main()

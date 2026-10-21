@@ -1,0 +1,200 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+package software.amazon.lambda.durable.execution;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
+
+/**
+ * Tracks one executor task owned by a single Lambda invocation.
+ *
+ * <p>This is runtime lifecycle metadata, not a checkpointed durable operation and not a request to invoke another
+ * Lambda function. Tasks include the root durable handler, user code for steps and child contexts, and SDK-owned
+ * map/parallel coordination. A durable operation may have no active task while it is replayed or waiting, and may
+ * create multiple tasks over its lifetime.
+ *
+ * <p>The logical {@link #completion()} future reports the action's result to SDK code. The separate {@link #exit()}
+ * future proves that the executor wrapper has actually stopped running. {@link #execution()} retains the underlying
+ * executor handle so a later invocation-cleanup phase can request interruption without confusing logical completion
+ * with actual task exit.
+ */
+final class ExecutorTaskHandle<T> {
+
+    /**
+     * Runtime role used for invocation-local cleanup, diagnostics, and executor routing. This is deliberately separate
+     * from a persisted durable operation type: the root has no operation, and map/parallel coordinators share the
+     * CONTEXT operation type with child user code.
+     */
+    enum Role {
+        /** The top-level durable handler submitted by {@link DurableExecutor}. */
+        ROOT,
+
+        /** User code for an operation whose type is STEP, including wait-for-condition checks. */
+        STEP,
+
+        /** User code running in a child context, map iteration, parallel branch, or retry context. */
+        CHILD_CONTEXT,
+
+        /** The SDK-owned scheduling loop for a map or parallel operation. */
+        COORDINATOR
+    }
+
+    enum State {
+        /** Admitted to the invocation scope but not yet started by the executor. */
+        REGISTERED,
+
+        /** The executor has entered the task wrapper and the action may still be running. */
+        RUNNING,
+
+        /** The wrapper has returned, or the executor accepted cancellation before the wrapper started. */
+        EXITED
+    }
+
+    private enum Publication {
+        PENDING,
+        RESULT,
+        CANCELLED
+    }
+
+    /** Scope-local sequence number; this is not a durable operation ID. */
+    private final long id;
+
+    private final Role role;
+
+    /** Associated durable operation ID, or {@code null} for the root handler. */
+    private final String operationId;
+
+    /** Removes this task from the invocation scope's active-task registry. */
+    private final Runnable onExit;
+
+    /** Logical action result consumed by the SDK; cancellation can complete it before the action exits. */
+    private final CompletableFuture<T> completion = new CompletableFuture<>();
+
+    /** Completes only when no executor thread can still be running this task. */
+    private final CompletableFuture<Void> exit = new CompletableFuture<>();
+
+    /** Interruptible handle bound before dispatch, including when an executor runs the task inline. */
+    private final AtomicReference<Future<?>> execution = new AtomicReference<>();
+
+    private final AtomicReference<State> state = new AtomicReference<>(State.REGISTERED);
+    private final AtomicReference<Publication> publication = new AtomicReference<>(Publication.PENDING);
+    private final AtomicBoolean interruptRequested = new AtomicBoolean();
+
+    ExecutorTaskHandle(long id, Role role, String operationId, Runnable onExit) {
+        this.id = id;
+        this.role = role;
+        this.operationId = operationId;
+        this.onExit = onExit;
+    }
+
+    /** Executor wrapper that captures the logical result and always records actual exit. */
+    void run(Supplier<T> action) {
+        if (!state.compareAndSet(State.REGISTERED, State.RUNNING)) {
+            return;
+        }
+        try {
+            var value = action.get();
+            // Select the publisher atomically: cancellation must not win between a flag check and completion.
+            // A cancel-winning worker leaves publication to the cancelling thread after physical interruption.
+            if (publication.compareAndSet(Publication.PENDING, Publication.RESULT)) completion.complete(value);
+        } catch (Throwable throwable) {
+            if (publication.compareAndSet(Publication.PENDING, Publication.RESULT))
+                completion.completeExceptionally(throwable);
+        } finally {
+            markExited();
+        }
+    }
+
+    /**
+     * Binds the executor handle before dispatch. A cancellation racing with registration is remembered and applied as
+     * soon as this handle becomes available.
+     */
+    void bindExecution(Future<?> future) {
+        if (!execution.compareAndSet(null, future)) {
+            throw new IllegalStateException("Invocation task already has an execution future");
+        }
+        if (publication.get() == Publication.CANCELLED) {
+            cancelExecution(future);
+        }
+    }
+
+    /** Records a synchronous executor rejection and releases the scope registration. */
+    void submissionFailed(Throwable failure) {
+        if (publication.compareAndSet(Publication.PENDING, Publication.RESULT))
+            completion.completeExceptionally(failure);
+        markExited();
+    }
+
+    /**
+     * Requests cooperative cancellation through the executor handle. Logical completion is cancelled immediately;
+     * actual exit remains pending until running code returns. Once the worker has selected its result, cancellation
+     * returns false even if its completion observers have not run yet. Observers of an ordinary result still run on the
+     * publishing worker and must not wait for that same worker to exit. User code that ignores interruption cannot be
+     * forcibly stopped.
+     */
+    boolean cancel(boolean mayInterruptIfRunning) {
+        while (true) {
+            var selected = publication.get();
+            if (selected == Publication.RESULT) return false;
+            if (selected == Publication.CANCELLED
+                    || publication.compareAndSet(Publication.PENDING, Publication.CANCELLED)) break;
+        }
+        if (mayInterruptIfRunning) {
+            interruptRequested.set(true);
+        }
+        var future = execution.get();
+        // CompletableFuture cancellation runs observers inline. Physical interruption must already be requested
+        // before an observer is allowed to wait for this task's actual exit.
+        var cancelled = future == null || cancelExecution(future);
+        completion.cancel(false);
+        return cancelled;
+    }
+
+    private boolean cancelExecution(Future<?> future) {
+        if (!future.cancel(interruptRequested.get())) {
+            return false;
+        }
+        if (state.compareAndSet(State.REGISTERED, State.EXITED)) {
+            onExit.run();
+            exit.complete(null);
+        }
+        return true;
+    }
+
+    private void markExited() {
+        state.set(State.EXITED);
+        onExit.run();
+        exit.complete(null);
+    }
+
+    long id() {
+        return id;
+    }
+
+    Role role() {
+        return role;
+    }
+
+    String operationId() {
+        return operationId;
+    }
+
+    State state() {
+        return state.get();
+    }
+
+    CompletableFuture<T> completion() {
+        return completion;
+    }
+
+    CompletableFuture<Void> exit() {
+        return exit;
+    }
+
+    Future<?> execution() {
+        return execution.get();
+    }
+}

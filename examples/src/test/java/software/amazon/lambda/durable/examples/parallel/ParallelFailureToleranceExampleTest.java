@@ -65,7 +65,8 @@ class ParallelFailureToleranceExampleTest {
     void failsWhenFailuresExceedTolerance(boolean holdHealthyBranch) throws Exception {
         var handler = new ParallelFailureToleranceExample();
         var probe = new CompletionProbe(holdHealthyBranch);
-        var config = DurableConfig.builder().withPlugins(probe.newPlugin()).build();
+        var config =
+                DurableConfig.builder().withPlugins(info -> probe.newPlugin()).build();
         var runner = LocalDurableTestRunner.create(ParallelFailureToleranceExample.Input.class, handler)
                 .withDurableConfig(config);
         var caller = Executors.newSingleThreadExecutor();

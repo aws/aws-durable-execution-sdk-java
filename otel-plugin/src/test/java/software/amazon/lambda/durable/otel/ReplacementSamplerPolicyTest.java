@@ -27,7 +27,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.model.ExecutionStatus;
-import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
 class ReplacementSamplerPolicyTest {
@@ -96,8 +96,8 @@ class ReplacementSamplerPolicyTest {
                     return ContextPropagators.noop();
                 }
             });
-            DurableExecutionPlugin plugin =
-                    view.equals("invocation") ? new InvocationOtelPlugin() : new ExecutionOtelPlugin();
+            DurableExecutionPluginFactory plugin =
+                    view.equals("invocation") ? InvocationOtelPlugin.factory() : ExecutionOtelPlugin.factory();
             var tracer = provider.get("application");
             var runner = LocalDurableTestRunner.create(
                     String.class,

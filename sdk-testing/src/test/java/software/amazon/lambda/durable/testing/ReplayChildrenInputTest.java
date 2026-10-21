@@ -127,7 +127,7 @@ class ReplayChildrenInputTest {
 
     private static DurableConfig config(List<InvocationInfo> starts) {
         return DurableConfig.builder()
-                .withPlugins(new DurableExecutionPlugin() {
+                .withPlugins(ignored -> new DurableExecutionPlugin() {
                     public void onInvocationStart(InvocationInfo info) {
                         starts.add(info);
                     }

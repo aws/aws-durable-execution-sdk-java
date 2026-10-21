@@ -23,7 +23,7 @@ class PropagationMetadataCollectorTest {
                 calls.incrementAndGet();
             }
         };
-        var runner = new PluginRunner(List.of(legacy));
+        var runner = new PluginRunner(List.of(ignored -> legacy));
         assertNull(runner.providePropagationMetadata(INPUT));
         runner.onInvocationStart(new InvocationInfo("request", "arn", true, Instant.EPOCH));
         assertEquals(1, calls.get());
@@ -44,7 +44,7 @@ class PropagationMetadataCollectorTest {
                 return new PropagationMetadata("first");
             }
         };
-        var runner = new PluginRunner(List.of(
+        var runner = runner(List.of(
                 new DurableExecutionPlugin() {},
                 first,
                 plugin("equal", "first", seen),
@@ -69,7 +69,7 @@ class PropagationMetadataCollectorTest {
                 throw new CancellationException("optional instrumentation cancelled");
             }
         };
-        var runner = new PluginRunner(List.of(
+        var runner = runner(List.of(
                 failure, cancellation, plugin("invalid", " ", seen), plugin("healthy", "healthy-header", seen)));
         assertEquals("healthy-header", runner.providePropagationMetadata(INPUT).xAmznTraceId());
         assertEquals(List.of("invalid", "healthy"), seen);
@@ -86,9 +86,7 @@ class PropagationMetadataCollectorTest {
         };
         assertSame(
                 fatal,
-                assertThrows(
-                        AssertionError.class,
-                        () -> new PluginRunner(List.of(plugin)).providePropagationMetadata(INPUT)));
+                assertThrows(AssertionError.class, () -> runner(List.of(plugin)).providePropagationMetadata(INPUT)));
     }
 
     @Test
@@ -107,5 +105,13 @@ class PropagationMetadataCollectorTest {
                 return new PropagationMetadata(header);
             }
         };
+    }
+
+    private static PluginRunner runner(List<DurableExecutionPlugin> plugins) {
+        var runner = new PluginRunner(plugins.stream()
+                .map(plugin -> (DurableExecutionPluginFactory) ignored -> plugin)
+                .toList());
+        runner.onInvocationStart(new InvocationInfo("request", "arn:collector", true, Instant.EPOCH));
+        return runner;
     }
 }

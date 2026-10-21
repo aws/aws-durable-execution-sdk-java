@@ -167,6 +167,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
     private void handleStepFailure(
             Throwable exception, int attempt, CompletableFuture<CompletableFuture<?>> publishedWorker) {
+        executionManager.rethrowPluginFatalIfPresent();
         exception = ExceptionHelper.unwrapCompletableFuture(exception);
         if (exception instanceof SuspendExecutionException suspendExecutionException) {
             throw suspendExecutionException;

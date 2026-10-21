@@ -26,6 +26,7 @@ import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.OperationEndInfo;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
@@ -59,9 +60,9 @@ class CaughtCallbackFailureStatusTest {
                     .enableMdc(false)
                     .contextExtractor(() -> null)
                     .build();
-            DurableExecutionPlugin otel = executionView
-                    ? new ExecutionOtelPlugin(builder, settings)
-                    : new InvocationOtelPlugin(builder, settings);
+            DurableExecutionPluginFactory otel = executionView
+                    ? ExecutionOtelPlugin.factory(builder, settings)
+                    : InvocationOtelPlugin.factory(builder, settings);
             var ends = new CopyOnWriteArrayList<OperationEndInfo>();
             var observer = new DurableExecutionPlugin() {
                 @Override
@@ -92,7 +93,9 @@ class CaughtCallbackFailureStatusTest {
                         context.wait("resume-once", Duration.ofSeconds(1));
                         return "handled";
                     },
-                    DurableConfig.builder().withPlugins(otel, observer).build());
+                    DurableConfig.builder()
+                            .withPlugins(otel, ignored -> observer)
+                            .build());
             runnerRef.set(runner);
             assertEquals(ExecutionStatus.PENDING, runner.run("input").getStatus());
             if (!live) {
