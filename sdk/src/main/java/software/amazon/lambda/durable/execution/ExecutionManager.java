@@ -1595,11 +1595,11 @@ public class ExecutionManager implements SafeCloseable {
     private Throwable drainInvocationTasks(Throwable originalFailure, long hardDeadline) throws InterruptedException {
         var taskDeadline = Math.max(System.nanoTime(), hardDeadline - CHECKPOINT_CLEANUP_RESERVE.toNanos());
         var recordedFailure = lifecycleFailure.get();
-        var abortFailure = isFatal(originalFailure)
-                ? originalFailure
-                : recordedFailure != null
-                        ? recordedFailure
-                        : isLifecycleFailure(originalFailure) ? originalFailure : null;
+        // Fatal publication already stops operation peers. Retain the root/scope owner's cleanup allowance;
+        // only lifecycle cutoffs or interruption require immediate registry cancellation.
+        var abortFailure = recordedFailure != null
+                ? recordedFailure
+                : isLifecycleFailure(originalFailure) ? originalFailure : null;
         var retrying = abortFailure != null;
         if (retrying) signalLifecycleFailure(abortFailure);
         else if (!awaitTasksUntil(minDeadline(taskDeadline, MAX_GRACEFUL_DRAIN_DURATION), false)) {
