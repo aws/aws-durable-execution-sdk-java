@@ -211,9 +211,9 @@ public class DurableExecutor {
                 // Deserialize only once. Even failed input gets paired start/end hooks with a null input value.
                 inputFailure = failure;
             }
-            manager.checkUserFunctionExecutionAllowed();
+            checkInputAdmission(inputFailure);
             fireOnInvocationStart();
-            manager.checkUserFunctionExecutionAllowed();
+            checkInputAdmission(inputFailure);
             if (inputFailure != null) ExceptionHelper.sneakyThrow(inputFailure);
             var context = DurableContextImpl.createRootContext(manager, config, lambdaContext);
             DurableContextImpl.setCurrentContext(context);
@@ -226,6 +226,21 @@ public class DurableExecutor {
                         () -> {},
                         manager::recordHandlerScopeFatal,
                         manager::recordRootHandlerFatal);
+            }
+        }
+
+        private void checkInputAdmission(Throwable inputFailure) {
+            try {
+                manager.checkUserFunctionExecutionAllowed();
+            } catch (Throwable admissionFailure) {
+                // Keep existing input Start/End behavior while admission remains open. If it closes during input
+                // preparation, the captured JVM fatal must win without starting any additional plugin or user work.
+                var inputCause = ExceptionHelper.unwrapInvocationFailure(inputFailure);
+                if (isFatal(inputCause)) {
+                    manager.recordInvocationFatal((Error) inputCause);
+                    throw manager.getInvocationFatal();
+                }
+                ExceptionHelper.sneakyThrow(admissionFailure);
             }
         }
 
@@ -327,12 +342,14 @@ public class DurableExecutor {
             ended = true;
             // End stays on its actual owner, including after a cutoff requested cancellation. The defensive
             // reported-state guard must never reopen work or prepare another execution result.
-            if (manager.isInvocationReported()
+            var lifecycleFailure = manager.getLifecycleFailure();
+            var terminal = status == InvocationStatus.SUCCEEDED || status == InvocationStatus.FAILED;
+            if ((manager.isInvocationReported() || (terminal && lifecycleFailure != null))
                     && !manager.isTerminalExecutionAcknowledged()
                     && !ExecutionManager.isFatal(error)) {
                 status = InvocationStatus.RETRYING;
-                error = manager.getLifecycleFailure() != null
-                        ? manager.getLifecycleFailure()
+                error = lifecycleFailure != null
+                        ? lifecycleFailure
                         : new IllegalStateException("Invocation already ended before owner cleanup");
                 result = null;
             }
