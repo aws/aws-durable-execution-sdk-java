@@ -18,6 +18,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.TestContext;
 import software.amazon.lambda.durable.TestUtils;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
@@ -34,13 +35,15 @@ class OwnedCallbackFailureAggregationTest {
         AWAIT,
         STATE,
         FORCED,
-        INITIAL
+        INITIAL,
+        SETUP
     }
 
     enum Wrapper {
         RAW,
         COMPLETION,
-        EXECUTION
+        EXECUTION,
+        CUSTOM
     }
 
     record Scenario(
@@ -57,12 +60,16 @@ class OwnedCallbackFailureAggregationTest {
                         .flatMap(wrappedState -> Stream.of(false, true)
                                 .map(death -> new Scenario(Stage.SHUTDOWN, wrapper, true, true, wrappedState, death))));
         var wrappers = Stream.of(Stage.values())
+                .filter(stage -> stage != Stage.SETUP)
                 .flatMap(stage -> Stream.of(Wrapper.COMPLETION, Wrapper.EXECUTION)
                         .flatMap(wrapper -> (stage == Stage.INITIAL ? Stream.of(false) : Stream.of(false, true))
                                 .map(recorded -> new Scenario(stage, wrapper, recorded, false, false, false))));
         return Stream.concat(
                 Stream.concat(triple, wrappers),
-                Stream.of(new Scenario(Stage.SHUTDOWN, Wrapper.RAW, false, true, false, false)));
+                Stream.of(
+                        new Scenario(Stage.SHUTDOWN, Wrapper.RAW, false, true, false, false),
+                        new Scenario(Stage.INITIAL, Wrapper.CUSTOM, false, false, false, false),
+                        new Scenario(Stage.SETUP, Wrapper.COMPLETION, true, true, true, false)));
     }
 
     @SuppressWarnings("removal")
@@ -75,10 +82,19 @@ class OwnedCallbackFailureAggregationTest {
         var nestedDiagnostic = new IllegalStateException("nested wrapper diagnostic");
         var queryDiagnostic = new IllegalArgumentException("query wrapper diagnostic");
         var ordinaryShutdown = new IllegalStateException("graceful shutdown failed before delegation");
+        var causeReads = new AtomicInteger();
         Throwable callback = switch (scenario.wrapper()) {
             case RAW -> later;
             case COMPLETION -> new CompletionException(later);
             case EXECUTION -> new ExecutionException(later);
+            case CUSTOM ->
+                new CompletionException(later) {
+                    @Override
+                    public synchronized Throwable getCause() {
+                        assertEquals(1, causeReads.incrementAndGet(), "Read a custom wrapper cause only once");
+                        return super.getCause();
+                    }
+                };
         };
         if (callback != later) {
             callback.addSuppressed(diagnostic);
@@ -121,7 +137,8 @@ class OwnedCallbackFailureAggregationTest {
                             fatalAtShutdown.set(manager.get().getInvocationFatal());
                         if (inject.get() && scenario.stage() == Stage.FORCED) throw ordinaryShutdown;
                         super.shutdown();
-                        if (inject.get() && scenario.stage() == Stage.SHUTDOWN) ExceptionHelper.sneakyThrow(callback);
+                        if (inject.get() && (scenario.stage() == Stage.SHUTDOWN || scenario.stage() == Stage.SETUP))
+                            ExceptionHelper.sneakyThrow(callback);
                     }
 
                     @Override
@@ -179,12 +196,22 @@ class OwnedCallbackFailureAggregationTest {
                     }
                 })
                 .build();
+        var requestReads = new AtomicInteger();
+        var runtime = scenario.stage() == Stage.SETUP
+                ? new TestContext("setup-callback") {
+                    @Override
+                    public String getAwsRequestId() {
+                        if (requestReads.incrementAndGet() == 2) throw first;
+                        return super.getAwsRequestId();
+                    }
+                }
+                : null;
         try {
             var observed = assertThrows(
                     Throwable.class,
                     () -> DurableExecutor.execute(
                             input(),
-                            null,
+                            runtime,
                             TypeToken.get(String.class),
                             (value, context) -> {
                                 manager.set(((DurableContextImpl) context).getExecutionManager());
@@ -193,7 +220,7 @@ class OwnedCallbackFailureAggregationTest {
                             },
                             config));
             assertSame(scenario.recorded() ? first : later, observed);
-            if (scenario.recorded()) {
+            if (scenario.recorded() && scenario.stage() != Stage.SETUP) {
                 assertTrue(workerEscaped.await(3, TimeUnit.SECONDS));
                 assertSame(first, workerFatal.get());
                 assertSame(first, fatalAtShutdown.get());
@@ -210,7 +237,7 @@ class OwnedCallbackFailureAggregationTest {
                 assertTrue(contains(observed, first));
             }
             assertEquals(1, shutdowns.get());
-            if (scenario.stage() == Stage.INITIAL) {
+            if (scenario.stage() == Stage.INITIAL || scenario.stage() == Stage.SETUP) {
                 assertEquals(0, bodies.get());
                 assertEquals(0, serializations.get());
                 assertEquals(0, ends.get());
@@ -222,6 +249,11 @@ class OwnedCallbackFailureAggregationTest {
                         scenario.recorded() ? InvocationStatus.RETRYING : InvocationStatus.SUCCEEDED,
                         end.get().invocationStatus());
                 assertSame(scenario.recorded() ? first : null, end.get().executionError());
+            }
+            if (scenario.wrapper() == Wrapper.CUSTOM) assertEquals(1, causeReads.get());
+            if (scenario.stage() == Stage.SETUP) {
+                assertEquals(2, requestReads.get());
+                assertNull(fatalAtShutdown.get(), "Setup fatal is carried as originalFailure, without plugin state");
             }
             assertAcyclic(observed, Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>()));
         } finally {

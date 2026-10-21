@@ -264,16 +264,19 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private Throwable cleanupFailedExecutorInitialization(Throwable initializationFailure) {
+        var initial = inspectOwnedExecutorFailure(initializationFailure);
+        var initialCause = normalizeOwnedExecutorFailure(initial, null);
+        var initialFatal = isFatal(initialCause) ? (Error) initialCause : null;
         var deadline = cleanupDeadlineNanos();
         try {
             Throwable cleanupFailure;
             try {
                 // No SDK work has been dispatched. Avoid repeating the state callback that failed validation.
-                cleanupFailure = attemptOwnedExecutorShutdown(deadline, null, false);
+                cleanupFailure = attemptOwnedExecutorShutdown(deadline, null, false, initialFatal);
             } catch (Throwable failure) {
                 cleanupFailure = failure;
             }
-            var selected = combineOwnedExecutorFailures(initializationFailure, cleanupFailure);
+            var selected = combineOwnedExecutorFailures(initializationFailure, initial, cleanupFailure);
             return cleanupFailure == null ? selected : forceStopOwnedExecutor(deadline, selected);
         } finally {
             ACTIVE_INVOCATION_EXECUTORS.remove(executorService);
@@ -1719,6 +1722,8 @@ public class ExecutionManager implements SafeCloseable {
             failure = signalLifecycleFailure(problem);
         } finally {
             failure = finishActualInvocationCleanup(failure, ownsExecutorService && !closeObservation);
+            if (ownsExecutorService && !closeObservation && isFatal(originalFailure))
+                failure = combineCompletionFailure(originalFailure, failure);
             if (ownsExecutorService && !closeObservation && failure != null && failure == getInvocationFatal())
                 completionFatal = failure;
             if (completedRoot != null && completedRoot.isDone() && getInvocationFatal() == null) {
@@ -1735,7 +1740,8 @@ public class ExecutionManager implements SafeCloseable {
                 failure = shutdownOwnedExecutor(hardDeadline, failure);
             } catch (Throwable shutdownFailure) {
                 // Executor callbacks, including fallback shutdown and state queries, must not skip finalization.
-                shutdownFailure = ExceptionHelper.unwrapInvocationFailure(shutdownFailure);
+                shutdownFailure = normalizeOwnedExecutorFailure(
+                        inspectOwnedExecutorFailure(shutdownFailure), isFatal(failure) ? (Error) failure : null);
                 failure = combineFailures(failure, shutdownFailure);
                 var firstFatal = getInvocationFatal();
                 if (firstFatal != null) failure = combineFailures(firstFatal, failure);
@@ -1770,9 +1776,10 @@ public class ExecutionManager implements SafeCloseable {
         Throwable result = priorFailure;
         Throwable thrown = null;
         try {
-            result = attemptOwnedExecutorShutdown(hardDeadline, priorFailure, true);
+            result = attemptOwnedExecutorShutdown(
+                    hardDeadline, priorFailure, true, isFatal(priorFailure) ? (Error) priorFailure : null);
         } catch (Throwable failure) {
-            thrown = failure;
+            thrown = isFatal(priorFailure) ? combineOwnedExecutorFailures(priorFailure, failure) : failure;
         }
         try {
             if (executorService.isShutdown()) ACTIVE_INVOCATION_EXECUTORS.remove(executorService);
@@ -1786,16 +1793,97 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private static Throwable combineOwnedExecutorFailures(Throwable earlier, Throwable later) {
-        var earlierCause = ExceptionHelper.unwrapInvocationFailure(earlier);
-        var laterCause = ExceptionHelper.unwrapInvocationFailure(later);
+        return combineOwnedExecutorFailures(earlier, inspectOwnedExecutorFailure(earlier), later);
+    }
+
+    private static Throwable combineOwnedExecutorFailures(Throwable earlier, OwnedFailure inspected, Throwable later) {
+        var earlierCause = normalizeOwnedExecutorFailure(inspected, null);
+        var laterCause = normalizeOwnedExecutorFailure(
+                inspectOwnedExecutorFailure(later), isFatal(earlierCause) ? (Error) earlierCause : null);
         return combineFailures(
                 isFatal(earlierCause) ? earlierCause : earlier, isFatal(laterCause) ? laterCause : later);
     }
 
-    private void requestOwnedExecutorShutdown(long deadline, boolean forceOnFailure) {
+    private record OwnedFailure(Throwable selected, List<Throwable> wrappers) {}
+
+    @SuppressWarnings("removal")
+    private static OwnedFailure inspectOwnedExecutorFailure(Throwable failure) {
+        // Match invocation unwrapping, retaining its observed wrappers without reading a cause accessor twice.
+        var wrappers = new ArrayList<Throwable>();
+        var visited = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        Throwable applicationWrapper = null;
+        while (failure instanceof CompletionException || failure instanceof ExecutionException) {
+            if (!visited.add(failure)) break;
+            wrappers.add(failure);
+            if (applicationWrapper == null && failure instanceof ExecutionException) applicationWrapper = failure;
+            Throwable cause;
+            try {
+                cause = failure.getCause();
+            } catch (VirtualMachineError | ThreadDeath fatal) {
+                failure = fatal;
+                break;
+            } catch (Throwable unreadableCause) {
+                break;
+            }
+            if (cause == null) break;
+            failure = cause;
+        }
+        return new OwnedFailure(
+                applicationWrapper != null && !isFatal(failure) ? applicationWrapper : failure, wrappers);
+    }
+
+    private static Throwable normalizeOwnedExecutorFailure(OwnedFailure failure, Error preferredFatal) {
+        if (isFatal(failure.selected()) && !failure.wrappers().isEmpty()) {
+            var fatal = (Error) failure.selected();
+            retainOwnedWrapperDiagnostics(preferredFatal != null ? preferredFatal : fatal, fatal, failure.wrappers());
+        }
+        return failure.selected();
+    }
+
+    private static void retainOwnedWrapperDiagnostics(Error primary, Error cause, List<Throwable> wrappers) {
+        var omitted = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        omitted.addAll(wrappers);
+        var pending = new ArrayList<Throwable>();
+        wrappers.forEach(wrapper -> Collections.addAll(pending, wrapper.getSuppressed()));
+        var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        for (var index = 0; index < pending.size(); index++) {
+            var diagnostic = pending.get(index);
+            if (diagnostic == primary || diagnostic == cause || omitted.contains(diagnostic) || !seen.add(diagnostic))
+                continue;
+            var aliases = ownedAliasWrappers(diagnostic, primary, cause, omitted);
+            if (aliases != null) {
+                omitted.addAll(aliases);
+                aliases.forEach(alias -> Collections.addAll(pending, alias.getSuppressed()));
+            } else {
+                combineCompletionFailure(primary, diagnostic);
+            }
+        }
+    }
+
+    private static List<Throwable> ownedAliasWrappers(
+            Throwable failure, Error primary, Error cause, Set<Throwable> omitted) {
+        var aliases = new ArrayList<Throwable>();
+        var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        while (failure != primary && failure != cause && !omitted.contains(failure)) {
+            if (failure == null || !seen.add(failure)) return null;
+            var type = failure.getClass();
+            if (type != CompletionException.class && type != ExecutionException.class) return null;
+            aliases.add(failure);
+            try {
+                failure = failure.getCause();
+            } catch (Throwable unreadableCause) {
+                // An unreadable diagnostic link must not replace the selected fatal.
+                return null;
+            }
+        }
+        return aliases;
+    }
+
+    private void requestOwnedExecutorShutdown(long deadline, boolean forceOnFailure, Error preferredFatal) {
         try {
             executorService.shutdown();
         } catch (Throwable shutdownFailure) {
+            if (preferredFatal != null) shutdownFailure = combineOwnedExecutorFailures(preferredFatal, shutdownFailure);
             if (forceOnFailure) shutdownFailure = forceStopOwnedExecutor(deadline, shutdownFailure);
             // The existing attempt and outer finalizer still classify the original failure and any later fatal.
             ExceptionHelper.sneakyThrow(shutdownFailure);
@@ -1803,11 +1891,11 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     private Throwable attemptOwnedExecutorShutdown(
-            long hardDeadline, Throwable priorFailure, boolean forceOnShutdownFailure) {
+            long hardDeadline, Throwable priorFailure, boolean forceOnShutdownFailure, Error preferredFatal) {
         var executorDeadline = Math.max(System.nanoTime(), hardDeadline - CHECKPOINT_CLEANUP_RESERVE.toNanos());
         try {
             // Constructor cleanup already recovers any failed attempt; normal finalization recovers this callback.
-            requestOwnedExecutorShutdown(executorDeadline, forceOnShutdownFailure);
+            requestOwnedExecutorShutdown(executorDeadline, forceOnShutdownFailure, preferredFatal);
             if (!getActiveExecutorTasks().isEmpty()) {
                 executorService.shutdownNow();
             }
@@ -1827,7 +1915,7 @@ public class ExecutionManager implements SafeCloseable {
             return combineFailures(
                     priorFailure, lifecycleFailure("Interrupted while shutting down invocation executor", interrupted));
         } catch (RuntimeException failure) {
-            var cause = ExceptionHelper.unwrapInvocationFailure(failure);
+            var cause = normalizeOwnedExecutorFailure(inspectOwnedExecutorFailure(failure), preferredFatal);
             if (isFatal(cause)) ExceptionHelper.sneakyThrow(cause);
             return combineFailures(priorFailure, lifecycleFailure("Invocation executor shutdown failed", failure));
         }
