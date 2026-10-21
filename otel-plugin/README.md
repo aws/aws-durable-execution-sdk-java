@@ -224,7 +224,8 @@ header also never adopts the global carrier. No global header is modified.
 
 Capture is skipped when no plugin factories are registered. A nonfatal failure from an available runtime accessor
 also becomes authoritative absence, so it cannot reuse another invocation's global trace or sampling decision.
-Direct JVM-fatal errors and those inside recognized standard transport wrappers propagate with their original identity.
+Direct JVM-fatal errors propagate with their original identity, as do fatal errors wrapped in a `CompletionException`,
+`ExecutionException`, `InvocationTargetException`, or `UndeclaredThrowableException`.
 
 In 3.x, the header is the eighth `InvocationInfo` record component. Existing 4-, 5-, 6-
 and 7-argument constructors remain and default the optional header to null. Existing compiled constructor/accessor calls
