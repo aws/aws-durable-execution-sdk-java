@@ -22,7 +22,7 @@ import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.plugin.*;
 
 @Timeout(15)
-class IndependentOwnedLifecycleIdentityTest {
+class OwnedExecutorLifecycleIdentityTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void ownedTerminationTimeoutDoesNotReplacePreviouslySelectedCutoff(boolean plugins) throws Exception {

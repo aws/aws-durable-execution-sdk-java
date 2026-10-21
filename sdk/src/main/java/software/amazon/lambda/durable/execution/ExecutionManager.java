@@ -1636,7 +1636,8 @@ public class ExecutionManager implements SafeCloseable {
         var recordedFailure = lifecycleFailure.get();
         var selectedFailure = isFatal(originalFailure) || recordedFailure == null ? originalFailure : recordedFailure;
         if (failure == null) return selectedFailure;
-        return isFatal(selectedFailure)
+        // Cleanup can return a later lifecycle failure without signaling it; retain the latched invocation failure.
+        return isFatal(selectedFailure) || (recordedFailure != null && isLifecycleFailure(failure))
                 ? combineFailures(selectedFailure, failure)
                 : combineFailures(failure, selectedFailure);
     }
