@@ -109,7 +109,7 @@ public class DurableExecutor {
                 if (completedFailure != null) ExceptionHelper.sneakyThrow(completedFailure);
                 return completion.join();
             } catch (Throwable failure) {
-                var originalFailure = ExceptionHelper.unwrapInvocationFailure(failure);
+                var originalFailure = ExecutionManager.normalizeInvocationBoundaryFailure(failure);
                 // Finalize synchronous setup/admission/dispatch failures before automatic close observes them again.
                 var finalFailure = manager.finishInvocation(originalFailure);
                 ExceptionHelper.sneakyThrow(finalFailure != null ? finalFailure : originalFailure);

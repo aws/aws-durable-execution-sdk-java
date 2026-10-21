@@ -1804,6 +1804,11 @@ public class ExecutionManager implements SafeCloseable {
                 isFatal(earlierCause) ? earlierCause : earlier, isFatal(laterCause) ? laterCause : later);
     }
 
+    static Throwable normalizeInvocationBoundaryFailure(Throwable failure) {
+        // Setup can fail after the executor lease is claimed; retain diagnostics before discarding fatal wrappers.
+        return normalizeOwnedExecutorFailure(inspectOwnedExecutorFailure(failure), null);
+    }
+
     private record OwnedFailure(Throwable selected, List<Throwable> wrappers) {}
 
     @SuppressWarnings("removal")
