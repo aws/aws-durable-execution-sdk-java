@@ -212,6 +212,8 @@ one event per record to `{logStreamPrefix}YYYY/MM/DD` (IAM: `logs:CreateLogStrea
   (`2 × maxRecordSizeBytes + 68` in the worst case, about 512 KB with the default 256,000). That
   is within the CloudWatch Logs limit of 1 MB per log event.
   `LambdaLogExporter` lines are INFO; an application log level of WARN or above drops them.
+  This line shape is a breaking change: 2.3.0 printed the bare record JSON, so a reader that
+  parsed each stdout line as a record must now parse `message`.
 - **Non-fatal plugin failures are isolated.** Record construction, snapshotting, transforms,
   truncation and exporter render/export/flush contain and log ordinary failures, including
   `AssertionError` and optional-dependency `NoClassDefFoundError`. `VirtualMachineError` and
