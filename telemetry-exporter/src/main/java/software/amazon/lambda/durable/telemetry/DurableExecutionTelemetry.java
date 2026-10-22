@@ -169,20 +169,35 @@ public final class DurableExecutionTelemetry {
     }
 
     /**
-     * Converts {@code t} and, recursively, its {@link Throwable#getCause()} chain. An error rebuilt from a checkpointed
-     * {@link ErrorObject} has no live cause, so it is written without one. The chain is cut after
-     * {@link #MAX_CAUSE_DEPTH} levels and stops at a cause already visited (by identity), so a cycle cannot loop.
+     * Converts {@code t} and, recursively, its {@link Throwable#getCause()} chain. Name and message come from the
+     * checkpointed {@link ErrorObject} when the SDK wrapper carries one; the chain still follows {@code getCause()}, so
+     * a live cause behind such a wrapper (for example a checkpoint continuation failure) is kept. The chain is cut
+     * after {@link #MAX_CAUSE_DEPTH} levels and stops at a cause already visited (by identity), so a cycle cannot loop.
+     * Reading a cause never throws: a non-fatal failure while reading a cause, or while reading the next cause, ends
+     * the chain at that point and the error is still written.
      */
     private static ErrorInfo toErrorInfo(Throwable t, Set<Throwable> visited, int depth) {
-        if (extractErrorObject(t) != null) {
-            return nameAndMessage(t, null);
-        }
-        Throwable next = t.getCause();
         ErrorInfo cause = null;
+        Throwable next = readCause(t);
         if (next != null && depth < MAX_CAUSE_DEPTH && visited.add(next)) {
-            cause = toErrorInfo(next, visited, depth + 1);
+            try {
+                cause = toErrorInfo(next, visited, depth + 1);
+            } catch (Throwable failure) {
+                FatalErrors.rethrow(failure);
+                cause = null; // A cause whose name or message cannot be read ends the chain.
+            }
         }
         return nameAndMessage(t, cause);
+    }
+
+    /** {@code t.getCause()}, or {@code null} when the accessor fails with a non-fatal error. */
+    private static Throwable readCause(Throwable t) {
+        try {
+            return t.getCause();
+        } catch (Throwable failure) {
+            FatalErrors.rethrow(failure);
+            return null;
+        }
     }
 
     private static ErrorInfo nameAndMessage(Throwable t, ErrorInfo cause) {

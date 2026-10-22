@@ -36,6 +36,7 @@ public final class DurableExecutionTelemetryRecord {
     ErrorInfo error;
     List<OperationRecord> operations = new ArrayList<>();
     Boolean truncated;
+    Boolean droppedCauses;
     Integer droppedOperations;
     Boolean droppedInput;
     Boolean droppedOutput;
@@ -90,6 +91,7 @@ public final class DurableExecutionTelemetryRecord {
         c.error = error;
         c.operations = new ArrayList<>(operations);
         c.truncated = truncated;
+        c.droppedCauses = droppedCauses;
         c.droppedOperations = droppedOperations;
         c.droppedInput = droppedInput;
         c.droppedOutput = droppedOutput;
@@ -168,6 +170,9 @@ public final class DurableExecutionTelemetryRecord {
     private void putTruncationMarkers(Map<String, Object> data) {
         if (truncated != null) {
             data.put("truncated", truncated);
+        }
+        if (droppedCauses != null) {
+            data.put("droppedCauses", droppedCauses);
         }
         if (droppedOperations != null) {
             data.put("droppedOperations", droppedOperations);

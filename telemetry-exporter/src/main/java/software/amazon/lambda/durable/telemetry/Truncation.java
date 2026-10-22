@@ -9,19 +9,24 @@ import java.util.function.Function;
 import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
- * Best-effort size limiter, porting the JS {@code truncateRecord} drop order:
+ * Best-effort size limiter. When the record is over the limit it drops, in order:
  *
  * <ol>
+ *   <li>every error {@code cause} (on the execution {@code error} and every operation {@code error}, and so on every
+ *       {@code operationsByName} error), setting {@code droppedCauses: true};
  *   <li>operation {@code result} fields, oldest operation first;
  *   <li>whole operations, oldest first;
  *   <li>last resort — execution {@code input}, then {@code output}.
  * </ol>
  *
  * <p>Identity/timeline fields are never dropped. When anything is dropped the returned record has {@code truncated:
- * true}; each operation whose result was dropped is itself marked {@code truncated: true}, and
- * {@code droppedOperations} / {@code droppedInput} / {@code droppedOutput} markers are set as applicable. The input
- * record is never mutated. {@code render} maps the record to the exact shape the exporter serializes so the size check
- * measures what is actually emitted.
+ * true}; each operation whose result was dropped is itself marked {@code truncated: true}, and {@code droppedCauses} /
+ * {@code droppedOperations} / {@code droppedInput} / {@code droppedOutput} markers are set as applicable. Markers
+ * already on the incoming record are kept, and {@code droppedOperations} adds to an incoming count, so truncating an
+ * already-truncated record never under-reports. The input record is never mutated. {@code render} maps the record to
+ * the exact value the exporter serializes so the size check measures what is actually emitted. This is one pass; the
+ * execution {@code error} and identity fields are never dropped, so a record can still be over a limit smaller than
+ * those fields.
  */
 @Experimental
 public final class Truncation {
@@ -40,20 +45,34 @@ public final class Truncation {
             return record;
         }
 
+        // Step 1: drop every error cause. operationsByName errors are derived from the operation errors.
+        boolean causesDropped = record.error != null && record.error.cause() != null;
         List<OperationRecord> ops = new ArrayList<>(record.operations().size());
         for (OperationRecord op : record.operations()) {
-            ops.add(op.copy());
+            OperationRecord copy = op.copy();
+            if (copy.error() != null && copy.error().cause() != null) {
+                copy.error(withoutCause(copy.error()));
+                causesDropped = true;
+            }
+            ops.add(copy);
+        }
+        if (causesDropped) {
+            DurableExecutionTelemetryRecord base = record.copy();
+            base.error = withoutCause(record.error);
+            base.droppedCauses = Boolean.TRUE;
+            record = base;
         }
         boolean[] kept = new boolean[ops.size()];
         java.util.Arrays.fill(kept, true);
         int[] order = oldestFirstOrder(ops);
 
         boolean[] anyResultDropped = {false};
-        int[] droppedOperations = {0};
-        boolean[] droppedInput = {false};
-        boolean[] droppedOutput = {false};
+        int[] droppedOperations = {record.droppedOperations != null ? record.droppedOperations : 0};
+        boolean[] droppedInput = {Boolean.TRUE.equals(record.droppedInput)};
+        boolean[] droppedOutput = {Boolean.TRUE.equals(record.droppedOutput)};
+        int incomingDroppedOperations = droppedOperations[0];
 
-        // Phase 1: drop operation results, oldest first (kept + marked truncated).
+        // Step 2: drop operation results, oldest first (kept + marked truncated).
         for (int idx : order) {
             if (fits(record, ops, kept, droppedOperations[0], droppedInput[0], droppedOutput[0], render, maxBytes)) {
                 break;
@@ -64,7 +83,7 @@ public final class Truncation {
             }
         }
 
-        // Phase 2: drop whole operations, oldest first.
+        // Step 3: drop whole operations, oldest first.
         for (int idx : order) {
             if (fits(record, ops, kept, droppedOperations[0], droppedInput[0], droppedOutput[0], render, maxBytes)) {
                 break;
@@ -75,7 +94,7 @@ public final class Truncation {
             }
         }
 
-        // Phase 3 (last resort): drop execution input, then output.
+        // Step 4 (last resort): drop execution input, then output.
         if (!fits(record, ops, kept, droppedOperations[0], droppedInput[0], droppedOutput[0], render, maxBytes)
                 && record.input != null) {
             droppedInput[0] = true;
@@ -85,10 +104,21 @@ public final class Truncation {
             droppedOutput[0] = true;
         }
 
-        if (!anyResultDropped[0] && droppedOperations[0] == 0 && !droppedInput[0] && !droppedOutput[0]) {
+        if (!causesDropped
+                && !anyResultDropped[0]
+                && droppedOperations[0] == incomingDroppedOperations
+                && Boolean.TRUE.equals(record.droppedInput) == droppedInput[0]
+                && Boolean.TRUE.equals(record.droppedOutput) == droppedOutput[0]) {
             return record;
         }
         return candidate(record, ops, kept, droppedOperations[0], droppedInput[0], droppedOutput[0]);
+    }
+
+    private static ErrorInfo withoutCause(ErrorInfo error) {
+        if (error == null || error.cause() == null) {
+            return error;
+        }
+        return new ErrorInfo(error.name(), error.message());
     }
 
     private static boolean fits(

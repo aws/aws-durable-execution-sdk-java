@@ -6,9 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -19,15 +22,17 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
 
 /**
  * The shared error shape {@code {name, message, cause?}}: keys in that order, {@code cause} from
- * {@link Throwable#getCause()} cut after 16 levels and stopped at an already-visited cause, no cause for an error
- * rebuilt from a checkpointed {@link ErrorObject}. Java's {@code getCause()} always returns a {@link Throwable}, so the
- * non-error cause rule of the shared format does not apply to this SDK.
+ * {@link Throwable#getCause()} cut after 16 levels and stopped at an already-visited cause, followed behind an SDK
+ * wrapper that also carries a checkpointed {@link ErrorObject}, never throwing while a cause is read, and every message
+ * capped at 8,192 characters. Java's {@code getCause()} always returns a {@link Throwable}, so the non-error cause rule
+ * of the shared format does not arise in this SDK.
  */
 class ErrorCauseFormatTest {
 
@@ -233,14 +238,195 @@ class ErrorCauseFormatTest {
         }
     }
 
+    /** A throwable whose accessors fail, to check that reading a cause never throws. */
+    static final class BrokenError extends RuntimeException {
+        final boolean brokenCause;
+        final RuntimeException failure;
+
+        BrokenError(boolean brokenCause, RuntimeException failure) {
+            super("broken");
+            this.brokenCause = brokenCause;
+            this.failure = failure;
+        }
+
+        @Override
+        public synchronized Throwable getCause() {
+            if (brokenCause) {
+                throw failure;
+            }
+            return null;
+        }
+
+        @Override
+        public String getMessage() {
+            if (!brokenCause) {
+                throw failure;
+            }
+            return "broken";
+        }
+    }
+
+    /** Review B3: the checkpoint continuation failure shape keeps the ErrorObject identity and the live cause. */
     @Test
-    void truncationKeepsTheCauseWithItsError() {
+    void wrapperWithErrorObjectAndLiveCauseFollowsTheCause() {
+        var io = new IOException("disk full", new IllegalStateException("inner"));
+        var control = new UnrecoverableDurableExecutionException(
+                ErrorObject.builder()
+                        .errorType("java.io.IOException")
+                        .errorMessage("Error in SDK checkpoint continuation")
+                        .build(),
+                true,
+                io);
+        ErrorInfo info = DurableExecutionTelemetry.toErrorInfo(control);
+        assertEquals("java.io.IOException", info.name());
+        assertEquals("Error in SDK checkpoint continuation", info.message());
+        assertEquals("IOException", info.cause().name());
+        assertEquals("disk full", info.cause().message());
+        assertEquals("IllegalStateException", info.cause().cause().name());
+        assertNull(info.cause().cause().cause());
+
+        // A user exception wrapping such a wrapper continues through it.
+        ErrorInfo outer = DurableExecutionTelemetry.toErrorInfo(new RuntimeException("outer", control));
+        assertEquals("Error in SDK checkpoint continuation", outer.cause().message());
+        assertEquals("disk full", outer.cause().cause().message());
+
+        // An operation wrapper with an ErrorObject and a live cause follows it too.
+        var opError = new DurableOperationException(
+                Operation.builder().id("op-1").build(),
+                ErrorObject.builder()
+                        .errorType("CallbackError")
+                        .errorMessage("cb")
+                        .build(),
+                "cb",
+                io);
+        ErrorInfo op = DurableExecutionTelemetry.toErrorInfo(opError);
+        assertEquals("CallbackError", op.name());
+        assertEquals("disk full", op.cause().message());
+    }
+
+    @Test
+    void depthAndIdentityGuardsStillApplyBehindAWrapper() {
+        LoopingError loop = new LoopingError("loop");
+        var control = new UnrecoverableDurableExecutionException(
+                ErrorObject.builder().errorType("X").errorMessage("m").build(), true, loop);
+        loop.next = control;
+        ErrorInfo info = DurableExecutionTelemetry.toErrorInfo(control);
+        assertEquals("loop", info.cause().message());
+        assertNull(info.cause().cause(), "the wrapper was already visited");
+
+        var deep = new UnrecoverableDurableExecutionException(
+                ErrorObject.builder().errorType("X").errorMessage("m").build(), true, chain(20));
+        assertEquals(16, depth(DurableExecutionTelemetry.toErrorInfo(deep)));
+    }
+
+    /** Rule 8: levels are written exactly as getCause() returns them, even when one repeats the level above. */
+    @Test
+    void repeatedLevelsAreNotSkipped() {
+        var inner = new IllegalStateException("same");
+        var outer = new IllegalStateException("same", inner);
+        ErrorInfo info = DurableExecutionTelemetry.toErrorInfo(outer);
+        assertEquals("same", info.message());
+        assertEquals("IllegalStateException", info.cause().name());
+        assertEquals("same", info.cause().message());
+    }
+
+    /** Rule 6: a failure while reading a cause ends the chain there, and the error is still written. */
+    @Test
+    void readingACauseNeverThrows() {
+        // getCause() throws on the top-level error: written without a cause.
+        ErrorInfo top = DurableExecutionTelemetry.toErrorInfo(new BrokenError(true, new IllegalStateException("x")));
+        assertEquals("broken", top.message());
+        assertNull(top.cause());
+
+        // getCause() throws one level down: the chain ends at that level.
+        ErrorInfo mid = DurableExecutionTelemetry.toErrorInfo(
+                new RuntimeException("outer", new BrokenError(true, new IllegalStateException("x"))));
+        assertEquals("broken", mid.cause().message());
+        assertNull(mid.cause().cause());
+
+        // A cause whose message cannot be read ends the chain above it.
+        ErrorInfo unreadable = DurableExecutionTelemetry.toErrorInfo(
+                new RuntimeException("outer", new BrokenError(false, new IllegalStateException("x"))));
+        assertEquals("outer", unreadable.message());
+        assertNull(unreadable.cause());
+
+        // Through the plugin, the record is kept.
+        var rec = run(true, chain(1), new RuntimeException("outer", new BrokenError(false, new RuntimeException())));
+        assertEquals("outer", rec.error.message());
+        assertNull(rec.error.cause());
+    }
+
+    @Test
+    void fatalErrorWhileReadingACausePropagates() {
+        var oom = new OutOfMemoryError("simulated");
+        var t = new RuntimeException("outer") {
+            @Override
+            public synchronized Throwable getCause() {
+                throw oom;
+            }
+        };
+        assertSame(oom, assertThrows(OutOfMemoryError.class, () -> DurableExecutionTelemetry.toErrorInfo(t)));
+    }
+
+    /** Rule 7: every message, on the error and on each cause, is capped at 8,192 characters plus an ellipsis. */
+    @Test
+    void everyMessageIsCappedAt8192Characters() {
+        String exact = "a".repeat(ErrorInfo.MAX_MESSAGE_CHARS);
+        String over = "b".repeat(ErrorInfo.MAX_MESSAGE_CHARS + 1);
+        String huge = "\\".repeat(100_000);
+        ErrorInfo info = DurableExecutionTelemetry.toErrorInfo(
+                new RuntimeException(huge, new IllegalStateException(over, new IllegalStateException(exact))));
+        assertEquals("\\".repeat(8_192) + "\u2026", info.message());
+        assertEquals("b".repeat(8_192) + "\u2026", info.cause().message());
+        assertEquals(exact, info.cause().cause().message(), "exactly 8,192 characters is not cut");
+
+        // The cap counts code points and never splits a surrogate pair; applying it again changes nothing.
+        String emoji = "\uD83D\uDE00".repeat(8_193);
+        ErrorInfo e = new ErrorInfo("E", emoji);
+        assertEquals("\uD83D\uDE00".repeat(8_192) + "\u2026", e.message());
+        assertEquals(e.message(), new ErrorInfo("E", e.message()).message());
+
+        // Operation errors and the ErrorObject message path are capped too.
+        var opError = new DurableOperationException(
+                Operation.builder().id("op-1").build(),
+                ErrorObject.builder().errorType("T").errorMessage(over).build());
+        var rec = run(true, opError, opError);
+        assertEquals(8_193, rec.operations().get(0).error().message().length());
+        assertEquals(8_193, rec.error.message().length());
+    }
+
+    /** Size limit step 1: every cause is removed from every error before anything else is dropped. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void truncationDropsEveryCauseFirst() throws Exception {
         var rec = run(true, chain(2), chain(2));
+        rec.input = "small";
+        int full = Json.byteSize(rec.toByNameWireMap());
+        var out = Truncation.truncateRecord(rec, full - 1, DurableExecutionTelemetryRecord::toByNameWireMap);
+        assertEquals(Boolean.TRUE, out.truncated);
+        assertEquals(Boolean.TRUE, out.droppedCauses);
+        assertNull(out.error.cause());
+        assertEquals("card declined", out.error.message());
+        assertNull(out.operations().get(0).error().cause());
+        assertEquals("small", out.input, "dropping causes was enough");
+        assertNull(out.droppedOperations);
+        assertNotNull(rec.error.cause(), "the input record is not mutated");
+
+        for (String json : List.of(Json.stringify(out.toByNameWireMap()), Json.stringify(out.toWireMap()))) {
+            assertFalse(json.contains("\"cause\""), json);
+            Map<String, Object> parsed = parse(json);
+            List<String> keys = List.copyOf(parsed.keySet());
+            assertEquals(Boolean.TRUE, parsed.get("droppedCauses"));
+            assertEquals(keys.indexOf("truncated") + 1, keys.indexOf("droppedCauses"), json);
+        }
+    }
+
+    @Test
+    void recordWithoutCausesHasNoDroppedCausesMarker() {
+        var rec = run(true, new PaymentError("a", null), new PaymentError("b", null));
         rec.input = "x".repeat(10_000);
         var out = Truncation.truncateRecord(rec, 2_000, DurableExecutionTelemetryRecord::toByNameWireMap);
-        assertEquals(Boolean.TRUE, out.truncated);
-        assertNotNull(out.error);
-        assertEquals(2, depth(out.error));
-        assertTrue(Json.stringify(out.toByNameWireMap()).contains("\"message\":\"level 2\""));
+        assertEquals(Boolean.TRUE, out.droppedInput);
+        assertNull(out.droppedCauses);
     }
 }
