@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.telemetry.exporters;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -12,7 +11,6 @@ import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
-import software.amazon.lambda.durable.telemetry.Truncation;
 
 /**
  * Exports workflow telemetry records to CloudWatch Logs via {@code System.out.println} (Lambda captures stdout to the
@@ -22,13 +20,18 @@ import software.amazon.lambda.durable.telemetry.Truncation;
  * is the compact record JSON. The Java runtime does not wrap {@code System.out}, so this exporter writes the envelope
  * itself; Lambda does not encode a line that is already JSON a second time.
  *
- * <p><b>Line size.</b> {@link #maxRecordSizeBytes()} caps the printed line, envelope included. The record is embedded
- * in {@code message} as a JSON string, so every {@code "} and {@code \} in it is escaped again and the line can be up
- * to about twice the record. When the line is over the limit, {@link #export} truncates the record again, measuring the
- * escaped envelope, until the line fits.
+ * <p><b>Line size.</b> {@link #render} returns the envelope, so the single truncation pass run before {@link #export}
+ * measures the printed line, envelope and second escaping included (every {@code "} and {@code \} in the record is
+ * escaped again inside {@code message}, so the line can be about twice the record). The pass drops error causes first,
+ * then operation results, whole operations, input and output. Every error message is capped at 8,192 characters (at
+ * most about 57 KB of line even when every character needs escaping twice), so once those are dropped the line fits any
+ * limit of 64 KB or more, including the default 256,000 bytes. The execution {@code error} and the identity fields are
+ * never dropped: with a limit smaller than those (for example a limit below the 68-byte envelope), the line is still
+ * printed, over the limit, with everything droppable dropped and the markers set.
  *
- * <p>Lines are written with {@code "level":"INFO"}. With the Lambda JSON log format and an application log level of
- * {@code WARN} or above, Lambda drops them.
+ * <p>Lines carry an explicit {@code "level":"INFO"}. Lambda already treats a line without a level as INFO, so
+ * application log level filtering is unchanged: with the JSON log format and an application log level of {@code WARN}
+ * or above, these lines are dropped, as raw record lines were before.
  */
 @Experimental
 public final class LambdaLogExporter implements TelemetryExporter {
@@ -52,28 +55,19 @@ public final class LambdaLogExporter implements TelemetryExporter {
         return maxRecordSizeBytes;
     }
 
+    /**
+     * Returns the envelope {@code {"timestamp", "level", "message"}} whose {@code message} is the compact
+     * {@code operationsByName} record JSON. This is exactly what {@link #export} prints, so the size limit measures the
+     * printed line. The timestamp always has the same width, so the size does not depend on when it is taken.
+     */
     @Override
     public Object render(DurableExecutionTelemetryRecord record) {
-        return record.toByNameWireMap();
+        return envelope(Json.stringify(record.toByNameWireMap()), Instant.now());
     }
 
     @Override
     public void export(DurableExecutionTelemetryRecord record) {
-        System.out.println(fittedLine(record, maxRecordSizeBytes, Instant.now()));
-    }
-
-    /**
-     * Returns the envelope line for {@code record}, truncated so that the line, escaping included, is at most
-     * {@code maxBytes} bytes. The record passed in was truncated against {@link #render}, which does not count the
-     * second escaping of {@code message}, so it is truncated again here with the envelope as the measured rendering.
-     */
-    String fittedLine(DurableExecutionTelemetryRecord record, Integer maxBytes, Instant now) {
-        String line = logLine(Json.stringify(render(record)), now);
-        if (maxBytes == null || maxBytes <= 0 || line.getBytes(StandardCharsets.UTF_8).length <= maxBytes) {
-            return line;
-        }
-        var fitted = Truncation.truncateRecord(record, maxBytes, r -> envelope(Json.stringify(render(r)), now));
-        return logLine(Json.stringify(render(fitted)), now);
+        System.out.println(Json.stringify(render(record)));
     }
 
     /** Builds the one-line Lambda JSON log envelope, keys in the order timestamp, level, message. */
