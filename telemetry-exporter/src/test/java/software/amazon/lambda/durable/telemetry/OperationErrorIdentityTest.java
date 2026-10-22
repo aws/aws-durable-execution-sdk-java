@@ -108,7 +108,8 @@ class OperationErrorIdentityTest {
                 ARN,
                 START);
 
-        // ErrorObject present but errorType null: name falls back to the throwable's simple class name.
+        // ErrorObject present but errorType null, and an operation with no SDK failure class: the SDK wrapper is never
+        // the name (rule 1), so a missing type gives "Error" (Table A, A12). The message still falls back.
         ErrorObject partial =
                 ErrorObject.builder().errorMessage("only a message").build();
         Throwable opError =
@@ -117,7 +118,7 @@ class OperationErrorIdentityTest {
                 "req", ARN, true, START, failedOps(opError), InvocationStatus.FAILED, opError, "in", null));
 
         var rec = exporter.records.get(0);
-        assertEquals("DurableOperationException", rec.error.name(), "null errorType falls back to throwable class");
+        assertEquals("Error", rec.error.name(), "null errorType gives Error, not the wrapper class");
         assertEquals("only a message", rec.error.message());
     }
 }

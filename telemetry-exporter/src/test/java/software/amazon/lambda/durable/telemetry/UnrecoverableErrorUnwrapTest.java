@@ -137,10 +137,7 @@ class UnrecoverableErrorUnwrapTest {
                 "req", ARN, true, START, ops(OperationStatus.FAILED), InvocationStatus.FAILED, execError, "in", null));
 
         var rec = exporter.records.get(0);
-        assertEquals(
-                "UnrecoverableDurableExecutionException",
-                rec.error.name(),
-                "null errorType falls back to throwable class");
+        assertEquals("Error", rec.error.name(), "null errorType gives Error, not the wrapper class (A12)");
         assertEquals("only a message", rec.error.message());
     }
 }

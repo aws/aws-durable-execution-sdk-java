@@ -382,7 +382,8 @@ final class TelemetryPlugin implements DurableExecutionPlugin {
                 content == null || content.includeOutput(),
                 content == null ? null : content.outputTransform());
         // The execution-level error is always kept, matching the JS exporter: ContentConfig.includeErrors gates only
-        // the per-operation errors below, so a FAILED record still says why it failed.
+        // the per-operation errors below, so a FAILED record still says why it failed. This is intentional and means
+        // includeErrors(false) does not keep the execution error's message out of a record; see ContentConfig.
         if (error != null) {
             record.error = DurableExecutionTelemetry.toErrorInfo(error);
         }
@@ -438,8 +439,19 @@ final class TelemetryPlugin implements DurableExecutionPlugin {
                 rec.durationMs(item.endTimestamp().toEpochMilli()
                         - item.startTimestamp().toEpochMilli());
             }
-            if (settings.includeErrors && item.error() != null) {
-                rec.error(DurableExecutionTelemetry.toErrorInfo(item.error()));
+            if (settings.includeErrors) {
+                if (item.error() != null) {
+                    rec.error(DurableExecutionTelemetry.toErrorInfo(item.error()));
+                } else {
+                    // A failed, timed-out or stopped operation can carry no checkpointed error (a callback timeout,
+                    // for example). Name it after the SDK exception the core throws for it, so the operation and the
+                    // execution error it propagates to agree. There is no message to report.
+                    String failure =
+                            DurableExecutionTelemetry.sdkFailureName(item.type(), item.subType(), item.status());
+                    if (failure != null) {
+                        rec.error(new ErrorInfo(failure, null));
+                    }
+                }
             }
             // Results are omitted unless an override explicitly opts in via a transform (matches JS).
             if (override != null && override.result() != null) {

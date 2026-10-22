@@ -3,19 +3,28 @@
 package software.amazon.lambda.durable.telemetry;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.CallbackDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.exception.CallbackFailedException;
+import software.amazon.lambda.durable.exception.CallbackTimeoutException;
+import software.amazon.lambda.durable.exception.CyclicWrapperForTest;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
@@ -163,18 +172,25 @@ class ErrorNameTest {
                 DurableExecutionTelemetry.toErrorInfo(wrapped(PaymentError.class.getName(), "x"))
                         .name());
 
-        // Anonymous and local classes: getSimpleName is empty / differs from the binary name, so both paths use the
-        // last segment of getName.
+        // Anonymous and local classes: Table A applied to Class.getName(), live and from the checkpoint, with no extra
+        // digit stripping (javac's binary names are ...ErrorNameTest$1 and ...ErrorNameTest$1LocalError).
         class LocalError extends RuntimeException {}
         Throwable anonymous = new RuntimeException() {};
-        for (Throwable t : List.of(anonymous, new LocalError())) {
+        assertEquals("1", DurableExecutionTelemetry.toErrorInfo(anonymous).name());
+        assertEquals(
+                "1LocalError",
+                DurableExecutionTelemetry.toErrorInfo(new LocalError()).name());
+        for (Throwable t : List.of(anonymous, new LocalError(), new Payment$Error("x"))) {
             String fromLive = DurableExecutionTelemetry.toErrorInfo(t).name();
             String fromCheckpoint = DurableExecutionTelemetry.toErrorInfo(
                             wrapped(t.getClass().getName(), null))
                     .name();
             assertEquals(fromCheckpoint, fromLive, t.getClass().getName());
-            assertTrue(!fromLive.isEmpty() && !fromLive.contains("$") && !fromLive.contains("."), fromLive);
         }
+        // B18: a top-level class named Payment$Error gives "Error" both ways.
+        assertEquals(
+                "Error",
+                DurableExecutionTelemetry.toErrorInfo(new Payment$Error("x")).name());
 
         // Plain type strings from other SDKs or service error codes.
         assertEquals("PaymentError", DurableExecutionTelemetry.simpleTypeName("PaymentError"));
@@ -207,6 +223,173 @@ class ErrorNameTest {
         var interrupted = DurableExecutionTelemetry.toErrorInfo(wrapped(StepInterruptedException.class.getName(), "i"));
         assertEquals("StepInterruptedException", interrupted.name());
         assertNotNull(interrupted.message());
+    }
+
+    /** B15: a user exception that subclasses an SDK exception is not an SDK wrapper and reports its own name. */
+    public static class UserOperationError extends DurableOperationException {
+        public UserOperationError(String message, Throwable cause) {
+            super(Operation.builder().id("u").build(), null, message, cause);
+        }
+    }
+
+    @Test
+    void userSubclassOfSdkWrapperReportsItsOwnName() {
+        var info = DurableExecutionTelemetry.toErrorInfo(new UserOperationError("mine", new IOException("disk")));
+        assertEquals("UserOperationError", info.name());
+        assertEquals("mine", info.message());
+        assertFalse(DurableExecutionTelemetry.isSdkWrapper(new UserOperationError("mine", null)));
+        assertTrue(DurableExecutionTelemetry.isSdkWrapper(wrapped("x", "y")));
+        // A callback timeout is an SDK error, never a wrapper.
+        assertFalse(DurableExecutionTelemetry.isSdkWrapper(new CallbackTimeoutException(callbackOp(
+                OperationStatus.TIMED_OUT,
+                ErrorObject.builder().errorType("States.Timeout").build()))));
+    }
+
+    @Test
+    void userErrorWithCauseIsNotUnwrapped() {
+        // B14: a user error is never unwrapped, even if it has a cause.
+        assertEquals(
+                "PaymentErrorWithCause",
+                DurableExecutionTelemetry.toErrorInfo(new PaymentErrorWithCause(new IllegalStateException("inner")))
+                        .name());
+    }
+
+    static final class PaymentErrorWithCause extends RuntimeException {
+        PaymentErrorWithCause(Throwable cause) {
+            super("outer", cause);
+        }
+    }
+
+    @Test
+    void nestedSdkWrappersAreFollowedToTheUserError() {
+        Throwable chain = new PaymentError("deep");
+        for (int i = 0; i < 5; i++) {
+            chain = new UnrecoverableDurableExecutionException(
+                    ErrorObject.builder()
+                            .errorType("w" + i)
+                            .errorMessage("w" + i)
+                            .build(),
+                    false,
+                    chain);
+        }
+        var info = DurableExecutionTelemetry.toErrorInfo(chain);
+        assertEquals("PaymentError", info.name());
+        assertEquals("w4", info.message(), "message is the outer record's message, unchanged");
+    }
+
+    @Test
+    void wrapperChainDepthIsBounded() {
+        Throwable chain = new PaymentError("deep");
+        for (int i = 0; i < 40; i++) {
+            chain = new UnrecoverableDurableExecutionException(
+                    ErrorObject.builder().errorType("w" + i).errorMessage("w").build(), false, chain);
+        }
+        // Terminates; the walk stops after 16 levels at an SDK class name.
+        assertEquals(
+                "UnrecoverableDurableExecutionException",
+                DurableExecutionTelemetry.toErrorInfo(chain).name());
+    }
+
+    @Test
+    void cyclicWrapperChainTerminates() {
+        var a = new CyclicWrapperForTest("x.A");
+        var b = new CyclicWrapperForTest("x.B");
+        a.setOther(b);
+        b.setOther(a);
+        assertTrue(DurableExecutionTelemetry.isSdkWrapper(a));
+        assertEquals(
+                "CyclicWrapperForTest", DurableExecutionTelemetry.toErrorInfo(a).name());
+    }
+
+    @Test
+    void blankCheckpointedTypeUsesTheSdkFailureClassOfTheOperation() {
+        // B13: the plugin snapshot hands the exporter a bare DurableOperationException; with a blank errorType the
+        // name is the SDK class the core throws for that operation, the same as the execution error.
+        for (String blank : new String[] {null, "", "   "}) {
+            var error = ErrorObject.builder()
+                    .errorType(blank)
+                    .errorMessage("declined")
+                    .build();
+            var op = callbackOp(OperationStatus.FAILED, error);
+            assertEquals(
+                    "CallbackFailedException",
+                    DurableExecutionTelemetry.toErrorInfo(new DurableOperationException(op, error))
+                            .name());
+            assertEquals(
+                    "CallbackFailedException",
+                    DurableExecutionTelemetry.toErrorInfo(new CallbackFailedException(op))
+                            .name());
+        }
+        // B11: a timed-out callback is CallbackTimeoutException whatever its checkpoint says.
+        var timeoutError = ErrorObject.builder().errorType("States.Timeout").build();
+        var timedOut = callbackOp(OperationStatus.TIMED_OUT, timeoutError);
+        assertEquals(
+                "CallbackTimeoutException",
+                DurableExecutionTelemetry.toErrorInfo(new DurableOperationException(timedOut, timeoutError))
+                        .name());
+        assertEquals(
+                "CallbackTimeoutException",
+                DurableExecutionTelemetry.toErrorInfo(new CallbackTimeoutException(timedOut))
+                        .name());
+        // No operation to map from and a base wrapper class: Table A's "Error", never the wrapper's name.
+        assertEquals(
+                "Error",
+                DurableExecutionTelemetry.toErrorInfo(wrapped("  ", "m")).name());
+        assertEquals(
+                "Error",
+                DurableExecutionTelemetry.toErrorInfo(new UnrecoverableDurableExecutionException(
+                                ErrorObject.builder().errorMessage("m").build()))
+                        .name());
+    }
+
+    @Test
+    void sdkFailureNamesMatchTheCoreExceptions() {
+        assertEquals(
+                "StepFailedException",
+                DurableExecutionTelemetry.sdkFailureName("STEP", "Step", OperationStatus.FAILED));
+        assertEquals(
+                "WaitForConditionFailedException",
+                DurableExecutionTelemetry.sdkFailureName("STEP", "WaitForCondition", OperationStatus.FAILED));
+        assertEquals(
+                "CallbackFailedException",
+                DurableExecutionTelemetry.sdkFailureName("CALLBACK", "Callback", OperationStatus.FAILED));
+        assertEquals(
+                "CallbackTimeoutException",
+                DurableExecutionTelemetry.sdkFailureName("CALLBACK", "Callback", OperationStatus.TIMED_OUT));
+        assertEquals(
+                "InvokeFailedException",
+                DurableExecutionTelemetry.sdkFailureName("CHAINED_INVOKE", "ChainedInvoke", OperationStatus.FAILED));
+        assertEquals(
+                "InvokeTimedOutException",
+                DurableExecutionTelemetry.sdkFailureName("CHAINED_INVOKE", "ChainedInvoke", OperationStatus.TIMED_OUT));
+        assertEquals(
+                "InvokeStoppedException",
+                DurableExecutionTelemetry.sdkFailureName("CHAINED_INVOKE", "ChainedInvoke", OperationStatus.STOPPED));
+        assertEquals(
+                "MapIterationFailedException",
+                DurableExecutionTelemetry.sdkFailureName("CONTEXT", "MapIteration", OperationStatus.FAILED));
+        assertEquals(
+                "ParallelBranchFailedException",
+                DurableExecutionTelemetry.sdkFailureName("CONTEXT", "ParallelBranch", OperationStatus.FAILED));
+        assertEquals(
+                "ChildContextFailedException",
+                DurableExecutionTelemetry.sdkFailureName("CONTEXT", "RunInChildContext", OperationStatus.FAILED));
+        assertNull(DurableExecutionTelemetry.sdkFailureName("CONTEXT", "WaitForCallback", OperationStatus.FAILED));
+        assertNull(DurableExecutionTelemetry.sdkFailureName("STEP", "Step", OperationStatus.SUCCEEDED));
+        assertNull(DurableExecutionTelemetry.sdkFailureName("WAIT", "Wait", OperationStatus.FAILED));
+        assertNull(DurableExecutionTelemetry.sdkFailureName(null, null, null));
+    }
+
+    private static Operation callbackOp(OperationStatus status, ErrorObject error) {
+        return Operation.builder()
+                .id("cb-1")
+                .type(OperationType.CALLBACK)
+                .status(status)
+                .callbackDetails(CallbackDetails.builder()
+                        .callbackId("cb-id")
+                        .error(error)
+                        .build())
+                .build();
     }
 
     private static DurableOperationException wrapped(String errorType, String message) {

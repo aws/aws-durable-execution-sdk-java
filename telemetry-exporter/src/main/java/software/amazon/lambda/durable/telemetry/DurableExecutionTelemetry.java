@@ -3,13 +3,30 @@
 package software.amazon.lambda.durable.telemetry;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import java.util.Set;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.annotations.Experimental;
+import software.amazon.lambda.durable.exception.CallbackException;
+import software.amazon.lambda.durable.exception.CallbackFailedException;
+import software.amazon.lambda.durable.exception.CallbackTimeoutException;
+import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.InvokeException;
+import software.amazon.lambda.durable.exception.InvokeFailedException;
+import software.amazon.lambda.durable.exception.InvokeStoppedException;
+import software.amazon.lambda.durable.exception.InvokeTimedOutException;
+import software.amazon.lambda.durable.exception.MapIterationFailedException;
+import software.amazon.lambda.durable.exception.ParallelBranchFailedException;
+import software.amazon.lambda.durable.exception.StepException;
+import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
+import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -164,58 +181,166 @@ public final class DurableExecutionTelemetry {
         // own message when the ErrorObject leaves it null. The name follows errorName.
         ErrorObject error = extractErrorObject(t);
         String message = error != null && error.errorMessage() != null ? error.errorMessage() : t.getMessage();
-        return new ErrorInfo(errorName(t, error), message);
+        return new ErrorInfo(errorName(t), message);
+    }
+
+    /** Package that declares the SDK's own exception types; only classes declared here can be SDK wrappers. */
+    private static final String SDK_EXCEPTION_PACKAGE = DurableOperationException.class.getPackageName();
+
+    /** SDK base classes that never name a failure themselves: with nothing to unwrap they report {@code Error}. */
+    private static final Set<Class<?>> SDK_BASE_WRAPPERS = Set.of(
+            DurableOperationException.class,
+            UnrecoverableDurableExecutionException.class,
+            StepException.class,
+            CallbackException.class,
+            InvokeException.class);
+
+    /** Reported name when a type string is missing or blank (Table A, A12). */
+    static final String DEFAULT_ERROR_NAME = "Error";
+
+    private static final int MAX_WRAPPER_DEPTH = 16;
+
+    /**
+     * Returns the cross-SDK {@code error.name} of a throwable.
+     *
+     * <ol>
+     *   <li>A throwable that is not an SDK wrapper (see {@link #isSdkWrapper}) reports its own class name, reduced by
+     *       {@link #simpleTypeName}. This includes user errors that have a cause and user subclasses of SDK exceptions.
+     *   <li>An SDK wrapper with a live cause is unwrapped, following the chain of SDK wrappers up to a depth of
+     *       {@value #MAX_WRAPPER_DEPTH}; the depth bound also stops a cyclic chain.
+     *   <li>An SDK wrapper with no cause reports its checkpointed {@code errorType}, reduced. The core writes that type
+     *       as {@link Class#getName()}, so a replayed failure gets the same name as the live one.
+     *   <li>An SDK wrapper whose {@code errorType} is blank reports the SDK failure class the core throws for its
+     *       operation (for example {@code CallbackFailedException}), so the operation and the execution agree.
+     *   <li>A timed-out callback is never unwrapped: it reports {@code CallbackTimeoutException}.
+     * </ol>
+     */
+    static String errorName(Throwable t) {
+        Throwable current = t;
+        for (int depth = 0; ; depth++) {
+            if (!isSdkWrapper(current)) {
+                return simpleTypeName(current.getClass().getName());
+            }
+            String timeout = callbackTimeoutName(current);
+            if (timeout != null) {
+                return timeout;
+            }
+            Throwable cause = current.getCause();
+            if (cause != null && cause != current) {
+                if (depth >= MAX_WRAPPER_DEPTH) {
+                    return simpleTypeName(cause.getClass().getName());
+                }
+                current = cause;
+                continue;
+            }
+            return wrapperName(current);
+        }
     }
 
     /**
-     * Returns the cross-SDK {@code error.name}: the simple type name of the error the user's code threw (for example
-     * {@code PaymentError}), with no package and no enclosing-class {@code $} prefix. An SDK wrapper with a live cause
-     * reports the cause's simple name; otherwise a wrapper reports the last segment of its checkpointed
-     * {@code errorType} (which the core SDK writes as {@code Class.getName()}), so a replayed failure gets the same
-     * name as the live one. Any other throwable — including an SDK exception with no user error behind it — reports its
-     * own simple name.
+     * {@code true} when {@code t} is one of the SDK's own wrapper types: an instance of
+     * {@link DurableOperationException} or {@link UnrecoverableDurableExecutionException} whose runtime class is
+     * declared in the SDK's exception package. A user subclass of an SDK exception is not a wrapper. A callback timeout
+     * is an SDK error, not a wrapper.
      */
-    static String errorName(Throwable t, ErrorObject error) {
-        return errorName(t, error, 0);
+    static boolean isSdkWrapper(Throwable t) {
+        return (t instanceof DurableOperationException || t instanceof UnrecoverableDurableExecutionException)
+                && !(t instanceof CallbackTimeoutException)
+                && SDK_EXCEPTION_PACKAGE.equals(t.getClass().getPackageName());
     }
 
-    private static final int MAX_CAUSE_DEPTH = 16;
-
-    private static String errorName(Throwable t, ErrorObject error, int depth) {
-        if (t instanceof DurableOperationException || t instanceof UnrecoverableDurableExecutionException) {
-            Throwable cause = t.getCause();
-            if (cause != null && cause != t) {
-                // A wrapped wrapper resolves through its own cause/errorType; the depth bound guards a cyclic chain.
-                return depth < MAX_CAUSE_DEPTH
-                        ? errorName(cause, extractErrorObject(cause), depth + 1)
-                        : simpleName(cause.getClass());
-            }
-            if (error != null && error.errorType() != null && !error.errorType().isBlank()) {
-                return simpleTypeName(error.errorType());
+    /** Name of an SDK wrapper that has no cause to follow. */
+    private static String wrapperName(Throwable wrapper) {
+        ErrorObject error = extractErrorObject(wrapper);
+        String type = error == null ? null : error.errorType();
+        if (type != null && !type.isBlank()) {
+            return simpleTypeName(type);
+        }
+        if (wrapper instanceof DurableOperationException doe && doe.getOperation() != null) {
+            var op = doe.getOperation();
+            String failure = sdkFailureName(op.typeAsString(), op.subType(), op.status());
+            if (failure != null) {
+                return failure;
             }
         }
-        return simpleName(t.getClass());
+        if (!SDK_BASE_WRAPPERS.contains(wrapper.getClass())) {
+            return simpleTypeName(wrapper.getClass().getName());
+        }
+        return DEFAULT_ERROR_NAME;
+    }
+
+    /** {@code CallbackTimeoutException} for a wrapper whose operation is a timed-out callback, else {@code null}. */
+    private static String callbackTimeoutName(Throwable wrapper) {
+        if (wrapper instanceof DurableOperationException doe
+                && doe.getOperation() != null
+                && doe.getOperation().type() == OperationType.CALLBACK
+                && doe.getOperation().status() == OperationStatus.TIMED_OUT) {
+            return CallbackTimeoutException.class.getSimpleName();
+        }
+        return null;
     }
 
     /**
-     * {@link Class#getSimpleName()}, except for anonymous and local classes, whose simple name is empty or differs from
-     * the checkpointed type name; those use the last segment of {@link Class#getName()} so live and replayed failures
-     * agree.
+     * Returns the simple name of the SDK exception the core throws when an operation of this type, sub-type and status
+     * fails with no reconstructable user error, or {@code null} when there is none. Used when the checkpoint carries no
+     * error type, so an operation record and the execution error it propagates to get the same name.
      */
-    static String simpleName(Class<?> type) {
-        String simple = type.getSimpleName();
-        if (simple.isEmpty() || type.isAnonymousClass() || type.isLocalClass()) {
-            return simpleTypeName(type.getName());
+    static String sdkFailureName(String type, String subType, OperationStatus status) {
+        if (type == null || status == null) {
+            return null;
         }
-        return simple;
+        Class<?> failure = switch (type) {
+            case "STEP" ->
+                status != OperationStatus.FAILED
+                        ? null
+                        : OperationSubType.WAIT_FOR_CONDITION.getValue().equals(subType)
+                                ? WaitForConditionFailedException.class
+                                : StepFailedException.class;
+            case "CALLBACK" ->
+                switch (status) {
+                    case FAILED -> CallbackFailedException.class;
+                    case TIMED_OUT -> CallbackTimeoutException.class;
+                    default -> null;
+                };
+            case "CHAINED_INVOKE" ->
+                switch (status) {
+                    case FAILED -> InvokeFailedException.class;
+                    case TIMED_OUT -> InvokeTimedOutException.class;
+                    case STOPPED -> InvokeStoppedException.class;
+                    default -> null;
+                };
+            case "CONTEXT" -> status != OperationStatus.FAILED ? null : contextFailure(subType);
+            default -> null;
+        };
+        return failure == null ? null : failure.getSimpleName();
     }
 
-    /** Returns the part of a type name after the last {@code '.'} and the last {@code '$'}. */
+    private static Class<?> contextFailure(String subType) {
+        if (OperationSubType.MAP_ITERATION.getValue().equals(subType)) {
+            return MapIterationFailedException.class;
+        }
+        if (OperationSubType.PARALLEL_BRANCH.getValue().equals(subType)) {
+            return ParallelBranchFailedException.class;
+        }
+        if (OperationSubType.RUN_IN_CHILD_CONTEXT.getValue().equals(subType)
+                || OperationSubType.WITH_RETRY.getValue().equals(subType)) {
+            return ChildContextFailedException.class;
+        }
+        return null;
+    }
+
+    /**
+     * Reduces a type string to the reported {@code error.name} (Table A of the cross-SDK rule): the part after the last
+     * {@code '.'} or {@code '$'}. If that part is empty the string is kept as it is. A {@code null}, empty or blank
+     * string gives {@code "Error"}. The string is not trimmed.
+     */
     static String simpleTypeName(String typeName) {
-        String trimmed = typeName.trim();
-        int cut = Math.max(trimmed.lastIndexOf('.'), trimmed.lastIndexOf('$'));
-        String last = trimmed.substring(cut + 1);
-        return last.isEmpty() ? trimmed : last;
+        if (typeName == null || typeName.isBlank()) {
+            return DEFAULT_ERROR_NAME;
+        }
+        int cut = Math.max(typeName.lastIndexOf('.'), typeName.lastIndexOf('$'));
+        String last = typeName.substring(cut + 1);
+        return last.isEmpty() ? typeName : last;
     }
 
     /**
