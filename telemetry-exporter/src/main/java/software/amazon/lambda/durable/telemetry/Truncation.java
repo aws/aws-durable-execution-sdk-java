@@ -6,7 +6,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
-import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Best-effort size limiter. When the record is over the limit it drops, in order:
@@ -28,7 +27,6 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * execution {@code error} and identity fields are never dropped, so a record can still be over a limit smaller than
  * those fields.
  */
-@Experimental
 public final class Truncation {
 
     private Truncation() {}

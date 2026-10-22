@@ -7,7 +7,6 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -33,7 +32,6 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * application log level filtering is unchanged: with the JSON log format and an application log level of {@code WARN}
  * or above, these lines are dropped, as raw record lines were before.
  */
-@Experimental
 public final class LambdaLogExporter implements TelemetryExporter {
     /** UTC ISO-8601 with exactly three fraction digits. */
     private static final DateTimeFormatter TIMESTAMP =

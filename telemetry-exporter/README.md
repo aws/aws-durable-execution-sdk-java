@@ -1,13 +1,9 @@
-# Durable Execution Telemetry Exporter (preview)
+# Durable Execution Telemetry Exporter
 
 Instrumentation plugin for the AWS Lambda Durable Execution Java SDK that emits a curated,
 per-execution **Durable Execution Telemetry record** to one or more pluggable exporters. It ports the
 JavaScript `durableExecutionTelemetry()` contract (canonical record schema `1.0`) to the Java plugin hook
 surface.
-
-> **Preview API.** Every public type is annotated
-> `@software.amazon.lambda.durable.annotations.Experimental` to signal it is experimental and may
-> change or be removed in a future release without a major-version bump.
 
 ## Usage
 
