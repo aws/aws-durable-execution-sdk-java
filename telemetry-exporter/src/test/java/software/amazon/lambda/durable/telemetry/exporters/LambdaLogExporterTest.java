@@ -22,8 +22,8 @@ import software.amazon.lambda.durable.telemetry.RecordFactory;
 import software.amazon.lambda.durable.telemetry.Truncation;
 
 /**
- * The {@code LambdaLogExporter} line is the Lambda JSON log envelope. Readers query it with
- * {@code filter level = "INFO" and message like /DurableExecutionTelemetry/} and then parse {@code message}.
+ * The {@code LambdaLogExporter} line is the Lambda JSON log envelope. Readers query it with {@code filter level =
+ * "INFO" and message like /DurableExecutionTelemetry/} and then parse {@code message}.
  */
 class LambdaLogExporterTest {
 
