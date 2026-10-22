@@ -29,7 +29,7 @@ Implement `TelemetryExporter` for custom sinks. Every exporter has a builder wit
 
 | Exporter | Destination | Operations rendering | Default size limit | Artifact (optional) |
 |---|---|---|---|---|
-| `LambdaLogExporter` | Function log group (stdout) | `operationsByName` | 256 KB | none |
+| `LambdaLogExporter` | Function log group (stdout) | `operationsByName` | 256,000 bytes (the printed line) | none |
 | `CloudWatchLogsExporter` | Any log group, PutLogEvents | `operationsByName` | 256 KB | `cloudwatchlogs` |
 | `S3Exporter` | One object per execution | `operations` array | 5 MB | `s3` |
 | `DynamoDBExporter` | One item per record (or per execution) | `operationsByName` | 400 KB | `dynamodb` |
@@ -73,18 +73,34 @@ wrapped and the exporter writes the envelope itself. Lambda does not double-enco
 line reaches CloudWatch Logs as written.
 
 The size limit bounds the printed line, envelope included: the exporter's `render` returns the envelope, so the one
-truncation pass measures exactly the line that is printed. `message` is the record JSON escaped again, so a record
-with many `"` or `\` characters can grow to about twice its size. Truncation drops error causes first, then operation
-results, whole operations, input and output (see [Error names and causes](#error-names-and-causes) and
-[Design](#design)). Because every error message is capped at 8,192 characters, a line whose droppable parts are gone
-fits any limit of 64 KB or more, including the default 256,000 bytes. The execution `error` and the identity fields
-are never dropped, so with a limit smaller than those (for example a limit below the 68 bytes the envelope itself
-takes) the line is still printed, over the limit, with `truncated` and the `dropped*` markers set.
+truncation pass measures exactly the line that is printed. The default limit is 256,000 bytes; CloudWatch Logs accepts
+log events of up to 1 MB. `message` is the record JSON escaped again, so a record with many `"` or `\` characters can
+grow to about twice its size. The exporter computes the line's size without building it (the envelope's fixed 68 bytes
+plus the record JSON's size once escaped again), so the size checks stay cheap on large records. Truncation drops
+error causes first, then operation results, whole operations, input and output (see
+[Error names and causes](#error-names-and-causes) and [Design](#design)).
+
+The execution `error` and the identity fields are never dropped, so they set the smallest line truncation can reach.
+Every error `name` and `message` is capped at 8,192 code points. On the line, one code point takes at most 7 bytes (a
+control character is written as `\u00XX` in the record and its backslash is escaped again), so a capped name or message
+takes at most about 57 KB, and about 33 KB when it is all quotes, backslashes or emoji. With identity fields of the
+lengths Lambda allows (each a few hundred characters at most):
+
+- the line fits any limit of 128 KB or more, including the default, whatever the error's name and message;
+- the line fits 64 KB when the execution error's name is under 500 characters, whatever its message.
+
+An execution error whose name and message are both 8,192 escape-heavy characters makes a line of about 66 KB to 115 KB.
+With a limit smaller than the minimal line (for example a limit below the 68-byte envelope) the line is still printed,
+over the limit, with `truncated` and the `dropped*` markers set.
 
 Lines have an explicit `"level":"INFO"`. Lambda already treats a line without a level as INFO, so log level filtering
 is unchanged: with the JSON log format and an application log level of `WARN` or above, Lambda drops these lines, as
 it dropped the raw record lines before. What changed for readers is the line itself: the record is the JSON string in
 `message`, so queries and metric filters must parse `message` instead of matching top-level record fields.
+
+`LambdaLogExporter.render` now returns the envelope map (`timestamp`, `level`, `message`) instead of the record map;
+`message` is the record JSON string. Code that called `render` to get the `operationsByName` record should call
+`DurableExecutionTelemetryRecord.toByNameWireMap()` instead.
 
 ### DynamoDBExporter
 
@@ -205,12 +221,13 @@ after 16 levels, and stops at a cause that was already visited, so a cycle canno
 checkpointed `ErrorObject`, `name` and `message` come from the `ErrorObject` and the chain still follows
 `getCause()`, so a live cause behind the wrapper (for example the real failure behind a checkpoint continuation
 failure) is kept. Reading a cause never throws: if a cause's `getCause()`, name or message fails, the chain ends there
-and the record is kept. Java names and messages are always strings (`message` is `null` when `getMessage()` is), and
+and the record is kept. If the top-level error's `getMessage()` fails, its `message` is written as `null` and its
+`name` is the class's simple name; the record is kept. Java names and messages are always strings (`message` is `null` when `getMessage()` is), and
 `getCause()` always returns a `Throwable`, so the shared rule for causes that are not error objects does not arise in
 this SDK.
 
-Every `message`, on errors and on causes, is capped at 8,192 characters (Unicode code points). A longer message keeps
-its first 8,192 characters followed by `…`. When a record is over an exporter's size limit, truncation first removes
+Every `name` and `message`, on errors and on causes, is capped at 8,192 characters (Unicode code points), so a cut
+never splits a surrogate pair. A longer value keeps its first 8,192 code points followed by `…`. When a record is over an exporter's size limit, truncation first removes
 every `cause` from every error and sets `droppedCauses: true`, then runs the other truncation steps.
 
 Which errors carry a cause in this SDK:
@@ -284,8 +301,10 @@ and the `cause` chain.
   `cause`, then operation results oldest-first, then whole operations oldest-first, then execution
   input, then output — setting `truncated`, `droppedCauses`, `droppedOperations`, `droppedInput`,
   `droppedOutput` as applicable. Markers already on a record are kept. The size is measured against
-  the exact value each exporter emits (its `render`). The execution `error` and identity fields are
-  never dropped.
+  the exact value each exporter emits (its `render`). `LambdaLogExporter` computes that size without
+  building the line, and the pass skips checks that cannot succeed yet (each operation's largest
+  possible saving is sized once), so the cost grows with the record rather than with the number of
+  dropped operations times the record. The execution `error` and identity fields are never dropped.
 - **Exporter isolation.** Every exporter receives its own copy of each record, truncated to its own
   limit; ordinary exporter failures are logged without preventing the other exporters from running.
 - **Export scheduling.** Exporter I/O never runs on the SDK threads that deliver plugin hooks.
