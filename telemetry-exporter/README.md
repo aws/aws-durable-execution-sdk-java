@@ -205,12 +205,12 @@ one event per record to `{logStreamPrefix}YYYY/MM/DD` (IAM: `logs:CreateLogStrea
   `{"timestamp":"<UTC, 3 fraction digits>Z","level":"INFO","message":"<compact record JSON>"}`,
   because the JS readers of this destination filter on `level` and parse `message`. The Node
   runtime adds this envelope around `console.log`; Java `System.out` is not wrapped, and Lambda
-  does not re-wrap a line that is already JSON. `maxRecordSizeBytes` is measured on the record
-  (`render`), not on the printed line. The record is embedded in `message` as a JSON string, so
-  every `"` and `\` in it is escaped again: the line is the record plus 68 bytes plus one byte
-  per quote or backslash in the record, and can be up to about twice the record size
-  (`2 × maxRecordSizeBytes + 68` in the worst case, about 512 KB with the default 256,000). That
-  is within the CloudWatch Logs limit of 1 MB per log event.
+  does not re-wrap a line that is already JSON. `maxRecordSizeBytes` caps the printed line,
+  envelope included. The record is embedded in `message` as a JSON string, so every `"` and `\`
+  in it is escaped again and the line can be up to about twice the record. When the line is over
+  the limit, the exporter truncates the record again, measuring the escaped envelope, until the
+  line fits. With the default 256,000, or any limit up to 1 MB, every line is within the
+  CloudWatch Logs limit of 1 MB per log event.
   `LambdaLogExporter` lines are INFO; an application log level of WARN or above drops them.
   This line shape is a breaking change: 2.3.0 printed the bare record JSON, so a reader that
   parsed each stdout line as a record must now parse `message`.

@@ -33,11 +33,15 @@ class LambdaLogExporterTest {
     private static final Pattern READER_MESSAGE_FILTER = Pattern.compile("DurableExecutionTelemetry");
 
     private static String exportAndCapture(DurableExecutionTelemetryRecord record) {
+        return exportAndCapture(new LambdaLogExporter(), record);
+    }
+
+    private static String exportAndCapture(LambdaLogExporter exporter, DurableExecutionTelemetryRecord record) {
         PrintStream original = System.out;
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         try (PrintStream capture = new PrintStream(buffer, true, StandardCharsets.UTF_8)) {
             System.setOut(capture);
-            new LambdaLogExporter().export(record);
+            exporter.export(record);
         } finally {
             System.setOut(original);
         }
@@ -84,21 +88,16 @@ class LambdaLogExporterTest {
     }
 
     @Test
-    void truncationIsMeasuredOnTheRecordNotTheEnvelope() {
+    void lineThatFitsIsPrintedWhole() {
         var record = RecordFactory.sample();
         var exporter = new LambdaLogExporter();
-        int recordBytes = Json.byteSize(exporter.render(record));
-
-        // A limit equal to the rendered record keeps it whole, even though the printed envelope line is larger.
-        var shaped = Truncation.truncateRecord(record, recordBytes, exporter::render);
-        assertSame(record, shaped);
-        assertFalse(shaped.toWireMap().containsKey("truncated"));
-        String line = exportAndCapture(shaped).strip();
-        String recordJson = Json.stringify(exporter.render(shaped));
+        String line = exportAndCapture(record).strip();
+        String recordJson = Json.stringify(exporter.render(record));
         assertEquals(
-                recordBytes + ENVELOPE_BYTES + escapedChars(recordJson),
+                Json.byteSize(exporter.render(record)) + ENVELOPE_BYTES + escapedChars(recordJson),
                 line.getBytes(StandardCharsets.UTF_8).length,
                 "line = record + 68-byte envelope + one byte per quote or backslash in the record");
+        assertFalse(line.contains("\\\"truncated\\\""), "not truncated: " + line);
     }
 
     /** Bytes the envelope adds around an empty {@code message}. */
@@ -115,23 +114,31 @@ class LambdaLogExporterTest {
     }
 
     /**
-     * An escape-heavy record just under the default 256,000-byte budget is not truncated, and its printed line is about
-     * twice the record: at most {@code 2 × maxRecordSizeBytes + 68}, and under the 1 MB CloudWatch Logs event limit.
+     * The limit caps the printed line, escaping included. An escape-heavy record that fits the record budget but whose
+     * line does not (300,000 backslashes are about 600 KB of record and 1.2 MB of line) is truncated again until the
+     * line fits; its message still parses and says it was truncated.
      */
     @Test
-    void escapeHeavyRecordNearTheLimitDoublesButStaysUnderOneMegabyte() {
-        var exporter = new LambdaLogExporter();
-        int limit = exporter.maxRecordSizeBytes();
-        for (char ch : new char[] {'"', '\\'}) {
-            var record = RecordFactory.sampleWithInput(String.valueOf(ch).repeat(127_000));
-            int recordBytes = Json.byteSize(exporter.render(record));
-            assertTrue(recordBytes <= limit && recordBytes > limit - 2_000, "record near the limit: " + recordBytes);
-            var shaped = Truncation.truncateRecord(record, limit, exporter::render);
-            assertSame(record, shaped, "not truncated");
-            int lineBytes = exportAndCapture(shaped).strip().getBytes(StandardCharsets.UTF_8).length;
-            assertTrue(lineBytes > 2 * recordBytes - 1_000, "line about twice the record: " + lineBytes);
-            assertTrue(lineBytes <= 2 * limit + ENVELOPE_BYTES, "line within 2 x limit + 68: " + lineBytes);
-            assertTrue(lineBytes < 1_048_576, "line under the 1 MB CloudWatch Logs event limit: " + lineBytes);
+    @SuppressWarnings("unchecked")
+    void escapeHeavyRecordIsTruncatedUntilThePrintedLineFits() throws Exception {
+        for (int limit : new int[] {256_000, 1_000_000}) {
+            var exporter = new LambdaLogExporter(limit);
+            for (char ch : new char[] {'"', '\\'}) {
+                int count = limit == 1_000_000 ? 300_000 : 127_000;
+                var record = RecordFactory.sampleWithInput(String.valueOf(ch).repeat(count));
+                int recordBytes = Json.byteSize(exporter.render(record));
+                assertTrue(recordBytes <= limit, "record fits the record budget: " + recordBytes);
+                var shaped = Truncation.truncateRecord(record, limit, exporter::render);
+                assertSame(record, shaped, "record-level truncation keeps it whole");
+
+                String line = exportAndCapture(exporter, shaped).strip();
+                int lineBytes = line.getBytes(StandardCharsets.UTF_8).length;
+                assertTrue(lineBytes <= limit, limit + ": printed line within the limit: " + lineBytes);
+                Map<String, Object> envelope = MAPPER.readValue(line, Map.class);
+                Map<String, Object> parsed = MAPPER.readValue((String) envelope.get("message"), Map.class);
+                assertEquals(Boolean.TRUE, parsed.get("truncated"), "record says it was truncated");
+                assertEquals(record.executionArn(), parsed.get("executionArn"));
+            }
         }
     }
 }
