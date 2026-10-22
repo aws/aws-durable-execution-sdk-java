@@ -76,12 +76,19 @@ list `LambdaLogger` and Log4j2 as the Java methods that Lambda captures as struc
 wrapped and the exporter writes the envelope itself. Lambda does not double-encode logs that are already JSON, so the
 line reaches CloudWatch Logs as written.
 
-The size limit bounds the printed line, envelope included. `message` is the record JSON escaped again, so a record
-with many `"` or `\` characters can grow to about twice its size. When the line is over the limit, the record is
-truncated again against the escaped envelope until the line fits.
+The size limit bounds the printed line, envelope included: the exporter's `render` returns the envelope, so the one
+truncation pass measures exactly the line that is printed. `message` is the record JSON escaped again, so a record
+with many `"` or `\` characters can grow to about twice its size. Truncation drops error causes first, then operation
+results, whole operations, input and output (see [Error names and causes](#error-names-and-causes) and
+[Design](#design)). Because every error message is capped at 8,192 characters, a line whose droppable parts are gone
+fits any limit of 64 KB or more, including the default 256,000 bytes. The execution `error` and the identity fields
+are never dropped, so with a limit smaller than those (for example a limit below the 68 bytes the envelope itself
+takes) the line is still printed, over the limit, with `truncated` and the `dropped*` markers set.
 
-Lines have `"level":"INFO"`. With the JSON log format and an application log level of `WARN` or above, Lambda drops
-them.
+Lines have an explicit `"level":"INFO"`. Lambda already treats a line without a level as INFO, so log level filtering
+is unchanged: with the JSON log format and an application log level of `WARN` or above, Lambda drops these lines, as
+it dropped the raw record lines before. What changed for readers is the line itself: the record is the JSON string in
+`message`, so queries and metric filters must parse `message` instead of matching top-level record fields.
 
 ### DynamoDBExporter
 
@@ -196,15 +203,45 @@ Every error in a record (the execution `error`, each `operations[].error`, and e
 }
 ```
 
-`cause` is present only when the error has one. It comes from `Throwable.getCause()` when a live `Throwable` is
-available, has the same shape, is cut after 16 levels, and stops at a cause that was already visited, so a cycle
-cannot loop. An operation error rebuilt from a checkpoint (`ErrorObject`) has no cause. `includeErrors(false)` removes
-errors together with their causes, and truncation keeps `cause` as part of its error.
+`cause` is present only when the error has one. It comes from `Throwable.getCause()`, has the same shape, is cut
+after 16 levels, and stops at a cause that was already visited, so a cycle cannot loop. Levels are written exactly as
+`getCause()` returns them; a level that repeats the one above is not skipped. When an SDK wrapper carries a
+checkpointed `ErrorObject`, `name` and `message` come from the `ErrorObject` and the chain still follows
+`getCause()`, so a live cause behind the wrapper (for example the real failure behind a checkpoint continuation
+failure) is kept. Reading a cause never throws: if a cause's `getCause()`, name or message fails, the chain ends there
+and the record is kept. Java names and messages are always strings (`message` is `null` when `getMessage()` is), and
+`getCause()` always returns a `Throwable`, so the shared rule for causes that are not error objects does not arise in
+this SDK.
+
+Every `message`, on errors and on causes, is capped at 8,192 characters (Unicode code points). A longer message keeps
+its first 8,192 characters followed by `…`. When a record is over an exporter's size limit, truncation first removes
+every `cause` from every error and sets `droppedCauses: true`, then runs the other truncation steps.
+
+Which errors carry a cause in this SDK:
+
+- **Only the execution-level `error`.** It is the live `Throwable` the handler ended with.
+- **Never `operations[].error` or `operationsByName.<name>.error`.** The SDK builds each operation error from the
+  operation's checkpoint, which stores only the error type, message and stack trace, so there is no cause to write.
+  This holds for the invocation where the operation failed and for every replay.
+- **A rebuilt cause can be named `Throwable`.** When a step throws an exception that has a cause, the SDK checkpoints
+  the exception and later rebuilds it; the rebuilt cause is a `java.lang.Throwable` carrying the original message,
+  not an instance of the original class. For example, a step that throws
+  `new RuntimeException("boom", new IOException("io-detail"))` and fails the execution gives
+  `{"name":"RuntimeException","message":"boom","cause":{"name":"Throwable","message":"io-detail"}}`. Do not rely on
+  `error.cause.name` to find the original cause type.
+
+`includeErrors(false)` removes errors together with their causes. With `includeErrors(true)`, cause messages are
+written unredacted, up to 16 of them per error, and there is no transform for errors. Library exceptions often put
+hostnames, file paths, SQL or request identifiers in their messages; use `includeErrors(false)` if that is a concern.
 
 Error names are each language's own type names, so they differ across SDKs. For example, a step that throws
 `PaymentError` can be reported as `StepError` in JS, `aws_durable_execution_sdk_python.exceptions.StepError` or
-`PaymentError` in Python, and `StepFailedException` or `PaymentError` in Java. To compare failures across SDKs,
-query per SDK, or query on `message` and the `cause` chain.
+`PaymentError` in Python, and `com.example.PaymentError` or `PaymentError` in Java. In Java, an operation error's
+`name` is the fully qualified class name stored in the checkpoint (`com.example.PaymentError`), while the
+execution-level `error` uses the simple class name of the exception the handler ended with (`PaymentError`). When the
+SDK cannot rebuild the step's exception and throws its `StepFailedException` fallback instead, the execution-level
+name is the checkpointed fully qualified name. To compare failures across SDKs, query per SDK, or query on `message`
+and the `cause` chain.
 
 ## Design
 
@@ -247,10 +284,12 @@ query per SDK, or query on `message` and the `cause` chain.
   fail, including when another exporter is blocked. Subsequent scheduler calls rethrow that fatal;
   a finished fatal pump cannot later be mistaken for a successful drain or flush. Already-running
   customer exporter code cannot be forcibly stopped, but it does not delay fatal delivery.
-- **Per-exporter size truncation** (`Truncation`) drops, in order: operation results oldest-first,
-  then whole operations oldest-first, then execution input, then output — setting `truncated`,
-  `droppedOperations`, `droppedInput`, `droppedOutput` as applicable. The size is measured against
-  the exact shape each exporter emits (its `render`).
+- **Per-exporter size truncation** (`Truncation`) is one pass that drops, in order: every error
+  `cause`, then operation results oldest-first, then whole operations oldest-first, then execution
+  input, then output — setting `truncated`, `droppedCauses`, `droppedOperations`, `droppedInput`,
+  `droppedOutput` as applicable. Markers already on a record are kept. The size is measured against
+  the exact value each exporter emits (its `render`). The execution `error` and identity fields are
+  never dropped.
 - **Exporter isolation.** Every exporter receives its own copy of each record, truncated to its own
   limit; ordinary exporter failures are logged without preventing the other exporters from running.
 - **Export scheduling.** Exporter I/O never runs on the SDK threads that deliver plugin hooks.
