@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
 import java.lang.reflect.Field;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -33,6 +34,7 @@ import software.amazon.lambda.durable.config.NestingType;
 import software.amazon.lambda.durable.config.ParallelBranchConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.exception.ParallelBranchSkippedException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
@@ -365,6 +367,11 @@ class ParallelOperationTest {
         assertEquals(1, result.skipped());
         assertEquals(ConcurrencyCompletionStatus.MIN_SUCCESSFUL_REACHED, result.completionStatus());
         assertTrue(result.completionStatus().isSucceeded());
+
+        var skipped = op.getBranches().get(0);
+        var thrown = assertTimeoutPreemptively(
+                Duration.ofSeconds(2), () -> assertThrows(ParallelBranchSkippedException.class, skipped::get));
+        assertEquals("branch-1", thrown.getBranchName());
     }
 
     // ===== Context hierarchy =====

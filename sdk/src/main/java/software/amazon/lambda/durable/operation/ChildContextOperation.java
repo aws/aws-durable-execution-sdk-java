@@ -27,6 +27,7 @@ import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.MapIterationFailedException;
 import software.amazon.lambda.durable.exception.ParallelBranchFailedException;
+import software.amazon.lambda.durable.exception.ParallelBranchSkippedException;
 import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -53,6 +54,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
     private final Function<DurableContext, T> function;
     private final AtomicBoolean replayChildren = new AtomicBoolean(false);
+    private final AtomicBoolean skipped = new AtomicBoolean(false);
     private final AtomicReference<DeserializedOperationResult<T>> cachedOperationResult = new AtomicReference<>(null);
 
     // child context for RunInChildContext
@@ -224,8 +226,25 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
                 OperationUpdate.builder().action(OperationAction.FAIL).error(errorObject));
     }
 
+    /**
+     * Completes this branch as skipped so {@link #get()} throws {@link ParallelBranchSkippedException} instead of
+     * waiting for an operation that will never be started or checkpointed.
+     */
+    void completeAsSkipped() {
+        skipped.set(true);
+        markAlreadyCompleted();
+    }
+
+    boolean isSkipped() {
+        return skipped.get();
+    }
+
     @Override
     public T get() {
+        waitForCompletionFuture();
+        if (skipped.get()) {
+            throw new ParallelBranchSkippedException(getName());
+        }
         var op = waitForOperationCompletion();
         if (cachedOperationResult.get() != null) {
             // we have a result, just return it directly
