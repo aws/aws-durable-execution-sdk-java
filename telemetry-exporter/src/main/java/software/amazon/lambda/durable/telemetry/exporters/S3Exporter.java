@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.telemetry.exporters;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -14,9 +15,11 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * overwrite the same object). Emits the canonical {@code operations}-array wire shape. Mirrors the JS
  * {@code S3Exporter}.
  */
+@Experimental
 public final class S3Exporter implements TelemetryExporter {
 
     /** How to partition objects in S3. */
+    @Experimental
     public enum Partitioning {
         DATE,
         FUNCTION_NAME,

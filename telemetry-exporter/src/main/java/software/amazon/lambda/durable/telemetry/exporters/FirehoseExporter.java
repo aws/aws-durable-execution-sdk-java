@@ -8,6 +8,7 @@ import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.firehose.FirehoseClient;
 import software.amazon.awssdk.services.firehose.model.PutRecordRequest;
 import software.amazon.awssdk.services.firehose.model.Record;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -16,6 +17,7 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * Exports workflow telemetry records to Amazon Data Firehose, one PutRecord per record as a newline-terminated JSON
  * line so concatenated deliveries stay parseable as NDJSON. Requires {@code firehose:PutRecord}.
  */
+@Experimental
 public final class FirehoseExporter implements TelemetryExporter {
     private final String deliveryStreamName;
     private final OperationsFormat operationsFormat;

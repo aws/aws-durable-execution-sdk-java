@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.telemetry;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * A single operation within an execution (step, wait, invoke, callback, or context).
@@ -11,6 +12,7 @@ import java.util.Map;
  * <p>Mirrors the JS {@code OperationRecord} interface field-for-field so the emitted wire JSON is identical. A
  * {@code null} field is treated as <em>absent</em> and omitted from the wire map (distinct from an explicit JSON null).
  */
+@Experimental
 public final class OperationRecord {
     private String id;
     private String name;

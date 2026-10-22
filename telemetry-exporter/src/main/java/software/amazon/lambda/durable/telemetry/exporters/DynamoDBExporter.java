@@ -11,6 +11,7 @@ import java.util.Map;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -20,6 +21,7 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * default sort key ({@code emittedAt}) every export adds a history item; with the sort key disabled each export
  * overwrites the execution's item. Emits the {@code operationsByName} map. Requires {@code dynamodb:PutItem}.
  */
+@Experimental
 public final class DynamoDBExporter implements TelemetryExporter {
     private final String tableName;
     private final String partitionKey;
