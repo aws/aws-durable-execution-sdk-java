@@ -161,6 +161,29 @@ FileExporter.builder().directory("/mnt/efs/durable-execution-telemetry").mode(Fi
 `S3Exporter` writes `{prefix}{partition}{executionName}.json` (IAM: `s3:PutObject`). `CloudWatchLogsExporter` writes
 one event per record to `{logStreamPrefix}YYYY/MM/DD` (IAM: `logs:CreateLogStream`, `logs:PutLogEvents`).
 
+## Error names and causes
+
+Every error in a record (the execution `error`, each `operations[].error`, and each
+`operationsByName.<name>.error`) has this shape, with keys in this order:
+
+```json
+"error": {
+  "name": "<the error's type name, as this SDK reports it>",
+  "message": "<the error's message>",
+  "cause": { "name": "...", "message": "...", "cause": { ... } }
+}
+```
+
+`cause` is present only when the error has one. It comes from `Throwable.getCause()` when a live `Throwable` is
+available, has the same shape, is cut after 16 levels, and stops at a cause that was already visited, so a cycle
+cannot loop. An operation error rebuilt from a checkpoint (`ErrorObject`) has no cause. `includeErrors(false)` removes
+errors together with their causes, and truncation keeps `cause` as part of its error.
+
+Error names are each language's own type names, so they differ across SDKs. For example, a step that throws
+`PaymentError` can be reported as `StepError` in JS, `aws_durable_execution_sdk_python.exceptions.StepError` or
+`PaymentError` in Python, and `StepFailedException` or `PaymentError` in Java. To compare failures across SDKs,
+query per SDK, or query on `message` and the `cause` chain.
+
 ## Design
 
 - **Snapshot-based, not accumulated.** Each record is built directly from the current-invocation
@@ -191,7 +214,8 @@ one event per record to `{logStreamPrefix}YYYY/MM/DD` (IAM: `logs:CreateLogStrea
   the cached input snapshot or any later emission), and a transform that throws omits the field and
   logs the failure rather than silently dropping it or failing the execution.
 - **`includeErrors`** gates **both** the execution-level error and each operation-level error; with
-  `includeErrors(false)` neither is emitted, so a sensitive failure message never reaches a record.
+  `includeErrors(false)` neither is emitted, nor its `cause` chain, so a sensitive failure message never reaches a
+  record.
 - **Non-fatal plugin failures are isolated.** Record construction, snapshotting, transforms,
   truncation and exporter render/export/flush contain and log ordinary failures, including
   `AssertionError` and optional-dependency `NoClassDefFoundError`. `VirtualMachineError` and

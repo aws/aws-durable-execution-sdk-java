@@ -3,6 +3,9 @@
 package software.amazon.lambda.durable.telemetry;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -156,7 +159,33 @@ public final class DurableExecutionTelemetry {
         }
     }
 
+    /** The cause chain written under an error is cut after this many levels. */
+    static final int MAX_CAUSE_DEPTH = 16;
+
     static ErrorInfo toErrorInfo(Throwable t) {
+        Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        visited.add(t);
+        return toErrorInfo(t, visited, 0);
+    }
+
+    /**
+     * Converts {@code t} and, recursively, its {@link Throwable#getCause()} chain. An error rebuilt from a checkpointed
+     * {@link ErrorObject} has no live cause, so it is written without one. The chain is cut after
+     * {@link #MAX_CAUSE_DEPTH} levels and stops at a cause already visited (by identity), so a cycle cannot loop.
+     */
+    private static ErrorInfo toErrorInfo(Throwable t, Set<Throwable> visited, int depth) {
+        if (extractErrorObject(t) != null) {
+            return nameAndMessage(t, null);
+        }
+        Throwable next = t.getCause();
+        ErrorInfo cause = null;
+        if (next != null && depth < MAX_CAUSE_DEPTH && visited.add(next)) {
+            cause = toErrorInfo(next, visited, depth + 1);
+        }
+        return nameAndMessage(t, cause);
+    }
+
+    private static ErrorInfo nameAndMessage(Throwable t, ErrorInfo cause) {
         // Operation and execution snapshot errors are exposed wrapped: operation failures as DurableOperationException
         // and unrecoverable execution failures as UnrecoverableDurableExecutionException. The wrapper's own
         // class/message would lose the original checkpointed failure identity. When the checkpointed ErrorObject is
@@ -167,9 +196,9 @@ public final class DurableExecutionTelemetry {
             String name =
                     error.errorType() != null ? error.errorType() : t.getClass().getSimpleName();
             String message = error.errorMessage() != null ? error.errorMessage() : t.getMessage();
-            return new ErrorInfo(name, message);
+            return new ErrorInfo(name, message, cause);
         }
-        return new ErrorInfo(t.getClass().getSimpleName(), t.getMessage());
+        return new ErrorInfo(t.getClass().getSimpleName(), t.getMessage(), cause);
     }
 
     /**
