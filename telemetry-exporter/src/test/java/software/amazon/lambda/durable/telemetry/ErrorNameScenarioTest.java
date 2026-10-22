@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -53,6 +54,13 @@ class ErrorNameScenarioTest {
 
         public PaymentError(String message, Throwable cause) {
             super(message, cause);
+        }
+    }
+
+    /** Second user error type of rows B20 and B21. */
+    public static class FraudError extends RuntimeException {
+        public FraudError(String message) {
+            super(message);
         }
     }
 
@@ -142,11 +150,14 @@ class ErrorNameScenarioTest {
 
     /**
      * The execution error comes from the final record. Each operation's error comes from the latest record that carries
-     * the operation: a completed child context can replay without its nested operations, so in a replayed run a nested
-     * operation is only in the record of the invocation that ran it.
+     * the operation. The final record is checked too, because it is the one a reader of an {@code ON_COMPLETE} export
+     * sees: every operation it carries must have the same name and {@code operationsByName} entry. A live final record
+     * must carry every operation. A replayed final record may omit an operation only when it is nested in a context
+     * that the final record carries as completed: the core replays a completed context from its checkpoint without
+     * running its body, so the final invocation's snapshot has no children for it.
      */
     @SuppressWarnings("unchecked")
-    private static Observed observe(List<DurableExecutionTelemetryRecord> records, List<String> opNames) {
+    private static Observed observe(List<DurableExecutionTelemetryRecord> records, List<String> opNames, Mode mode) {
         var last = records.get(records.size() - 1);
         Map<String, ErrorInfo> ops = new LinkedHashMap<>();
         for (String name : opNames) {
@@ -167,9 +178,45 @@ class ErrorNameScenarioTest {
             assertNotNull(byNameError, "operationsByName." + name + ".error");
             assertEquals(op.error().name(), byNameError.get("name"), "operationsByName == operations[] for " + name);
             assertEquals(op.error().message(), byNameError.get("message"), "byName message for " + name);
+            var inFinal = last.operations().stream()
+                    .filter(o -> name.equals(o.name()) && o.error() != null)
+                    .reduce((a, b) -> b)
+                    .orElse(null);
+            if (inFinal == null) {
+                assertTrue(
+                        mode == Mode.REPLAYED && hasCompletedAncestorInFinal(records, op),
+                        mode + " final record carries operations[" + name + "].error; records: " + describe(records));
+                ops.put(name, op.error());
+                continue;
+            }
+            assertEquals(op.error().name(), inFinal.error().name(), "final record name for " + name);
+            var finalByName = (Map<String, Object>) ((Map<String, Object>)
+                            ((Map<String, Object>) last.toByNameWireMap().get("operationsByName")).get(name))
+                    .get("error");
+            assertEquals(op.error().name(), finalByName.get("name"), "final record operationsByName for " + name);
             ops.put(name, op.error());
         }
         return new Observed(last.error, ops);
+    }
+
+    /** {@code true} when an ancestor context of {@code op} is in the final record with a terminal status. */
+    private static boolean hasCompletedAncestorInFinal(
+            List<DurableExecutionTelemetryRecord> records, OperationRecord op) {
+        Map<String, String> parents = new LinkedHashMap<>();
+        for (var r : records) {
+            for (var o : r.operations()) {
+                parents.putIfAbsent(o.id(), o.parentId());
+            }
+        }
+        var last = records.get(records.size() - 1);
+        var terminal = List.of("SUCCEEDED", "FAILED", "TIMED_OUT", "STOPPED", "CANCELLED");
+        for (String id = op.parentId(); id != null; id = parents.get(id)) {
+            String ancestor = id;
+            if (last.operations().stream().anyMatch(o -> ancestor.equals(o.id()) && terminal.contains(o.status()))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String describe(List<DurableExecutionTelemetryRecord> records) {
@@ -204,16 +251,27 @@ class ErrorNameScenarioTest {
             String expectedOpMessage) {
         Map<Mode, Observed> seen = new LinkedHashMap<>();
         for (Mode mode : Mode.values()) {
-            var obs = observe(run(handler.apply(mode), drive), List.copyOf(expectedOps.keySet()));
+            var obs = observe(run(handler.apply(mode), drive), List.copyOf(expectedOps.keySet()), mode);
             String where = row + " " + mode;
             assertNotNull(obs.execution(), where + " execution error");
-            assertEquals(expectedExecName, obs.execution().name(), where + " execution error.name");
+            if (expectedExecName == null) {
+                // Not applicable in Java; the reason is in EXECUTION_NOT_APPLICABLE.
+                assertTrue(!EXECUTION_NOT_APPLICABLE.getOrDefault(row, "").isEmpty(), row + " needs a reason");
+            } else {
+                assertEquals(expectedExecName, obs.execution().name(), where + " execution error.name");
+            }
             if (expectedExecMessage != null) {
                 assertEquals(expectedExecMessage, obs.execution().message(), where + " execution error.message");
             }
             expectedOps.forEach((name, expected) -> {
                 assertEquals(expected, obs.operations().get(name).name(), where + " " + name + " error.name");
-                if (expectedOpMessage != null) {
+                if (SAME_AS_EXECUTION.equals(expectedOpMessage)) {
+                    assertNotNull(obs.execution().message(), where + " execution error.message");
+                    assertEquals(
+                            obs.execution().message(),
+                            obs.operations().get(name).message(),
+                            where + " " + name + " error.message == execution error.message");
+                } else if (expectedOpMessage != null) {
                     assertEquals(
                             expectedOpMessage,
                             obs.operations().get(name).message(),
@@ -224,7 +282,9 @@ class ErrorNameScenarioTest {
         }
         var live = seen.get(Mode.LIVE);
         var replayed = seen.get(Mode.REPLAYED);
-        assertEquals(live.execution().name(), replayed.execution().name(), row + " live == replayed (execution)");
+        if (expectedExecName != null) {
+            assertEquals(live.execution().name(), replayed.execution().name(), row + " live == replayed (execution)");
+        }
         expectedOps
                 .keySet()
                 .forEach(name -> assertEquals(
@@ -232,6 +292,27 @@ class ErrorNameScenarioTest {
                         replayed.operations().get(name).name(),
                         row + " live == replayed (" + name + ")"));
     }
+
+    /** Expected operation message meaning "equal to the execution error message" (an SDK-generated message). */
+    private static final String SAME_AS_EXECUTION = "<same as execution>";
+
+    /**
+     * Table B execution cells that cannot happen in Java, with the reason. The operation cells of these rows are still
+     * asserted.
+     */
+    private static final Map<String, String> EXECUTION_NOT_APPLICABLE = Map.of(
+            "B5",
+            "Java map returns item failures as data (MapResult.MapError) and does not throw them; no operation error"
+                    + " propagates, the handler throws a new PaymentError, so rule 8 is not exercised",
+            "B6",
+            "same as B5: Java map does not throw item failures",
+            "B20",
+            "same as B5: Java map does not throw item failures, so the SDK never has to choose between the two items"
+                    + " (rule 9)",
+            "B21",
+            "Java parallel returns a ParallelResult of branch statuses and does not throw; only the branch future the"
+                    + " handler calls get() on throws, and it throws that branch's own error, so the SDK never has to"
+                    + " choose between branches (rule 9)");
 
     enum Row {
         B1,
@@ -247,11 +328,15 @@ class ErrorNameScenarioTest {
         B11,
         B12,
         B13,
+        B13b,
         B14,
         B15,
         B16,
         B17,
-        B18
+        B18,
+        B19,
+        B20,
+        B21
     }
 
     @ParameterizedTest
@@ -341,7 +426,7 @@ class ErrorNameScenarioTest {
                         "B5",
                         m -> (in, ctx) -> failure(m, ctx, c -> mapAndRethrow(c, false)),
                         null,
-                        "PaymentError",
+                        null, // execution: not applicable in Java, see EXECUTION_NOT_APPLICABLE
                         MSG,
                         Map.of("fanout-iteration-0", "PaymentError"),
                         MSG);
@@ -350,7 +435,7 @@ class ErrorNameScenarioTest {
                         "B6",
                         m -> (in, ctx) -> failure(m, ctx, c -> mapAndRethrow(c, true)),
                         null,
-                        "PaymentError",
+                        null, // execution: not applicable in Java, see EXECUTION_NOT_APPLICABLE
                         MSG,
                         Map.of("charge", "PaymentError", "fanout-iteration-0", "PaymentError"),
                         MSG);
@@ -464,6 +549,18 @@ class ErrorNameScenarioTest {
                             MSG);
                 }
             }
+            case B13b -> // A callback is failed externally with the explicit type "Error".
+                check(
+                        "B13b",
+                        m -> (in, ctx) -> failure(
+                                m,
+                                ctx,
+                                c -> c.createCallback("cb", String.class).get()),
+                        failCallback("Error"),
+                        "Error",
+                        MSG,
+                        Map.of("cb", "Error"),
+                        MSG);
             case B14 -> // The handler throws PaymentError, which has its own cause TypeError.
                 check(
                         "B14",
@@ -519,9 +616,9 @@ class ErrorNameScenarioTest {
                         }),
                         null,
                         "SerDesException",
-                        null, // SDK-generated serialization message
+                        null, // SDK-generated serialization message, not hard-coded
                         Map.of("encode", "SerDesException"),
-                        null);
+                        SAME_AS_EXECUTION);
             case B18 -> // A class named Payment$Error is thrown from a step.
                 check(
                         "B18",
@@ -539,6 +636,51 @@ class ErrorNameScenarioTest {
                         "Error",
                         MSG,
                         Map.of("charge", "Error"),
+                        MSG);
+            case B19 -> // promise.all over a failing step.
+                Assumptions.abort("B19 not applicable in Java: promise.all is a JS combinator with no Java equivalent");
+            case B20 -> // Two map items fail with the same message: item 0 PaymentError, item 1 FraudError.
+                check(
+                        "B20",
+                        m -> (in, ctx) -> failure(m, ctx, c -> {
+                            var result = c.map("fanout", List.of("a", "b"), String.class, (item, i, mc) -> {
+                                if (i == 0) {
+                                    throw new PaymentError(MSG);
+                                }
+                                throw new FraudError(MSG);
+                            });
+                            assertEquals(
+                                    PaymentError.class.getName(),
+                                    result.getError(0).errorType());
+                            assertEquals(
+                                    FraudError.class.getName(),
+                                    result.getError(1).errorType());
+                            throw new PaymentError(result.getError(0).errorMessage());
+                        }),
+                        null,
+                        null, // execution: not applicable in Java, see EXECUTION_NOT_APPLICABLE
+                        MSG,
+                        Map.of("fanout-iteration-0", "PaymentError", "fanout-iteration-1", "FraudError"),
+                        MSG);
+            case B21 -> // Two parallel branches fail with the same message and different types.
+                check(
+                        "B21",
+                        m -> (in, ctx) -> failure(m, ctx, c -> {
+                            try (var p = c.parallel("par")) {
+                                var pay = p.branch("pay", String.class, bc -> {
+                                    throw new PaymentError(MSG);
+                                });
+                                p.branch("fraud", String.class, bc -> {
+                                    throw new FraudError(MSG);
+                                });
+                                p.get(); // does not throw: branch failures are statuses
+                                return pay.get();
+                            }
+                        }),
+                        null,
+                        null, // execution: not applicable in Java, see EXECUTION_NOT_APPLICABLE
+                        MSG,
+                        Map.of("pay", "PaymentError", "fraud", "FraudError"),
                         MSG);
             default -> fail("unhandled row " + row);
         }
@@ -595,5 +737,52 @@ class ErrorNameScenarioTest {
                 .findFirst()
                 .orElseThrow();
         assertNull(op.error().message(), "no checkpointed error, so no operation message");
+    }
+
+    /**
+     * Invoke timeout and stop are SDK errors, not wrappers (rule 5): the operation and the execution report
+     * {@code InvokeTimedOutException} or {@code InvokeStoppedException}, live and replayed, whatever error type a stop
+     * carries. A timed-out invoke has no checkpointed error, so its operation message is {@code null}; a stopped invoke
+     * keeps the stop error's message.
+     */
+    @ParameterizedTest
+    @EnumSource(Mode.class)
+    void invokeTimeoutAndStopAreSdkErrors(Mode mode) {
+        for (String outcome : List.of("timeout", "stop-states", "stop-user")) {
+            var records = run((in, ctx) -> failure(mode, ctx, c -> c.invoke("callee", "fn", "x", String.class)), r -> {
+                r.run("in");
+                switch (outcome) {
+                    case "timeout" -> r.timeoutChainedInvoke("callee");
+                    case "stop-states" ->
+                        r.stopChainedInvoke(
+                                "callee",
+                                ErrorObject.builder()
+                                        .errorType("States.Stopped")
+                                        .errorMessage(MSG)
+                                        .build());
+                    default ->
+                        r.stopChainedInvoke(
+                                "callee",
+                                ErrorObject.builder()
+                                        .errorType("com.acme.PaymentError")
+                                        .errorMessage(MSG)
+                                        .build());
+                }
+                r.runUntilComplete("in");
+            });
+            var rec = records.get(records.size() - 1);
+            String expected = "timeout".equals(outcome) ? "InvokeTimedOutException" : "InvokeStoppedException";
+            var op = rec.operations().stream()
+                    .filter(o -> "callee".equals(o.name()))
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals(expected, rec.error.name(), outcome + " execution");
+            assertEquals(expected, op.error().name(), outcome + " operation");
+            if ("timeout".equals(outcome)) {
+                assertNull(op.error().message(), "no checkpointed error, so no operation message");
+            } else {
+                assertEquals(MSG, op.error().message(), outcome + " operation message");
+            }
+        }
     }
 }
