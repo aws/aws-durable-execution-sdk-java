@@ -25,6 +25,8 @@ import software.amazon.lambda.durable.exception.CallbackSubmitterException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.InvokeStoppedException;
+import software.amazon.lambda.durable.exception.InvokeTimedOutException;
 import software.amazon.lambda.durable.exception.MapIterationFailedException;
 import software.amazon.lambda.durable.exception.ParallelBranchFailedException;
 import software.amazon.lambda.durable.exception.StepFailedException;
@@ -35,6 +37,7 @@ import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.DeserializedOperationResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -200,7 +203,10 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
         final ErrorObject errorObject;
         if (exception instanceof DurableOperationException opEx) {
-            errorObject = opEx.getErrorObject();
+            // waitForCallback rethrows the callback's own exception, whose error object is the callback's; its context
+            // keeps that same object so a replay that can only read the context reports the same error object.
+            errorObject =
+                    getSubType() == OperationSubType.WAIT_FOR_CALLBACK ? opEx.getErrorObject() : wrappedError(opEx);
         } else {
             errorObject = serializeException(exception);
         }
@@ -245,9 +251,66 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         }
     }
 
+    /**
+     * Returns the error to checkpoint for a context that failed because an SDK operation exception escaped it: the
+     * wrapped (original) error, never the wrapper.
+     *
+     * <p>A wrapper such as {@code StepFailedException} or {@code CallbackFailedException} carries the original error's
+     * {@link ErrorObject}; when that object has a type, it is checkpointed as it is. An SDK error that names the
+     * failure itself (a timed-out callback, a timed-out or stopped invoke), or an exception whose {@link ErrorObject}
+     * is missing or has no type, is checkpointed under its own class name, keeping the original message, data and stack
+     * trace when there are any. The context checkpoint then always says which error failed it, so a reader of the
+     * checkpoint never has to look at the context's children, which the backend can prune once the context completes.
+     */
+    static ErrorObject wrappedError(DurableOperationException exception) {
+        var original = exception.getErrorObject();
+        boolean namedBySdk = exception instanceof CallbackTimeoutException
+                || exception instanceof InvokeTimedOutException
+                || exception instanceof InvokeStoppedException;
+        if (!namedBySdk && original != null && !isBlankType(original.errorType())) {
+            return original;
+        }
+        var message =
+                original != null && original.errorMessage() != null ? original.errorMessage() : exception.getMessage();
+        var stackTrace = original != null
+                        && original.stackTrace() != null
+                        && !original.stackTrace().isEmpty()
+                ? original.stackTrace()
+                : ExceptionHelper.serializeStackTrace(exception.getStackTrace());
+        return ErrorObject.builder()
+                .errorType(exception.getClass().getName())
+                .errorMessage(message)
+                .errorData(original != null ? original.errorData() : null)
+                .stackTrace(stackTrace)
+                .build();
+    }
+
+    /**
+     * {@code true} for a missing type or one made only of ASCII whitespace (space, tab, line feed, carriage return,
+     * form feed, vertical tab).
+     */
+    private static boolean isBlankType(String type) {
+        return type == null || type.chars().allMatch(c -> c == ' ' || (c >= '\t' && c <= '\r'));
+    }
+
+    /** {@code true} when {@code errorType} names an SDK operation exception, which is never rebuilt from error data. */
+    private static boolean isSdkOperationException(String errorType) {
+        if (errorType == null || !errorType.startsWith(DurableOperationException.class.getPackageName() + ".")) {
+            return false;
+        }
+        try {
+            return DurableOperationException.class.isAssignableFrom(Class.forName(errorType));
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
     private Throwable translateException(Operation op, ErrorObject errorObject) {
-        // Attempt to reconstruct and throw the original exception
-        Throwable original = deserializeException(errorObject);
+        // Attempt to reconstruct and throw the original exception. An SDK operation exception recorded by
+        // wrappedError is not rebuilt from its data: the context reports it through its own failure type below.
+        Throwable original = errorObject != null && isSdkOperationException(errorObject.errorType())
+                ? null
+                : deserializeException(errorObject);
         if (original != null) {
             return original;
         }
