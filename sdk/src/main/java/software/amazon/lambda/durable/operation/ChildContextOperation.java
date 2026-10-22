@@ -25,6 +25,7 @@ import software.amazon.lambda.durable.exception.CallbackSubmitterException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.InvokeFailedException;
 import software.amazon.lambda.durable.exception.InvokeStoppedException;
 import software.amazon.lambda.durable.exception.InvokeTimedOutException;
 import software.amazon.lambda.durable.exception.MapIterationFailedException;
@@ -256,18 +257,22 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
      * wrapped (original) error, never the wrapper.
      *
      * <p>A wrapper such as {@code StepFailedException} or {@code CallbackFailedException} carries the original error's
-     * {@link ErrorObject}; when that object has a type, it is checkpointed as it is. An SDK error that names the
-     * failure itself (a timed-out callback, a timed-out or stopped invoke), or an exception whose {@link ErrorObject}
-     * is missing or has no type, is checkpointed under its own class name, keeping the original message, data and stack
-     * trace when there are any. The context checkpoint then always says which error failed it, so a reader of the
-     * checkpoint never has to look at the context's children, which the backend can prune once the context completes.
+     * {@link ErrorObject}, which is checkpointed as it is. An SDK error that names the failure itself (a timed-out
+     * callback, a timed-out or stopped invoke), and a callback or invoke failure whose error has no type, is
+     * checkpointed under its own class name instead, keeping the original message, data and stack trace when there are
+     * any: its {@link ErrorObject} is missing or is the stop error, so it does not say which error failed the context.
+     * The context checkpoint then says which error failed it without its children, which the backend can prune once the
+     * context completes. Any other operation exception keeps its error object as it is, including a missing one.
      */
     static ErrorObject wrappedError(DurableOperationException exception) {
         var original = exception.getErrorObject();
         boolean namedBySdk = exception instanceof CallbackTimeoutException
                 || exception instanceof InvokeTimedOutException
                 || exception instanceof InvokeStoppedException;
-        if (!namedBySdk && original != null && !isBlankType(original.errorType())) {
+        boolean typelessFailure = (exception.getClass() == CallbackFailedException.class
+                        || exception.getClass() == InvokeFailedException.class)
+                && (original == null || isBlankType(original.errorType()));
+        if (!namedBySdk && !typelessFailure) {
             return original;
         }
         var message =
