@@ -53,8 +53,8 @@ class ErrorNameVectorsTest {
     @Test
     void vectorFileHasTheSharedShape() throws IOException {
         JsonNode root = load();
-        assertEquals(1, root.get("version").asInt());
-        assertTrue(root.get("reduce").size() >= 15, "all Table A rows present");
+        assertEquals(2, root.get("version").asInt(), "spec version 2 vectors");
+        assertTrue(root.get("reduce").size() >= 20, "all Table A rows present, A1 to A17");
     }
 
     @ParameterizedTest(name = "{0}: [{1}] -> [{2}]")
@@ -66,6 +66,11 @@ class ErrorNameVectorsTest {
     /**
      * The same vectors through the record path: a checkpointed operation error whose {@code errorType} is the input.
      * The operation type is one with no SDK failure class of its own, so a blank type falls through to Table A.
+     *
+     * <p>A12 and A13 hold on this path only for operation types without a failure class. For a STEP, CALLBACK,
+     * CHAINED_INVOKE or CONTEXT operation, a blank type reports the SDK failure class the core throws for it instead,
+     * for example {@code StepFailedException} or {@code CallbackFailedException} (Table B, B13), so the operation and
+     * the execution agree.
      */
     @ParameterizedTest(name = "{0}: checkpointed [{1}] -> [{2}]")
     @MethodSource("reduceVectors")
