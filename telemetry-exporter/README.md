@@ -243,23 +243,37 @@ this rule. The rule applies to the execution-level `error`, every `operations[].
 `operationsByName.<name>.error`.
 
 1. A record names the error that caused the failure. A wrapper error that the SDK added is never
-   the name.
+   the name, except in the bounded cases of rules 3 and 9.
 2. The SDK unwraps an error only when the error's type is one of the SDK's own wrapper types. A
    user error is never unwrapped, even if it has a cause.
-3. Unwrapping follows the whole chain of SDK wrappers, up to a depth of 16. A cycle stops the walk.
+3. Unwrapping follows the chain of SDK wrappers. The depth counts unwrap steps, one per wrapper
+   passed, not levels in the operation tree. At most 16 unwraps happen. If the error reached after
+   16 unwraps is still a wrapper, its name is reported. If the chain reaches an error it has
+   already visited, the walk stops and the last error visited before the repeat is reported.
 4. If the chain ends at a user error, the name is that error's type name.
 5. If the chain ends at an SDK error that is not a wrapper, the name is that SDK error's simple
    class name. A callback timeout is an example.
 6. A type name that is a qualified string is reduced to its last segment after any `.` or `$`. If
-   that segment is empty, the string is kept as it is.
+   that segment is empty, the string is kept as it is. A missing type, or a type made only of blank
+   characters, is `Error`. The blank characters are the six ASCII whitespace characters: space,
+   `\t`, `\n`, `\r`, `\f` and `\v`. No other character counts as blank, and names are never
+   trimmed.
 7. A failure gets the same name whether the record is built live or from a replayed checkpoint.
 8. When the execution fails because an operation's error propagated, the execution `error.name`
    equals that operation's `error.name`.
+9. If the SDK cannot tell which of several failures caused a wrapper, it does not guess. It
+   reports the wrapper's name. Two map items or parallel branches that fail with the same message
+   but different types are an example.
+
+A callback that is failed externally with an explicit `ErrorType` is named after that type, after
+the reduction of rule 6. This includes the type `"Error"`, which reports `Error`. Only a missing or
+blank type reports the SDK callback-failure class.
 
 User error types have the same name in every SDK, because the user names them. SDK error types
 keep each language's own class name. For example, a callback timeout is `CallbackTimeoutError` in
-JS and Python and `CallbackTimeoutException` in Java. Every SDK name for a timeout contains
-`Timeout`, so a `/Timeout/` query keeps working.
+JS and Python and `CallbackTimeoutException` in Java. Every SDK name for a callback timeout
+contains `Timeout`. An invoke timeout does not always: Java names it `InvokeTimedOutException`, so
+a `/Timeout/` query that should also match invoke timeouts needs `/Timeout|TimedOut/`.
 
 How the Java exporter applies it:
 
@@ -267,16 +281,42 @@ How the Java exporter applies it:
   replayed ones, so both give the same name. `com.acme.Outer$PaymentError` gives `PaymentError`;
   a top-level class named `Payment$Error` gives `Error`; a local class `LocalError` declared in
   `pkg.Foo` (binary name `pkg.Foo$1LocalError`) gives `1LocalError`; an anonymous class gives its
-  last segment, for example `1`. The string is not trimmed. A missing, empty or blank type gives
-  `Error`. A string that ends with a separator (`trailing.`, `Outer$`) is kept as it is.
-- SDK wrappers are the subclasses of `DurableOperationException` and
-  `UnrecoverableDurableExecutionException` declared in `software.amazon.lambda.durable.exception`.
-  A user exception that subclasses one of them is not a wrapper and reports its own name.
-  `CallbackTimeoutException` is never unwrapped.
+  last segment, for example `1`. A string that ends with a separator (`trailing.`, `Outer$`) is
+  kept as it is. U+00A0, U+FEFF, U+001C and U+2003 are not blank, so a type made of them is kept.
+- A hidden class's name ends in `/0x…`, a suffix that changes on every JVM start. The name is cut
+  at the first `/` before rule 6, live and from the checkpoint, so `pkg.Gen$HiddenErr/0x…` gives
+  `HiddenErr`.
+- The SDK wrappers are an explicit list, matched on the exact runtime class:
+  `DurableOperationException`, `UnrecoverableDurableExecutionException`, `StepException`,
+  `CallbackException`, `InvokeException`, `StepFailedException`, `CallbackFailedException`,
+  `CallbackSubmitterException`, `ChildContextFailedException`, `InvokeFailedException`,
+  `MapIterationFailedException`, `ParallelBranchFailedException` and
+  `WaitForConditionFailedException`. A subclass of one of them, such as a user exception, is not a
+  wrapper and reports its own name. Every other class in `software.amazon.lambda.durable.exception`
+  is an SDK error that reports its simple class name: `CallbackTimeoutException`,
+  `InvokeTimedOutException`, `InvokeStoppedException`, `StepInterruptedException`,
+  `IllegalDurableOperationException`, `NonDeterministicExecutionException`, `SerDesException` and
+  `DurableExecutionException`.
+- A timed-out callback, and a timed-out or stopped invoke, are SDK errors like the callback
+  timeout. The operation and the execution report `CallbackTimeoutException`,
+  `InvokeTimedOutException` or `InvokeStoppedException`, whatever error type the checkpoint
+  carries. A stopped invoke is not named after its stop error: a stop with `errorType`
+  `States.Stopped` or `com.acme.PaymentError` reports `InvokeStoppedException`.
+- After 16 unwraps, or at a cycle, the reported wrapper's name is its checkpointed `errorType`,
+  reduced; with a blank type it is the SDK failure class below.
 - When an operation failed with no error type (for example a callback failed externally without an
-  `errorType`, or a callback timed out), the operation and the execution report the SDK exception
-  the core throws for it, such as `CallbackFailedException` or `CallbackTimeoutException`. If the
-  checkpoint has no error at all, the operation error has that name and a `null` message.
+  `errorType`), the operation and the execution report the SDK exception the core throws for it,
+  such as `CallbackFailedException`.
+- When the checkpoint has no error at all, the operation error has the SDK exception's name and a
+  `null` message, because there is no original message to keep. This is the case for a timed-out
+  callback and a timed-out invoke in the local test runner, and for a stopped invoke stopped
+  without an error. Before this change such operations had no `error` object; a reader that tests
+  `error != null` now sees one with `"message": null`. The execution error of a timed-out callback
+  has the message `Callback timed out: <callbackId>`, built by `CallbackTimeoutException`; it is not
+  checkpointed, and the JS and Python exporters report `Callback timed out` without the id.
+- Java `map` and `parallel` return item and branch failures as data and do not throw them, so the
+  SDK never has to choose between several failures (rule 9). The execution error is whatever the
+  handler throws.
 - Non-class type strings are reduced too: an external callback failure with `errorType`
   `States.Timeout` reports `Timeout`.
 
