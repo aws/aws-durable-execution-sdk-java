@@ -61,6 +61,28 @@ at first export with a message naming the artifact; the plugin logs it and conti
 </dependency>
 ```
 
+### LambdaLogExporter
+
+Writes one line per record to `System.out`, in the Lambda JSON log envelope:
+
+```json
+{"timestamp":"2026-10-21T08:00:00.000Z","level":"INFO","message":"<compact record JSON>"}
+```
+
+`timestamp` is UTC ISO-8601 with exactly three fraction digits. The keys appear in that order. The
+[Lambda Java logging docs](https://docs.aws.amazon.com/lambda/latest/dg/java-logging.html) and the
+[Lambda log format docs](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-cloudwatchlogs-logformat.html)
+list `LambdaLogger` and Log4j2 as the Java methods that Lambda captures as structured JSON, so `System.out` is not
+wrapped and the exporter writes the envelope itself. Lambda does not double-encode logs that are already JSON, so the
+line reaches CloudWatch Logs as written.
+
+The size limit bounds the printed line, envelope included. `message` is the record JSON escaped again, so a record
+with many `"` or `\` characters can grow to about twice its size. When the line is over the limit, the record is
+truncated again against the escaped envelope until the line fits.
+
+Lines have `"level":"INFO"`. With the JSON log format and an application log level of `WARN` or above, Lambda drops
+them.
+
 ### DynamoDBExporter
 
 Table keyed by `pk` (string), optionally with sort key `sk`. IAM: `dynamodb:PutItem`.
