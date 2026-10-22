@@ -263,9 +263,17 @@ this rule. The rule applies to the execution-level `error`, every `operations[].
 7. A failure gets the same name whether the record is built live or from a replayed checkpoint.
 8. When the execution fails because an operation's error propagated, the execution `error.name`
    equals that operation's `error.name`.
-9. If the SDK cannot tell which of several failures caused a wrapper, it does not guess. It
-   reports the wrapper's name. Two map items or parallel branches that fail with the same message
-   but different types are an example.
+9. If a checkpoint holds only a wrapper type, which an older SDK can write, the name is that
+   wrapper's name. The exporter never guesses a cause from other operations.
+
+The core SDK checkpoints the wrapped error, not the wrapper. When a child context, map item or
+parallel branch fails because an SDK wrapper error escaped it, the Java SDK writes the original
+error's `ErrorType`, `ErrorMessage`, `ErrorData` and `StackTrace` into that context's checkpoint.
+An SDK error that names the failure itself (a timed-out callback, a timed-out or stopped invoke) is
+written under its own class name. A `waitForCallback` context keeps the callback's own error. So
+the exporter names an operation by reducing its own `ErrorType` (rule 6) and names the execution
+by unwrapping its error's cause chain (rules 2 to 5). It keeps no matching by message, timestamp or
+tree position.
 
 A callback that is failed externally with an explicit `ErrorType` is named after that type, after
 the reduction of rule 6. This includes the type `"Error"`, which reports `Error`. Only a missing or
@@ -304,12 +312,16 @@ How the Java exporter applies it:
   timeout. The operation and the execution report `CallbackTimeoutException`,
   `InvokeTimedOutException` or `InvokeStoppedException`, whatever error type the checkpoint
   carries. A stopped invoke is not named after its stop error: a stop with `errorType`
-  `States.Stopped` or `com.acme.PaymentError` reports `InvokeStoppedException`.
+  `States.Stopped` or `com.acme.PaymentError` reports `InvokeStoppedException`. Inside a child
+  context the core checkpoints that SDK error as the context's error, so the invoke, every
+  enclosing context and the execution report the same name, live and replayed.
 - After 16 unwraps, or at a cycle, the reported wrapper's name is its checkpointed `errorType`,
   reduced; with a blank type it is the SDK failure class below.
-- When an operation failed with no error type (for example a callback failed externally without an
-  `errorType`), the operation and the execution report the SDK exception the core throws for it,
-  such as `CallbackFailedException`.
+- When a callback or invoke failed with no error type (for example a callback failed externally
+  without an `errorType`), the operation and the execution report the SDK exception the core throws
+  for it, such as `CallbackFailedException`. A failed step or context always has a type in its
+  checkpoint. A context checkpoint written by an older SDK without one reports the wrapper's name
+  for the execution and no operation error (rule 9).
 - When the checkpoint has no error at all, the operation error has the SDK exception's name and a
   `null` message, because there is no original message to keep. This is the case for a timed-out
   callback and a timed-out invoke in the local test runner, and for a stopped invoke stopped
@@ -317,9 +329,10 @@ How the Java exporter applies it:
   `error != null` now sees one with `"message": null`. The execution error of a timed-out callback
   has the message `Callback timed out: <callbackId>`, built by `CallbackTimeoutException`; it is not
   checkpointed, and the JS and Python exporters report `Callback timed out` without the id.
-- Java `map` and `parallel` return item and branch failures as data and do not throw them, so the
-  SDK never has to choose between several failures (rule 9). The execution error is whatever the
-  handler throws.
+- Java `map` and `parallel` return item and branch failures as data and do not throw them. Each
+  item and branch is named after its own type. For `parallel` the execution error is the error of
+  the branch whose future the handler calls `get()` on (Table B, B21); `map` has no `throwIfError`,
+  so B5, B6 and B20 have no propagated execution error in Java.
 - Non-class type strings are reduced too: an external callback failure with `errorType`
   `States.Timeout` reports `Timeout`.
 

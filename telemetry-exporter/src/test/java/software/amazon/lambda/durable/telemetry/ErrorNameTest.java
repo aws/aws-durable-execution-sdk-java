@@ -464,8 +464,8 @@ class ErrorNameTest {
     }
 
     /**
-     * R2 (Java only): a hidden class's name ends in {@code /0x…}, which changes on every JVM start. The name is cut at
-     * the first {@code '/'} before the reduction, live and from the checkpoint.
+     * R2 (Java only): a hidden class's name ends in {@code /0x…}, which changes on every JVM start. Only that trailing
+     * {@code /0x<hex>} is removed before the reduction, live and from the checkpoint.
      */
     @Test
     void hiddenClassNameDropsTheAddressSuffix() throws Throwable {
@@ -550,12 +550,6 @@ class ErrorNameTest {
     @Test
     void sdkFailureNamesMatchTheCoreExceptions() {
         assertEquals(
-                "StepFailedException",
-                DurableExecutionTelemetry.sdkFailureName("STEP", "Step", OperationStatus.FAILED));
-        assertEquals(
-                "WaitForConditionFailedException",
-                DurableExecutionTelemetry.sdkFailureName("STEP", "WaitForCondition", OperationStatus.FAILED));
-        assertEquals(
                 "CallbackFailedException",
                 DurableExecutionTelemetry.sdkFailureName("CALLBACK", "Callback", OperationStatus.FAILED));
         assertEquals(
@@ -570,17 +564,11 @@ class ErrorNameTest {
         assertEquals(
                 "InvokeStoppedException",
                 DurableExecutionTelemetry.sdkFailureName("CHAINED_INVOKE", "ChainedInvoke", OperationStatus.STOPPED));
-        assertEquals(
-                "MapIterationFailedException",
-                DurableExecutionTelemetry.sdkFailureName("CONTEXT", "MapIteration", OperationStatus.FAILED));
-        assertEquals(
-                "ParallelBranchFailedException",
-                DurableExecutionTelemetry.sdkFailureName("CONTEXT", "ParallelBranch", OperationStatus.FAILED));
-        assertEquals(
-                "ChildContextFailedException",
-                DurableExecutionTelemetry.sdkFailureName("CONTEXT", "RunInChildContext", OperationStatus.FAILED));
-        assertNull(DurableExecutionTelemetry.sdkFailureName("CONTEXT", "WaitForCallback", OperationStatus.FAILED));
-        assertNull(DurableExecutionTelemetry.sdkFailureName("STEP", "Step", OperationStatus.SUCCEEDED));
+        // A failed step or context always checkpoints its wrapped error's type, so there is no fallback for them.
+        assertNull(DurableExecutionTelemetry.sdkFailureName("STEP", "Step", OperationStatus.FAILED));
+        assertNull(DurableExecutionTelemetry.sdkFailureName("CONTEXT", "RunInChildContext", OperationStatus.FAILED));
+        assertNull(DurableExecutionTelemetry.sdkFailureName("CONTEXT", "MapIteration", OperationStatus.FAILED));
+        assertNull(DurableExecutionTelemetry.sdkFailureName("CALLBACK", "Callback", OperationStatus.SUCCEEDED));
         assertNull(DurableExecutionTelemetry.sdkFailureName("WAIT", "Wait", OperationStatus.FAILED));
         assertNull(DurableExecutionTelemetry.sdkFailureName(null, null, null));
     }

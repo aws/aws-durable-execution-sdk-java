@@ -6,9 +6,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Set;
-import java.util.regex.Pattern;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -36,7 +36,6 @@ import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
-import software.amazon.lambda.durable.model.OperationSubType;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -350,21 +349,16 @@ public final class DurableExecutionTelemetry {
     }
 
     /**
-     * Returns the simple name of the SDK exception the core throws when an operation of this type, sub-type and status
-     * fails with no reconstructable user error, or {@code null} when there is none. Used when the checkpoint carries no
-     * error type, so an operation record and the execution error it propagates to get the same name.
+     * Returns the simple name of the SDK exception the core throws for a callback or invoke that failed, timed out or
+     * was stopped with no error type: a callback or invoke caller can leave the type out, and a timeout carries no
+     * error. {@code null} for any other operation. A failed step or context always checkpoints a type, because the core
+     * checkpoints the wrapped error of a failed context; an older SDK's checkpoint without one reports no name.
      */
     static String sdkFailureName(String type, String subType, OperationStatus status) {
         if (type == null || status == null) {
             return null;
         }
         Class<?> failure = switch (type) {
-            case "STEP" ->
-                status != OperationStatus.FAILED
-                        ? null
-                        : OperationSubType.WAIT_FOR_CONDITION.getValue().equals(subType)
-                                ? WaitForConditionFailedException.class
-                                : StepFailedException.class;
             case "CALLBACK" ->
                 switch (status) {
                     case FAILED -> CallbackFailedException.class;
@@ -378,24 +372,9 @@ public final class DurableExecutionTelemetry {
                     case STOPPED -> InvokeStoppedException.class;
                     default -> null;
                 };
-            case "CONTEXT" -> status != OperationStatus.FAILED ? null : contextFailure(subType);
             default -> null;
         };
         return failure == null ? null : failure.getSimpleName();
-    }
-
-    private static Class<?> contextFailure(String subType) {
-        if (OperationSubType.MAP_ITERATION.getValue().equals(subType)) {
-            return MapIterationFailedException.class;
-        }
-        if (OperationSubType.PARALLEL_BRANCH.getValue().equals(subType)) {
-            return ParallelBranchFailedException.class;
-        }
-        if (OperationSubType.RUN_IN_CHILD_CONTEXT.getValue().equals(subType)
-                || OperationSubType.WITH_RETRY.getValue().equals(subType)) {
-            return ChildContextFailedException.class;
-        }
-        return null;
     }
 
     /** The address suffix of a hidden class's {@link Class#getName()}, which changes on every JVM start. */

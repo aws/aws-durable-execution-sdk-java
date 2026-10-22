@@ -307,12 +307,8 @@ class ErrorNameScenarioTest {
             "B6",
             "same as B5: Java map does not throw item failures",
             "B20",
-            "same as B5: Java map does not throw item failures, so the SDK never has to choose between the two items"
-                    + " (rule 9)",
-            "B21",
-            "Java parallel returns a ParallelResult of branch statuses and does not throw; only the branch future the"
-                    + " handler calls get() on throws, and it throws that branch's own error, so the SDK never has to"
-                    + " choose between branches (rule 9)");
+            "same as B5: Java map does not throw item failures and has no throwIfError, so no item's error propagates;"
+                    + " each item's own type is still asserted");
 
     enum Row {
         B1,
@@ -662,7 +658,7 @@ class ErrorNameScenarioTest {
                         MSG,
                         Map.of("fanout-iteration-0", "PaymentError", "fanout-iteration-1", "FraudError"),
                         MSG);
-            case B21 -> // Two parallel branches fail with the same message and different types.
+            case B21 -> // Two parallel branches fail like B20; the execution names the branch error that propagated.
                 check(
                         "B21",
                         m -> (in, ctx) -> failure(m, ctx, c -> {
@@ -678,7 +674,9 @@ class ErrorNameScenarioTest {
                             }
                         }),
                         null,
-                        null, // execution: not applicable in Java, see EXECUTION_NOT_APPLICABLE
+                        // Java parallel does not throw; the error that propagates is the one of the branch whose
+                        // future the handler calls get() on.
+                        "PaymentError",
                         MSG,
                         Map.of("pay", "PaymentError", "fraud", "FraudError"),
                         MSG);
@@ -782,6 +780,58 @@ class ErrorNameScenarioTest {
                 assertNull(op.error().message(), "no checkpointed error, so no operation message");
             } else {
                 assertEquals(MSG, op.error().message(), outcome + " operation message");
+            }
+        }
+    }
+
+    /**
+     * An invoke that is stopped or times out inside a child context: the invoke, the enclosing context and the
+     * execution report the same SDK error name, live and replayed, whatever error type a stop carries. The core
+     * checkpoints the SDK error, not the stop error's type, as the context's error. Nested two contexts deep as well.
+     */
+    @ParameterizedTest
+    @EnumSource(Mode.class)
+    void stoppedOrTimedOutInvokeInsideAChildHasOneName(Mode mode) {
+        for (boolean nested : new boolean[] {false, true}) {
+            for (String outcome : List.of("timeout", "stop-states", "stop-user")) {
+                String row = (nested ? "nested " : "") + outcome + " " + mode;
+                Function<DurableContext, String> invokeInChild = c ->
+                        c.runInChildContext("child", String.class, cc -> cc.invoke("callee", "fn", "x", String.class));
+                var records = run(
+                        (in, ctx) -> failure(
+                                mode,
+                                ctx,
+                                nested
+                                        ? c -> c.runInChildContext("outer", String.class, invokeInChild::apply)
+                                        : invokeInChild),
+                        r -> {
+                            r.run("in");
+                            switch (outcome) {
+                                case "timeout" -> r.timeoutChainedInvoke("callee");
+                                case "stop-states" ->
+                                    r.stopChainedInvoke(
+                                            "callee",
+                                            ErrorObject.builder()
+                                                    .errorType("States.Stopped")
+                                                    .errorMessage(MSG)
+                                                    .build());
+                                default ->
+                                    r.stopChainedInvoke(
+                                            "callee",
+                                            ErrorObject.builder()
+                                                    .errorType("com.acme.PaymentError")
+                                                    .errorMessage(MSG)
+                                                    .build());
+                            }
+                            r.runUntilComplete("in");
+                        });
+                String expected = "timeout".equals(outcome) ? "InvokeTimedOutException" : "InvokeStoppedException";
+                var names = nested ? List.of("callee", "child", "outer") : List.of("callee", "child");
+                var obs = observe(records, names, mode);
+                assertEquals(expected, obs.execution().name(), row + " execution");
+                for (String name : names) {
+                    assertEquals(expected, obs.operations().get(name).name(), row + " " + name);
+                }
             }
         }
     }
