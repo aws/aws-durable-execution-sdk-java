@@ -24,14 +24,18 @@ import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
  * Error gate. {@code ContentConfig.includeErrors(false)} suppresses every operation-level error — in the canonical
  * {@code operations} array rendering and the {@code operationsByName} rendering — and keeps the execution-level
  * {@code error}, matching the JS exporter.
+ *
+ * <p>This is intended: {@code includeErrors(false)} is not a privacy control for the execution error. Its message is
+ * emitted whatever the setting, so it must not carry secrets (see the {@link ContentConfig} documentation). Earlier
+ * releases also suppressed the execution error.
  */
 class ErrorPrivacyGateTest {
 
     private static final String ARN =
             "arn:aws:lambda:us-west-2:1:function:f:$LATEST/durable-execution/exec-1/invocation-1";
     private static final Instant START = Instant.parse("2026-08-05T00:00:00Z");
-    private static final String EXEC_SECRET = "exec-secret-ssn-123-45-6789";
-    private static final String OP_SECRET = "op-secret-token-abcdef";
+    private static final String EXEC_MESSAGE = "execution failed: card declined";
+    private static final String OP_MESSAGE = "operation failed: token rejected";
 
     private static final class CapturingExporter implements TelemetryExporter {
         final List<DurableExecutionTelemetryRecord> records = new ArrayList<>();
@@ -57,7 +61,7 @@ class ErrorPrivacyGateTest {
                         OperationStatus.FAILED,
                         1,
                         false,
-                        new RuntimeException(OP_SECRET),
+                        new RuntimeException(OP_MESSAGE),
                         null));
         return m;
     }
@@ -80,7 +84,7 @@ class ErrorPrivacyGateTest {
                 START,
                 failingOp(),
                 InvocationStatus.FAILED,
-                new RuntimeException(EXEC_SECRET),
+                new RuntimeException(EXEC_MESSAGE),
                 "in",
                 null));
         assertEquals(1, exporter.records.size());
@@ -88,22 +92,26 @@ class ErrorPrivacyGateTest {
     }
 
     @Test
-    void includeErrorsFalseDropsOperationErrorsAndKeepsExecutionError() {
+    void includeErrorsFalseDropsOnlyOperationErrorsAndStillEmitsTheExecutionErrorMessage() {
         var exporter = new CapturingExporter();
         var rec = runFailedExecution(false, exporter);
 
         assertEquals("FAILED", rec.status());
         assertNotNull(rec.error, "execution-level error kept with includeErrors:false (as in JS)");
         assertEquals("RuntimeException", rec.error.name());
-        assertEquals(EXEC_SECRET, rec.error.message());
+        assertEquals(EXEC_MESSAGE, rec.error.message());
         assertNull(rec.operations().get(0).error(), "operation-level error suppressed by includeErrors:false");
 
         String arrayJson = Json.stringify(rec.toWireMap());
         String byNameJson = Json.stringify(rec.toByNameWireMap());
-        assertTrue(arrayJson.contains(EXEC_SECRET), "execution error in the operations-array JSON");
-        assertFalse(arrayJson.contains(OP_SECRET), "no operation error in the operations-array JSON");
-        assertTrue(byNameJson.contains(EXEC_SECRET), "execution error in the operationsByName JSON");
-        assertFalse(byNameJson.contains(OP_SECRET), "no operation error in the operationsByName JSON");
+        assertTrue(
+                arrayJson.contains(EXEC_MESSAGE),
+                "execution error message emitted in the operations-array JSON despite includeErrors:false");
+        assertFalse(arrayJson.contains(OP_MESSAGE), "no operation error in the operations-array JSON");
+        assertTrue(
+                byNameJson.contains(EXEC_MESSAGE),
+                "execution error message emitted in the operationsByName JSON despite includeErrors:false");
+        assertFalse(byNameJson.contains(OP_MESSAGE), "no operation error in the operationsByName JSON");
         @SuppressWarnings("unchecked")
         var byName = (Map<String, Object>) rec.toByNameWireMap().get("operationsByName");
         @SuppressWarnings("unchecked")
@@ -112,13 +120,13 @@ class ErrorPrivacyGateTest {
     }
 
     @Test
-    void includeErrorsTrueKeepsBothErrors() {
+    void includeErrorsTrueEmitsExecutionAndOperationErrors() {
         var exporter = new CapturingExporter();
         var rec = runFailedExecution(true, exporter);
 
         assertNotNull(rec.error, "execution-level error present when includeErrors:true");
-        assertEquals(EXEC_SECRET, rec.error.message());
+        assertEquals(EXEC_MESSAGE, rec.error.message());
         assertNotNull(rec.operations().get(0).error(), "operation-level error present when includeErrors:true");
-        assertEquals(OP_SECRET, rec.operations().get(0).error().message());
+        assertEquals(OP_MESSAGE, rec.operations().get(0).error().message());
     }
 }

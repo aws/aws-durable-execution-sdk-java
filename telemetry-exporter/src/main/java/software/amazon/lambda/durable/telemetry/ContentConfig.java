@@ -12,10 +12,18 @@ import software.amazon.lambda.durable.annotations.Experimental;
  *
  * <p>Mirrors the JS {@code ContentConfig}. {@code input}/{@code output} may be included as-is, excluded, or
  * transformed; all three are honored — the plugin reads execution input from {@code InvocationInfo.executionInput()}
- * and output from {@code InvocationEndInfo.executionResult()}. {@code includeErrors} gates only the per-operation
- * errors, as in JS: with {@code includeErrors(false)} operation errors are omitted and the execution-level error is
- * kept. Per-operation result opt-in is honored via {@link OperationOverride#withResult} (see
- * {@code OperationChangeItemInfo.result()}).
+ * and output from {@code InvocationEndInfo.executionResult()}. Per-operation result opt-in is honored via
+ * {@link OperationOverride#withResult} (see {@code OperationChangeItemInfo.result()}).
+ *
+ * <p><b>{@code includeErrors} gates only the per-operation errors</b> ({@code operations[].error} and
+ * {@code operationsByName.<name>.error}), as in the JS exporter. With {@code includeErrors(false)} the
+ * <em>execution-level</em> {@code error}, including its message, is still emitted on every FAILED record. In Java the
+ * execution error is usually the failed operation's own exception rethrown, so its message is usually the operation's
+ * message too. Earlier releases of this exporter also suppressed the execution error; that is no longer the case. No
+ * setting suppresses the execution error message, and the input/output transforms do not apply to errors. Do not put
+ * secrets or personal data in exception messages that can reach the handler's return path: catch such an exception and
+ * rethrow one with a safe message, or, for a custom {@link TelemetryExporter}, remove or redact {@code error} in its
+ * {@link TelemetryExporter#render render}.
  *
  * <p><b>Transform value shape.</b> The {@code inputTransform} and {@code outputTransform} functions receive a
  * <em>detached, JSON-compatible</em> copy of the value, never the SDK's original Java object: a POJO is presented as a
@@ -101,6 +109,14 @@ public final class ContentConfig {
             return this;
         }
 
+        /**
+         * Whether per-operation errors ({@code operations[].error}, {@code operationsByName.<name>.error}) are emitted.
+         * Default {@code true}. {@code false} does <em>not</em> hide the execution-level {@code error} or its message;
+         * see the class documentation.
+         *
+         * @param include {@code false} to omit per-operation errors
+         * @return this builder
+         */
         public Builder includeErrors(boolean include) {
             this.includeErrors = include;
             return this;
