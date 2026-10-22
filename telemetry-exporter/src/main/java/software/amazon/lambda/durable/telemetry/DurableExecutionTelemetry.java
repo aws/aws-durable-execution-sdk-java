@@ -3,8 +3,11 @@
 package software.amazon.lambda.durable.telemetry;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
@@ -13,17 +16,23 @@ import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.exception.CallbackException;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
+import software.amazon.lambda.durable.exception.CallbackSubmitterException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
+import software.amazon.lambda.durable.exception.DurableExecutionException;
 import software.amazon.lambda.durable.exception.DurableOperationException;
+import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.InvokeException;
 import software.amazon.lambda.durable.exception.InvokeFailedException;
 import software.amazon.lambda.durable.exception.InvokeStoppedException;
 import software.amazon.lambda.durable.exception.InvokeTimedOutException;
 import software.amazon.lambda.durable.exception.MapIterationFailedException;
+import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
 import software.amazon.lambda.durable.exception.ParallelBranchFailedException;
+import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.exception.StepException;
 import software.amazon.lambda.durable.exception.StepFailedException;
+import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.exception.WaitForConditionFailedException;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -184,8 +193,39 @@ public final class DurableExecutionTelemetry {
         return new ErrorInfo(errorName(t), message);
     }
 
-    /** Package that declares the SDK's own exception types; only classes declared here can be SDK wrappers. */
-    private static final String SDK_EXCEPTION_PACKAGE = DurableOperationException.class.getPackageName();
+    /**
+     * The SDK's own wrapper types, matched on the exact runtime class. Only these are unwrapped (rule 2). A subclass,
+     * including a user subclass of one of them, is not a wrapper. Every class in the SDK exception package is either
+     * here or in {@link #SDK_ERRORS}; a test fails when a new class is in neither.
+     */
+    static final Set<Class<? extends Throwable>> SDK_WRAPPERS = Set.of(
+            DurableOperationException.class,
+            UnrecoverableDurableExecutionException.class,
+            StepException.class,
+            CallbackException.class,
+            InvokeException.class,
+            StepFailedException.class,
+            CallbackFailedException.class,
+            CallbackSubmitterException.class,
+            ChildContextFailedException.class,
+            InvokeFailedException.class,
+            MapIterationFailedException.class,
+            ParallelBranchFailedException.class,
+            WaitForConditionFailedException.class);
+
+    /**
+     * SDK exceptions that are not wrappers: they name a failure themselves and report their simple class name (rule 5).
+     * Kept for the classification test; the walk needs only {@link #SDK_WRAPPERS}.
+     */
+    static final Set<Class<? extends Throwable>> SDK_ERRORS = Set.of(
+            DurableExecutionException.class,
+            SerDesException.class,
+            CallbackTimeoutException.class,
+            InvokeTimedOutException.class,
+            InvokeStoppedException.class,
+            StepInterruptedException.class,
+            IllegalDurableOperationException.class,
+            NonDeterministicExecutionException.class);
 
     /** SDK base classes that never name a failure themselves: with nothing to unwrap they report {@code Error}. */
     private static final Set<Class<?>> SDK_BASE_WRAPPERS = Set.of(
@@ -195,66 +235,74 @@ public final class DurableExecutionTelemetry {
             CallbackException.class,
             InvokeException.class);
 
-    /** Reported name when a type string is missing or blank (Table A, A12). */
+    /** Reported name when a type string is missing or blank (Table A, A12 and A13). */
     static final String DEFAULT_ERROR_NAME = "Error";
 
-    private static final int MAX_WRAPPER_DEPTH = 16;
+    /** Maximum number of unwrap steps (rule 3). */
+    static final int MAX_UNWRAPS = 16;
 
     /**
      * Returns the cross-SDK {@code error.name} of a throwable.
      *
      * <ol>
      *   <li>A throwable that is not an SDK wrapper (see {@link #isSdkWrapper}) reports its own class name, reduced by
-     *       {@link #simpleTypeName}. This includes user errors that have a cause and user subclasses of SDK exceptions.
-     *   <li>An SDK wrapper with a live cause is unwrapped, following the chain of SDK wrappers up to a depth of
-     *       {@value #MAX_WRAPPER_DEPTH}; the depth bound also stops a cyclic chain.
-     *   <li>An SDK wrapper with no cause reports its checkpointed {@code errorType}, reduced. The core writes that type
-     *       as {@link Class#getName()}, so a replayed failure gets the same name as the live one.
-     *   <li>An SDK wrapper whose {@code errorType} is blank reports the SDK failure class the core throws for its
-     *       operation (for example {@code CallbackFailedException}), so the operation and the execution agree.
-     *   <li>A timed-out callback is never unwrapped: it reports {@code CallbackTimeoutException}.
+     *       {@link #simpleTypeName}. This includes user errors that have a cause, user subclasses of SDK exceptions and
+     *       the SDK errors that are not wrappers, such as {@code CallbackTimeoutException}.
+     *   <li>A wrapper whose operation timed out (callback or invoke) or was stopped (invoke) reports the SDK error the
+     *       core throws for it: {@code CallbackTimeoutException}, {@code InvokeTimedOutException} or
+     *       {@code InvokeStoppedException}. These are SDK errors, not wrappers, so live and replayed records agree.
+     *   <li>A wrapper with a live cause is unwrapped. At most {@value #MAX_UNWRAPS} unwraps happen; if the error
+     *       reached after them is still a wrapper, that wrapper's name is reported. If the cause is an error already
+     *       visited, the walk stops and the last error visited before the repeat is reported.
+     *   <li>A wrapper's name is its checkpointed {@code errorType}, reduced. The core writes that type as
+     *       {@link Class#getName()}, so a replayed failure gets the same name as the live one.
+     *   <li>A wrapper whose {@code errorType} is blank reports the SDK failure class the core throws for its operation
+     *       (for example {@code CallbackFailedException}), so the operation and the execution agree.
      * </ol>
      */
     static String errorName(Throwable t) {
+        return errorName(t, Throwable::getCause);
+    }
+
+    /**
+     * {@link #errorName(Throwable)} with the cause lookup supplied, so a test can give the walk a cycle: the JDK's
+     * {@link Throwable#getCause()} never returns the throwable itself, and the SDK wrappers' causes are fixed at
+     * construction.
+     */
+    static String errorName(Throwable t, UnaryOperator<Throwable> causeOf) {
+        Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
         Throwable current = t;
-        for (int depth = 0; ; depth++) {
+        for (int unwraps = 0; ; unwraps++) {
             if (!isSdkWrapper(current)) {
-                return simpleTypeName(current.getClass().getName());
+                return javaTypeName(current.getClass().getName());
             }
-            String timeout = callbackTimeoutName(current);
-            if (timeout != null) {
-                return timeout;
+            String sdkError = sdkErrorOfOperation(current);
+            if (sdkError != null) {
+                return sdkError;
             }
-            Throwable cause = current.getCause();
-            if (cause != null && cause != current) {
-                if (depth >= MAX_WRAPPER_DEPTH) {
-                    return simpleTypeName(cause.getClass().getName());
-                }
-                current = cause;
-                continue;
+            visited.add(current);
+            Throwable cause = causeOf.apply(current);
+            if (cause == null || unwraps == MAX_UNWRAPS || visited.contains(cause)) {
+                return wrapperName(current);
             }
-            return wrapperName(current);
+            current = cause;
         }
     }
 
     /**
-     * {@code true} when {@code t} is one of the SDK's own wrapper types: an instance of
-     * {@link DurableOperationException} or {@link UnrecoverableDurableExecutionException} whose runtime class is
-     * declared in the SDK's exception package. A user subclass of an SDK exception is not a wrapper. A callback timeout
-     * is an SDK error, not a wrapper.
+     * {@code true} when the runtime class of {@code t} is exactly one of {@link #SDK_WRAPPERS}. A user subclass of an
+     * SDK exception is not a wrapper, and neither is an SDK error such as a callback timeout.
      */
     static boolean isSdkWrapper(Throwable t) {
-        return (t instanceof DurableOperationException || t instanceof UnrecoverableDurableExecutionException)
-                && !(t instanceof CallbackTimeoutException)
-                && SDK_EXCEPTION_PACKAGE.equals(t.getClass().getPackageName());
+        return t != null && SDK_WRAPPERS.contains(t.getClass());
     }
 
-    /** Name of an SDK wrapper that has no cause to follow. */
+    /** Name of an SDK wrapper whose cause is not followed. */
     private static String wrapperName(Throwable wrapper) {
         ErrorObject error = extractErrorObject(wrapper);
         String type = error == null ? null : error.errorType();
-        if (type != null && !type.isBlank()) {
-            return simpleTypeName(type);
+        if (!isBlankType(type)) {
+            return javaTypeName(type);
         }
         if (wrapper instanceof DurableOperationException doe && doe.getOperation() != null) {
             var op = doe.getOperation();
@@ -269,13 +317,23 @@ public final class DurableExecutionTelemetry {
         return DEFAULT_ERROR_NAME;
     }
 
-    /** {@code CallbackTimeoutException} for a wrapper whose operation is a timed-out callback, else {@code null}. */
-    private static String callbackTimeoutName(Throwable wrapper) {
-        if (wrapper instanceof DurableOperationException doe
-                && doe.getOperation() != null
-                && doe.getOperation().type() == OperationType.CALLBACK
-                && doe.getOperation().status() == OperationStatus.TIMED_OUT) {
+    /**
+     * The SDK error (not a wrapper) the core throws for a wrapper's operation, whatever its checkpoint says: a
+     * timed-out callback, or a timed-out or stopped invoke. {@code null} for any other operation.
+     */
+    private static String sdkErrorOfOperation(Throwable wrapper) {
+        if (!(wrapper instanceof DurableOperationException doe) || doe.getOperation() == null) {
+            return null;
+        }
+        var op = doe.getOperation();
+        if (op.type() == OperationType.CALLBACK && op.status() == OperationStatus.TIMED_OUT) {
             return CallbackTimeoutException.class.getSimpleName();
+        }
+        if (op.type() == OperationType.CHAINED_INVOKE && op.status() == OperationStatus.TIMED_OUT) {
+            return InvokeTimedOutException.class.getSimpleName();
+        }
+        if (op.type() == OperationType.CHAINED_INVOKE && op.status() == OperationStatus.STOPPED) {
+            return InvokeStoppedException.class.getSimpleName();
         }
         return null;
     }
@@ -330,17 +388,51 @@ public final class DurableExecutionTelemetry {
     }
 
     /**
+     * {@link #simpleTypeName} for a Java class name, live or checkpointed. The name of a hidden class has a
+     * {@code /0x…} suffix that changes on every JVM start, so the name is cut at the first {@code '/'} first and the
+     * same failure keeps the same name across cold starts.
+     */
+    static String javaTypeName(String className) {
+        if (className == null) {
+            return DEFAULT_ERROR_NAME;
+        }
+        int slash = className.indexOf('/');
+        return simpleTypeName(slash < 0 ? className : className.substring(0, slash));
+    }
+
+    /**
      * Reduces a type string to the reported {@code error.name} (Table A of the cross-SDK rule): the part after the last
-     * {@code '.'} or {@code '$'}. If that part is empty the string is kept as it is. A {@code null}, empty or blank
-     * string gives {@code "Error"}. The string is not trimmed.
+     * {@code '.'} or {@code '$'}. If that part is empty the string is kept as it is. A {@code null} string, or one made
+     * only of the six ASCII whitespace characters (see {@link #isBlankType}), gives {@code "Error"}. The string is not
+     * trimmed.
      */
     static String simpleTypeName(String typeName) {
-        if (typeName == null || typeName.isBlank()) {
+        if (isBlankType(typeName)) {
             return DEFAULT_ERROR_NAME;
         }
         int cut = Math.max(typeName.lastIndexOf('.'), typeName.lastIndexOf('$'));
         String last = typeName.substring(cut + 1);
         return last.isEmpty() ? typeName : last;
+    }
+
+    /**
+     * {@code true} for {@code null}, the empty string, or a string made only of space, {@code \t}, {@code \n},
+     * {@code \r}, {@code \f} and {@code \u000B} (rule 6). No other character is blank: unlike {@link String#isBlank()},
+     * U+001C to U+001F and the Unicode spaces such as U+2003 are not, and U+00A0 and U+FEFF are not either.
+     */
+    static boolean isBlankType(String type) {
+        if (type == null) {
+            return true;
+        }
+        for (int i = 0; i < type.length(); i++) {
+            switch (type.charAt(i)) {
+                case ' ', '\t', '\n', '\r', '\f', '\u000B' -> {}
+                default -> {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     /**

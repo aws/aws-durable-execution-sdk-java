@@ -9,13 +9,21 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.lang.invoke.MethodHandles;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CallbackDetails;
+import software.amazon.awssdk.services.lambda.model.ChainedInvokeDetails;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
@@ -24,9 +32,12 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.exception.CallbackFailedException;
 import software.amazon.lambda.durable.exception.CallbackTimeoutException;
-import software.amazon.lambda.durable.exception.CyclicWrapperForTest;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
+import software.amazon.lambda.durable.exception.InvokeStoppedException;
+import software.amazon.lambda.durable.exception.InvokeTimedOutException;
+import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
+import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.exception.StepInterruptedException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.model.ExecutionStatus;
@@ -277,28 +288,217 @@ class ErrorNameTest {
         assertEquals("w4", info.message(), "message is the outer record's message, unchanged");
     }
 
+    /**
+     * Rule 3 depth, shared with the JS and Python tests: a chain of {@code n} SDK wrappers around {@code PaymentError}.
+     * Wrapper {@code k} (1 is the outermost) carries the checkpointed {@code errorType} {@code test.W<k>}. The depth
+     * counts unwrap steps: 16 wrappers need 16 unwraps and reach {@code PaymentError}; with 17 or more, the error
+     * reached after 16 unwraps is wrapper 17, which is still a wrapper, so its name {@code W17} is reported.
+     */
     @Test
-    void wrapperChainDepthIsBounded() {
-        Throwable chain = new PaymentError("deep");
-        for (int i = 0; i < 40; i++) {
-            chain = new UnrecoverableDurableExecutionException(
-                    ErrorObject.builder().errorType("w" + i).errorMessage("w").build(), false, chain);
-        }
-        // Terminates; the walk stops after 16 levels at an SDK class name.
+    void wrapperChainDepthCountsUnwrapSteps() {
         assertEquals(
-                "UnrecoverableDurableExecutionException",
-                DurableExecutionTelemetry.toErrorInfo(chain).name());
+                "PaymentError",
+                DurableExecutionTelemetry.toErrorInfo(wrapperChain(1)).name());
+        assertEquals(
+                "PaymentError",
+                DurableExecutionTelemetry.toErrorInfo(wrapperChain(15)).name());
+        assertEquals(
+                "PaymentError",
+                DurableExecutionTelemetry.toErrorInfo(wrapperChain(16)).name());
+        assertEquals(
+                "W17", DurableExecutionTelemetry.toErrorInfo(wrapperChain(17)).name());
+        assertEquals(
+                "W17", DurableExecutionTelemetry.toErrorInfo(wrapperChain(18)).name());
+        assertEquals(
+                "W17", DurableExecutionTelemetry.toErrorInfo(wrapperChain(40)).name());
+        // The message is the outermost wrapper's checkpointed message, unchanged.
+        assertEquals(
+                "m1", DurableExecutionTelemetry.toErrorInfo(wrapperChain(17)).message());
+    }
+
+    /** {@code n} wrappers, wrapper 1 outermost, wrapper {@code k} with type {@code test.W<k>}, around PaymentError. */
+    private static Throwable wrapperChain(int n) {
+        Throwable chain = new PaymentError("card declined");
+        for (int k = n; k >= 1; k--) {
+            chain = new UnrecoverableDurableExecutionException(
+                    ErrorObject.builder()
+                            .errorType("test.W" + k)
+                            .errorMessage("m" + k)
+                            .build(),
+                    false,
+                    chain);
+        }
+        return chain;
+    }
+
+    /**
+     * Rule 3 cycles, shared with the JS and Python tests: the walk stops at the first repeat and reports the last error
+     * visited before it. The JDK never returns a throwable as its own cause, and the SDK wrappers' causes are fixed at
+     * construction, so the cycle is given through the walk's cause lookup.
+     */
+    @Test
+    void cyclicWrapperChainReportsTheLastErrorBeforeTheRepeat() {
+        var a = wrapped("test.A", "a");
+        var b = wrapped("test.B", "b");
+        var self = wrapped("test.Self", "s");
+        // Two-cycle A -> B -> A: visited A, B; A repeats; B is reported.
+        Map<Throwable, Throwable> twoCycle = new IdentityHashMap<>();
+        twoCycle.put(a, b);
+        twoCycle.put(b, a);
+        assertEquals("B", DurableExecutionTelemetry.errorName(a, twoCycle::get));
+        assertEquals("A", DurableExecutionTelemetry.errorName(b, twoCycle::get));
+        // Self-cycle S -> S: visited S; S repeats; S is reported.
+        Map<Throwable, Throwable> selfCycle = new IdentityHashMap<>();
+        selfCycle.put(self, self);
+        assertEquals("Self", DurableExecutionTelemetry.errorName(self, selfCycle::get));
+        // A cycle that is entered after a prefix: P -> A -> B -> A reports B.
+        var p = wrapped("test.P", "p");
+        Map<Throwable, Throwable> prefixed = new IdentityHashMap<>(twoCycle);
+        prefixed.put(p, a);
+        assertEquals("B", DurableExecutionTelemetry.errorName(p, prefixed::get));
+    }
+
+    /**
+     * R1: wrapper detection is an explicit list matched on the exact runtime class. Every class in the SDK exception
+     * package, read from the SDK jar (or its classes directory), must be classified as a wrapper or an SDK error, so a
+     * new SDK exception cannot become a wrapper without a decision.
+     */
+    @Test
+    void everySdkExceptionClassIsClassified() throws Exception {
+        var pkg = DurableOperationException.class.getPackageName();
+        var found = sdkExceptionClassNames(pkg);
+        assertTrue(found.size() >= 21, "SDK exception classes found: " + found);
+        List<String> unclassified = new ArrayList<>();
+        for (String name : found) {
+            Class<?> c = Class.forName(name, false, DurableOperationException.class.getClassLoader());
+            if (!DurableExecutionTelemetry.SDK_WRAPPERS.contains(c)
+                    && !DurableExecutionTelemetry.SDK_ERRORS.contains(c)) {
+                unclassified.add(name);
+            }
+        }
+        assertEquals(List.of(), unclassified, "classify each new SDK exception as a wrapper or an SDK error");
+        for (var c : DurableExecutionTelemetry.SDK_WRAPPERS) {
+            assertFalse(DurableExecutionTelemetry.SDK_ERRORS.contains(c), c + " is in both lists");
+            assertEquals(pkg, c.getPackageName());
+        }
+        for (var c : DurableExecutionTelemetry.SDK_ERRORS) {
+            assertEquals(pkg, c.getPackageName());
+        }
+        // The decisions of the review: these name a failure themselves.
+        for (var c : List.of(
+                StepInterruptedException.class,
+                IllegalDurableOperationException.class,
+                NonDeterministicExecutionException.class,
+                InvokeTimedOutException.class,
+                InvokeStoppedException.class,
+                CallbackTimeoutException.class,
+                SerDesException.class)) {
+            assertTrue(DurableExecutionTelemetry.SDK_ERRORS.contains(c), c.getSimpleName());
+        }
+    }
+
+    private static List<String> sdkExceptionClassNames(String pkg) throws Exception {
+        var dir = pkg.replace('.', '/') + "/";
+        var location = Path.of(DurableOperationException.class
+                .getProtectionDomain()
+                .getCodeSource()
+                .getLocation()
+                .toURI());
+        List<String> names = new ArrayList<>();
+        if (Files.isDirectory(location)) {
+            try (var files = Files.list(location.resolve(dir))) {
+                files.map(f -> f.getFileName().toString())
+                        .filter(f -> f.endsWith(".class"))
+                        .forEach(f -> names.add(pkg + "." + f.substring(0, f.length() - ".class".length())));
+            }
+        } else {
+            try (var jar = new JarFile(location.toFile())) {
+                jar.stream()
+                        .map(JarEntry::getName)
+                        .filter(e -> e.startsWith(dir) && e.endsWith(".class"))
+                        .filter(e -> e.indexOf('/', dir.length()) < 0)
+                        .forEach(e -> names.add(
+                                e.substring(0, e.length() - ".class".length()).replace('/', '.')));
+            }
+        }
+        names.removeIf(n -> n.endsWith(".package-info"));
+        Collections.sort(names);
+        return names;
     }
 
     @Test
-    void cyclicWrapperChainTerminates() {
-        var a = new CyclicWrapperForTest("x.A");
-        var b = new CyclicWrapperForTest("x.B");
-        a.setOther(b);
-        b.setOther(a);
-        assertTrue(DurableExecutionTelemetry.isSdkWrapper(a));
+    void sdkErrorsThatAreNotWrappersReportTheirOwnName() {
+        // Invoke timeout and stop are SDK errors, like a callback timeout: named after the core's exception, whatever
+        // error type the checkpoint carries, live (the core's exception) and from the snapshot (a bare wrapper).
+        for (var status : List.of(OperationStatus.TIMED_OUT, OperationStatus.STOPPED)) {
+            String expected =
+                    status == OperationStatus.TIMED_OUT ? "InvokeTimedOutException" : "InvokeStoppedException";
+            for (String type : new String[] {"States.Stopped", "com.acme.PaymentError", null}) {
+                var error =
+                        ErrorObject.builder().errorType(type).errorMessage("m").build();
+                var op = Operation.builder()
+                        .id("inv")
+                        .type(OperationType.CHAINED_INVOKE)
+                        .status(status)
+                        .chainedInvokeDetails(
+                                ChainedInvokeDetails.builder().error(error).build())
+                        .build();
+                assertEquals(
+                        expected,
+                        DurableExecutionTelemetry.toErrorInfo(new DurableOperationException(op, error))
+                                .name());
+                Throwable live = status == OperationStatus.TIMED_OUT
+                        ? new InvokeTimedOutException(op)
+                        : new InvokeStoppedException(op);
+                assertFalse(DurableExecutionTelemetry.isSdkWrapper(live));
+                assertEquals(
+                        expected, DurableExecutionTelemetry.toErrorInfo(live).name());
+            }
+        }
+        assertFalse(DurableExecutionTelemetry.isSdkWrapper(new IllegalDurableOperationException("bad")));
+        assertFalse(DurableExecutionTelemetry.isSdkWrapper(new NonDeterministicExecutionException("nd")));
         assertEquals(
-                "CyclicWrapperForTest", DurableExecutionTelemetry.toErrorInfo(a).name());
+                "NonDeterministicExecutionException",
+                DurableExecutionTelemetry.toErrorInfo(new NonDeterministicExecutionException("nd"))
+                        .name());
+    }
+
+    /**
+     * R2 (Java only): a hidden class's name ends in {@code /0x…}, which changes on every JVM start. The name is cut at
+     * the first {@code '/'} before the reduction, live and from the checkpoint.
+     */
+    @Test
+    void hiddenClassNameDropsTheAddressSuffix() throws Throwable {
+        byte[] bytes;
+        try (InputStream in = HiddenProbeError.class.getResourceAsStream("HiddenProbeError.class")) {
+            assertNotNull(in);
+            bytes = in.readAllBytes();
+        }
+        Class<?> hidden = MethodHandles.lookup().defineHiddenClass(bytes, true).lookupClass();
+        assertTrue(hidden.isHidden());
+        assertTrue(hidden.getName().contains("/"), hidden.getName());
+        var error = (Throwable) hidden.getDeclaredConstructor().newInstance();
+        assertEquals(
+                "HiddenProbeError", DurableExecutionTelemetry.toErrorInfo(error).name());
+        assertEquals(
+                "HiddenProbeError",
+                DurableExecutionTelemetry.toErrorInfo(wrapped(hidden.getName(), "m"))
+                        .name());
+        assertEquals("Lambda", DurableExecutionTelemetry.javaTypeName("pkg.Foo$$Lambda/0x1"));
+        assertEquals("Error", DurableExecutionTelemetry.javaTypeName("/0x1"));
+    }
+
+    /** Rule 6 blank: only the six ASCII whitespace characters; the Table A vectors cover each single character. */
+    @Test
+    void onlyAsciiWhitespaceIsBlank() {
+        assertTrue(DurableExecutionTelemetry.isBlankType(null));
+        assertTrue(DurableExecutionTelemetry.isBlankType(""));
+        assertTrue(DurableExecutionTelemetry.isBlankType(" \t\n\r\f\u000B"));
+        for (char c :
+                new char[] {'\u00A0', '\uFEFF', '\u001C', '\u001D', '\u001E', '\u001F', '\u2003', '\u3000', '\u0085'}) {
+            assertFalse(DurableExecutionTelemetry.isBlankType(" " + c + " "), Integer.toHexString(c));
+            assertEquals(" " + c + " ", DurableExecutionTelemetry.simpleTypeName(" " + c + " "));
+        }
     }
 
     @Test
