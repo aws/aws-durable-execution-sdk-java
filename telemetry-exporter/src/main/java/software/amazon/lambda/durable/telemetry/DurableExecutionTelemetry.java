@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import org.slf4j.Logger;
@@ -302,7 +303,8 @@ public final class DurableExecutionTelemetry {
         ErrorObject error = extractErrorObject(wrapper);
         String type = error == null ? null : error.errorType();
         if (!isBlankType(type)) {
-            return javaTypeName(type);
+            // A callback or invoke error type is supplied from outside the JVM and is never a Java class name.
+            return hasExternalErrorType(wrapper) ? simpleTypeName(type) : javaTypeName(type);
         }
         if (wrapper instanceof DurableOperationException doe && doe.getOperation() != null) {
             var op = doe.getOperation();
@@ -315,6 +317,15 @@ public final class DurableExecutionTelemetry {
             return simpleTypeName(wrapper.getClass().getName());
         }
         return DEFAULT_ERROR_NAME;
+    }
+
+    /** {@code true} when the wrapper's checkpointed error type was written by a callback or invoke caller. */
+    private static boolean hasExternalErrorType(Throwable wrapper) {
+        if (!(wrapper instanceof DurableOperationException doe) || doe.getOperation() == null) {
+            return false;
+        }
+        var type = doe.getOperation().type();
+        return type == OperationType.CALLBACK || type == OperationType.CHAINED_INVOKE;
     }
 
     /**
@@ -387,17 +398,20 @@ public final class DurableExecutionTelemetry {
         return null;
     }
 
+    /** The address suffix of a hidden class's {@link Class#getName()}, which changes on every JVM start. */
+    private static final Pattern HIDDEN_CLASS_SUFFIX = Pattern.compile("/0x[0-9a-fA-F]+$");
+
     /**
-     * {@link #simpleTypeName} for a Java class name, live or checkpointed. The name of a hidden class has a
-     * {@code /0x…} suffix that changes on every JVM start, so the name is cut at the first {@code '/'} first and the
-     * same failure keeps the same name across cold starts.
+     * {@link #simpleTypeName} for a Java class name ({@link Class#getName()}), live or as the core checkpointed it.
+     * Only a hidden-class suffix matching {@code /0x[0-9a-fA-F]+$} is removed first, so the same failure keeps the same
+     * name across cold starts. No other {@code '/'} is touched, and type strings from outside the JVM (callback and
+     * invoke error types) never come here.
      */
     static String javaTypeName(String className) {
         if (className == null) {
             return DEFAULT_ERROR_NAME;
         }
-        int slash = className.indexOf('/');
-        return simpleTypeName(slash < 0 ? className : className.substring(0, slash));
+        return simpleTypeName(HIDDEN_CLASS_SUFFIX.matcher(className).replaceFirst(""));
     }
 
     /**

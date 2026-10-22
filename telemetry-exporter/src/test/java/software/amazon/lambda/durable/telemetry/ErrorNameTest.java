@@ -486,6 +486,11 @@ class ErrorNameTest {
                         .name());
         assertEquals("Lambda", DurableExecutionTelemetry.javaTypeName("pkg.Foo$$Lambda/0x1"));
         assertEquals("Error", DurableExecutionTelemetry.javaTypeName("/0x1"));
+        assertEquals("Lambda", DurableExecutionTelemetry.javaTypeName("pkg.Foo$$Lambda/0x00007f3aBcD"));
+        // Only a trailing /0x<hex> is a hidden-class suffix; any other '/' is part of the name.
+        assertEquals("PaymentError", DurableExecutionTelemetry.javaTypeName("payments/v1.PaymentError"));
+        assertEquals("Foo/0xZZ", DurableExecutionTelemetry.javaTypeName("pkg.Foo/0xZZ"));
+        assertEquals("b/0x1", DurableExecutionTelemetry.javaTypeName("a.b/0x1/0x2"));
     }
 
     /** Rule 6 blank: only the six ASCII whitespace characters; the Table A vectors cover each single character. */

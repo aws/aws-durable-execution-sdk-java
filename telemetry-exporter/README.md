@@ -285,9 +285,10 @@ How the Java exporter applies it:
   `pkg.Foo` (binary name `pkg.Foo$1LocalError`) gives `1LocalError`; an anonymous class gives its
   last segment, for example `1`. A string that ends with a separator (`trailing.`, `Outer$`) is
   kept as it is. U+00A0, U+FEFF, U+001C and U+2003 are not blank, so a type made of them is kept.
-- A hidden class's name ends in `/0x…`, a suffix that changes on every JVM start. The name is cut
-  at the first `/` before rule 6, live and from the checkpoint, so `pkg.Gen$HiddenErr/0x…` gives
-  `HiddenErr`.
+- A hidden class's name ends in `/0x…`, a suffix that changes on every JVM start. Only a trailing
+  suffix matching `/0x[0-9a-fA-F]+$` is removed before rule 6, live and from the checkpoint, so
+  `pkg.Gen$HiddenErr/0x…` gives `HiddenErr`. Callback and invoke error types come from outside the
+  JVM and are never cut: `payments/v1.PaymentError` gives `PaymentError`.
 - The SDK wrappers are an explicit list, matched on the exact runtime class:
   `DurableOperationException`, `UnrecoverableDurableExecutionException`, `StepException`,
   `CallbackException`, `InvokeException`, `StepFailedException`, `CallbackFailedException`,

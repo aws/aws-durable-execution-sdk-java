@@ -785,4 +785,32 @@ class ErrorNameScenarioTest {
             }
         }
     }
+
+    /**
+     * Callback and invoke error types come from outside the JVM: a {@code '/'} in them is not a hidden-class suffix and
+     * the type is reduced as a whole (Table A).
+     */
+    @ParameterizedTest
+    @EnumSource(Mode.class)
+    void externalTypeWithSlashIsReducedAsAWhole(Mode mode) {
+        String external = "payments/v1.PaymentError";
+        var viaCallback = run(
+                (in, ctx) -> failure(
+                        mode, ctx, c -> c.createCallback("cb", String.class).get()),
+                failCallback(external));
+        var cb = observe(viaCallback, List.of("cb"), mode);
+        assertEquals("PaymentError", cb.execution().name(), "callback execution");
+        assertEquals("PaymentError", cb.operations().get("cb").name(), "callback operation");
+
+        var viaInvoke = run((in, ctx) -> failure(mode, ctx, c -> c.invoke("callee", "fn", "x", String.class)), r -> {
+            r.run("in");
+            r.failChainedInvoke(
+                    "callee",
+                    ErrorObject.builder().errorType(external).errorMessage(MSG).build());
+            r.runUntilComplete("in");
+        });
+        var inv = observe(viaInvoke, List.of("callee"), mode);
+        assertEquals("PaymentError", inv.execution().name(), "invoke execution");
+        assertEquals("PaymentError", inv.operations().get("callee").name(), "invoke operation");
+    }
 }
