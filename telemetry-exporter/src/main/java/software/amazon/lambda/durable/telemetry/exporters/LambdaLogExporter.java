@@ -20,8 +20,16 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * <p>The line is the Lambda JSON log envelope {@code {"timestamp", "level": "INFO", "message"}} whose {@code message}
  * is the compact record JSON. Readers of this destination filter on {@code level} and parse {@code message}. The Node
  * runtime adds that envelope around {@code console.log}, but Java {@code System.out} is not wrapped, so this exporter
- * writes it itself; Lambda does not re-wrap a line that is already JSON. {@link #maxRecordSizeBytes()} is measured on
- * the record ({@link #render}), not on the envelope.
+ * writes it itself; Lambda does not re-wrap a line that is already JSON.
+ *
+ * <p><b>Line size.</b> {@link #maxRecordSizeBytes()} is measured on the record ({@link #render}), not on the printed
+ * line. The record is embedded in {@code message} as a JSON string, so every {@code "} and {@code \} in it is escaped
+ * again: the line is the record plus 68 bytes of envelope plus one byte per quote or backslash in the record, so it can
+ * be up to about twice the record size ({@code 2 × maxRecordSizeBytes + 68} in the worst case). With the default
+ * 256,000-byte limit that is about 512 KB, within the CloudWatch Logs limit of 1 MB per log event.
+ *
+ * <p>Lines are written with {@code "level":"INFO"}. With the Lambda JSON log format and an application log level of
+ * {@code WARN} or above, Lambda drops them.
  */
 @Experimental
 public final class LambdaLogExporter implements TelemetryExporter {
@@ -29,7 +37,10 @@ public final class LambdaLogExporter implements TelemetryExporter {
     private static final DateTimeFormatter TIMESTAMP =
             DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
 
-    /** CloudWatch Logs caps a single log event at 256 KB. */
+    /**
+     * Budget for the rendered record, not the printed line (see the class documentation). The default 256,000 keeps the
+     * worst-case escaped line (about 512 KB) under the CloudWatch Logs limit of 1 MB per log event.
+     */
     private final Integer maxRecordSizeBytes;
 
     public LambdaLogExporter() {

@@ -94,6 +94,44 @@ class LambdaLogExporterTest {
         assertSame(record, shaped);
         assertFalse(shaped.toWireMap().containsKey("truncated"));
         String line = exportAndCapture(shaped).strip();
-        assertTrue(line.getBytes(StandardCharsets.UTF_8).length > recordBytes, line);
+        String recordJson = Json.stringify(exporter.render(shaped));
+        assertEquals(
+                recordBytes + ENVELOPE_BYTES + escapedChars(recordJson),
+                line.getBytes(StandardCharsets.UTF_8).length,
+                "line = record + 68-byte envelope + one byte per quote or backslash in the record");
+    }
+
+    /** Bytes the envelope adds around an empty {@code message}. */
+    private static final int ENVELOPE_BYTES = 68;
+
+    private static long escapedChars(String json) {
+        return json.chars().filter(c -> c == '"' || c == '\\').count();
+    }
+
+    @Test
+    void envelopeAddsSixtyEightBytes() {
+        String empty = LambdaLogExporter.logLine("", Instant.parse("2026-10-21T08:00:00Z"));
+        assertEquals(ENVELOPE_BYTES, empty.getBytes(StandardCharsets.UTF_8).length, empty);
+    }
+
+    /**
+     * An escape-heavy record just under the default 256,000-byte budget is not truncated, and its printed line is about
+     * twice the record: at most {@code 2 × maxRecordSizeBytes + 68}, and under the 1 MB CloudWatch Logs event limit.
+     */
+    @Test
+    void escapeHeavyRecordNearTheLimitDoublesButStaysUnderOneMegabyte() {
+        var exporter = new LambdaLogExporter();
+        int limit = exporter.maxRecordSizeBytes();
+        for (char ch : new char[] {'"', '\\'}) {
+            var record = RecordFactory.sampleWithInput(String.valueOf(ch).repeat(127_000));
+            int recordBytes = Json.byteSize(exporter.render(record));
+            assertTrue(recordBytes <= limit && recordBytes > limit - 2_000, "record near the limit: " + recordBytes);
+            var shaped = Truncation.truncateRecord(record, limit, exporter::render);
+            assertSame(record, shaped, "not truncated");
+            int lineBytes = exportAndCapture(shaped).strip().getBytes(StandardCharsets.UTF_8).length;
+            assertTrue(lineBytes > 2 * recordBytes - 1_000, "line about twice the record: " + lineBytes);
+            assertTrue(lineBytes <= 2 * limit + ENVELOPE_BYTES, "line within 2 x limit + 68: " + lineBytes);
+            assertTrue(lineBytes < 1_048_576, "line under the 1 MB CloudWatch Logs event limit: " + lineBytes);
+        }
     }
 }

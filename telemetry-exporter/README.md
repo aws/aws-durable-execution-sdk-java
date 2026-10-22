@@ -191,20 +191,27 @@ one event per record to `{logStreamPrefix}YYYY/MM/DD` (IAM: `logs:CreateLogStrea
   the cached input snapshot or any later emission), and a transform that throws omits the field and
   logs the failure rather than silently dropping it or failing the execution.
 - **`includeErrors`** gates only the per-operation errors (`operations[].error` and
-  `operationsByName.<name>.error`), as in the JS exporter. With `includeErrors(false)` the
-  execution-level `error` is still emitted, so a FAILED record keeps its failure reason.
-- **`error.name`** is the simple type name of the error the user's code threw (for example
-  `PaymentError`): no package, no enclosing-class `$` prefix. The same rule applies to the
-  execution `error`, `operations[].error` and `operationsByName.<name>.error`, and a failure gets
-  the same name whether it happens live or is replayed from a checkpoint (the last segment of the
-  checkpointed `errorType`). When no user error is involved, the SDK exception's simple name is
-  used. `error.message` is unchanged.
+  `operationsByName.<name>.error`), as in the JS exporter. **`includeErrors(false)` does not hide
+  the execution-level `error`**: its `name` and `message` are emitted on every FAILED record. In
+  2.3.0 and earlier, `includeErrors(false)` also suppressed the execution error.
+  In Java the execution error is usually the failed operation's own exception rethrown, so its
+  message is usually the operation's message too. No setting suppresses the execution error
+  message, and the input/output transforms do not apply to errors. Do not put secrets or personal
+  data in exception messages that can reach the handler's return path: catch such an exception and
+  rethrow one with a safe message, or, in a custom `TelemetryExporter`, remove or redact `error` in
+  `render`.
+- **`error.name`** follows the cross-SDK rule in [`error.name`](#errorname) below.
 - **`LambdaLogExporter` line shape.** Each record is printed to stdout as one Lambda JSON log line,
   `{"timestamp":"<UTC, 3 fraction digits>Z","level":"INFO","message":"<compact record JSON>"}`,
   because the JS readers of this destination filter on `level` and parse `message`. The Node
   runtime adds this envelope around `console.log`; Java `System.out` is not wrapped, and Lambda
   does not re-wrap a line that is already JSON. `maxRecordSizeBytes` is measured on the record
-  (`render`), not on the envelope, which adds escaping plus about 70 bytes.
+  (`render`), not on the printed line. The record is embedded in `message` as a JSON string, so
+  every `"` and `\` in it is escaped again: the line is the record plus 68 bytes plus one byte
+  per quote or backslash in the record, and can be up to about twice the record size
+  (`2 × maxRecordSizeBytes + 68` in the worst case, about 512 KB with the default 256,000). That
+  is within the CloudWatch Logs limit of 1 MB per log event.
+  `LambdaLogExporter` lines are INFO; an application log level of WARN or above drops them.
 - **Non-fatal plugin failures are isolated.** Record construction, snapshotting, transforms,
   truncation and exporter render/export/flush contain and log ordinary failures, including
   `AssertionError` and optional-dependency `NoClassDefFoundError`. `VirtualMachineError` and
@@ -228,6 +235,50 @@ one event per record to `{logStreamPrefix}YYYY/MM/DD` (IAM: `logs:CreateLogStrea
   for its latest record to reach every exporter, then requests a flush through the same worker.
   Concurrent flush requests may share one flush, and the final record is delivered before the
   invocation returns.
+
+## `error.name`
+
+This rule is shared by the JS, Python and Java exporters. `error.message` is never changed by
+this rule. The rule applies to the execution-level `error`, every `operations[].error`, and every
+`operationsByName.<name>.error`.
+
+1. A record names the error that caused the failure. A wrapper error that the SDK added is never
+   the name.
+2. The SDK unwraps an error only when the error's type is one of the SDK's own wrapper types. A
+   user error is never unwrapped, even if it has a cause.
+3. Unwrapping follows the whole chain of SDK wrappers, up to a depth of 16. A cycle stops the walk.
+4. If the chain ends at a user error, the name is that error's type name.
+5. If the chain ends at an SDK error that is not a wrapper, the name is that SDK error's simple
+   class name. A callback timeout is an example.
+6. A type name that is a qualified string is reduced to its last segment after any `.` or `$`. If
+   that segment is empty, the string is kept as it is.
+7. A failure gets the same name whether the record is built live or from a replayed checkpoint.
+8. When the execution fails because an operation's error propagated, the execution `error.name`
+   equals that operation's `error.name`.
+
+User error types have the same name in every SDK, because the user names them. SDK error types
+keep each language's own class name. For example, a callback timeout is `CallbackTimeoutError` in
+JS and Python and `CallbackTimeoutException` in Java. Every SDK name for a timeout contains
+`Timeout`, so a `/Timeout/` query keeps working.
+
+How the Java exporter applies it:
+
+- Rule 6 is applied to `Class.getName()` for live errors and to the checkpointed `errorType` for
+  replayed ones, so both give the same name. `com.acme.Outer$PaymentError` gives `PaymentError`;
+  a top-level class named `Payment$Error` gives `Error`; a local class `LocalError` declared in
+  `pkg.Foo` (binary name `pkg.Foo$1LocalError`) gives `1LocalError`; an anonymous class gives its
+  last segment, for example `1`. The string is not trimmed. A missing, empty or blank type gives
+  `Error`. A string that ends with a separator (`trailing.`, `Outer$`) is kept as it is.
+- SDK wrappers are the subclasses of `DurableOperationException` and
+  `UnrecoverableDurableExecutionException` declared in `software.amazon.lambda.durable.exception`.
+  A user exception that subclasses one of them is not a wrapper and reports its own name.
+  `CallbackTimeoutException` is never unwrapped.
+- When an operation failed with no error type (for example a callback failed externally without an
+  `errorType`, or a callback timed out), the operation and the execution report the SDK exception
+  the core throws for it, such as `CallbackFailedException` or `CallbackTimeoutException`. If the
+  checkpoint has no error at all, the operation error has that name and a `null` message.
+- Non-class type strings are reduced too: an external callback failure with `errorType`
+  `States.Timeout` reports `Timeout`.
 
 ## Conformance
 

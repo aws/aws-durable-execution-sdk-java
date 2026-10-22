@@ -18,4 +18,11 @@ public final class RecordFactory {
                 new OperationRecord().id("op-1").name("fetch-user").type("STEP").status("SUCCEEDED"));
         return r;
     }
+
+    /** {@link #sample()} with the given execution {@code input}. */
+    public static DurableExecutionTelemetryRecord sampleWithInput(Object input) {
+        DurableExecutionTelemetryRecord r = sample();
+        r.input = input;
+        return r;
+    }
 }
