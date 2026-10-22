@@ -286,12 +286,10 @@ class LambdaLogExporterTest {
             String s = String.valueOf((char) c);
             assertEquals(
                     Json.stringify(s).getBytes(StandardCharsets.UTF_8).length - 2,
-                    software.amazon.lambda.durable.telemetry.internal.RenderedSize.escapedUtf8Size(s),
+                    Json.escapedUtf8Size(s),
                     "U+" + Integer.toHexString(c));
         }
         String pairs = "\uD83D\uDE00a\uDE00\uD83Db\uD83D";
-        assertEquals(
-                Json.stringify(pairs).getBytes(StandardCharsets.UTF_8).length - 2,
-                software.amazon.lambda.durable.telemetry.internal.RenderedSize.escapedUtf8Size(pairs));
+        assertEquals(Json.stringify(pairs).getBytes(StandardCharsets.UTF_8).length - 2, Json.escapedUtf8Size(pairs));
     }
 }

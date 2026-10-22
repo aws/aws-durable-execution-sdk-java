@@ -17,8 +17,8 @@ import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
+import software.amazon.lambda.durable.telemetry.exporters.LambdaLogExporter;
 import software.amazon.lambda.durable.telemetry.internal.FatalErrors;
-import software.amazon.lambda.durable.telemetry.internal.RenderedSize;
 
 /**
  * Durable Execution Telemetry instrumentation plugin for the Durable Execution Java SDK.
@@ -80,8 +80,8 @@ public final class DurableExecutionTelemetry {
             // so without this a custom exporter that mutates operations or nested content would corrupt every
             // other exporter's view of the same record.
             DurableExecutionTelemetryRecord isolated = record.deepCopy();
-            DurableExecutionTelemetryRecord shaped = exporter instanceof RenderedSize measured
-                    ? Truncation.truncateMeasured(isolated, exporter.maxRecordSizeBytes(), measured::renderedSize)
+            DurableExecutionTelemetryRecord shaped = exporter instanceof LambdaLogExporter lambdaLog
+                    ? Truncation.truncateMeasured(isolated, exporter.maxRecordSizeBytes(), lambdaLog::renderedSize)
                     : Truncation.truncateRecord(isolated, exporter.maxRecordSizeBytes(), exporter::render);
             exporter.export(shaped);
         } catch (Throwable t) {

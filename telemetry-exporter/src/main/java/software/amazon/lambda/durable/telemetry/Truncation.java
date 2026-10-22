@@ -7,7 +7,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import software.amazon.lambda.durable.telemetry.internal.RenderedSize;
 
 /**
  * Best-effort size limiter. When the record is over the limit it drops, in order:
@@ -41,11 +40,11 @@ public final class Truncation {
     }
 
     /**
-     * {@link #truncateRecord} for a rendering whose size {@code size} measures directly, such as the built-in
-     * {@link software.amazon.lambda.durable.telemetry.internal.RenderedSize} exporters. The rendering must be the
-     * record's JSON, or that JSON embedded as one JSON string value, so that dropping one result or operation shrinks
-     * it by at most that operation's escaped JSON size plus a small constant. Size checks that cannot succeed under
-     * that bound are skipped; the outcome is the same as checking after every step.
+     * {@link #truncateRecord} for a rendering whose size {@code size} measures directly, such as
+     * {@link software.amazon.lambda.durable.telemetry.exporters.LambdaLogExporter#renderedSize}. The rendering must be
+     * the record's JSON, or that JSON embedded as one JSON string value, so that dropping one result or operation
+     * shrinks it by at most that operation's escaped JSON size plus a small constant. Size checks that cannot succeed
+     * under that bound are skipped; the outcome is the same as checking after every step.
      */
     static DurableExecutionTelemetryRecord truncateMeasured(
             DurableExecutionTelemetryRecord record,
@@ -169,9 +168,9 @@ public final class Truncation {
             OperationRecord op = ops.get(i);
             long bound = SHRINK_SLACK_BYTES;
             try {
-                bound += RenderedSize.escapedUtf8Size(Json.stringify(op.toWireMap()));
+                bound += Json.escapedUtf8Size(Json.stringify(op.toWireMap()));
                 if (op.name() != null) {
-                    bound += RenderedSize.escapedUtf8Size(Json.stringify(op.name()));
+                    bound += Json.escapedUtf8Size(Json.stringify(op.name()));
                 }
             } catch (IllegalStateException e) {
                 bound = Long.MAX_VALUE / 4; // Unknown: never skip a check after dropping this operation.

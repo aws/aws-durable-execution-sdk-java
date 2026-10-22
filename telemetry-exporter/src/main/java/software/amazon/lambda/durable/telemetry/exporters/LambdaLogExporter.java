@@ -10,7 +10,6 @@ import java.util.Map;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
-import software.amazon.lambda.durable.telemetry.internal.RenderedSize;
 
 /**
  * Exports workflow telemetry records to CloudWatch Logs via {@code System.out.println} (Lambda captures stdout to the
@@ -35,7 +34,7 @@ import software.amazon.lambda.durable.telemetry.internal.RenderedSize;
  * application log level filtering is unchanged: with the JSON log format and an application log level of {@code WARN}
  * or above, these lines are dropped, as raw record lines were before.
  */
-public final class LambdaLogExporter implements TelemetryExporter, RenderedSize {
+public final class LambdaLogExporter implements TelemetryExporter {
     /** UTC ISO-8601 with exactly three fraction digits. */
     private static final DateTimeFormatter TIMESTAMP =
             DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
@@ -76,9 +75,9 @@ public final class LambdaLogExporter implements TelemetryExporter, RenderedSize 
     /**
      * The UTF-8 size of the line {@link #export} prints for {@code record}, computed without building the envelope: the
      * envelope's fixed size plus the size of the record JSON once it is escaped again as the {@code message} string.
-     * Equal to the size of {@code Json.stringify(render(record))}; {@code null} if the record cannot be serialized.
+     * Equal to the size of {@code Json.stringify(render(record))}; {@code null} if the record cannot be serialized. The
+     * truncation pass calls this instead of serializing {@link #render} on every size check.
      */
-    @Override
     public Integer renderedSize(DurableExecutionTelemetryRecord record) {
         String recordJson;
         try {
@@ -86,7 +85,7 @@ public final class LambdaLogExporter implements TelemetryExporter, RenderedSize 
         } catch (IllegalStateException e) {
             return null; // Json.stringify reports a serialization failure this way, as Json.byteSize reports null.
         }
-        long size = ENVELOPE_BYTES + RenderedSize.escapedUtf8Size(recordJson);
+        long size = ENVELOPE_BYTES + Json.escapedUtf8Size(recordJson);
         return size > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) size;
     }
 
