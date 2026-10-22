@@ -37,7 +37,7 @@ public final class LambdaLogExporter implements TelemetryExporter {
     private static final DateTimeFormatter TIMESTAMP =
             DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
 
-    /** Budget for the printed line, envelope included. CloudWatch Logs caps a single log event at 256 KB. */
+    /** Budget for the printed line, envelope included. CloudWatch Logs accepts log events of up to 1 MB. */
     private final Integer maxRecordSizeBytes;
 
     public LambdaLogExporter() {
