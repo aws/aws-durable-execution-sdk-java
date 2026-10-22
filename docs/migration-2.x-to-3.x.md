@@ -4,7 +4,25 @@ This guide helps teams upgrade from the `2.x` line to `3.x`.
 
 The `3.x` line contains one breaking change: the plugin contract is now factory-only and per-invocation. Nothing outside the plugin surface changed. If your application registers no plugins, ships no plugin provider, and consumes no plugin JAR, you can upgrade the dependency version and stop reading here.
 
-A plugin instance used to live as long as the execution environment and serve every execution that landed on it. Under Lambda Managed Instances several executions run concurrently in one environment, so a plugin had to key its own state by execution ARN and remove those entries itself. In `3.x` the SDK creates one plugin instance per Lambda invocation and drops it when the invocation returns, so per-invocation state is a plain instance field.
+## Why upgrade to 3.0
+
+- **Plugin state is isolated between invocations.** Each Lambda invocation gets
+  a fresh plugin instance, including concurrent invocations in Lambda Managed
+  Instances. Invocation identity, spans, and operation buffers no longer share
+  one plugin object or require an execution-ARN-keyed map inside it. See
+  [Per-invocation state](#per-invocation-state-that-used-to-be-keyed-by-execution-arn).
+- **Resource ownership is explicit.** Factories can share thread-safe exporters,
+  connection pools, and configuration while keeping invocation-specific state
+  on the plugins they create. Reusable resources retain their
+  execution-environment lifetime. See
+  [Shared state](#state-that-must-be-shared-across-invocations).
+- **Stale discovered providers fail at startup.** A provider selected through
+  `DURABLE_EXECUTION_PLUGINS` that still implements the old zero-argument factory
+  is rejected during configuration, with a diagnostic identifying the provider
+  and its JAR. This exposes a missed provider or layer upgrade before the handler
+  runs without its telemetry. Direct registrations still require validation of
+  plugin output. See
+  [Providers that were not rebuilt](#what-happens-to-a-provider-that-is-not-rebuilt).
 
 ## There Is No Compatibility Bridge
 
