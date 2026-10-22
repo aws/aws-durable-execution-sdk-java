@@ -7,7 +7,6 @@ import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
-import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
@@ -42,7 +41,6 @@ import software.amazon.lambda.durable.telemetry.internal.FatalErrors;
  * {@link TelemetrySettings}, the exporters, and the {@link ExportScheduler} that serializes exports across every
  * execution the environment hosts.
  */
-@Experimental
 public final class DurableExecutionTelemetry {
 
     private static final Logger logger = LoggerFactory.getLogger(DurableExecutionTelemetry.class);

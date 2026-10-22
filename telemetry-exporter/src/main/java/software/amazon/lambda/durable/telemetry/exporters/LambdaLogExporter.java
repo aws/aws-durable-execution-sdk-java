@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.telemetry.exporters;
 
-import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -13,7 +12,6 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * record, mirroring the JS {@code LambdaLogExporter} (which uses {@code console.log}). The conformance CloudWatch sink
  * decodes both raw top-level JSON lines and the Lambda structured-logging envelope.
  */
-@Experimental
 public final class LambdaLogExporter implements TelemetryExporter {
     /** CloudWatch Logs caps a single log event at 256 KB. */
     private final Integer maxRecordSizeBytes;
