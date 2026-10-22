@@ -380,9 +380,53 @@ A useful pre-deployment check is to run one execution locally with the provider 
 
 ## Artifact version boundary
 
-This factory migration builds as `3.0.0-SNAPSHOT`; it must not be published under a 2.x Maven coordinate.
-The release workflow also requires a major version bump for the `BREAKING`-labeled PR. Existing 2.x consumers
-continue to use the separately maintained instance-registration API and compatible plugin layers.
+The factory migration is part of the `3.0.0` release, prepared by
+[#813](https://github.com/aws/aws-durable-execution-sdk-java/pull/813).
+Use the release coordinates after publication, rather than the earlier
+`3.0.0-SNAPSHOT` development build. Do not publish this contract under a 2.x
+Maven coordinate.
+
+All three artifacts below use group ID `software.amazon.lambda.durable` and
+the same release version. Update the artifacts your application uses together:
+
+| Artifact | Version |
+| --- | --- |
+| `aws-durable-execution-sdk-java` | `3.0.0` |
+| `aws-durable-execution-sdk-java-testing` | `3.0.0` |
+| `aws-durable-execution-sdk-java-plugin-otel` | `3.0.0` |
+
+For example, use one property for your Core and OTel dependencies:
+
+```xml
+<properties>
+    <durable.sdk.version>3.0.0</durable.sdk.version>
+</properties>
+<dependencies>
+    <dependency>
+        <groupId>software.amazon.lambda.durable</groupId>
+        <artifactId>aws-durable-execution-sdk-java</artifactId>
+        <version>${durable.sdk.version}</version>
+    </dependency>
+    <dependency>
+        <groupId>software.amazon.lambda.durable</groupId>
+        <artifactId>aws-durable-execution-sdk-java-plugin-otel</artifactId>
+        <version>${durable.sdk.version}</version>
+    </dependency>
+</dependencies>
+```
+
+Set the testing artifact to the same property with test scope if you use it.
+Java's durable OTel plugin version is `3.0.0`; it does not follow the separate
+OTel `2.0.0` package version used by the Python and JavaScript SDKs. The optional
+`aws-durable-execution-sdk-java-plugin-telemetry-exporter` artifact also uses `3.0.0`.
+
+Inspect `mvn dependency:tree` for older transitive SDK/plugin artifacts, then
+rebuild your application and provider JARs. Update attached Lambda layers as
+described above. Keep existing executions on a compatible deployed function
+version while routing new executions to the upgraded version; preserve operation
+identity and checkpoint serialization when validating a resumed workflow.
+Existing 2.x consumers must continue using compatible 2.x plugin artifacts and
+layers until they migrate.
 
 ## Fatal invocation failures
 
