@@ -48,7 +48,8 @@ public interface TelemetryExporter {
 
     /**
      * Maps a record to the exact value this exporter serializes/sends (defaults to the canonical {@code operations}
-     * array wire map). Overriding exporters (CloudWatch/Lambda log) return the {@code operationsByName} rendering.
+     * array wire map). {@code CloudWatchLogsExporter} returns the {@code operationsByName} rendering, and
+     * {@code LambdaLogExporter} returns the log envelope it prints, whose {@code message} is that rendering.
      */
     default Object render(DurableExecutionTelemetryRecord record) {
         return record.toWireMap();
