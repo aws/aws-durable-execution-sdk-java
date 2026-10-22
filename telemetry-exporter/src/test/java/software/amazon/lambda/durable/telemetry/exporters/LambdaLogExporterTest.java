@@ -140,8 +140,8 @@ class LambdaLogExporterTest {
     }
 
     /**
-     * Review B1: with the default 256,000-byte limit, an execution error whose message is 100,000 backslashes (about
-     * 400 KB of line uncapped) prints a line within the limit. The message cap does it; the cause is dropped first.
+     * With the default 256,000-byte limit, an execution error whose message is 100,000 backslashes (about 400 KB of
+     * line uncapped) prints a line within the limit. The message cap does it; the cause is dropped first.
      */
     @Test
     @SuppressWarnings("unchecked")
@@ -174,8 +174,8 @@ class LambdaLogExporterTest {
     }
 
     /**
-     * Review B2: one pass, measured on the printed line, reports every dropped operation. 400 failed operations whose
-     * messages are full of quotes, limit 100,000.
+     * One pass, measured on the printed line, reports every dropped operation. 400 failed operations whose messages are
+     * full of quotes, limit 100,000.
      */
     @Test
     @SuppressWarnings("unchecked")
@@ -249,5 +249,49 @@ class LambdaLogExporterTest {
         assertEquals(1, exportAndCapture(record).lines().count());
         assertFalse(line.contains("\u0001"), "control characters are escaped");
         assertEquals(text, messageOf(line).get("input"));
+    }
+
+    /**
+     * {@code renderedSize} is computed without building the envelope, and equals the UTF-8 size of the printed line for
+     * content that is escaped differently at each level: quotes, backslashes, short and long control-character escapes,
+     * DEL, two- and three-byte UTF-8, line and paragraph separators, emoji (surrogate pairs) and a lone surrogate.
+     */
+    @Test
+    void renderedSizeEqualsThePrintedLineSize() {
+        String tricky =
+                "q\" b\\ \b\t\n\f\r \u0000\u0001\u001F\u007F é ß 日本 \u2028\u2029 \uD83D\uDE00\uD83E\uDD16 lone\uD800x";
+        var exporter = new LambdaLogExporter();
+        var record =
+                RecordFactory.withInput(RecordFactory.sampleWithError(tricky, tricky), Map.of(tricky, List.of(tricky)));
+        RecordFactory.withOperation(
+                record,
+                new software.amazon.lambda.durable.telemetry.OperationRecord()
+                        .id("op-2")
+                        .name(tricky)
+                        .type("STEP")
+                        .status("FAILED")
+                        .result(tricky)
+                        .error(new software.amazon.lambda.durable.telemetry.ErrorInfo(tricky, tricky)));
+        for (var r : List.of(RecordFactory.sample(), record)) {
+            String line = exportAndCapture(exporter, r).strip();
+            assertEquals(line.getBytes(StandardCharsets.UTF_8).length, exporter.renderedSize(r), line);
+            assertEquals(Json.byteSize(exporter.render(r)), exporter.renderedSize(r));
+        }
+    }
+
+    /** The escaped size of every single character, and of mixed text, matches the serializer. */
+    @Test
+    void escapedSizeMatchesTheSerializerForEveryChar() {
+        for (int c = 0; c <= 0xFFFF; c++) {
+            String s = String.valueOf((char) c);
+            assertEquals(
+                    Json.stringify(s).getBytes(StandardCharsets.UTF_8).length - 2,
+                    software.amazon.lambda.durable.telemetry.internal.RenderedSize.escapedUtf8Size(s),
+                    "U+" + Integer.toHexString(c));
+        }
+        String pairs = "\uD83D\uDE00a\uDE00\uD83Db\uD83D";
+        assertEquals(
+                Json.stringify(pairs).getBytes(StandardCharsets.UTF_8).length - 2,
+                software.amazon.lambda.durable.telemetry.internal.RenderedSize.escapedUtf8Size(pairs));
     }
 }

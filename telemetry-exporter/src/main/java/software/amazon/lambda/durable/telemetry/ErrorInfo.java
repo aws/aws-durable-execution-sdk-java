@@ -9,13 +9,14 @@ import java.util.Map;
  * Error detail carried on a record or operation: {@code {name, message, cause?}}, the shape shared by the Telemetry
  * exporters of every SDK. {@code cause} has the same shape and is {@code null} when the error has no cause.
  *
- * <p>{@code message} is capped at {@link #MAX_MESSAGE_CHARS} characters (Unicode code points): a longer message keeps
- * its first {@value #MAX_MESSAGE_CHARS} characters followed by {@code …}. The cap is applied here, when the error is
- * created, so it holds for the error and every cause. Applying it again leaves the message unchanged.
+ * <p>{@code name} and {@code message} are each capped at 8,192 characters, counted as Unicode code points: a longer
+ * value keeps its first 8,192 code points followed by {@code …}, and a cut never splits a surrogate pair. The cap is
+ * applied here, when the error is created, so it holds for the error and every cause. Applying it again leaves the
+ * value unchanged.
  */
 public final class ErrorInfo {
-    /** Longest {@code message} written, in characters (Unicode code points), before the {@code …} marker. */
-    public static final int MAX_MESSAGE_CHARS = 8_192;
+    /** Longest {@code name} or {@code message} written, in Unicode code points, before the {@code …} marker. */
+    static final int MAX_CHARS = 8_192;
 
     private final String name;
     private final String message;
@@ -26,20 +27,20 @@ public final class ErrorInfo {
     }
 
     public ErrorInfo(String name, String message, ErrorInfo cause) {
-        this.name = name;
-        this.message = capMessage(message);
+        this.name = cap(name);
+        this.message = cap(message);
         this.cause = cause;
     }
 
-    /** Caps {@code message} at {@link #MAX_MESSAGE_CHARS} code points plus {@code …}; never splits a surrogate pair. */
-    static String capMessage(String message) {
-        if (message == null || message.length() <= MAX_MESSAGE_CHARS) {
-            return message;
+    /** Caps {@code value} at {@link #MAX_CHARS} code points plus {@code …}; never splits a surrogate pair. */
+    static String cap(String value) {
+        if (value == null || value.length() <= MAX_CHARS) {
+            return value;
         }
-        if (message.codePointCount(0, message.length()) <= MAX_MESSAGE_CHARS) {
-            return message;
+        if (value.codePointCount(0, value.length()) <= MAX_CHARS) {
+            return value;
         }
-        return message.substring(0, message.offsetByCodePoints(0, MAX_MESSAGE_CHARS)) + "\u2026";
+        return value.substring(0, value.offsetByCodePoints(0, MAX_CHARS)) + "\u2026";
     }
 
     public String name() {

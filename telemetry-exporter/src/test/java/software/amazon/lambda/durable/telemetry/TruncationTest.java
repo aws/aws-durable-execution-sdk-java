@@ -91,8 +91,8 @@ class TruncationTest {
     }
 
     /**
-     * Review B2: truncating an already-truncated record adds to its {@code droppedOperations} and keeps its other
-     * markers, so a second pass can never under-report what was dropped.
+     * Truncating an already-truncated record adds to its {@code droppedOperations} and keeps its other markers, so a
+     * second pass can never under-report what was dropped.
      */
     @Test
     void truncatingATruncatedRecordKeepsItsMarkers() {

@@ -266,7 +266,7 @@ class ErrorCauseFormatTest {
         }
     }
 
-    /** Review B3: the checkpoint continuation failure shape keeps the ErrorObject identity and the live cause. */
+    /** A checkpoint continuation failure keeps the ErrorObject identity and the live cause. */
     @Test
     void wrapperWithErrorObjectAndLiveCauseFollowsTheCause() {
         var io = new IOException("disk full", new IllegalStateException("inner"));
@@ -356,6 +356,30 @@ class ErrorCauseFormatTest {
         assertNull(rec.error.cause());
     }
 
+    /** A root error whose message cannot be read is written with a null message and its class name; it is kept. */
+    @Test
+    void rootErrorWithUnreadableMessageIsWrittenWithNullMessage() {
+        ErrorInfo root = DurableExecutionTelemetry.toErrorInfo(new BrokenError(false, new IllegalStateException("x")));
+        assertEquals("BrokenError", root.name());
+        assertNull(root.message());
+
+        // A readable cause under it is still written.
+        var withCause = new RuntimeException("unused", new IllegalStateException("inner")) {
+            @Override
+            public String getMessage() {
+                throw new IllegalStateException("unreadable");
+            }
+        };
+        ErrorInfo info = DurableExecutionTelemetry.toErrorInfo(withCause);
+        assertNull(info.message());
+        assertEquals("inner", info.cause().message());
+
+        // Through the plugin, the record and its error are kept.
+        var rec = run(true, chain(1), new BrokenError(false, new RuntimeException()));
+        assertEquals("BrokenError", rec.error.name());
+        assertNull(rec.error.message());
+    }
+
     @Test
     void fatalErrorWhileReadingACausePropagates() {
         var oom = new OutOfMemoryError("simulated");
@@ -371,8 +395,8 @@ class ErrorCauseFormatTest {
     /** Rule 7: every message, on the error and on each cause, is capped at 8,192 characters plus an ellipsis. */
     @Test
     void everyMessageIsCappedAt8192Characters() {
-        String exact = "a".repeat(ErrorInfo.MAX_MESSAGE_CHARS);
-        String over = "b".repeat(ErrorInfo.MAX_MESSAGE_CHARS + 1);
+        String exact = "a".repeat(ErrorInfo.MAX_CHARS);
+        String over = "b".repeat(ErrorInfo.MAX_CHARS + 1);
         String huge = "\\".repeat(100_000);
         ErrorInfo info = DurableExecutionTelemetry.toErrorInfo(
                 new RuntimeException(huge, new IllegalStateException(over, new IllegalStateException(exact))));

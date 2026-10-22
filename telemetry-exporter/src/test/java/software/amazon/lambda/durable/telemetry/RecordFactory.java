@@ -59,4 +59,11 @@ public final class RecordFactory {
         }
         return r;
     }
+
+    /** {@code record} with {@code operation} appended. */
+    public static DurableExecutionTelemetryRecord withOperation(
+            DurableExecutionTelemetryRecord record, OperationRecord operation) {
+        record.addOperation(operation);
+        return record;
+    }
 }

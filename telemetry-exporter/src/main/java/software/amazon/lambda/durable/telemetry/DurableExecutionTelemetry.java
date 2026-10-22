@@ -18,6 +18,7 @@ import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
 import software.amazon.lambda.durable.telemetry.internal.FatalErrors;
+import software.amazon.lambda.durable.telemetry.internal.RenderedSize;
 
 /**
  * Durable Execution Telemetry instrumentation plugin for the Durable Execution Java SDK.
@@ -79,8 +80,9 @@ public final class DurableExecutionTelemetry {
             // so without this a custom exporter that mutates operations or nested content would corrupt every
             // other exporter's view of the same record.
             DurableExecutionTelemetryRecord isolated = record.deepCopy();
-            DurableExecutionTelemetryRecord shaped =
-                    Truncation.truncateRecord(isolated, exporter.maxRecordSizeBytes(), exporter::render);
+            DurableExecutionTelemetryRecord shaped = exporter instanceof RenderedSize measured
+                    ? Truncation.truncateMeasured(isolated, exporter.maxRecordSizeBytes(), measured::renderedSize)
+                    : Truncation.truncateRecord(isolated, exporter.maxRecordSizeBytes(), exporter::render);
             exporter.export(shaped);
         } catch (Throwable t) {
             // Ordinary Errors (such as missing optional dependencies) are isolated too.
@@ -171,8 +173,9 @@ public final class DurableExecutionTelemetry {
      * checkpointed {@link ErrorObject} when the SDK wrapper carries one; the chain still follows {@code getCause()}, so
      * a live cause behind such a wrapper (for example a checkpoint continuation failure) is kept. The chain is cut
      * after {@link #MAX_CAUSE_DEPTH} levels and stops at a cause already visited (by identity), so a cycle cannot loop.
-     * Reading a cause never throws: a non-fatal failure while reading a cause, or while reading the next cause, ends
-     * the chain at that point and the error is still written.
+     * A non-fatal failure while reading a cause's name or message ends the chain at that cause. For the root error
+     * ({@code depth == 0}) such a failure does not drop the error: the message is written as {@code null} and the name
+     * falls back to the class's simple name.
      */
     private static ErrorInfo toErrorInfo(Throwable t, Set<Throwable> visited, int depth) {
         ErrorInfo cause = null;
@@ -185,7 +188,44 @@ public final class DurableExecutionTelemetry {
                 cause = null; // A cause whose name or message cannot be read ends the chain.
             }
         }
-        return nameAndMessage(t, cause);
+        return depth == 0 ? rootNameAndMessage(t, cause) : nameAndMessage(t, cause);
+    }
+
+    /** {@link #nameAndMessage} for the root error: an accessor that throws yields the class name and a null message. */
+    private static ErrorInfo rootNameAndMessage(Throwable t, ErrorInfo cause) {
+        try {
+            return nameAndMessage(t, cause);
+        } catch (Throwable failure) {
+            FatalErrors.rethrow(failure);
+        }
+        ErrorObject error = null;
+        try {
+            error = extractErrorObject(t);
+        } catch (Throwable failure) {
+            FatalErrors.rethrow(failure);
+        }
+        String name = null;
+        String message = null;
+        if (error != null) {
+            try {
+                name = error.errorType();
+            } catch (Throwable failure) {
+                FatalErrors.rethrow(failure);
+            }
+            try {
+                message = error.errorMessage();
+            } catch (Throwable failure) {
+                FatalErrors.rethrow(failure);
+            }
+        }
+        if (message == null) {
+            try {
+                message = t.getMessage();
+            } catch (Throwable failure) {
+                FatalErrors.rethrow(failure);
+            }
+        }
+        return new ErrorInfo(name != null ? name : t.getClass().getSimpleName(), message, cause);
     }
 
     /** {@code t.getCause()}, or {@code null} when the accessor fails with a non-fatal error. */
