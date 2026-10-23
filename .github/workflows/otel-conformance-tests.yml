@@ -49,7 +49,7 @@ on:
       conformance_test_ref:
         description: Optional conformance test commit SHA or branch name
         required: false
-        default: "c32b40f5548f4776b7d533a76838e02358bc66d3"
+        default: "3e7fd1a05e8f45d37e4ec223a6c5a0e379dfa9e8"
         type: string
 
 permissions: {}
