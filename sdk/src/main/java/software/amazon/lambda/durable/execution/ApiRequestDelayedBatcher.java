@@ -11,7 +11,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -28,7 +30,7 @@ import java.util.function.Supplier;
  * @param <T> Request type
  */
 public class ApiRequestDelayedBatcher<T> {
-    private static final Duration MAX_DELAY = Duration.ofMinutes(60);
+    private static final long NO_FLUSH_DEADLINE = Long.MAX_VALUE;
 
     /** Maximum items allowed in a single batch */
     private final int maxItemCount;
@@ -134,6 +136,12 @@ public class ApiRequestDelayedBatcher<T> {
         if (fatal != null) throw new CompletionException(fatal);
     }
 
+    /** Flushes pending requests without waiting beyond the caller's remaining cleanup budget. */
+    void shutdown(Duration timeout) throws InterruptedException, ExecutionException, TimeoutException {
+        flush();
+        flushingQueueFuture.get(Math.max(0, timeout.toNanos()), TimeUnit.NANOSECONDS);
+    }
+
     /** Schedules pending requests immediately without waiting for the current batch. */
     void flush() {
         synchronized (delayedBatch) {
@@ -145,8 +153,8 @@ public class ApiRequestDelayedBatcher<T> {
     /** clear the current batch and creates a new batch */
     private void initializeDelayedBatch() {
         this.delayedBatch.clear();
-        // MAX_DELAY is longer than a single Lambda invocation
-        this.delayedBatchFlushTime = System.nanoTime() + MAX_DELAY.toNanos();
+        // No timer is scheduled until an item supplies its flush time.
+        this.delayedBatchFlushTime = NO_FLUSH_DEADLINE;
 
         // the timer future is created initially without a timeout until an item is added to the batch
         this.delayedBatchFlushTimer = new CompletableFuture<>();

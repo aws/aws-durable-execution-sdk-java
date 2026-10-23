@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.exception;
 import static org.junit.jupiter.api.Assertions.*;
 
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 
 class UnrecoverableDurableExecutionExceptionTest {
 
@@ -35,5 +36,16 @@ class UnrecoverableDurableExecutionExceptionTest {
         assertNull(exception.getCause());
         assertInstanceOf(RuntimeException.class, exception);
         assertInstanceOf(DurableExecutionException.class, exception);
+    }
+
+    @Test
+    void preservesCauseForRetryableInvocationFailures() {
+        var cause = new InterruptedException("interrupted");
+        var error = ErrorObject.builder().errorMessage("cleanup failed").build();
+
+        var exception = new UnrecoverableDurableExecutionException(error, true, cause);
+
+        assertSame(cause, exception.getCause());
+        assertTrue(exception.isRetryable());
     }
 }

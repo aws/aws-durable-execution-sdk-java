@@ -25,11 +25,11 @@ import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.*;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
-/** The old caller handoff is replaced by handler-owned completion, including exhausted runtime budgets. */
+/** The old caller handoff is replaced by handler-owned completion, after the execution cutoff. */
 class HandlerScopeHandoffTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void controlWaitsForScopeOwnerAndEndDespiteExpiredHandoffBudget(boolean retry) throws Exception {
+    void selectedControlWaitsForScopeOwnerAndEndAfterExecutionCutoff(boolean retry) throws Exception {
         var scopeEntered = new CountDownLatch(1);
         var releaseScope = new CountDownLatch(1);
         var endEntered = new CountDownLatch(1);
@@ -37,6 +37,7 @@ class HandlerScopeHandoffTest {
         var owner = new AtomicReference<Thread>();
         var endThread = new AtomicReference<Thread>();
         var end = new AtomicReference<InvocationEndInfo>();
+        var executionManager = new AtomicReference<ExecutionManager>();
         var original = new UnrecoverableDurableExecutionException(
                 ErrorObject.builder().errorMessage("retry").build(), true);
         var plugin = new ScopedPlugin(
@@ -57,7 +58,7 @@ class HandlerScopeHandoffTest {
         var workers = Executors.newSingleThreadExecutor();
         var callers = Executors.newSingleThreadExecutor();
         var runtime = mock(Context.class);
-        when(runtime.getRemainingTimeInMillis()).thenReturn(0);
+        when(runtime.getRemainingTimeInMillis()).thenReturn(3000);
         try {
             var config = DurableConfig.builder()
                     .withExecutorService(workers)
@@ -70,6 +71,7 @@ class HandlerScopeHandoffTest {
                     TypeToken.get(String.class),
                     (value, context) -> {
                         var manager = ((DurableContextImpl) context).getExecutionManager();
+                        executionManager.set(manager);
                         try {
                             if (retry) manager.terminateExecution(original);
                             manager.suspendExecution();
@@ -80,12 +82,21 @@ class HandlerScopeHandoffTest {
                     },
                     config));
             assertTrue(scopeEntered.await(3, TimeUnit.SECONDS));
-            assertThrows(TimeoutException.class, () -> response.get(600, TimeUnit.MILLISECONDS));
+            // Admission must precede the deadline. The selected control may then wait for its real scope
+            // owner past the execution cutoff, without consuming the separate cleanup budget.
+            var manager = executionManager.get();
+            var untilCutoff =
+                    manager.getRemainingInvocationTime().orElseThrow().toNanos() - TimeUnit.MILLISECONDS.toNanos(500);
+            assertTrue(untilCutoff > 0, "The scope must open before the execution cutoff");
+            assertThrows(
+                    TimeoutException.class,
+                    () -> response.get(untilCutoff + TimeUnit.MILLISECONDS.toNanos(1), TimeUnit.NANOSECONDS));
+            assertTrue(manager.getRemainingInvocationTime().orElseThrow().toMillis() < 500);
             assertEquals(1, endEntered.getCount(), "No End before the real scope owner finishes");
             releaseScope.countDown();
             assertTrue(endEntered.await(3, TimeUnit.SECONDS));
             assertSame(owner.get(), endThread.get(), "End belongs to the handler thread");
-            assertThrows(TimeoutException.class, () -> response.get(100, TimeUnit.MILLISECONDS));
+            assertThrows(TimeoutException.class, () -> response.get(50, TimeUnit.MILLISECONDS));
             releaseEnd.countDown();
             if (retry) {
                 var failure = assertThrows(ExecutionException.class, () -> response.get(3, TimeUnit.SECONDS));
