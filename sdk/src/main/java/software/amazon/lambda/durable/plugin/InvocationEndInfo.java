@@ -4,7 +4,6 @@ package software.amazon.lambda.durable.plugin;
 
 import java.time.Instant;
 import java.util.Map;
-import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Information provided at the end of a Lambda invocation.
@@ -18,9 +17,9 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * @param executionStartTime the stable start timestamp of the durable execution
  * @param operations a snapshot of operations known when the invocation ended, keyed by operation ID
  * @param invocationStatus the invocation outcome
- * @param executionError non-null if the execution failed; this component is experimental
- * @param executionInput the deserialized execution input; this component is experimental
- * @param executionResult the value returned by a successful handler; this component is experimental
+ * @param executionError non-null if the execution failed
+ * @param executionInput the deserialized execution input
+ * @param executionResult the value returned by a successful handler
  */
 public record InvocationEndInfo(
         String requestId,
@@ -29,9 +28,9 @@ public record InvocationEndInfo(
         Instant executionStartTime,
         Map<String, OperationChangeItemInfo> operations,
         InvocationStatus invocationStatus,
-        @Experimental Throwable executionError,
-        @Experimental Object executionInput,
-        @Experimental Object executionResult) {
+        Throwable executionError,
+        Object executionInput,
+        Object executionResult) {
 
     /** Creates invocation-end information without execution payloads or operation state. */
     public InvocationEndInfo(

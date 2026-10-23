@@ -2,15 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.telemetry;
 
-import software.amazon.lambda.durable.annotations.Experimental;
-
 /**
  * Parses the durable execution ARN into its component fields, mirroring the JS {@code parseExecutionArn}.
  *
  * <p>Format:
  * {@code arn:<partition>:lambda:<region>:<accountId>:function:<functionName>:<qualifier>/durable-execution/<executionName>/<invocationId>}.
  */
-@Experimental
 public final class ArnParser {
     private final String functionName;
     private final String qualifier;

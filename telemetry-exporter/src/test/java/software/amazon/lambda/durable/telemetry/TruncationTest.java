@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.telemetry;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -87,5 +88,42 @@ class TruncationTest {
         DurableExecutionTelemetryRecord out =
                 Truncation.truncateRecord(r, 5_000_000, DurableExecutionTelemetryRecord::toWireMap);
         assertNull(out.truncated);
+    }
+
+    /**
+     * Truncating an already-truncated record adds to its {@code droppedOperations} and keeps its other markers, so a
+     * second pass can never under-report what was dropped.
+     */
+    @Test
+    void truncatingATruncatedRecordKeepsItsMarkers() {
+        DurableExecutionTelemetryRecord r = RecordFactory.sampleWithFailedOperations(40, "m".repeat(200));
+        r.input = "i".repeat(5_000);
+        int full = Json.byteSize(r.toWireMap());
+        DurableExecutionTelemetryRecord first =
+                Truncation.truncateRecord(r, full / 2, DurableExecutionTelemetryRecord::toWireMap);
+        int firstDropped = first.droppedOperations;
+        assertTrue(firstDropped > 0, "first pass drops operations");
+        assertEquals(Boolean.TRUE, first.droppedCauses);
+
+        DurableExecutionTelemetryRecord second =
+                Truncation.truncateRecord(first, full / 4, DurableExecutionTelemetryRecord::toWireMap);
+        assertEquals(40, second.operations().size() + second.droppedOperations, "every dropped operation is counted");
+        assertTrue(second.droppedOperations > firstDropped);
+        assertEquals(Boolean.TRUE, second.droppedCauses, "kept from the first pass");
+        assertEquals(Boolean.TRUE, second.truncated);
+
+        // A pass that has nothing more to drop returns the record unchanged.
+        assertSame(second, Truncation.truncateRecord(second, full, DurableExecutionTelemetryRecord::toWireMap));
+    }
+
+    /** One pass reports every operation it dropped. */
+    @Test
+    void droppedOperationsCountsEveryDroppedOperation() {
+        DurableExecutionTelemetryRecord r = RecordFactory.sampleWithFailedOperations(400, "\"".repeat(200));
+        DurableExecutionTelemetryRecord out =
+                Truncation.truncateRecord(r, 100_000, DurableExecutionTelemetryRecord::toWireMap);
+        assertTrue(out.droppedOperations > 0);
+        assertEquals(400, out.operations().size() + out.droppedOperations);
+        assertTrue(Json.byteSize(out.toWireMap()) <= 100_000);
     }
 }

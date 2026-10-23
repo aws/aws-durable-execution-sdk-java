@@ -7,7 +7,6 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * The curated execution record emitted to destinations.
@@ -16,7 +15,6 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * identical (camelCase names, absent fields omitted). Exactly one of {@code operations} (array) or the
  * {@code operationsByName} rendering is emitted, depending on the exporter's {@code render}.
  */
-@Experimental
 public final class DurableExecutionTelemetryRecord {
     String recordType = "DurableExecutionTelemetry";
     String schemaVersion = "1.0";
@@ -36,6 +34,7 @@ public final class DurableExecutionTelemetryRecord {
     ErrorInfo error;
     List<OperationRecord> operations = new ArrayList<>();
     Boolean truncated;
+    Boolean droppedCauses;
     Integer droppedOperations;
     Boolean droppedInput;
     Boolean droppedOutput;
@@ -90,6 +89,7 @@ public final class DurableExecutionTelemetryRecord {
         c.error = error;
         c.operations = new ArrayList<>(operations);
         c.truncated = truncated;
+        c.droppedCauses = droppedCauses;
         c.droppedOperations = droppedOperations;
         c.droppedInput = droppedInput;
         c.droppedOutput = droppedOutput;
@@ -168,6 +168,9 @@ public final class DurableExecutionTelemetryRecord {
     private void putTruncationMarkers(Map<String, Object> data) {
         if (truncated != null) {
             data.put("truncated", truncated);
+        }
+        if (droppedCauses != null) {
+            data.put("droppedCauses", droppedCauses);
         }
         if (droppedOperations != null) {
             data.put("droppedOperations", droppedOperations);
