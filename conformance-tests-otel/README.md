@@ -106,3 +106,9 @@ For case 25, Java reports no plugin error details for an entirely empty error
 container. The persisted container, callback failure, and caller error stay
 unchanged. Any present type, message, data, or stack-trace field remains an error
 detail, including an empty string or an explicitly supplied empty stack list.
+
+Case 27 (`chained-invoke-suspend`) invokes a child that performs a one-second
+durable wait and returns the original payload after resuming. Both views
+check two caller invocations, two child invocations and the child wait's
+parentage and continuation links. It replaces the suspended-child scenario
+formerly exercised by the short mode of `otel-long-running-4`.
