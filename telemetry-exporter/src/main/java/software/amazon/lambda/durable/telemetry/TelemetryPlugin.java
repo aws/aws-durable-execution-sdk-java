@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -43,6 +44,8 @@ import software.amazon.lambda.durable.telemetry.internal.Timestamps;
  *   <li><em>The build revision</em> — {@link #buildRevision} — counts the record builds this invocation has started, so
  *       that a build which was overtaken can be recognized at hand-off time and its record dropped. Atomic rather than
  *       {@code volatile}, because the case it exists for is two builds running at once. See the field.
+ *   <li><em>The last emittedAt</em> — {@link #lastEmittedMs} — is atomic for the same reason: two builds can run at
+ *       once. See {@link #nextEmittedAt()}.
  *   <li><em>Scheduling state</em> — {@link #record}, {@link #settled}, {@link #exporting}, {@link #drainWaiters} and
  *       {@link #closed} — is shared with the export pump and guarded by the monitor of {@link #scheduler}. One monitor
  *       for the whole environment, not one per invocation, so the {@code closed} check and the hand-off of a record are
@@ -109,6 +112,17 @@ final class TelemetryPlugin implements DurableExecutionPlugin {
      */
     private final AtomicLong buildRevision = new AtomicLong();
 
+    // --- emittedAt ordering. ---
+
+    /** Current time in epoch milliseconds. {@code System::currentTimeMillis} outside tests. */
+    private final LongSupplier clockMillis;
+
+    /**
+     * The last {@code emittedAt} this instance assigned, in epoch milliseconds. {@link Long#MIN_VALUE} before the first
+     * record. See {@link #nextEmittedAt()}.
+     */
+    private final AtomicLong lastEmittedMs = new AtomicLong(Long.MIN_VALUE);
+
     // --- Scheduling state: guarded by the scheduler's monitor. ---
 
     /**
@@ -168,7 +182,14 @@ final class TelemetryPlugin implements DurableExecutionPlugin {
      *     contains a hook failure, by skipping this plugin for the invocation
      */
     TelemetryPlugin(TelemetrySettings settings, ExportScheduler scheduler, InvocationInfo info) {
+        this(settings, scheduler, info, System::currentTimeMillis);
+    }
+
+    /** Test seam: the same instance with a supplied clock for {@code emittedAt}. */
+    TelemetryPlugin(
+            TelemetrySettings settings, ExportScheduler scheduler, InvocationInfo info, LongSupplier clockMillis) {
         this.settings = settings;
+        this.clockMillis = clockMillis;
         this.scheduler = scheduler;
         this.executionArn = info.durableExecutionArn();
         this.arn = ArnParser.parse(executionArn);
@@ -348,6 +369,30 @@ final class TelemetryPlugin implements DurableExecutionPlugin {
         return buildRevision.get() == revision;
     }
 
+    /**
+     * Returns the {@code emittedAt} value for the next record this instance builds.
+     *
+     * <ol>
+     *   <li>{@code emittedAt} has millisecond precision.
+     *   <li>With {@code ON_CHANGE}, this instance can build two records in the same millisecond. One example is a
+     *       RUNNING record and the terminal record.
+     *   <li>The SQS FIFO deduplication id and the default DynamoDB sort key use {@code executionArn} and
+     *       {@code emittedAt}.
+     *   <li>So two records with equal values collide. SQS drops the second message. DynamoDB overwrites the first item.
+     *   <li>So {@code emittedAt} strictly increases within this instance. This instance serves one invocation.
+     * </ol>
+     *
+     * <p>The rule: if the clock is past the last value, the clock is used. Otherwise the last value plus 1 ms is used.
+     *
+     * <p>Hook threads can build records at the same time, and no lock serializes the builds. So the read and the update
+     * of the last value are one atomic {@code updateAndGet}. {@code Math.max(prev + 1, now)} is the rule above.
+     */
+    String nextEmittedAt() {
+        long nowMs = clockMillis.getAsLong();
+        long ms = lastEmittedMs.updateAndGet(prev -> Math.max(prev + 1, nowMs));
+        return Timestamps.format(Instant.ofEpochMilli(ms));
+    }
+
     private DurableExecutionTelemetryRecord buildRecord(
             String status,
             Map<String, OperationChangeItemInfo> operations,
@@ -357,7 +402,7 @@ final class TelemetryPlugin implements DurableExecutionPlugin {
             Throwable error) {
         ContentConfig content = settings.content;
         DurableExecutionTelemetryRecord record = new DurableExecutionTelemetryRecord();
-        record.emittedAt = Timestamps.format(Instant.now());
+        record.emittedAt = nextEmittedAt();
         record.executionArn = executionArn;
         record.executionName = DurableExecutionTelemetry.emptyToNull(arn.executionName());
         record.functionName = arn.functionName();

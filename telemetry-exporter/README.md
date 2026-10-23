@@ -215,6 +215,10 @@ This is the format of JavaScript's `Date.prototype.toISOString()`. Every value h
 values as text gives the same order as comparing them as times. This matters for destinations that compare strings,
 such as a DynamoDB sort key or a CloudWatch Logs Insights filter.
 
+`emittedAt` strictly increases within one invocation: two records built in the same millisecond get values 1 ms
+apart, because the SQS FIFO deduplication id and the default DynamoDB sort key use `executionArn` and `emittedAt`, so
+equal values would drop or overwrite a record.
+
 ## Error names and causes
 
 Every error in a record (the execution `error`, each `operations[].error`, and each
