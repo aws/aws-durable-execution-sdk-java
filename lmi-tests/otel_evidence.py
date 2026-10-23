@@ -80,4 +80,3 @@ def validate_invocations(events, settings):
             require(len(workflows) == 1, "Workflow repeated across resume/retry")
             expected = "ERROR" if terminal["status"] == "FAILED" else "OK"
             require(workflows[0]["status"] == expected, "Workflow status changed")
-

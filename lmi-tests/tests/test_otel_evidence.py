@@ -115,4 +115,3 @@ class OtelEvidenceTest(unittest.TestCase):
         self.assertEqual(HEADER, request["traceHeader"])
         self.assertNotIn("traceHeader", json.loads(request["payload"]))
         self.assertEqual("run-marker", request["executionName"])
-

@@ -95,4 +95,3 @@ def additional_cases(cloud, lifecycle):
                 for scenario in ("return-inflight", "failure-inflight"):
                     add(scenario, lambda scenario=scenario: lifecycle.inflight_case(cloud, "default2", scenario))
     return cases
-
