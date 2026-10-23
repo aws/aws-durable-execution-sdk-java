@@ -39,8 +39,12 @@ invoke path collects after that hook and therefore uses the operation context it
 The invocation view can read the sampling flags from an operation span that has already started. The execution view
 defers that span until completion, so its placeholder does not establish a per-span sampling decision. It contributes
 metadata when the visible provider uses `DurableSampler`, including the application-owned builder setup. With an
-opaque Java-agent provider, the sampler confirms consumption of the actual Invocation span's sampling intent through
-the thread-scoped bridge. The confirmation matches the trace ID, span name and execution ARN, restores an enclosing
+opaque Java-agent provider, the existing autoconfiguration SPI's post-build callback checks the actual provider's final
+sampler. Only an unwrapped `DurableSampler` is accepted, and only that exact instance can confirm consumption of the
+actual Invocation span's sampling intent through the thread-scoped bridge. A filter around `DurableSampler` cannot
+authorize propagation merely by delegating Invocation sampling. A new configuration clears the previous verification;
+an absent callback or an unrecognized final sampler leaves propagation disabled for an opaque provider.
+The confirmation matches the trace ID, span name and execution ARN, restores an enclosing
 observation when nested, and is cleared when the span-creation scope closes. This lets the producer use the deterministic
 invoke parent ID and actual invocation sampling flags without accessing the agent's provider.
 Replacement samplers and opaque providers without confirmation still abstain. In those cases the backend's omitted-header

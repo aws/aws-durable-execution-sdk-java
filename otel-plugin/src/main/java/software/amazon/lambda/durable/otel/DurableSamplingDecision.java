@@ -104,7 +104,7 @@ final class DurableSamplingDecision {
         return new Observation(scope, key, previous, expected);
     }
 
-    /** Called only after DurableSampler has successfully resolved an intent for the span being sampled. */
+    /** Called only by the verified final sampler after it resolves an intent for the span being sampled. */
     static void confirmConsumption(String traceId, String spanName, String executionArn) {
         var key = observationProperty();
         var expected = System.getProperty(key);
@@ -114,7 +114,8 @@ final class DurableSamplingDecision {
     }
 
     private static String observationProperty() {
-        return scopedProperty() + ".observation";
+        // An older agent copy that only observes sampler participation must not satisfy final-sampler verification.
+        return scopedProperty() + ".verifiedSamplerObservation";
     }
 
     private static String spanIdentity(String traceId, String spanName, String executionArn) {

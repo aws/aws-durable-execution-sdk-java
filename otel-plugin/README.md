@@ -105,11 +105,13 @@ AWS SDK for Java 2.56.0 provides the generated typed setter. Deployed parent/chi
 cloud validation. See [the implemented path and validation status](../docs/advanced/propagation-metadata.md).
 
 Execution-view operation spans are deferred until completion. Their placeholders can provide sampling metadata with
-a visible provider using the SDK's `DurableSampler`, or an agent provider whose `DurableSampler` confirms that it
-consumed this invocation's sampling intent. Confirmation crosses the application/agent class-loader boundary through
+a visible provider using the SDK's `DurableSampler`, or an agent provider verified after SDK autoconfiguration.
+The post-build callback checks the immutable provider's final sampler, after all customizers have run. Only that exact
+`DurableSampler` instance can confirm consumption of this invocation's sampling intent; a later filtering wrapper is
+rejected even if it delegates Invocation sampling to an inner `DurableSampler`. Confirmation crosses the application/agent class-loader boundary through
 the existing thread-scoped bridge and is cleared after span creation. The propagated parent is the deterministic
 invoke span ID, and sampling flags come from the actual Invocation span.
-Replacement samplers and opaque providers without that confirmation still abstain; the backend's existing
+Replacement samplers and opaque providers without post-build verification and confirmation still abstain; the backend's existing
 omitted-header fallback applies. Invocation view uses the actual started operation span's flags. Before that span is
 available, it requires a visible durable sampler. Neither path changes the customer's sampler, samples again, or
 creates a span just to obtain propagation metadata.

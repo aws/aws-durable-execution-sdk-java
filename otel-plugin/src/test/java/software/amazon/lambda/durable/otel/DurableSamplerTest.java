@@ -70,6 +70,7 @@ class DurableSamplerTest {
     @ValueSource(strings = {"trace", "span", "execution"})
     void propagationObservationRejectsAnotherSpan(String mismatch) {
         var sampler = DurableSampler.wrap(Sampler.alwaysOff());
+        OtelPluginAutoConfigurationState.recordConfiguredSampler(sampler);
         var intent = DurableSamplingDecision.Intent.resolved(SamplingResult.recordOnly());
         try (var observation = DurableSamplingDecision.observe(intent, TRACE_ID, "Invocation", ARN)) {
             var result = sampler.shouldSample(
@@ -88,6 +89,7 @@ class DurableSamplerTest {
     @Test
     void propagationObservationRestoresNestedScopesAndDoesNotLeak() {
         var sampler = DurableSampler.wrap(Sampler.alwaysOff());
+        OtelPluginAutoConfigurationState.recordConfiguredSampler(sampler);
         var intent = DurableSamplingDecision.Intent.resolved(SamplingResult.recordAndSample());
         var attributes = Attributes.of(SpanAttributes.DURABLE_EXECUTION_ARN, ARN);
         try (var outer = DurableSamplingDecision.observe(intent, TRACE_ID, "Invocation", ARN)) {

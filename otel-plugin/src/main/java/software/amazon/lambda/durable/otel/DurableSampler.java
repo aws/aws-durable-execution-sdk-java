@@ -128,7 +128,10 @@ final class DurableSampler implements Sampler {
                         key -> delegate.shouldSample(
                                 Context.root(), key.traceId(), name, spanKind, attributes, Collections.emptyList()))
                 : intent.resolved();
-        DurableSamplingDecision.confirmConsumption(traceId, name, attributes.get(SpanAttributes.DURABLE_EXECUTION_ARN));
+        if (OtelPluginAutoConfigurationState.isConfiguredSampler(this)) {
+            DurableSamplingDecision.confirmConsumption(
+                    traceId, name, attributes.get(SpanAttributes.DURABLE_EXECUTION_ARN));
+        }
         if (name.equals("DurableExecutionRoot")
                 && Boolean.TRUE.equals(attributes.get(SpanAttributes.DURABLE_EXECUTION_SYNTHETIC_ROOT))) {
             // Re-exported anchors carry only SDK identity and the sampled decision. Per-invocation sampler

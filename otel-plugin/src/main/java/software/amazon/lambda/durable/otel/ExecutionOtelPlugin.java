@@ -468,7 +468,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
         var trace = executionTrace;
         if (trace == null) return null;
         // Deferred operation contexts may reuse the invocation's decision only when DurableSampler owns it.
-        // An agent hides its provider, so confirm the actual Invocation sampling call crossed our bridge.
+        // An agent hides its provider, so require a bridge confirmation from its verified final sampler instance.
         // A replacement sampler can decide differently per span and must continue to abstain here.
         if (!OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)
                 || (sdkTracerProvider == null && !invocationUsesDurableSampler)) return null;

@@ -10,6 +10,7 @@ import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
@@ -93,6 +94,10 @@ class InvokePropagationIntegrationTest {
                         .setIdGenerator(new DeterministicIdGenerator())
                         .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                         .build()) {
+            new OtelPluginAutoConfigurationCustomizerProvider()
+                    .afterAutoConfigure(OpenTelemetrySdk.builder()
+                            .setTracerProvider(provider)
+                            .build());
             installOpaqueProvider(provider);
             assertOpaqueInvokePropagation(exporter, sampled, explicitDecision);
         } finally {

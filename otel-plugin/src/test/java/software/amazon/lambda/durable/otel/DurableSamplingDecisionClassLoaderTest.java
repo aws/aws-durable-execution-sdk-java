@@ -21,6 +21,7 @@ import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.IdGenerator;
 import io.opentelemetry.sdk.trace.ReadWriteSpan;
@@ -124,6 +125,15 @@ class DurableSamplingDecisionClassLoaderTest {
                             .setExportUnsampledSpans(true)
                             .build())
                     .build()) {
+                var customizerType =
+                        Class.forName(OtelPluginAutoConfigurationCustomizerProvider.class.getName(), true, loader);
+                customizerType
+                        .getMethod("afterAutoConfigure", OpenTelemetrySdk.class)
+                        .invoke(
+                                customizerType.getConstructor().newInstance(),
+                                OpenTelemetrySdk.builder()
+                                        .setTracerProvider(provider)
+                                        .build());
                 var hidden = new TracerProvider() {
                     public Tracer get(String name) {
                         return provider.get(name);
