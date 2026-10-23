@@ -270,7 +270,10 @@ class StateCleanupLifecycleTest {
 
         var terminal = exporter.records.get(exporter.records.size() - 1);
         assertEquals("SUCCEEDED", terminal.status());
-        assertEquals(START.toString(), terminal.startTime(), "stable start time recreated across the suspend boundary");
+        assertEquals(
+                "2026-08-05T00:00:00.000Z",
+                terminal.startTime(),
+                "stable start time recreated across the suspend boundary");
         assertEquals("alpha", terminal.input, "input re-seeded from resume onInvocationStart");
         assertFalse(Executions.outstanding(resumed), "the terminal end leaves the scheduler owing nothing");
         assertFalse(resumed.scheduler.retains(resumed), "the environment holds no reference to the resumed invocation");

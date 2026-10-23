@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.telemetry;
 
+import software.amazon.lambda.durable.telemetry.internal.Timestamps;
+
 /** Builds a minimal, fully populated record for exporter tests outside this package. */
 public final class RecordFactory {
     private RecordFactory() {}
@@ -54,7 +56,7 @@ public final class RecordFactory {
                     .name("op-" + i)
                     .type("STEP")
                     .status("FAILED")
-                    .startTime(start.plusSeconds(i).toString())
+                    .startTime(Timestamps.format(start.plusSeconds(i)))
                     .error(new ErrorInfo("java.lang.RuntimeException", message, new ErrorInfo("Throwable", "c"))));
         }
         return r;
