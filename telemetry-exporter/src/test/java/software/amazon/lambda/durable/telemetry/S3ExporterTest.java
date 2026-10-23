@@ -27,7 +27,7 @@ class S3ExporterTest {
         r.executionName = "exec-1";
         r.functionName = "f";
         r.status = "SUCCEEDED";
-        r.startTime = "2026-08-05T00:00:00Z";
+        r.startTime = "2026-08-05T00:00:00.000Z";
         r.addOperation(new OperationRecord()
                 .id("op-1")
                 .name("greet")

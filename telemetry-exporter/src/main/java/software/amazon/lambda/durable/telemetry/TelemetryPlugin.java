@@ -15,6 +15,7 @@ import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.OperationChangeInfo;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
 import software.amazon.lambda.durable.telemetry.internal.FatalErrors;
+import software.amazon.lambda.durable.telemetry.internal.Timestamps;
 
 /**
  * The Durable Execution Telemetry plugin instance for one Lambda invocation: both the state that invocation's records
@@ -356,7 +357,7 @@ final class TelemetryPlugin implements DurableExecutionPlugin {
             Throwable error) {
         ContentConfig content = settings.content;
         DurableExecutionTelemetryRecord record = new DurableExecutionTelemetryRecord();
-        record.emittedAt = Instant.now().toString();
+        record.emittedAt = Timestamps.format(Instant.now());
         record.executionArn = executionArn;
         record.executionName = DurableExecutionTelemetry.emptyToNull(arn.executionName());
         record.functionName = arn.functionName();
@@ -364,9 +365,9 @@ final class TelemetryPlugin implements DurableExecutionPlugin {
         record.region = arn.region();
         record.accountId = arn.accountId();
         record.status = status;
-        record.startTime = startTime != null ? startTime.toString() : null;
+        record.startTime = startTime != null ? Timestamps.format(startTime) : null;
         if (endTime != null) {
-            record.endTime = endTime.toString();
+            record.endTime = Timestamps.format(endTime);
             if (startTime != null) {
                 record.durationMs = endTime.toEpochMilli() - startTime.toEpochMilli();
             }
@@ -429,11 +430,8 @@ final class TelemetryPlugin implements DurableExecutionPlugin {
                     .subType(item.subType())
                     .parentId(item.parentId())
                     .status(item.status() != null ? item.status().toString() : "UNKNOWN")
-                    .startTime(
-                            item.startTimestamp() != null
-                                    ? item.startTimestamp().toString()
-                                    : null)
-                    .endTime(item.endTimestamp() != null ? item.endTimestamp().toString() : null)
+                    .startTime(item.startTimestamp() != null ? Timestamps.format(item.startTimestamp()) : null)
+                    .endTime(item.endTimestamp() != null ? Timestamps.format(item.endTimestamp()) : null)
                     .attempt(item.attempt());
             if (item.startTimestamp() != null && item.endTimestamp() != null) {
                 rec.durationMs(item.endTimestamp().toEpochMilli()

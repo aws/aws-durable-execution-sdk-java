@@ -65,8 +65,8 @@ Writes one line per record to `System.out`, in the Lambda JSON log envelope:
 {"timestamp":"2026-10-21T08:00:00.000Z","level":"INFO","message":"<compact record JSON>"}
 ```
 
-`timestamp` is UTC ISO-8601 with exactly three fraction digits. The keys appear in that order. The
-[Lambda Java logging docs](https://docs.aws.amazon.com/lambda/latest/dg/java-logging.html) and the
+`timestamp` has the same format as the record timestamps (see [Timestamps](#timestamps)). The keys appear in that
+order. The [Lambda Java logging docs](https://docs.aws.amazon.com/lambda/latest/dg/java-logging.html) and the
 [Lambda log format docs](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-cloudwatchlogs-logformat.html)
 list `LambdaLogger` and Log4j2 as the Java methods that Lambda captures as structured JSON, so `System.out` is not
 wrapped and the exporter writes the envelope itself. Lambda does not double-encode logs that are already JSON, so the
@@ -201,6 +201,19 @@ FileExporter.builder().directory("/mnt/efs/durable-execution-telemetry").mode(Fi
 
 `S3Exporter` writes `{prefix}{partition}{executionName}.json` (IAM: `s3:PutObject`). `CloudWatchLogsExporter` writes
 one event per record to `{logStreamPrefix}YYYY/MM/DD` (IAM: `logs:CreateLogStream`, `logs:PutLogEvents`).
+
+## Timestamps
+
+Every timestamp in a record has one format: `YYYY-MM-DDTHH:MM:SS.sssZ`, for example `2026-10-23T18:42:44.078Z`.
+This covers `emittedAt`, `startTime` and `endTime` on the record, and `startTime` and `endTime` on each operation.
+
+- The time is in UTC, and the value always ends with the literal `Z`.
+- The fraction always has exactly three digits. A whole second is written as `.000`.
+- Digits below the millisecond are dropped, not rounded. So `.078757096` is written as `.078`.
+
+This is the format of JavaScript's `Date.prototype.toISOString()`. Every value has the same width. So comparing two
+values as text gives the same order as comparing them as times. This matters for destinations that compare strings,
+such as a DynamoDB sort key or a CloudWatch Logs Insights filter.
 
 ## Error names and causes
 
