@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+      Standalone project (NOT part of the SDK reactor): the Durable Execution Telemetry
+      conformance run builds this module against an SDK already installed to the local
+      repository. The SDK version comes from the JAVA_SDK_VERSION environment variable through
+      the durable.sdk.version property. SAM builds the same pom during deploy.
+      The module depends on the SDK and telemetry-exporter artifacts by version, not as
+      reactor siblings. The exporter declares the CloudWatch Logs client as optional,
+      so this module declares it directly.
+    -->
+    <groupId>software.amazon.lambda.durable</groupId>
+    <artifactId>aws-durable-execution-sdk-java-conformance-tests-telemetry</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>AWS Lambda Durable Execution SDK Telemetry Conformance Tests</name>
+    <description>
+        Java SDK handlers and SAM template for the Durable Execution Telemetry conformance
+        suite (telemetry-1).
+    </description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <maven.compiler.release>17</maven.compiler.release>
+        <!-- Supplied by the conformance workflow (JAVA_SDK_VERSION), resolved from the built SDK. -->
+        <durable.sdk.version>${env.JAVA_SDK_VERSION}</durable.sdk.version>
+        <aws.sdk.version>2.56.0</aws.sdk.version>
+        <aws.lambda.java.core.version>1.4.1</aws.lambda.java.core.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>software.amazon.lambda.durable</groupId>
+            <artifactId>aws-durable-execution-sdk-java</artifactId>
+            <version>${durable.sdk.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.lambda.durable</groupId>
+            <artifactId>aws-durable-execution-sdk-java-plugin-telemetry-exporter</artifactId>
+            <version>${durable.sdk.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>cloudwatchlogs</artifactId>
+            <version>${aws.sdk.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-lambda-java-core</artifactId>
+            <version>${aws.lambda.java.core.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.15.0</version>
+            </plugin>
+
+            <!-- Shaded (uber) JAR so the Lambda deploys as a single artifact. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.2</version>
+                <configuration>
+                    <createDependencyReducedPom>false</createDependencyReducedPom>
+                </configuration>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <transformers>
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
