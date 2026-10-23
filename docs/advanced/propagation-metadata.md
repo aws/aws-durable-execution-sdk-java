@@ -38,10 +38,14 @@ invoke path collects after that hook and therefore uses the operation context it
 
 The invocation view can read the sampling flags from an operation span that has already started. The execution view
 defers that span until completion, so its placeholder does not establish a per-span sampling decision. It contributes
-metadata only when the visible provider uses `DurableSampler`, including the application-owned builder setup. It
-abstains for replacement samplers and opaque providers whose effective sampler cannot be verified, including opaque
-agent facades. In those cases the backend's omitted-header fallback applies; no new invoke-parent linkage is promised.
-The invocation view applies the same restriction if asked before an operation span is available.
+metadata when the visible provider uses `DurableSampler`, including the application-owned builder setup. With an
+opaque Java-agent provider, the sampler confirms consumption of the actual Invocation span's sampling intent through
+the thread-scoped bridge. The confirmation matches the trace ID, span name and execution ARN, restores an enclosing
+observation when nested, and is cleared when the span-creation scope closes. This lets the producer use the deterministic
+invoke parent ID and actual invocation sampling flags without accessing the agent's provider.
+Replacement samplers and opaque providers without confirmation still abstain. In those cases the backend's omitted-header
+fallback applies; no new invoke-parent linkage is promised. The invocation view still requires a visible durable sampler
+if asked before an operation span is available.
 This does not change the configured sampler, create an early operation span, or query the sampler again.
 
 ## Replay and retry

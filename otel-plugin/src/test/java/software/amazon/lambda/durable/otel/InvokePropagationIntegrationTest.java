@@ -4,7 +4,12 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.api.trace.TracerProvider;
+import io.opentelemetry.context.propagation.ContextPropagators;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
@@ -70,6 +75,90 @@ class InvokePropagationIntegrationTest {
     private static final String PAYLOAD = "{\"traceparent\":\"customer-owned\",\"value\":42}";
     private static final BiFunction<String, DurableContext, String> INVOKE =
             (input, context) -> context.invoke("invoke", "target:live", Map.of("value", 42), String.class);
+    private static final BiFunction<String, DurableContext, String> INVOKE_WITH_BARRIER = (input, context) -> {
+        var result = INVOKE.apply(input, context);
+        context.waitForCallback("resume", String.class, (callbackId, step) -> {});
+        return result;
+    };
+
+    @ParameterizedTest
+    @CsvSource({"true,true", "true,false", "false,true", "false,false"})
+    void executionViewPropagatesThroughOpaqueAgentProvider(boolean sampled, boolean explicitDecision) {
+        GlobalOpenTelemetry.resetForTest();
+        OtelPluginAutoConfigurationState.markInstalled();
+        var delegateSamples = explicitDecision ? !sampled : sampled;
+        try (var exporter = InMemorySpanExporter.create();
+                var provider = SdkTracerProvider.builder()
+                        .setSampler(DurableSampler.wrap(delegateSamples ? Sampler.alwaysOn() : Sampler.alwaysOff()))
+                        .setIdGenerator(new DeterministicIdGenerator())
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+                        .build()) {
+            installOpaqueProvider(provider);
+            assertOpaqueInvokePropagation(exporter, sampled, explicitDecision);
+        } finally {
+            GlobalOpenTelemetry.resetForTest();
+            OtelPluginAutoConfigurationState.resetInstalledForTest();
+            DurableSamplingDecision.clearSharedStateForTest();
+            DeterministicIdGenerator.clearSharedStateForTest();
+        }
+    }
+
+    private static void assertOpaqueInvokePropagation(
+            InMemorySpanExporter exporter, boolean sampled, boolean explicitDecision) {
+        var config = OtelPluginConfig.builder()
+                .enableMdc(false)
+                .contextExtractor(() -> new ExtractedContext(
+                        TRACE,
+                        "1234567890123456",
+                        explicitDecision
+                                ? (sampled ? ExtractedContext.Sampling.SAMPLED : ExtractedContext.Sampling.NOT_SAMPLED)
+                                : ExtractedContext.Sampling.UNDECIDED))
+                .build();
+        try (var fixture = new Fixture(ExecutionOtelPlugin.factory(config))) {
+            assertEquals(
+                    ExecutionStatus.PENDING, fixture.run(INVOKE_WITH_BARRIER).status());
+            var update = fixture.client.starts().get(0);
+            var header = update.chainedInvokeOptions().xAmznTraceId();
+            var spanId = new DeterministicIdGenerator().generateSpanIdForOperation(ARN, update.id());
+            assertEquals(
+                    "Root=1-6955b900-123456789012345678901234;Parent=" + spanId + ";Sampled=" + (sampled ? "1" : "0"),
+                    header);
+            fixture.client.completeChainedInvoke("invoke", OperationResult.succeeded("\"result\""));
+            assertEquals(
+                    ExecutionStatus.PENDING, fixture.run(INVOKE_WITH_BARRIER).status());
+            fixture.client.completeCallback(
+                    fixture.client.getCallbackId("resume-callback"), OperationResult.succeeded("\"resume\""));
+            assertEquals(
+                    ExecutionStatus.SUCCEEDED, fixture.run(INVOKE_WITH_BARRIER).status());
+            assertEquals(1, fixture.client.starts().size(), "Completed invoke replay must not send another START");
+            var invokes = exporter.getFinishedSpanItems().stream()
+                    .filter(span -> span.getName().equals("invoke"))
+                    .toList();
+            assertEquals(sampled ? 1 : 0, invokes.size());
+            if (sampled) assertEquals(spanId, invokes.get(0).getSpanId());
+        }
+    }
+
+    private static void installOpaqueProvider(SdkTracerProvider provider) {
+        var facade = new TracerProvider() {
+            public Tracer get(String name) {
+                return provider.get(name);
+            }
+
+            public Tracer get(String name, String version) {
+                return provider.get(name, version);
+            }
+        };
+        GlobalOpenTelemetry.set(new OpenTelemetry() {
+            public TracerProvider getTracerProvider() {
+                return facade;
+            }
+
+            public ContextPropagators getPropagators() {
+                return ContextPropagators.noop();
+            }
+        });
+    }
 
     @Test
     void committedStartAndTerminalReplayNeverRecollectOrReserialize() {

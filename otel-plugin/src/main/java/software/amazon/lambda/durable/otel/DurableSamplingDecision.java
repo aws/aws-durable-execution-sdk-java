@@ -91,13 +91,52 @@ final class DurableSamplingDecision {
         var key = scopedProperty();
         var previous = System.getProperty(key);
         System.setProperty(key, encode(intent));
-        return () -> {
-            if (previous == null) {
-                System.clearProperty(key);
-            } else {
-                System.setProperty(key, previous);
-            }
-        };
+        return () -> restoreProperty(key, previous);
+    }
+
+    /** Observes whether the actual sampler consumes the intent for this span, including across agent class loaders. */
+    static Observation observe(Intent intent, String traceId, String spanName, String executionArn) {
+        var key = observationProperty();
+        var previous = System.getProperty(key);
+        var expected = spanIdentity(traceId, spanName, executionArn);
+        var scope = openScope(intent);
+        System.setProperty(key, expected);
+        return new Observation(scope, key, previous, expected);
+    }
+
+    /** Called only after DurableSampler has successfully resolved an intent for the span being sampled. */
+    static void confirmConsumption(String traceId, String spanName, String executionArn) {
+        var key = observationProperty();
+        var expected = System.getProperty(key);
+        if (expected != null && expected.equals(spanIdentity(traceId, spanName, executionArn))) {
+            System.setProperty(key, "CONSUMED:" + expected);
+        }
+    }
+
+    private static String observationProperty() {
+        return scopedProperty() + ".observation";
+    }
+
+    private static String spanIdentity(String traceId, String spanName, String executionArn) {
+        return traceId + "\n" + spanName + "\n" + executionArn;
+    }
+
+    private static void restoreProperty(String key, String previous) {
+        if (previous == null) System.clearProperty(key);
+        else System.setProperty(key, previous);
+    }
+
+    /** A scoped confirmation for one span; it never infers the sampler from the provider's wrapper type. */
+    record Observation(Scope scope, String key, String previous, String expected) implements AutoCloseable {
+        boolean wasConsumed() {
+            return ("CONSUMED:" + expected).equals(System.getProperty(key));
+        }
+
+        @Override
+        public void close() {
+            restoreProperty(key, previous);
+            scope.close();
+        }
     }
 
     /** Consumes both carriers before callbacks can reuse the parent context or cross-loader bridge. */

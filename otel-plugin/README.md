@@ -104,12 +104,15 @@ checkpoints carry that context in the flat optional `ChainedInvokeOptions.XAmznT
 AWS SDK for Java 2.56.0 provides the generated typed setter. Deployed parent/child trace behavior still requires
 cloud validation. See [the implemented path and validation status](../docs/advanced/propagation-metadata.md).
 
-Execution-view operation spans are deferred until completion. Their placeholders can provide sampling metadata only
-with a visible provider using the SDK's `DurableSampler`, as configured by the application-owned builder constructor.
-Replacement samplers and opaque provider/agent facades therefore cause this view to abstain; the backend's existing
-omitted-header fallback applies. Invocation view uses the actual started operation span's flags; before that span is
-available, it applies the same sampling-policy restriction. Neither path changes
-the customer's sampler or creates a span just to obtain a sampling decision.
+Execution-view operation spans are deferred until completion. Their placeholders can provide sampling metadata with
+a visible provider using the SDK's `DurableSampler`, or an agent provider whose `DurableSampler` confirms that it
+consumed this invocation's sampling intent. Confirmation crosses the application/agent class-loader boundary through
+the existing thread-scoped bridge and is cleared after span creation. The propagated parent is the deterministic
+invoke span ID, and sampling flags come from the actual Invocation span.
+Replacement samplers and opaque providers without that confirmation still abstain; the backend's existing
+omitted-header fallback applies. Invocation view uses the actual started operation span's flags. Before that span is
+available, it requires a visible durable sampler. Neither path changes the customer's sampler, samples again, or
+creates a span just to obtain propagation metadata.
 
 ## Fallback execution roots
 

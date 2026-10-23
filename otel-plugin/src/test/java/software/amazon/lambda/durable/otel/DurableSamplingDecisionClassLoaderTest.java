@@ -159,6 +159,11 @@ class DurableSamplingDecisionClassLoaderTest {
                             System.getProperty("com.amazonaws.xray.traceHeader"));
                     var plugin = factory.createPlugin(info);
                     plugin.onInvocationStart(info);
+                    if (pluginName.equals("ExecutionOtelPlugin")) {
+                        var metadata = plugin.providePropagationMetadata(arn, "invoke-op", null, "target:live");
+                        assertNotNull(metadata, "The sampler's decision must be available across the agent boundary");
+                        assertTrue(metadata.endsWith(";Sampled=" + (recordOnly ? "0" : "1")));
+                    }
                     plugin.onInvocationEnd(new InvocationEndInfo(
                             "request",
                             arn,
