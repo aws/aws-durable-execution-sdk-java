@@ -114,6 +114,7 @@
                     -->
                     <environmentVariables>
                         <_X_AMZN_TRACE_ID/>
+                        <OTEL_INVOKE_TARGET_FUNCTION_NAME>case11-target:1</OTEL_INVOKE_TARGET_FUNCTION_NAME>
                     </environmentVariables>
                 </configuration>
             </plugin>
