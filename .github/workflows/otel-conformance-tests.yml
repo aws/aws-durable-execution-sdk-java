@@ -49,7 +49,7 @@ on:
       conformance_test_ref:
         description: Optional conformance test commit SHA or branch name
         required: false
-        default: "c32b40f5548f4776b7d533a76838e02358bc66d3"
+        default: "3e7fd1a05e8f45d37e4ec223a6c5a0e379dfa9e8"
         type: string
 
 permissions: {}
@@ -69,15 +69,15 @@ jobs:
       actions: write
       contents: read
       id-token: write
-    uses: aws/aws-durable-execution-conformance-tests/.github/workflows/opentelemetry-orchestrator.yml@c32b40f5548f4776b7d533a76838e02358bc66d3
+    uses: aws/aws-durable-execution-conformance-tests/.github/workflows/opentelemetry-orchestrator.yml@3e7fd1a05e8f45d37e4ec223a6c5a0e379dfa9e8
     with:
-      case_count: 26
+      case_count: 27
       runs_on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || format('codebuild-github-actions-runner-{0}-{1}', github.run_id, github.run_attempt) }}
       language: java
       resource_prefix: j
       sdk_repository: aws/aws-durable-execution-sdk-java
       sdk_ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      conformance_test_ref: ${{ inputs.conformance_test_ref || 'c32b40f5548f4776b7d533a76838e02358bc66d3' }}
+      conformance_test_ref: ${{ inputs.conformance_test_ref || '3e7fd1a05e8f45d37e4ec223a6c5a0e379dfa9e8' }}
       checkout_sdk: true
       # Build the handlers from this repo's checked-out module instead of the conformance repo's
       # bundled examples/java. Path is relative to the conformance workspace where the SDK is
