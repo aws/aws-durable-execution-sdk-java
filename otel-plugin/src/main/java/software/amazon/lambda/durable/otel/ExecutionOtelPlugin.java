@@ -136,6 +136,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
     private final DurableSamplingDecision.Intent samplingIntent;
 
     private final Span invocationSpan;
+    private final boolean invocationUsesDurableSampler;
     private final Span executionRootSpan;
 
     /**
@@ -280,6 +281,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
             this.executionTrace = null;
             this.executionAncestor = null;
             this.invocationSpan = null;
+            this.invocationUsesDurableSampler = false;
             this.executionRootSpan = null;
             this.workflowSpanContext = null;
             return;
@@ -343,7 +345,16 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
             spanBuilder.setAttribute(AttributeKey.stringKey("faas.invocation_id"), info.requestId());
         }
 
-        this.invocationSpan = startDurableSpan(spanBuilder);
+        if (OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)) {
+            try (var observation = DurableSamplingDecision.observe(
+                    samplingIntent, canonicalTraceId, "Invocation", durableExecutionArn)) {
+                this.invocationSpan = spanBuilder.startSpan();
+                this.invocationUsesDurableSampler = observation.wasConsumed();
+            }
+        } else {
+            this.invocationSpan = spanBuilder.startSpan();
+            this.invocationUsesDurableSampler = false;
+        }
 
         // Defer the recording Workflow span until terminal completion. The placeholder uses the Invocation span's
         // resolved sampling metadata so operation parents/links match the span that is eventually exported.
@@ -456,9 +467,11 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
         if (disabled() || !executionArn.equals(durableExecutionArn)) return null;
         var trace = executionTrace;
         if (trace == null) return null;
-        // These contexts are deferred placeholders, not sampled operation spans. A replacement sampler may decide
-        // differently for Invocation and invoke; an opaque provider does not expose its effective policy.
-        if (sdkTracerProvider == null || !OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)) return null;
+        // Deferred operation contexts may reuse the invocation's decision only when DurableSampler owns it.
+        // An agent hides its provider, so require a bridge confirmation from its verified final sampler instance.
+        // A replacement sampler can decide differently per span and must continue to abstain here.
+        if (!OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider)
+                || (sdkTracerProvider == null && !invocationUsesDurableSampler)) return null;
         var context = operationContexts.get(operationId);
         if (context == null) {
             // Before a new operation starts, use the same deterministic ID its initial span will receive.
