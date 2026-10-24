@@ -72,4 +72,17 @@ durable-execution-conformance \
   --parameter-overrides LambdaExecutionRoleArn=<role-arn>
 ```
 
-A caller GitHub workflow is a follow-on.
+## CI
+
+[`.github/workflows/telemetry-conformance-tests.yml:1–118`](../.github/workflows/telemetry-conformance-tests.yml#L1-L118)
+runs on pull requests and pushes to `main` that touch the SDK, telemetry
+exporter, this module, or the root `pom.xml`. It also supports manual dispatch.
+
+It calls the conformance repository's reusable telemetry workflow at a pinned
+SHA. `sdk_ref` selects the PR head commit, and `examples_dir` points to this
+module. CI installs the SDK and exporter, compiles the handlers, then deploys
+the template and validates the `telemetry` suite. Reports and execution
+histories are uploaded as artifacts.
+
+CI assumes AWS credentials through OIDC using the repository's existing test
+secrets. Fork and Dependabot pull requests skip the cloud job.
