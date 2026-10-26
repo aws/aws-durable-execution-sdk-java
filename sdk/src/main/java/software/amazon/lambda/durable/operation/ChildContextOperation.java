@@ -300,10 +300,9 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
     @Override
     public T get() {
+        throwIfSkipped();
         waitForCompletionFuture();
-        if (skipped.get()) {
-            throw new ParallelBranchSkippedException(getName());
-        }
+        throwIfSkipped();
         var op = waitForOperationCompletion();
         if (cachedOperationResult.get() != null) {
             // we have a result, just return it directly
@@ -320,6 +319,12 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
             ExceptionHelper.sneakyThrow(translateException(op, errorObject));
             return null;
+        }
+    }
+
+    private void throwIfSkipped() {
+        if (skipped.get()) {
+            throw new ParallelBranchSkippedException(getName());
         }
     }
 

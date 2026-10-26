@@ -46,9 +46,16 @@ import software.amazon.lambda.durable.serde.SerDes;
  */
 public class ParallelOperation extends ConcurrencyOperation<ParallelResult> implements ParallelDurableFuture {
 
+    private static volatile Runnable beforeBranchRegistration;
+
     // this field could be written and read in different threads
     private volatile ParallelResult cachedResult;
     private volatile ParallelResult partialResult;
+    private final Object branchMembership = new Object();
+
+    static void beforeBranchRegistration(Runnable action) {
+        beforeBranchRegistration = action;
+    }
 
     public ParallelOperation(
             OperationIdentifier operationIdentifier,
@@ -67,26 +74,11 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
 
     @Override
     protected void handleCompletion(CompletionConfig.CompletionDecision completionDecision) {
-
-        var items = List.copyOf(getBranches());
-        var statuses = items.stream()
-                .map(ChildContextOperation::settleForParallelSnapshot)
-                .toList();
-        int succeededCount = Math.toIntExact(statuses.stream()
-                .filter(s -> s == ParallelResult.Status.SUCCEEDED)
-                .count());
-        int failedCount = Math.toIntExact(
-                statuses.stream().filter(s -> s == ParallelResult.Status.FAILED).count());
-        int skippedCount = items.size() - succeededCount - failedCount;
-        cachedResult = new ParallelResult(
-                items.size(),
-                succeededCount,
-                failedCount,
-                skippedCount,
-                completionDecision.completionStatus(),
-                statuses);
+        snapshotBranches(completionDecision);
         var serializedResult = serializeAndDeserializeResult(cachedResult);
-        cachedResult = serializedResult.deserialized();
+        synchronized (branchMembership) {
+            cachedResult = serializedResult.deserialized();
+        }
 
         // Branches added after checkpoint will not exist in the checkpointed result, but they'll be in the returned
         // value from get() method.
@@ -97,12 +89,27 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
                 .contextOptions(ContextOptions.builder().replayChildren(true).build()));
     }
 
-    private ParallelResult rebuildParallelResult() {
-        var statuses = new ArrayList<>(cachedResult.statuses());
-        while (statuses.size() < getBranches().size()) {
-            statuses.add(ParallelResult.Status.SKIPPED);
+    private void snapshotBranches(CompletionConfig.CompletionDecision completionDecision) {
+        synchronized (branchMembership) {
+            cachedResult = parallelResult(completionDecision, settleCurrentBranches());
         }
+    }
 
+    private List<ParallelResult.Status> settleCurrentBranches() {
+        var statuses = new ArrayList<ParallelResult.Status>();
+        var settled = 0;
+        do {
+            var items = List.copyOf(getBranches());
+            for (var i = settled; i < items.size(); i++) {
+                statuses.add(items.get(i).settleForParallelSnapshot());
+            }
+            settled = items.size();
+        } while (getBranches().size() != settled);
+        return statuses;
+    }
+
+    private static ParallelResult parallelResult(
+            CompletionConfig.CompletionDecision completionDecision, List<ParallelResult.Status> statuses) {
         int succeededCount = Math.toIntExact(statuses.stream()
                 .filter(status -> status == ParallelResult.Status.SUCCEEDED)
                 .count());
@@ -114,8 +121,21 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
                 succeededCount,
                 failedCount,
                 statuses.size() - succeededCount - failedCount,
-                cachedResult.completionStatus(),
+                completionDecision.completionStatus(),
                 List.copyOf(statuses));
+    }
+
+    private ParallelResult rebuildParallelResult() {
+        synchronized (branchMembership) {
+            var branches = List.copyOf(getBranches());
+            var statuses = new ArrayList<>(cachedResult.statuses());
+            while (statuses.size() < branches.size()) {
+                branches.get(statuses.size()).completeAsSkipped();
+                statuses.add(ParallelResult.Status.SKIPPED);
+            }
+            return parallelResult(
+                    CompletionConfig.CompletionDecision.complete(cachedResult.completionStatus()), statuses);
+        }
     }
 
     @Override
@@ -168,16 +188,21 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
             throw new IllegalStateException("Cannot add branches after join() has been called");
         }
 
-        var nextBranchIndex = getBranches().size();
-
-        // Skip when the checkpointed or in-memory parallel result already completed without this branch.
-        var skip = shouldSkipBranch(nextBranchIndex);
-        var serDes = config.serDes() == null ? getContext().getDurableConfig().getSerDes() : config.serDes();
-        var branch = enqueueItem(name, func, resultType, serDes, OperationSubType.PARALLEL_BRANCH, skip);
-        if (skip) {
-            branch.completeAsSkipped();
+        var pause = beforeBranchRegistration;
+        if (pause != null) {
+            pause.run();
         }
-        return branch;
+        synchronized (branchMembership) {
+            var nextBranchIndex = getBranches().size();
+            var skip = shouldSkipBranch(nextBranchIndex);
+            var serDes =
+                    config.serDes() == null ? getContext().getDurableConfig().getSerDes() : config.serDes();
+            var branch = enqueueItem(name, func, resultType, serDes, OperationSubType.PARALLEL_BRANCH, skip);
+            if (skip) {
+                branch.completeAsSkipped();
+            }
+            return branch;
+        }
     }
 
     private boolean shouldSkipBranch(int nextBranchIndex) {
