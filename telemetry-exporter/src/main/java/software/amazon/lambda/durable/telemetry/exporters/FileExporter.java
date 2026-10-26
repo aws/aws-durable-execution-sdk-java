@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Map;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -20,9 +21,11 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * (default), or written as one pretty-printed JSON file per execution that later exports overwrite. Suitable for an EFS
  * mount or {@code /tmp}. No truncation limit by default.
  */
+@Experimental
 public final class FileExporter implements TelemetryExporter {
 
     /** File layout. */
+    @Experimental
     public enum Mode {
         /** Append every record to {@code {directory}/{YYYY-MM-DD}.ndjson}. */
         NDJSON("ndjson"),

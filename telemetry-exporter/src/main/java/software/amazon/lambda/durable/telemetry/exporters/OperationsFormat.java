@@ -3,9 +3,11 @@
 package software.amazon.lambda.durable.telemetry.exporters;
 
 import java.util.Map;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 
 /** How an exporter renders operations in the emitted record. */
+@Experimental
 public enum OperationsFormat {
     /** The canonical {@code operations} array (lossless; default). */
     ARRAY("array"),

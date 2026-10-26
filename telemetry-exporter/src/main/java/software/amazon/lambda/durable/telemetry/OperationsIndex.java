@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.telemetry;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Builds a name-keyed index of operation summaries from the canonical operations array.
@@ -14,6 +15,7 @@ import java.util.Map;
  * {@code error} (no single representative value). Scalar fields ({@code type}, {@code subType}, {@code status}) reflect
  * the most recently seen occurrence. Unnamed operations are skipped.
  */
+@Experimental
 public final class OperationsIndex {
 
     private OperationsIndex() {}

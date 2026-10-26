@@ -3,6 +3,7 @@
 package software.amazon.lambda.durable.telemetry;
 
 import java.util.function.Function;
+import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Per-operation override controlling inclusion and result transformation, matched by {@code operationName}.
@@ -14,6 +15,7 @@ import java.util.function.Function;
  * argument is safe, and a transform that throws omits the field (the failure is logged) rather than leaking the raw
  * value or failing the execution. An {@code exclude} override drops the operation entirely.
  */
+@Experimental
 public final class OperationOverride {
     private final String operationName;
     private final boolean exclude;

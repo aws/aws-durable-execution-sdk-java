@@ -22,6 +22,7 @@ import software.amazon.awssdk.http.SdkHttpMethod;
 import software.amazon.awssdk.http.SdkHttpRequest;
 import software.amazon.awssdk.http.auth.aws.signer.AwsV4HttpSigner;
 import software.amazon.awssdk.http.auth.spi.signer.SignedRequest;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -31,9 +32,11 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * document id so later exports overwrite the same document. Authenticates with SigV4 (default) or HTTP basic auth.
  * Requires {@code es:ESHttpPut} on the index for SigV4.
  */
+@Experimental
 public final class OpenSearchExporter implements TelemetryExporter {
 
     /** Authentication method. */
+    @Experimental
     public enum Auth {
         /** IAM request signing for Amazon OpenSearch Service (default). */
         SIGV4("sigv4"),

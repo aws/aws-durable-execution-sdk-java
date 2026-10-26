@@ -13,6 +13,7 @@ import java.util.Map;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.MessageAttributeValue;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -22,6 +23,7 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * {@code status} / {@code functionName} message attributes. On a FIFO queue the group id defaults to the execution ARN
  * and the deduplication id is the execution ARN plus {@code emittedAt}. Requires {@code sqs:SendMessage}.
  */
+@Experimental
 public final class SQSExporter implements TelemetryExporter {
     private final String queueUrl;
     private final String messageGroupId;

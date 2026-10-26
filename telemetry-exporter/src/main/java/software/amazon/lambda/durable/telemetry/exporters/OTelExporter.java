@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -23,9 +24,11 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * record with identity fields as resource and log attributes and the full record JSON as the body. Compatible with any
  * OTLP-capable backend; authentication is via headers.
  */
+@Experimental
 public final class OTelExporter implements TelemetryExporter {
 
     /** OTLP transport encoding. */
+    @Experimental
     public enum Protocol {
         HTTP_JSON("http/json"),
         HTTP_PROTOBUF("http/protobuf");

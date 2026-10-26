@@ -10,6 +10,7 @@ import java.util.Map;
 import software.amazon.awssdk.services.redshiftdata.RedshiftDataClient;
 import software.amazon.awssdk.services.redshiftdata.model.ExecuteStatementRequest;
 import software.amazon.awssdk.services.redshiftdata.model.SqlParameter;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -21,6 +22,7 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * ({@code redshift-serverless:GetCredentials}, {@code redshift:GetClusterCredentialsWithIAM}, or
  * {@code secretsmanager:GetSecretValue}).
  */
+@Experimental
 public final class RedshiftExporter implements TelemetryExporter {
     private final String database;
     private final String fqTable;
