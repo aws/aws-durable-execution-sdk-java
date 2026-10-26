@@ -45,7 +45,7 @@ jobs:
     # The pinned SHA also selects the runner and telemetry-extension revision the shared
     # workflow installs, so it must be reachable from a branch. It is the merge commit of
     # aws-durable-execution-conformance-tests PR #150 on that repository's main branch.
-    uses: aws/aws-durable-execution-conformance-tests/.github/workflows/telemetry-suite.yml@d4b7df927ea7eb7022bcca339d2cddd387d3d650
+    uses: aws/aws-durable-execution-conformance-tests/.github/workflows/telemetry-suite.yml@9a5ead5e9ab8051bedfd300726472cbd443923cb
     with:
       language: java
       resource_prefix: java
