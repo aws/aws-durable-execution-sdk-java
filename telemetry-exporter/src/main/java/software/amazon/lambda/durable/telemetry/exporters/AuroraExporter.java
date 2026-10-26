@@ -10,7 +10,6 @@ import software.amazon.awssdk.services.rdsdata.RdsDataClient;
 import software.amazon.awssdk.services.rdsdata.model.ExecuteStatementRequest;
 import software.amazon.awssdk.services.rdsdata.model.Field;
 import software.amazon.awssdk.services.rdsdata.model.SqlParameter;
-import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -20,11 +19,9 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * per execution keyed by execution ARN. Requires the Data API enabled on the cluster, {@code rds-data:ExecuteStatement}
  * and {@code secretsmanager:GetSecretValue}.
  */
-@Experimental
 public final class AuroraExporter implements TelemetryExporter {
 
     /** Database engine; selects the upsert dialect. */
-    @Experimental
     public enum Engine {
         POSTGRESQL("postgresql"),
         MYSQL("mysql");

@@ -5,7 +5,6 @@ package software.amazon.lambda.durable.telemetry.exporters;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -34,7 +33,6 @@ import software.amazon.lambda.durable.telemetry.internal.Timestamps;
  * application log level filtering is unchanged: with the JSON log format and an application log level of {@code WARN}
  * or above, these lines are dropped, as raw record lines were before.
  */
-@Experimental
 public final class LambdaLogExporter implements TelemetryExporter {
     /** UTF-8 size of the envelope around an empty {@code message}; the timestamp always has the same width. */
     private static final int ENVELOPE_BYTES =

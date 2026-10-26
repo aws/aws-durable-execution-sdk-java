@@ -11,7 +11,6 @@ import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
 import software.amazon.awssdk.services.cloudwatchlogs.model.CreateLogStreamRequest;
 import software.amazon.awssdk.services.cloudwatchlogs.model.InputLogEvent;
 import software.amazon.awssdk.services.cloudwatchlogs.model.PutLogEventsRequest;
-import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -21,7 +20,6 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * {@code operationsByName} map. Mirrors the JS {@code CloudWatchLogsExporter}. Requires {@code logs:CreateLogStream}
  * and {@code logs:PutLogEvents} on the target log group.
  */
-@Experimental
 public final class CloudWatchLogsExporter implements TelemetryExporter {
     private final String logGroupName;
     private final String logStreamPrefix;
