@@ -77,6 +77,39 @@ public final class Json {
     }
 
     /**
+     * The UTF-8 size {@code text} takes when it is written as the content of a JSON string (quotes excluded), using
+     * {@link #stringify}'s escaping: {@code "} and {@code \} and the control characters {@code \b \t \n \f \r} take 2
+     * bytes, other control characters below U+0020 take 6 ({@code \}{@code u00XX}), and everything else is written as
+     * UTF-8 (a surrogate pair is 4 bytes; a lone surrogate is replaced by {@code ?}, 1 byte).
+     */
+    public static long escapedUtf8Size(CharSequence text) {
+        long size = 0;
+        int length = text.length();
+        for (int i = 0; i < length; i++) {
+            char c = text.charAt(i);
+            if (c < 0x80) {
+                if (c == '"' || c == '\\' || c == '\b' || c == '\t' || c == '\n' || c == '\f' || c == '\r') {
+                    size += 2;
+                } else if (c < 0x20) {
+                    size += 6;
+                } else {
+                    size += 1;
+                }
+            } else if (c < 0x800) {
+                size += 2;
+            } else if (Character.isHighSurrogate(c) && i + 1 < length && Character.isLowSurrogate(text.charAt(i + 1))) {
+                size += 4;
+                i++;
+            } else if (Character.isSurrogate(c)) {
+                size += 1;
+            } else {
+                size += 3;
+            }
+        }
+        return size;
+    }
+
+    /**
      * Deep-copies JSON content (execution input/output and operation results) so a mutation by one exporter cannot leak
      * into another exporter's record. Maps and lists are rebuilt recursively. Known-immutable scalar values
      * ({@code String}, {@code Boolean}, {@code Character}, {@code Enum}, and {@code null}) are shared. Everything else,

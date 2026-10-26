@@ -4,7 +4,6 @@ package software.amazon.lambda.durable.plugin;
 
 import java.time.Instant;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
-import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Operation-level information for an {@link OperationChangeInfo} and invocation operation snapshot.
@@ -19,8 +18,8 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * @param status operation status
  * @param attempt attempt number for retriable operations, null for others
  * @param isReplay true if this operation was present in state delivered at invocation start
- * @param error non-null if the operation failed; this component is experimental
- * @param result checkpointed serialized result, or null if unavailable; this component is experimental
+ * @param error non-null if the operation failed
+ * @param result checkpointed serialized result, or null if unavailable
  */
 public record OperationChangeItemInfo(
         String id,
@@ -33,8 +32,8 @@ public record OperationChangeItemInfo(
         OperationStatus status,
         Integer attempt,
         boolean isReplay,
-        @Experimental Throwable error,
-        @Experimental String result) {
+        Throwable error,
+        String result) {
 
     /** Returns a representation that omits the operation result payload. */
     @Override
