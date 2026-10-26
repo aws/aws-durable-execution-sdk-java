@@ -4,7 +4,6 @@ package software.amazon.lambda.durable.telemetry;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Error detail carried on a record or operation: {@code {name, message, cause?}}, the shape shared by the Telemetry
@@ -15,7 +14,6 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * applied here, when the error is created, so it holds for the error and every cause. Applying it again leaves the
  * value unchanged.
  */
-@Experimental
 public final class ErrorInfo {
     /** Longest {@code name} or {@code message} written, in Unicode code points, before the {@code …} marker. */
     static final int MAX_CHARS = 8_192;
