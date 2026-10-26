@@ -43,7 +43,9 @@ try (var parallel = ctx.parallel("work")) {
 | `statuses()` | Per-branch status: `SUCCEEDED`, `FAILED`, or `SKIPPED` |
 | `completionStatus()` | Why the operation completed (`ALL_COMPLETED`, `MIN_SUCCESSFUL_REACHED`, `FAILURE_TOLERANCE_EXCEEDED`) |
 
-When a completion config finishes the parallel operation early, branches that never started — and branches that were still running at completion — are recorded as `SKIPPED`. `get()` on a skipped branch throws `ParallelBranchSkippedException` on the first invocation and on every replay. The SDK does not start or resume that branch later.
+When a completion config finishes the parallel operation early, branches that never started — and branches that were still running at completion — are recorded as `SKIPPED`. The snapshot and the skip happen together with that branch's own completion, so `get()` does not return a value and later throw for the same call sequence. `get()` on a skipped branch throws `ParallelBranchSkippedException` on the first invocation and on every replay. The SDK does not start or resume that branch later.
+
+`DurableFuture.anyOf` does not select a skipped branch while another future can still settle, so the winner from the first invocation is the winner on replay. If every future passed to `anyOf` is skipped, it throws `ParallelBranchSkippedException`.
 
 ### ParallelConfig
 

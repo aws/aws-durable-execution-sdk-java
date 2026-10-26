@@ -691,6 +691,10 @@ public class ExecutionManager implements SafeCloseable {
      * <p>This is the multi-operation equivalent of {@code BaseDurableOperation.waitForOperationCompletion()}: it builds
      * a combined future so this manager can suspend while waiting for the first operation to settle.
      *
+     * <p>Operations that settled only because they were skipped are not selected while another operation can still
+     * settle. That preserves the {@code anyOf} winner when a skipped parallel branch is completed immediately on
+     * replay.
+     *
      * @param operations operations to wait on
      * @return the first durable future to settle
      */
@@ -701,6 +705,23 @@ public class ExecutionManager implements SafeCloseable {
 
         validateCurrentThreadCanWaitForDurableOperation(null, null);
 
+        var pending = new ArrayList<BaseDurableOperation>(operations);
+        while (true) {
+            var eligible = pending.stream().filter(op -> !op.isSkipSettlement()).toList();
+            var candidates = eligible.isEmpty() ? List.copyOf(pending) : eligible;
+            var settled = awaitFirstSettledOperation(candidates);
+            if (eligible.isEmpty() || !isSkipSettlement(settled)) {
+                return settled;
+            }
+            pending.remove(settled);
+        }
+    }
+
+    private static boolean isSkipSettlement(DurableFuture<?> settled) {
+        return settled instanceof BaseDurableOperation operation && operation.isSkipSettlement();
+    }
+
+    private DurableFuture<?> awaitFirstSettledOperation(List<? extends BaseDurableOperation> operations) {
         var threadId = getCurrentThreadContext().threadId();
         var wait = new CompletionWait();
         var anyOfFuture = CompletableFuture.anyOf(operations.stream()

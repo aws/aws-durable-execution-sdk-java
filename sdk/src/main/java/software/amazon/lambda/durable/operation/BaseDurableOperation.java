@@ -208,6 +208,17 @@ public abstract class BaseDurableOperation {
     }
 
     /**
+     * Whether this operation settled because it was skipped, rather than because its own work finished.
+     *
+     * <p>{@link software.amazon.lambda.durable.DurableFuture#anyOf} ignores a skipped operation while another future
+     * can still settle. A branch marked skipped on replay therefore does not replace the winner observed on the first
+     * invocation.
+     */
+    public boolean isSkipSettlement() {
+        return false;
+    }
+
+    /**
      * Waits for the first of the given operations to complete.
      *
      * @param operations operations to wait on

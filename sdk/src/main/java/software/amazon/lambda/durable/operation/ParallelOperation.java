@@ -17,7 +17,6 @@ import software.amazon.lambda.durable.config.CompletionConfig;
 import software.amazon.lambda.durable.config.ParallelBranchConfig;
 import software.amazon.lambda.durable.config.ParallelConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
-import software.amazon.lambda.durable.exception.ParallelBranchSkippedException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
@@ -70,7 +69,9 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
     protected void handleCompletion(CompletionConfig.CompletionDecision completionDecision) {
 
         var items = List.copyOf(getBranches());
-        var statuses = items.stream().map(this::getParallelItemStatus).toList();
+        var statuses = items.stream()
+                .map(ChildContextOperation::settleForParallelSnapshot)
+                .toList();
         int succeededCount = Math.toIntExact(statuses.stream()
                 .filter(s -> s == ParallelResult.Status.SUCCEEDED)
                 .count());
@@ -86,7 +87,6 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
                 statuses);
         var serializedResult = serializeAndDeserializeResult(cachedResult);
         cachedResult = serializedResult.deserialized();
-        completeSkippedBranches(items, statuses);
 
         // Branches added after checkpoint will not exist in the checkpointed result, but they'll be in the returned
         // value from get() method.
@@ -95,28 +95,6 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
                 .subType(getSubType().getValue())
                 .payload(serializedResult.serialized())
                 .contextOptions(ContextOptions.builder().replayChildren(true).build()));
-    }
-
-    private void completeSkippedBranches(List<ChildContextOperation<?>> items, List<ParallelResult.Status> statuses) {
-        for (int i = 0; i < items.size(); i++) {
-            if (statuses.get(i) == ParallelResult.Status.SKIPPED) {
-                items.get(i).completeAsSkipped();
-            }
-        }
-    }
-
-    private ParallelResult.Status getParallelItemStatus(ChildContextOperation<?> childContextOperation) {
-        if (!childContextOperation.isOperationCompleted() || childContextOperation.isSkipped()) {
-            return ParallelResult.Status.SKIPPED;
-        }
-        try {
-            childContextOperation.get();
-            return ParallelResult.Status.SUCCEEDED;
-        } catch (ParallelBranchSkippedException e) {
-            return ParallelResult.Status.SKIPPED;
-        } catch (Throwable t) {
-            return ParallelResult.Status.FAILED;
-        }
     }
 
     private ParallelResult rebuildParallelResult() {

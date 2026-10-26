@@ -36,6 +36,7 @@ import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.logging.DurableLogger;
 import software.amazon.lambda.durable.model.DeserializedOperationResult;
 import software.amazon.lambda.durable.model.OperationIdentifier;
+import software.amazon.lambda.durable.model.ParallelResult;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
 /**
@@ -55,6 +56,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     private final Function<DurableContext, T> function;
     private final AtomicBoolean replayChildren = new AtomicBoolean(false);
     private final AtomicBoolean skipped = new AtomicBoolean(false);
+    private final Object settlementLock = new Object();
     private final AtomicReference<DeserializedOperationResult<T>> cachedOperationResult = new AtomicReference<>(null);
 
     // child context for RunInChildContext
@@ -154,7 +156,17 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
     private void handleChildContextSuccess(T result) {
         var serializedResult = serializeAndDeserializeResult(result);
+        synchronized (settlementLock) {
+            // A parallel snapshot may already have recorded this branch as skipped. Do not publish a result after that
+            // decision, or get() can return a value and later throw.
+            if (skipped.get()) {
+                return;
+            }
+            publishSuccess(serializedResult);
+        }
+    }
 
+    private void publishSuccess(SerializedResult<T> serializedResult) {
         if (replayChildren.get() || isVirtual || parentOperation != null && parentOperation.isOperationCompleted()) {
             // Skip checkpointing if
             // - parent ConcurrencyOperation has already completed, preventing race conditions where a child finishes
@@ -167,9 +179,9 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
                 fireOnOperationEnd(null, null, false);
             }
             markAlreadyCompleted();
-        } else {
-            checkpointSuccess(serializedResult.deserialized(), serializedResult.serialized());
+            return;
         }
+        checkpointSuccess(serializedResult.deserialized(), serializedResult.serialized());
     }
 
     private void checkpointSuccess(T result, String serialized) {
@@ -207,6 +219,15 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             errorObject = serializeException(exception);
         }
 
+        synchronized (settlementLock) {
+            if (skipped.get()) {
+                return;
+            }
+            publishFailure(exception, errorObject);
+        }
+    }
+
+    private void publishFailure(Throwable exception, ErrorObject errorObject) {
         var op = createVirtualOperation(errorObject);
         cachedOperationResult.set(DeserializedOperationResult.failed(translateException(op, errorObject)));
 
@@ -229,13 +250,51 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     /**
      * Completes this branch as skipped so {@link #get()} throws {@link ParallelBranchSkippedException} instead of
      * waiting for an operation that will never be started or checkpointed.
+     *
+     * <p>A branch that has already published its own result keeps that result. The parallel snapshot calls this only
+     * while holding the same lock the result is published under.
      */
     void completeAsSkipped() {
+        synchronized (settlementLock) {
+            if (isOperationCompleted() && !skipped.get()) {
+                return;
+            }
+            markSkipped();
+        }
+    }
+
+    /**
+     * Records this branch in a parallel completion snapshot. An incomplete branch is marked skipped before the lock is
+     * released, so a later completion cannot make {@code get()} succeed and then throw.
+     */
+    ParallelResult.Status settleForParallelSnapshot() {
+        synchronized (settlementLock) {
+            if (skipped.get() || !isOperationCompleted()) {
+                markSkipped();
+                return ParallelResult.Status.SKIPPED;
+            }
+            try {
+                get();
+                return ParallelResult.Status.SUCCEEDED;
+            } catch (Throwable ignored) {
+                // A skip exception that propagated from the branch body is a failure of this branch. Only the explicit
+                // skipped flag above means the parallel operation itself skipped the branch.
+                return ParallelResult.Status.FAILED;
+            }
+        }
+    }
+
+    private void markSkipped() {
         skipped.set(true);
         markAlreadyCompleted();
     }
 
     boolean isSkipped() {
+        return skipped.get();
+    }
+
+    @Override
+    public boolean isSkipSettlement() {
         return skipped.get();
     }
 

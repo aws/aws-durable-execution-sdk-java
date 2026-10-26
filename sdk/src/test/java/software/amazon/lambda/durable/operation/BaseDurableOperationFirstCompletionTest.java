@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
@@ -136,6 +137,66 @@ class BaseDurableOperationFirstCompletionTest {
 
         assertEquals(settled, operation);
         assertFalse(executionManager.isExecutionCompletedExceptionally(), "caller must not have triggered suspension");
+    }
+
+    @Test
+    void returnsAlreadySettledOperationAheadOfAnEarlierSkippedFuture() {
+        var skipped = operation(FIRST_OP_ID);
+        var winner = operation(SECOND_OP_ID);
+        skipped.skip();
+        winner.settle();
+
+        var operation = executionManager.waitForFirstOperationCompletion(List.of(skipped, winner));
+
+        assertEquals(winner, operation);
+    }
+
+    @Test
+    void returnsLaterNonSkippedOperationWhenAnEarlierFutureWasSkipped() {
+        executionManager.registerActiveThread(OTHER_THREAD);
+        var skipped = operation(FIRST_OP_ID);
+        var winner = operation(SECOND_OP_ID);
+        skipped.skip();
+        CompletableFuture.runAsync(winner::settle, CompletableFuture.delayedExecutor(50, MILLISECONDS));
+
+        var operation = awaitFirstSettled(List.of(skipped, winner));
+
+        assertEquals(winner, operation);
+    }
+
+    @Test
+    void ignoresASkipThatSettlesWhileAnotherOperationIsStillRunning() {
+        executionManager.registerActiveThread(OTHER_THREAD);
+        var skipping = operation(FIRST_OP_ID);
+        var winner = operation(SECOND_OP_ID);
+        CompletableFuture.runAsync(skipping::skip, CompletableFuture.delayedExecutor(20, MILLISECONDS));
+        CompletableFuture.runAsync(winner::settle, CompletableFuture.delayedExecutor(80, MILLISECONDS));
+
+        var operation = awaitFirstSettled(List.of(skipping, winner));
+
+        assertEquals(winner, operation);
+    }
+
+    @Test
+    void suspendsWhenOnlySkippedFuturesHaveSettled() {
+        initExecution(List.of(pendingStepOperation(SECOND_OP_ID)));
+        var skipped = operation(FIRST_OP_ID);
+        var pending = operation(SECOND_OP_ID);
+        skipped.skip();
+
+        assertThrows(
+                SuspendExecutionException.class,
+                () -> executionManager.waitForFirstOperationCompletion(List.of(skipped, pending)));
+    }
+
+    @Test
+    void returnsSkippedFutureWhenEveryFutureIsSkipped() {
+        var skipped = operation(FIRST_OP_ID);
+        skipped.skip();
+
+        var operation = executionManager.waitForFirstOperationCompletion(List.of(skipped));
+
+        assertEquals(skipped, operation);
     }
 
     @Test
@@ -303,6 +364,8 @@ class BaseDurableOperationFirstCompletionTest {
 
     /** Minimal operation that settles on demand, so the waiting behaviour can be driven directly. */
     private static final class TestOperation extends BaseDurableOperation implements DurableFuture<Void> {
+        private final AtomicBoolean skipSettlement = new AtomicBoolean();
+
         private TestOperation(String operationId, DurableContextImpl durableContext) {
             super(OperationIdentifier.of(operationId, operationId, OperationSubType.STEP), durableContext, null);
         }
@@ -314,12 +377,22 @@ class BaseDurableOperationFirstCompletionTest {
         protected void replay(Operation existing) {}
 
         @Override
+        public boolean isSkipSettlement() {
+            return skipSettlement.get();
+        }
+
+        @Override
         public Void get() {
             return null;
         }
 
         private void settle() {
             markAlreadyCompleted();
+        }
+
+        private void skip() {
+            skipSettlement.set(true);
+            settle();
         }
     }
 
