@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.lambda.durable.telemetry.exporters.LambdaLogExporter;
+import software.amazon.lambda.durable.telemetry.internal.Timestamps;
 
 /** Size checks for the {@code LambdaLogExporter} line through the plugin's export path. */
 class LambdaLogLineSizeTest {
@@ -58,7 +59,7 @@ class LambdaLogLineSizeTest {
                     .name("op-" + i)
                     .type("STEP")
                     .status("SUCCEEDED")
-                    .startTime(start.plusSeconds(i).toString())
+                    .startTime(Timestamps.format(start.plusSeconds(i)))
                     .result(result));
         }
         return r;
@@ -111,7 +112,7 @@ class LambdaLogLineSizeTest {
                         .name(i % 5 == 0 ? "op-" + i : "group-" + (i % 7))
                         .type(i % 3 == 0 ? "STEP" : "WAIT")
                         .status(i % 4 == 0 ? "FAILED" : "SUCCEEDED")
-                        .startTime(i % 11 == 0 ? null : start.plusSeconds(i).toString())
+                        .startTime(i % 11 == 0 ? null : Timestamps.format(start.plusSeconds(i)))
                         .durationMs((long) i * 997)
                         .attempt(i % 3 + 1)
                         .result(i % 6 == 0 ? Integer.valueOf(i) : "\"\\é😀".repeat(i % 50));
@@ -166,8 +167,8 @@ class LambdaLogLineSizeTest {
                     .name("op-" + i)
                     .type("STEP")
                     .status("FAILED")
-                    .startTime(
-                            Instant.parse("2026-07-15T11:00:00Z").plusSeconds(i).toString())
+                    .startTime(Timestamps.format(
+                            Instant.parse("2026-07-15T11:00:00Z").plusSeconds(i)))
                     .result(message)
                     .error(new ErrorInfo(name, message, new ErrorInfo(name, message))));
         }

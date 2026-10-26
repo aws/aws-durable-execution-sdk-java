@@ -1,0 +1,116 @@
+name: Telemetry Conformance Tests
+
+# SDK handlers and builds live here. The shared workflow deploys and validates them.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "sdk/**"
+      - "telemetry-exporter/**"
+      - "conformance-tests-telemetry/**"
+      - "pom.xml"
+      - ".github/workflows/telemetry-conformance-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/**"
+      - "telemetry-exporter/**"
+      - "conformance-tests-telemetry/**"
+      - "pom.xml"
+      - ".github/workflows/telemetry-conformance-tests.yml"
+  workflow_dispatch:
+    inputs:
+      aws_region:
+        description: AWS region
+        required: true
+        default: us-west-2
+        type: string
+      conformance_test_ref:
+        description: Optional conformance test commit SHA or branch name. Empty uses the shared workflow commit.
+        required: false
+        type: string
+        default: ""
+
+permissions: {}
+
+jobs:
+  telemetry:
+    # 1. Run for non-PR events, such as pushes and manual invocations.
+    # 2. For PRs, run only same-repo branches from non-Dependabot actors. Forked PRs and Dependabot cannot read secrets.
+    if: github.event_name != 'pull_request' || (github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      contents: read
+      id-token: write
+    # The pinned SHA also selects the runner and telemetry-extension revision the shared
+    # workflow installs, so it must be reachable from a branch. It is the merge commit of
+    # aws-durable-execution-conformance-tests PR #150 on that repository's main branch.
+    uses: aws/aws-durable-execution-conformance-tests/.github/workflows/telemetry-suite.yml@d4b7df927ea7eb7022bcca339d2cddd387d3d650
+    with:
+      language: java
+      resource_prefix: java
+      sdk_repository: aws/aws-durable-execution-sdk-java
+      sdk_ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      # Path relative to the conformance workspace, where this repo is checked out at .build/durable-sdk.
+      examples_dir: .build/durable-sdk/conformance-tests-telemetry
+      conformance_test_ref: ${{ inputs.conformance_test_ref }}
+      aws_region: ${{ inputs.aws_region || 'us-west-2' }}
+      runs_on: codebuild-github-actions-runner-${{ github.run_id }}-${{ github.run_attempt }}
+      timeout_minutes: 30
+      setup_command: |
+        set -euo pipefail
+        if [ -n "${JAVA_HOME_21_X64:-}" ]; then
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+        elif [ -x /usr/lib/jvm/java-21-amazon-corretto/bin/java ]; then
+          export JAVA_HOME=/usr/lib/jvm/java-21-amazon-corretto
+        elif [ -z "${JAVA_HOME:-}" ]; then
+          export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
+        fi
+        if [ ! -x "$JAVA_HOME/bin/java" ] || [ ! -x "$JAVA_HOME/bin/javac" ]; then
+          echo "Selected JAVA_HOME=$JAVA_HOME is not a complete JDK"
+          exit 1
+        fi
+        export PATH="$JAVA_HOME/bin:$PATH"
+        java_spec=$(java -XshowSettings:properties -version 2>&1 | awk '$1 == "java.specification.version" {print $3}')
+        if [ "$java_spec" != "21" ]; then
+          echo "Java 21 is required; selected JAVA_HOME=$JAVA_HOME reports specification version $java_spec"
+          exit 1
+        fi
+        javac_version=$(javac -version 2>&1)
+        if [[ ! "$javac_version" =~ ^javac[[:space:]]21([.]|[[:space:]]|$) ]]; then
+          echo "Java 21 javac is required; selected compiler reports $javac_version"
+          exit 1
+        fi
+        java -version
+        javac -version
+        if [ -n "${GITHUB_ENV:-}" ]; then
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+        fi
+        if [ -n "${GITHUB_PATH:-}" ]; then
+          echo "$JAVA_HOME/bin" >> "$GITHUB_PATH"
+        fi
+      prepare_command: |
+        JAVA_SDK_VERSION=$(
+          mvn -B -q \
+            --file "$SDK_CHECKOUT/pom.xml" \
+            -Dstyle.color=never \
+            -Dexpression=project.version \
+            -DforceStdout \
+            help:evaluate
+        )
+        mvn -B -q \
+          --file "$SDK_CHECKOUT/pom.xml" \
+          --projects sdk,telemetry-exporter \
+          --also-make \
+          -DskipTests \
+          install
+        echo "Using Java SDK version $JAVA_SDK_VERSION"
+        # The runner's sam build runs in a later step. Only GITHUB_ENV carries the version to it.
+        echo "JAVA_SDK_VERSION=$JAVA_SDK_VERSION" >> "$GITHUB_ENV"
+        mvn -B -q -DskipTests package \
+          -Ddurable.sdk.version="$JAVA_SDK_VERSION" \
+          --file "$EXAMPLES_DIR/pom.xml"
+    secrets:
+      CONFORMANCE_TEST_ROLE_ARN: ${{ secrets.TEST_ROLE_ARN }}
+      CONFORMANCE_TEST_ACCOUNT_ID: ${{ secrets.TEST_ACCOUNT_ID }}
+      CONFORMANCE_TEST_LAMBDA_EXECUTION_ROLE_ARN: ${{ secrets.TEST_LAMBDA_EXECUTION_ROLE_ARN }}

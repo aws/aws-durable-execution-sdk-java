@@ -3,13 +3,12 @@
 package software.amazon.lambda.durable.telemetry.exporters;
 
 import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
+import software.amazon.lambda.durable.telemetry.internal.Timestamps;
 
 /**
  * Exports workflow telemetry records to CloudWatch Logs via {@code System.out.println} (Lambda captures stdout to the
@@ -35,10 +34,6 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * or above, these lines are dropped, as raw record lines were before.
  */
 public final class LambdaLogExporter implements TelemetryExporter {
-    /** UTC ISO-8601 with exactly three fraction digits. */
-    private static final DateTimeFormatter TIMESTAMP =
-            DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
-
     /** UTF-8 size of the envelope around an empty {@code message}; the timestamp always has the same width. */
     private static final int ENVELOPE_BYTES =
             logLine("", Instant.EPOCH).getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
@@ -101,7 +96,7 @@ public final class LambdaLogExporter implements TelemetryExporter {
 
     private static Map<String, Object> envelope(String recordJson, Instant now) {
         Map<String, Object> line = new LinkedHashMap<>();
-        line.put("timestamp", TIMESTAMP.format(now));
+        line.put("timestamp", Timestamps.format(now));
         line.put("level", "INFO");
         line.put("message", recordJson);
         return line;
