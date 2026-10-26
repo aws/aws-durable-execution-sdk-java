@@ -12,7 +12,6 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
-import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -21,11 +20,9 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * Exports workflow telemetry records to an HTTP endpoint as a JSON body, one request per record. A non-2xx response
  * fails the export. No truncation limit by default; set one if the endpoint caps request size.
  */
-@Experimental
 public final class HttpExporter implements TelemetryExporter {
 
     /** Request method. */
-    @Experimental
     public enum Method {
         POST,
         PUT;

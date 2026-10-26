@@ -4,14 +4,11 @@ package software.amazon.lambda.durable.telemetry;
 
 import java.util.ArrayList;
 import java.util.List;
-import software.amazon.lambda.durable.annotations.Experimental;
 
 /** Configuration for the Durable Execution Telemetry plugin. Mirrors the JS {@code DurableExecutionTelemetryConfig}. */
-@Experimental
 public final class DurableExecutionTelemetryConfig {
 
     /** When records are emitted. */
-    @Experimental
     public enum EmitMode {
         ON_COMPLETE,
         ON_CHANGE,
@@ -19,7 +16,6 @@ public final class DurableExecutionTelemetryConfig {
     }
 
     /** Which operations to include in each record's operations array. */
-    @Experimental
     public enum OperationDetail {
         TOP_LEVEL,
         FULL_TREE
