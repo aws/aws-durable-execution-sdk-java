@@ -46,8 +46,8 @@ them before upgrading.
 
 ### Upgrade dependencies together
 
-The coordinated release uses `3.0.0` for the SDK and its companion artifacts. Use the
-release coordinates after publication, rather than `3.0.0-SNAPSHOT`.
+The proposed coordinated release uses `3.0.0` for the SDK and its companion artifacts.
+Use the release coordinates after publication, rather than `3.0.0-SNAPSHOT`.
 
 All three artifacts below use group ID `software.amazon.lambda.durable` and the same
 release version. Update the artifacts your application uses together:
@@ -81,7 +81,8 @@ For example, use one property for your Core and OTel dependencies:
 Set the testing artifact to the same property with test scope if you use it. Java's
 durable OTel plugin version is `3.0.0`; it does not follow the separate OTel `2.0.0`
 package version used by the Python and JavaScript SDKs. The optional
-`aws-durable-execution-sdk-java-plugin-telemetry-exporter` artifact also uses `3.0.0`.
+`aws-durable-execution-sdk-java-plugin-telemetry-exporter` artifact also uses `3.0.0`
+and remains a [preview API](#migrate-the-preview-telemetry-exporter).
 
 Inspect `mvn dependency:tree` for older transitive SDK/plugin artifacts, then rebuild
 your application and provider JARs. Update attached Lambda layers together with the
@@ -237,11 +238,13 @@ java.lang.IllegalStateException: Dynamic plugin configuration failed: Plugin pro
     package, so upgrading the function's SDK dependency does not update the layer.
 ```
 
-The check reads whether `createPlugin(InvocationInfo)` resolves to an abstract method on
-the provider's class, and calls no provider code. A provider written against `3.x` does
-not trip it, including one that declares `createPlugin` with a narrowed return type,
-inherits it from an abstract base class, or inherits it as a default method from a
-subinterface of `DurableExecutionPluginFactory`.
+The loader checks the factory method directly instead of calling `getApiVersion()`.
+It requires a public, non-static, non-abstract `createPlugin(InvocationInfo)` method
+with the `DurableExecutionPlugin` return type expected by the interface. This inspects
+class metadata without running the factory. A provider compiled against `3.x` can
+return a plugin subtype: the compiler supplies the matching bridge method. An inherited
+concrete implementation or a default method from a factory subinterface also works.
+An old class that only declares a similarly named helper does not satisfy the contract.
 
 Two cases are outside this startup check:
 
@@ -298,6 +301,28 @@ The same applies to `ExecutionOtelPlugin` and to the overloads that take an
 `SdkTracerProviderBuilder` and an `OtelPluginConfig`. See the [OTel plugin
 README](../otel-plugin/README.md#configuration) for the full set.
 
+Update any Lambda layer containing the durable OTel plugin or its Java-agent extension
+together with the function package. In the execution view, chained invokes can now
+propagate their deterministic operation-span parent even when a Java agent hides the
+concrete tracer provider. The agent's post-build callback must verify that the final
+sampler is the expected `DurableSampler`; the propagated sampling flags come from the
+actual Invocation span. Keep the documented sampler and extension setup. A replacement
+sampler, an unrecognized filtering wrapper, or a provider without verification retains
+the backend's omitted-header fallback.
+
+Validate parent/child trace ancestry and sampled/unsampled behavior in your deployed
+environment. Replaying an existing invoke START reuses its checkpointed metadata and
+does not send another START. If the original START was never committed, a retry can
+collect metadata again, so custom propagation hooks must remain deterministic and
+side-effect free. See [Chained-invoke trace propagation](advanced/propagation-metadata.md).
+
+### Migrate the preview telemetry exporter
+
+The Durable Execution Telemetry Exporter remains a preview API in `3.0.0`. Its public
+types retain `@Experimental` annotations and may change or be removed without a
+major-version bump. This preview status applies to the telemetry-exporter artifact,
+not the Core plugin interface or the OTel tracing plugin.
+
 `DurableExecutionTelemetry.durableExecutionTelemetry(config)` now returns a
 `DurableExecutionPluginFactory` instead of a `DurableExecutionPlugin`, so the
 registration source line is unchanged:
@@ -310,6 +335,28 @@ DurableConfig.builder()
 
 Recompile this call site even though its source is unchanged: the return type changed,
 and old bytecode fails with `NoSuchMethodError`.
+
+If you consume records from an earlier exporter build, update the readers as well.
+`LambdaLogExporter` writes the Lambda JSON log envelope with `timestamp`, `level`, and
+a `message` containing the escaped record JSON. Parse `message` to read the record, and
+update Logs Insights queries and metric filters that expected record fields at the top
+level. `render()` returns the same envelope. Use
+`DurableExecutionTelemetryRecord.toByNameWireMap()` when you need the record map.
+The configured size limit measures the complete printed line, including the envelope.
+
+Record and operation timestamps use fixed-width UTC strings,
+`YYYY-MM-DDTHH:MM:SS.sssZ`, with exactly three fractional digits. A whole second includes
+`.000Z`; sub-millisecond precision is truncated. Update parsers and text comparisons
+that assumed variable precision. `emittedAt` strictly increases within one invocation,
+including concurrent hooks and records created in the same millisecond. This avoids
+equal timestamp keys dropping records through SQS FIFO deduplication or overwriting
+DynamoDB records; it does not promise ordering across invocations.
+
+Execution-level errors can include nested `cause` records. Readers should tolerate
+missing causes and the record's optional `droppedCauses` marker when size limits remove
+them. See the exporter reference for the [log envelope](../telemetry-exporter/README.md#lambdalogexporter),
+[timestamp format](../telemetry-exporter/README.md#timestamps), and
+[error names and causes](../telemetry-exporter/README.md#error-names-and-causes).
 
 ### Inspect and copy plugin configuration
 
@@ -363,6 +410,8 @@ rg -n "withPlugins\(" .
 rg -n "getPluginRunner|getPlugins\(\)" .
 rg -n "DurableExecutionPluginProvider|getApiVersion|getPluginType" .
 rg -n "durableExecutionArn\(\)\s*\)|ConcurrentHashMap" --glob '*Plugin*.java' .
+rg -n "DurableExecutionTelemetry|LambdaLogExporter|emittedAt|droppedCauses" .
+rg -n "DurableSampler|OTEL_JAVAAGENT_EXTENSIONS" .
 ```
 
 ## Plugin state and invocation lifecycle
@@ -565,3 +614,5 @@ event hooks retain immediate fatal propagation.
 6. If you rely on dynamic loading, deploy to a pre-production stage and confirm the provider loaded using the three checks above.
 7. Grep one stage's logs for `Plugin factory failed` before promoting.
 8. Check that no plugin retains state after an invocation ends. A plugin instance should have no static or shared mutable collection keyed by execution ARN left in it.
+9. With OTel, verify chained-invoke parentage and sampled/unsampled behavior for both views in the target environment, including a suspension/resume path. Preserve shared providers across invocations and check the installed Java-agent extension and sampler configuration.
+10. With the preview telemetry exporter, validate log-envelope parsing, fixed-width timestamps, and optional error causes against real output. Exercise multiple records in one invocation and check that downstream deduplication or sort keys retain them.
