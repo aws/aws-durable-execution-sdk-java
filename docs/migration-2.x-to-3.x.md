@@ -82,7 +82,7 @@ Set the testing artifact to the same property with test scope if you use it. Jav
 durable OTel plugin version is `3.0.0`; it does not follow the separate OTel `2.0.0`
 package version used by the Python and JavaScript SDKs. The optional
 `aws-durable-execution-sdk-java-plugin-telemetry-exporter` artifact also uses `3.0.0`
-and remains a [preview API](#migrate-the-preview-telemetry-exporter).
+and becomes a [stable API](#migrate-the-telemetry-exporter) in this release.
 
 Inspect `mvn dependency:tree` for older transitive SDK/plugin artifacts, then rebuild
 your application and provider JARs. Update attached Lambda layers together with the
@@ -316,12 +316,11 @@ does not send another START. If the original START was never committed, a retry 
 collect metadata again, so custom propagation hooks must remain deterministic and
 side-effect free. See [Chained-invoke trace propagation](advanced/propagation-metadata.md).
 
-### Migrate the preview telemetry exporter
+### Migrate the telemetry exporter
 
-The Durable Execution Telemetry Exporter remains a preview API in `3.0.0`. Its public
-types retain `@Experimental` annotations and may change or be removed without a
-major-version bump. This preview status applies to the telemetry-exporter artifact,
-not the Core plugin interface or the OTel tracing plugin.
+The Durable Execution Telemetry Exporter becomes a stable public API in `3.0.0`.
+When upgrading from an earlier preview build, recompile plugin registration code and
+update telemetry readers for the changes below.
 
 `DurableExecutionTelemetry.durableExecutionTelemetry(config)` now returns a
 `DurableExecutionPluginFactory` instead of a `DurableExecutionPlugin`, so the
@@ -615,4 +614,4 @@ event hooks retain immediate fatal propagation.
 7. Grep one stage's logs for `Plugin factory failed` before promoting.
 8. Check that no plugin retains state after an invocation ends. A plugin instance should have no static or shared mutable collection keyed by execution ARN left in it.
 9. With OTel, verify chained-invoke parentage and sampled/unsampled behavior for both views in the target environment, including a suspension/resume path. Preserve shared providers across invocations and check the installed Java-agent extension and sampler configuration.
-10. With the preview telemetry exporter, validate log-envelope parsing, fixed-width timestamps, and optional error causes against real output. Exercise multiple records in one invocation and check that downstream deduplication or sort keys retain them.
+10. With the telemetry exporter, validate log-envelope parsing, fixed-width timestamps, and optional error causes against real output. Exercise multiple records in one invocation and check that downstream deduplication or sort keys retain them.
