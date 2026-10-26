@@ -14,9 +14,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.internal.FatalErrors;
 
 /** Minimal JSON helper for emitting telemetry records and measuring their serialized size. */
+@Experimental
 public final class Json {
     // Register JavaTimeModule and emit ISO-8601 (not numeric timestamps) so SDK-default payload types such as
     // java.time.Instant/Duration in an included input/output/result serialize instead of throwing and silently

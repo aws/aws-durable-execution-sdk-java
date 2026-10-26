@@ -9,6 +9,7 @@ import software.amazon.awssdk.services.eventbridge.model.PutEventsRequest;
 import software.amazon.awssdk.services.eventbridge.model.PutEventsRequestEntry;
 import software.amazon.awssdk.services.eventbridge.model.PutEventsResponse;
 import software.amazon.awssdk.services.eventbridge.model.PutEventsResultEntry;
+import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryRecord;
 import software.amazon.lambda.durable.telemetry.Json;
 import software.amazon.lambda.durable.telemetry.TelemetryExporter;
@@ -17,6 +18,7 @@ import software.amazon.lambda.durable.telemetry.TelemetryExporter;
  * Exports workflow telemetry records to Amazon EventBridge, one PutEvents entry per record with the record status as
  * {@code DetailType} and the record JSON as {@code Detail}. Requires {@code events:PutEvents}.
  */
+@Experimental
 public final class EventBridgeExporter implements TelemetryExporter {
     /**
      * Default event source. The {@code aws.} prefix is reserved for AWS service events and is rejected by PutEvents.
