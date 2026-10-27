@@ -73,6 +73,13 @@ jobs:
             exit 1
           fi
 
+      - name: Set release build timestamp
+        shell: bash
+        run: |
+          # Use the release commit date instead of Maven 3.10's default year of 1980.
+          # MAVEN_ARGS also applies to the publishing rebuilds in maven_publish.sh.
+          echo "MAVEN_ARGS=-Dproject.build.outputTimestamp=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
       - name: Build artifacts
         run: mvn clean install -q -Dlog4j2.level=WARN -Dlog4j.configurationFile=log4j2-quiet.xml --no-transfer-progress
 
