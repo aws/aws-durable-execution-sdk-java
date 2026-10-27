@@ -2,6 +2,10 @@
 
 AI coding agent instructions for the AWS Lambda Durable Execution Java SDK.
 
+Read and follow the [Rules for every change](CONTRIBUTING.md#rules-for-every-change)
+and [SDK invariants](CONTRIBUTING.md#sdk-invariants) in `CONTRIBUTING.md` before
+implementing or reviewing a change. They apply alongside the Java-specific guidance below.
+
 ## Project Overview
 
 **AWS Lambda Durable Execution SDK for Java** - enables building resilient, multi-step Lambda workflows that can run for up to one year with automatic state management, checkpoint-and-replay, and failure recovery.
