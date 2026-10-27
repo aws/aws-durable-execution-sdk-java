@@ -3,7 +3,6 @@
 package software.amazon.lambda.durable.plugin;
 
 import java.time.Instant;
-import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * Information provided when a user function finishes executing.
@@ -20,7 +19,7 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * @param isReplay true if this operation was present in the checkpointed state delivered at invocation start
  * @param attempt 1-based attempt number for steps/waitForCondition, null for context operations
  * @param outcome the user function outcome
- * @param error non-null if the user function failed or exited incompletely; this component is experimental
+ * @param error non-null if the user function failed or exited incompletely
  */
 public record UserFunctionEndInfo(
         String id,
@@ -33,4 +32,4 @@ public record UserFunctionEndInfo(
         boolean isReplay,
         Integer attempt,
         UserFunctionOutcome outcome,
-        @Experimental Throwable error) {}
+        Throwable error) {}

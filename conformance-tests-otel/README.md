@@ -17,6 +17,14 @@ The [SAM template](template.yaml) maps each case to its handler in both views.
 When investigating a run, read the shared requirements at the
 `conformance_test_ref` selected by the [OTel workflow](../.github/workflows/otel-conformance-tests.yml).
 
+Case 11 pauses at `otel-invoke-replay-barrier` after the child invocation returns.
+The shared driver completes that callback after the second caller invocation
+ends. The third invocation replays the saved invoke result and returns it,
+without starting another child or exporting another terminal invoke span.
+The workflow pins the matching requirements from shared conformance PR #131.
+The shared cloud run checks the service trace carrier and full X-Ray ancestry;
+local replay tests do not establish those service-side properties.
+
 The following notes cover cases 21–26.
 
 | Case | Scenario | Behavior |
@@ -98,3 +106,9 @@ For case 25, Java reports no plugin error details for an entirely empty error
 container. The persisted container, callback failure, and caller error stay
 unchanged. Any present type, message, data, or stack-trace field remains an error
 detail, including an empty string or an explicitly supplied empty stack list.
+
+Case 27 (`chained-invoke-suspend`) invokes a child that performs a one-second
+durable wait and returns the original payload after resuming. Both views
+check two caller invocations, two child invocations and the child wait's
+parentage and continuation links. It replaces the suspended-child scenario
+formerly exercised by the short mode of `otel-long-running-4`.

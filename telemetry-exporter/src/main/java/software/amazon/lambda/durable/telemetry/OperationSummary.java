@@ -4,7 +4,6 @@ package software.amazon.lambda.durable.telemetry;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import software.amazon.lambda.durable.annotations.Experimental;
 
 /**
  * A per-operation-name summary emitted (as an {@code operationsByName} map) by point-access exporters (CloudWatch
@@ -14,7 +13,6 @@ import software.amazon.lambda.durable.annotations.Experimental;
  * {@code type}, {@code subType}, {@code status} reflect the most recently seen occurrence; {@code result}/{@code error}
  * are included only when the name occurs exactly once.
  */
-@Experimental
 public final class OperationSummary {
     String type;
     String subType;

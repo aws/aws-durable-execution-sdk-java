@@ -7,7 +7,7 @@
     <parent>
         <groupId>software.amazon.lambda.durable</groupId>
         <artifactId>aws-durable-execution-sdk-java-parent</artifactId>
-        <version>3.0.0</version>
+        <version>3.0.1-SNAPSHOT</version>
     </parent>
 
     <artifactId>aws-durable-execution-sdk-java-plugin-otel</artifactId>
@@ -114,6 +114,7 @@
                     -->
                     <environmentVariables>
                         <_X_AMZN_TRACE_ID/>
+                        <OTEL_INVOKE_TARGET_FUNCTION_NAME>case11-target:1</OTEL_INVOKE_TARGET_FUNCTION_NAME>
                     </environmentVariables>
                 </configuration>
             </plugin>

@@ -1,13 +1,9 @@
-# Durable Execution Telemetry Exporter (preview)
+# Durable Execution Telemetry Exporter
 
 Instrumentation plugin for the AWS Lambda Durable Execution Java SDK that emits a curated,
 per-execution **Durable Execution Telemetry record** to one or more pluggable exporters. It ports the
 JavaScript `durableExecutionTelemetry()` contract (canonical record schema `1.0`) to the Java plugin hook
 surface.
-
-> **Preview API.** Every public type is annotated
-> `@software.amazon.lambda.durable.annotations.Experimental` to signal it is experimental and may
-> change or be removed in a future release without a major-version bump.
 
 ## Usage
 
@@ -33,7 +29,7 @@ Implement `TelemetryExporter` for custom sinks. Every exporter has a builder wit
 
 | Exporter | Destination | Operations rendering | Default size limit | Artifact (optional) |
 |---|---|---|---|---|
-| `LambdaLogExporter` | Function log group (stdout) | `operationsByName` | 256 KB | none |
+| `LambdaLogExporter` | Function log group (stdout) | `operationsByName` | 256,000 bytes (the printed line) | none |
 | `CloudWatchLogsExporter` | Any log group, PutLogEvents | `operationsByName` | 256 KB | `cloudwatchlogs` |
 | `S3Exporter` | One object per execution | `operations` array | 5 MB | `s3` |
 | `DynamoDBExporter` | One item per record (or per execution) | `operationsByName` | 400 KB | `dynamodb` |
@@ -60,6 +56,51 @@ at first export with a message naming the artifact; the plugin logs it and conti
     <version>AWS_SDK_VERSION</version>
 </dependency>
 ```
+
+### LambdaLogExporter
+
+Writes one line per record to `System.out`, in the Lambda JSON log envelope:
+
+```json
+{"timestamp":"2026-10-21T08:00:00.000Z","level":"INFO","message":"<compact record JSON>"}
+```
+
+`timestamp` has the same format as the record timestamps (see [Timestamps](#timestamps)). The keys appear in that
+order. The [Lambda Java logging docs](https://docs.aws.amazon.com/lambda/latest/dg/java-logging.html) and the
+[Lambda log format docs](https://docs.aws.amazon.com/lambda/latest/dg/monitoring-cloudwatchlogs-logformat.html)
+list `LambdaLogger` and Log4j2 as the Java methods that Lambda captures as structured JSON, so `System.out` is not
+wrapped and the exporter writes the envelope itself. Lambda does not double-encode logs that are already JSON, so the
+line reaches CloudWatch Logs as written.
+
+The size limit bounds the printed line, envelope included: the exporter's `render` returns the envelope, so the one
+truncation pass measures exactly the line that is printed. The default limit is 256,000 bytes; CloudWatch Logs accepts
+log events of up to 1 MB. `message` is the record JSON escaped again, so a record with many `"` or `\` characters can
+grow to about twice its size. The exporter computes the line's size without building it (the envelope's fixed 68 bytes
+plus the record JSON's size once escaped again), so the size checks stay cheap on large records. Truncation drops
+error causes first, then operation results, whole operations, input and output (see
+[Error names and causes](#error-names-and-causes) and [Design](#design)).
+
+The execution `error` and the identity fields are never dropped, so they set the smallest line truncation can reach.
+Every error `name` and `message` is capped at 8,192 code points. On the line, one code point takes at most 7 bytes (a
+control character is written as `\u00XX` in the record and its backslash is escaped again), so a capped name or message
+takes at most about 57 KB, and about 33 KB when it is all quotes, backslashes or emoji. With identity fields of the
+lengths Lambda allows (each a few hundred characters at most):
+
+- the line fits any limit of 128 KB or more, including the default, whatever the error's name and message;
+- the line fits 64 KB when the execution error's name is under 500 characters, whatever its message.
+
+An execution error whose name and message are both 8,192 escape-heavy characters makes a line of about 66 KB to 115 KB.
+With a limit smaller than the minimal line (for example a limit below the 68-byte envelope) the line is still printed,
+over the limit, with `truncated` and the `dropped*` markers set.
+
+Lines have an explicit `"level":"INFO"`. Lambda already treats a line without a level as INFO, so log level filtering
+is unchanged: with the JSON log format and an application log level of `WARN` or above, Lambda drops these lines, as
+it dropped the raw record lines before. What changed for readers is the line itself: the record is the JSON string in
+`message`, so queries and metric filters must parse `message` instead of matching top-level record fields.
+
+`LambdaLogExporter.render` now returns the envelope map (`timestamp`, `level`, `message`) instead of the record map;
+`message` is the record JSON string. Code that called `render` to get the `operationsByName` record should call
+`DurableExecutionTelemetryRecord.toByNameWireMap()` instead.
 
 ### DynamoDBExporter
 
@@ -161,6 +202,77 @@ FileExporter.builder().directory("/mnt/efs/durable-execution-telemetry").mode(Fi
 `S3Exporter` writes `{prefix}{partition}{executionName}.json` (IAM: `s3:PutObject`). `CloudWatchLogsExporter` writes
 one event per record to `{logStreamPrefix}YYYY/MM/DD` (IAM: `logs:CreateLogStream`, `logs:PutLogEvents`).
 
+## Timestamps
+
+Every timestamp in a record has one format: `YYYY-MM-DDTHH:MM:SS.sssZ`, for example `2026-10-23T18:42:44.078Z`.
+This covers `emittedAt`, `startTime` and `endTime` on the record, and `startTime` and `endTime` on each operation.
+
+- The time is in UTC, and the value always ends with the literal `Z`.
+- The fraction always has exactly three digits. A whole second is written as `.000`.
+- Digits below the millisecond are dropped, not rounded. So `.078757096` is written as `.078`.
+
+This is the format of JavaScript's `Date.prototype.toISOString()`. Every value has the same width. So comparing two
+values as text gives the same order as comparing them as times. This matters for destinations that compare strings,
+such as a DynamoDB sort key or a CloudWatch Logs Insights filter.
+
+`emittedAt` strictly increases within one invocation: two records built in the same millisecond get values 1 ms
+apart, because the SQS FIFO deduplication id and the default DynamoDB sort key use `executionArn` and `emittedAt`, so
+equal values would drop or overwrite a record.
+
+## Error names and causes
+
+Every error in a record (the execution `error`, each `operations[].error`, and each
+`operationsByName.<name>.error`) has this shape, with keys in this order:
+
+```json
+"error": {
+  "name": "<the error's type name, as this SDK reports it>",
+  "message": "<the error's message>",
+  "cause": { "name": "...", "message": "...", "cause": { ... } }
+}
+```
+
+`cause` is present only when the error has one. It comes from `Throwable.getCause()`, has the same shape, is cut
+after 16 levels, and stops at a cause that was already visited, so a cycle cannot loop. Levels are written exactly as
+`getCause()` returns them; a level that repeats the one above is not skipped. When an SDK wrapper carries a
+checkpointed `ErrorObject`, `name` and `message` come from the `ErrorObject` and the chain still follows
+`getCause()`, so a live cause behind the wrapper (for example the real failure behind a checkpoint continuation
+failure) is kept. Reading a cause never throws: if a cause's `getCause()`, name or message fails, the chain ends there
+and the record is kept. If the top-level error's `getMessage()` fails, its `message` is written as `null` and its
+`name` is the class's simple name; the record is kept. Java names and messages are always strings (`message` is `null` when `getMessage()` is), and
+`getCause()` always returns a `Throwable`, so the shared rule for causes that are not error objects does not arise in
+this SDK.
+
+Every `name` and `message`, on errors and on causes, is capped at 8,192 characters (Unicode code points), so a cut
+never splits a surrogate pair. A longer value keeps its first 8,192 code points followed by `…`. When a record is over an exporter's size limit, truncation first removes
+every `cause` from every error and sets `droppedCauses: true`, then runs the other truncation steps.
+
+Which errors carry a cause in this SDK:
+
+- **Only the execution-level `error`.** It is the live `Throwable` the handler ended with.
+- **Never `operations[].error` or `operationsByName.<name>.error`.** The SDK builds each operation error from the
+  operation's checkpoint, which stores only the error type, message and stack trace, so there is no cause to write.
+  This holds for the invocation where the operation failed and for every replay.
+- **A rebuilt cause can be named `Throwable`.** When a step throws an exception that has a cause, the SDK checkpoints
+  the exception and later rebuilds it; the rebuilt cause is a `java.lang.Throwable` carrying the original message,
+  not an instance of the original class. For example, a step that throws
+  `new RuntimeException("boom", new IOException("io-detail"))` and fails the execution gives
+  `{"name":"RuntimeException","message":"boom","cause":{"name":"Throwable","message":"io-detail"}}`. Do not rely on
+  `error.cause.name` to find the original cause type.
+
+`includeErrors(false)` removes errors together with their causes. With `includeErrors(true)`, cause messages are
+written unredacted, up to 16 of them per error, and there is no transform for errors. Library exceptions often put
+hostnames, file paths, SQL or request identifiers in their messages; use `includeErrors(false)` if that is a concern.
+
+Error names are each language's own type names, so they differ across SDKs. For example, a step that throws
+`PaymentError` can be reported as `StepError` in JS, `aws_durable_execution_sdk_python.exceptions.StepError` or
+`PaymentError` in Python, and `com.example.PaymentError` or `PaymentError` in Java. In Java, an operation error's
+`name` is the fully qualified class name stored in the checkpoint (`com.example.PaymentError`), while the
+execution-level `error` uses the simple class name of the exception the handler ended with (`PaymentError`). When the
+SDK cannot rebuild the step's exception and throws its `StepFailedException` fallback instead, the execution-level
+name is the checkpointed fully qualified name. To compare failures across SDKs, query per SDK, or query on `message`
+and the `cause` chain.
+
 ## Design
 
 - **Snapshot-based, not accumulated.** Each record is built directly from the current-invocation
@@ -191,7 +303,8 @@ one event per record to `{logStreamPrefix}YYYY/MM/DD` (IAM: `logs:CreateLogStrea
   the cached input snapshot or any later emission), and a transform that throws omits the field and
   logs the failure rather than silently dropping it or failing the execution.
 - **`includeErrors`** gates **both** the execution-level error and each operation-level error; with
-  `includeErrors(false)` neither is emitted, so a sensitive failure message never reaches a record.
+  `includeErrors(false)` neither is emitted, nor its `cause` chain, so a sensitive failure message never reaches a
+  record.
 - **Non-fatal plugin failures are isolated.** Record construction, snapshotting, transforms,
   truncation and exporter render/export/flush contain and log ordinary failures, including
   `AssertionError` and optional-dependency `NoClassDefFoundError`. `VirtualMachineError` and
@@ -201,10 +314,14 @@ one event per record to `{logStreamPrefix}YYYY/MM/DD` (IAM: `logs:CreateLogStrea
   fail, including when another exporter is blocked. Subsequent scheduler calls rethrow that fatal;
   a finished fatal pump cannot later be mistaken for a successful drain or flush. Already-running
   customer exporter code cannot be forcibly stopped, but it does not delay fatal delivery.
-- **Per-exporter size truncation** (`Truncation`) drops, in order: operation results oldest-first,
-  then whole operations oldest-first, then execution input, then output — setting `truncated`,
-  `droppedOperations`, `droppedInput`, `droppedOutput` as applicable. The size is measured against
-  the exact shape each exporter emits (its `render`).
+- **Per-exporter size truncation** (`Truncation`) is one pass that drops, in order: every error
+  `cause`, then operation results oldest-first, then whole operations oldest-first, then execution
+  input, then output — setting `truncated`, `droppedCauses`, `droppedOperations`, `droppedInput`,
+  `droppedOutput` as applicable. Markers already on a record are kept. The size is measured against
+  the exact value each exporter emits (its `render`). `LambdaLogExporter` computes that size without
+  building the line, and the pass skips checks that cannot succeed yet (each operation's largest
+  possible saving is sized once), so the cost grows with the record rather than with the number of
+  dropped operations times the record. The execution `error` and identity fields are never dropped.
 - **Exporter isolation.** Every exporter receives its own copy of each record, truncated to its own
   limit; ordinary exporter failures are logged without preventing the other exporters from running.
 - **Export scheduling.** Exporter I/O never runs on the SDK threads that deliver plugin hooks.

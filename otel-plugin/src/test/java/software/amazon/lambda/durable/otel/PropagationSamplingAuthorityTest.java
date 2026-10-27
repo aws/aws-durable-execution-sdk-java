@@ -12,6 +12,7 @@ import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.data.LinkData;
@@ -35,12 +36,15 @@ import software.amazon.lambda.durable.plugin.PropagationInput;
 class PropagationSamplingAuthorityTest {
     @ParameterizedTest
     @CsvSource({
-        "true,false,true", "true,false,false", "true,true,true", "true,true,false",
-        "false,false,true", "false,false,false", "false,true,true", "false,true,false"
+        "true,false,true,false", "true,false,false,false", "true,true,true,false", "true,true,false,false",
+        "false,false,true,false", "false,false,false,false", "false,true,true,false", "false,true,false,false",
+        "true,false,true,true", "true,false,false,true", "true,true,true,true", "true,true,false,true",
+        "false,false,true,true", "false,false,false,true", "false,true,true,true", "false,true,false,true"
     })
     void replacementSamplerMayChooseDifferentInvocationAndInvokeFlags(
-            boolean executionView, boolean opaque, boolean sampleInvoke) {
+            boolean executionView, boolean opaque, boolean sampleInvoke, boolean delegateInvocation) {
         var decisions = new ArrayList<String>();
+        var innerSampler = DurableSampler.wrap(sampleInvoke ? Sampler.alwaysOff() : Sampler.alwaysOn());
         var replacement = new Sampler() {
             public SamplingResult shouldSample(
                     Context parent,
@@ -51,6 +55,9 @@ class PropagationSamplingAuthorityTest {
                     List<LinkData> links) {
                 boolean sampled = name.equals("Invocation") ? !sampleInvoke : sampleInvoke;
                 decisions.add(name + ":" + sampled);
+                if (delegateInvocation && name.equals("Invocation")) {
+                    return innerSampler.shouldSample(parent, traceId, name, kind, attributes, links);
+                }
                 return sampled ? SamplingResult.recordAndSample() : SamplingResult.drop();
             }
 
@@ -66,6 +73,10 @@ class PropagationSamplingAuthorityTest {
                         .setIdGenerator(new DeterministicIdGenerator())
                         .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                         .build()) {
+            new OtelPluginAutoConfigurationCustomizerProvider()
+                    .afterAutoConfigure(OpenTelemetrySdk.builder()
+                            .setTracerProvider(provider)
+                            .build());
             var facade = new TracerProvider() {
                 public Tracer get(String name) {
                     return provider.get(name);

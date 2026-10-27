@@ -12,10 +12,12 @@ public final class Otel11ChainedInvoke extends OtelConformanceHandler<Map<String
     @Override
     public Map<String, Object> handleRequest(Map<String, Object> event, DurableContext context) {
         requireScenario(event, "chained-invoke");
-        return context.invoke(
+        var result = context.invoke(
                 "otel-invoke",
                 System.getenv("OTEL_INVOKE_TARGET_FUNCTION_NAME"),
                 event,
                 new TypeToken<Map<String, Object>>() {});
+        context.waitForCallback("otel-invoke-replay-barrier", String.class, (callbackId, step) -> {});
+        return result;
     }
 }

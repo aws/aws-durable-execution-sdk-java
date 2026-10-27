@@ -3,11 +3,13 @@
 package software.amazon.lambda.durable.telemetry;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
-import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
@@ -15,6 +17,7 @@ import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
+import software.amazon.lambda.durable.telemetry.exporters.LambdaLogExporter;
 import software.amazon.lambda.durable.telemetry.internal.FatalErrors;
 
 /**
@@ -42,7 +45,6 @@ import software.amazon.lambda.durable.telemetry.internal.FatalErrors;
  * {@link TelemetrySettings}, the exporters, and the {@link ExportScheduler} that serializes exports across every
  * execution the environment hosts.
  */
-@Experimental
 public final class DurableExecutionTelemetry {
 
     private static final Logger logger = LoggerFactory.getLogger(DurableExecutionTelemetry.class);
@@ -78,8 +80,9 @@ public final class DurableExecutionTelemetry {
             // so without this a custom exporter that mutates operations or nested content would corrupt every
             // other exporter's view of the same record.
             DurableExecutionTelemetryRecord isolated = record.deepCopy();
-            DurableExecutionTelemetryRecord shaped =
-                    Truncation.truncateRecord(isolated, exporter.maxRecordSizeBytes(), exporter::render);
+            DurableExecutionTelemetryRecord shaped = exporter instanceof LambdaLogExporter lambdaLog
+                    ? Truncation.truncateMeasured(isolated, exporter.maxRecordSizeBytes(), lambdaLog::renderedSize)
+                    : Truncation.truncateRecord(isolated, exporter.maxRecordSizeBytes(), exporter::render);
             exporter.export(shaped);
         } catch (Throwable t) {
             // Ordinary Errors (such as missing optional dependencies) are isolated too.
@@ -156,7 +159,86 @@ public final class DurableExecutionTelemetry {
         }
     }
 
+    /** The cause chain written under an error is cut after this many levels. */
+    static final int MAX_CAUSE_DEPTH = 16;
+
     static ErrorInfo toErrorInfo(Throwable t) {
+        Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        visited.add(t);
+        return toErrorInfo(t, visited, 0);
+    }
+
+    /**
+     * Converts {@code t} and, recursively, its {@link Throwable#getCause()} chain. Name and message come from the
+     * checkpointed {@link ErrorObject} when the SDK wrapper carries one; the chain still follows {@code getCause()}, so
+     * a live cause behind such a wrapper (for example a checkpoint continuation failure) is kept. The chain is cut
+     * after {@link #MAX_CAUSE_DEPTH} levels and stops at a cause already visited (by identity), so a cycle cannot loop.
+     * A non-fatal failure while reading a cause's name or message ends the chain at that cause. For the root error
+     * ({@code depth == 0}) such a failure does not drop the error: the message is written as {@code null} and the name
+     * falls back to the class's simple name.
+     */
+    private static ErrorInfo toErrorInfo(Throwable t, Set<Throwable> visited, int depth) {
+        ErrorInfo cause = null;
+        Throwable next = readCause(t);
+        if (next != null && depth < MAX_CAUSE_DEPTH && visited.add(next)) {
+            try {
+                cause = toErrorInfo(next, visited, depth + 1);
+            } catch (Throwable failure) {
+                FatalErrors.rethrow(failure);
+                cause = null; // A cause whose name or message cannot be read ends the chain.
+            }
+        }
+        return depth == 0 ? rootNameAndMessage(t, cause) : nameAndMessage(t, cause);
+    }
+
+    /** {@link #nameAndMessage} for the root error: an accessor that throws yields the class name and a null message. */
+    private static ErrorInfo rootNameAndMessage(Throwable t, ErrorInfo cause) {
+        try {
+            return nameAndMessage(t, cause);
+        } catch (Throwable failure) {
+            FatalErrors.rethrow(failure);
+        }
+        ErrorObject error = null;
+        try {
+            error = extractErrorObject(t);
+        } catch (Throwable failure) {
+            FatalErrors.rethrow(failure);
+        }
+        String name = null;
+        String message = null;
+        if (error != null) {
+            try {
+                name = error.errorType();
+            } catch (Throwable failure) {
+                FatalErrors.rethrow(failure);
+            }
+            try {
+                message = error.errorMessage();
+            } catch (Throwable failure) {
+                FatalErrors.rethrow(failure);
+            }
+        }
+        if (message == null) {
+            try {
+                message = t.getMessage();
+            } catch (Throwable failure) {
+                FatalErrors.rethrow(failure);
+            }
+        }
+        return new ErrorInfo(name != null ? name : t.getClass().getSimpleName(), message, cause);
+    }
+
+    /** {@code t.getCause()}, or {@code null} when the accessor fails with a non-fatal error. */
+    private static Throwable readCause(Throwable t) {
+        try {
+            return t.getCause();
+        } catch (Throwable failure) {
+            FatalErrors.rethrow(failure);
+            return null;
+        }
+    }
+
+    private static ErrorInfo nameAndMessage(Throwable t, ErrorInfo cause) {
         // Operation and execution snapshot errors are exposed wrapped: operation failures as DurableOperationException
         // and unrecoverable execution failures as UnrecoverableDurableExecutionException. The wrapper's own
         // class/message would lose the original checkpointed failure identity. When the checkpointed ErrorObject is
@@ -167,9 +249,9 @@ public final class DurableExecutionTelemetry {
             String name =
                     error.errorType() != null ? error.errorType() : t.getClass().getSimpleName();
             String message = error.errorMessage() != null ? error.errorMessage() : t.getMessage();
-            return new ErrorInfo(name, message);
+            return new ErrorInfo(name, message, cause);
         }
-        return new ErrorInfo(t.getClass().getSimpleName(), t.getMessage());
+        return new ErrorInfo(t.getClass().getSimpleName(), t.getMessage(), cause);
     }
 
     /**

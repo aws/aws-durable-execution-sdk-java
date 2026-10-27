@@ -4,6 +4,7 @@ package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static software.amazon.lambda.durable.otel.Invocations.started;
@@ -28,6 +29,8 @@ import java.util.function.BiFunction;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -61,6 +64,48 @@ class DurableSamplerTest {
         DeterministicIdGenerator.clearSharedStateForTest();
         DurableSamplingDecision.clearSharedStateForTest();
         OtelPluginAutoConfigurationState.resetInstalledForTest();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"trace", "span", "execution"})
+    void propagationObservationRejectsAnotherSpan(String mismatch) {
+        var sampler = DurableSampler.wrap(Sampler.alwaysOff());
+        OtelPluginAutoConfigurationState.recordConfiguredSampler(sampler);
+        var intent = DurableSamplingDecision.Intent.resolved(SamplingResult.recordOnly());
+        try (var observation = DurableSamplingDecision.observe(intent, TRACE_ID, "Invocation", ARN)) {
+            var result = sampler.shouldSample(
+                    Context.root(),
+                    mismatch.equals("trace") ? "b".repeat(32) : TRACE_ID,
+                    mismatch.equals("span") ? "another-span" : "Invocation",
+                    SpanKind.INTERNAL,
+                    Attributes.of(SpanAttributes.DURABLE_EXECUTION_ARN, mismatch.equals("execution") ? "other" : ARN),
+                    List.of());
+            assertEquals(SamplingDecision.RECORD_ONLY, result.getDecision());
+            assertFalse(observation.wasConsumed());
+        }
+        assertNull(DurableSamplingDecision.consume(Context.root()));
+    }
+
+    @Test
+    void propagationObservationRestoresNestedScopesAndDoesNotLeak() {
+        var sampler = DurableSampler.wrap(Sampler.alwaysOff());
+        OtelPluginAutoConfigurationState.recordConfiguredSampler(sampler);
+        var intent = DurableSamplingDecision.Intent.resolved(SamplingResult.recordAndSample());
+        var attributes = Attributes.of(SpanAttributes.DURABLE_EXECUTION_ARN, ARN);
+        try (var outer = DurableSamplingDecision.observe(intent, TRACE_ID, "Invocation", ARN)) {
+            try (var inner = DurableSamplingDecision.observe(intent, TRACE_ID, "Workflow", ARN)) {
+                sampler.shouldSample(Context.root(), TRACE_ID, "Workflow", SpanKind.INTERNAL, attributes, List.of());
+                assertTrue(inner.wasConsumed());
+                assertFalse(outer.wasConsumed());
+            }
+            assertFalse(outer.wasConsumed());
+            sampler.shouldSample(Context.root(), TRACE_ID, "Invocation", SpanKind.INTERNAL, attributes, List.of());
+            assertTrue(outer.wasConsumed());
+        }
+        try (var next = DurableSamplingDecision.observe(intent, TRACE_ID, "Invocation", ARN)) {
+            assertFalse(next.wasConsumed());
+        }
+        assertNull(DurableSamplingDecision.consume(Context.root()));
     }
 
     @Test

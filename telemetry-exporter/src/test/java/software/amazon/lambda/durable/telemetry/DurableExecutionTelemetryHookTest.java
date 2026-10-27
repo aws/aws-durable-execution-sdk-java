@@ -265,7 +265,7 @@ class DurableExecutionTelemetryHookTest {
         assertEquals(4, exporter.records.size());
         String startTime = exporter.records.get(0).startTime();
         assertTrue(exporter.records.stream().allMatch(r -> startTime.equals(r.startTime())));
-        assertEquals(START.toString(), startTime);
+        assertEquals("2026-08-05T00:00:00.000Z", startTime);
         assertFalse(Executions.outstanding(first), "the suspended invocation left the scheduler owing nothing");
         assertFalse(Executions.outstanding(resumed), "nor did the resumed one");
     }

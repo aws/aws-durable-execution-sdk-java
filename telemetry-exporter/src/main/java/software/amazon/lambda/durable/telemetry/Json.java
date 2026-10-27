@@ -14,11 +14,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import software.amazon.lambda.durable.annotations.Experimental;
 import software.amazon.lambda.durable.telemetry.internal.FatalErrors;
 
 /** Minimal JSON helper for emitting telemetry records and measuring their serialized size. */
-@Experimental
 public final class Json {
     // Register JavaTimeModule and emit ISO-8601 (not numeric timestamps) so SDK-default payload types such as
     // java.time.Instant/Duration in an included input/output/result serialize instead of throwing and silently
@@ -74,6 +72,39 @@ public final class Json {
             FatalErrors.rethrow(e);
             return null;
         }
+    }
+
+    /**
+     * The UTF-8 size {@code text} takes when it is written as the content of a JSON string (quotes excluded), using
+     * {@link #stringify}'s escaping: {@code "} and {@code \} and the control characters {@code \b \t \n \f \r} take 2
+     * bytes, other control characters below U+0020 take 6 ({@code \}{@code u00XX}), and everything else is written as
+     * UTF-8 (a surrogate pair is 4 bytes; a lone surrogate is replaced by {@code ?}, 1 byte).
+     */
+    public static long escapedUtf8Size(CharSequence text) {
+        long size = 0;
+        int length = text.length();
+        for (int i = 0; i < length; i++) {
+            char c = text.charAt(i);
+            if (c < 0x80) {
+                if (c == '"' || c == '\\' || c == '\b' || c == '\t' || c == '\n' || c == '\f' || c == '\r') {
+                    size += 2;
+                } else if (c < 0x20) {
+                    size += 6;
+                } else {
+                    size += 1;
+                }
+            } else if (c < 0x800) {
+                size += 2;
+            } else if (Character.isHighSurrogate(c) && i + 1 < length && Character.isLowSurrogate(text.charAt(i + 1))) {
+                size += 4;
+                i++;
+            } else if (Character.isSurrogate(c)) {
+                size += 1;
+            } else {
+                size += 3;
+            }
+        }
+        return size;
     }
 
     /**
