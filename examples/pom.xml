@@ -31,6 +31,13 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- Workflow Insight plugin (used by WorkflowInsightExample) -->
+        <dependency>
+            <groupId>software.amazon.lambda.durable</groupId>
+            <artifactId>aws-durable-execution-sdk-java-plugin-insight</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- AWS Lambda Java Core -->
         <dependency>
             <groupId>com.amazonaws</groupId>
@@ -70,6 +77,14 @@
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>sts</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- CloudWatch Logs client for the WorkflowInsightExample cloud test to poll the emitted insight record.
+             Declared directly (not relied upon transitively via the insight plugin's exporters) so the cloud test
+             compiles regardless of the plugin's dependency graph. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>cloudwatchlogs</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
