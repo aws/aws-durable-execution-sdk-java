@@ -151,10 +151,17 @@ public class MyHandler extends DurableHandler<Input, Output> {
 
 ### Thread Pool Architecture
 
+Each invocation tracks logical task outcomes separately from actual task exit.
+Deadline and cleanup cutoffs fence admission and request cooperative cancellation,
+while finalization still waits for admitted work and in-flight transport to finish.
+The matching invocation End runs on its owner, and the runtime caller waits for
+that owner and End before returning. Code that ignores interruption can therefore
+outlast the policy budget; see [invocation deadline cleanup](advanced/configuration.md#invocation-deadline-cleanup).
+
 The SDK uses two separate thread pools with distinct responsibilities:
 
 **User Executor (`DurableConfig.executorService`):**
-- Runs user-defined operations (the code passed to `ctx.step()` and `ctx.stepAsync()`)
+- Runs the root handler, steps, child-context user code, and map/parallel coordination
 - Configurable via `DurableConfig.builder().withExecutorService()`
 - Default: cached daemon thread pool
 
