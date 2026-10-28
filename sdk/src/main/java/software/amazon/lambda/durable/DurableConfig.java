@@ -8,9 +8,11 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider;
@@ -95,6 +97,7 @@ public final class DurableConfig {
     private final DurableExecutionClient durableExecutionClient;
     private final SerDes serDes;
     private final ExecutorService executorService;
+    private final Supplier<? extends ExecutorService> invocationExecutorFactory;
     private final LoggerConfig loggerConfig;
     private final PollingStrategy pollingStrategy;
     private final Duration checkpointDelay;
@@ -103,6 +106,10 @@ public final class DurableConfig {
     private final List<DurableExecutionPluginFactory> pluginFactories;
 
     private DurableConfig(Builder builder) {
+        if (builder.executorService != null && builder.invocationExecutorFactory != null) {
+            throw new IllegalArgumentException(
+                    "ExecutorService and invocation executor factory cannot both be configured");
+        }
         this.pluginFactories = builder.loadDynamicPlugins
                 ? DynamicPluginLoader.loadConfiguredPluginFactories(builder.pluginFactories)
                 : List.copyOf(builder.pluginFactories);
@@ -112,6 +119,7 @@ public final class DurableConfig {
         this.serDes = Objects.requireNonNullElseGet(builder.serDes, JacksonSerDes::new);
         this.executorService =
                 Objects.requireNonNullElseGet(builder.executorService, DurableConfig::createDefaultExecutor);
+        this.invocationExecutorFactory = builder.invocationExecutorFactory;
         this.loggerConfig = Objects.requireNonNullElseGet(builder.loggerConfig, LoggerConfig::defaults);
         this.pollingStrategy = Objects.requireNonNullElse(builder.pollingStrategy, PollingStrategies.Presets.DEFAULT);
         this.checkpointDelay = Objects.requireNonNullElseGet(builder.checkpointDelay, () -> Duration.ofSeconds(0));
@@ -164,6 +172,19 @@ public final class DurableConfig {
      */
     public ExecutorService getExecutorService() {
         return executorService;
+    }
+
+    /**
+     * Gets the optional factory for invocation-owned executors.
+     *
+     * <p>When present, {@code ExecutionManager} calls the factory once per Lambda invocation and owns the returned
+     * executor's shutdown. {@link #getExecutorService()} remains the shared executor used when no factory is
+     * configured.
+     *
+     * @return configured invocation executor factory, if any
+     */
+    public Optional<Supplier<? extends ExecutorService>> getInvocationExecutorFactory() {
+        return Optional.ofNullable(invocationExecutorFactory);
     }
 
     /**
@@ -239,12 +260,16 @@ public final class DurableConfig {
         var builder = new Builder()
                 .withDurableExecutionClient(durableExecutionClient)
                 .withSerDes(serDes)
-                .withExecutorService(executorService)
                 .withLoggerConfig(loggerConfig)
                 .withPollingStrategy(pollingStrategy)
                 .withCheckpointDelay(checkpointDelay)
                 .withDeserializeAfterSerialization(deserializeAfterSerialization)
                 .withCheckpointEmptyMap(checkpointEmptyMap);
+        if (invocationExecutorFactory != null) {
+            builder.withInvocationExecutorFactory(invocationExecutorFactory);
+        } else {
+            builder.withExecutorService(executorService);
+        }
         builder.pluginFactories = new ArrayList<>(pluginFactories);
         builder.loadDynamicPlugins = false;
         return builder;
@@ -341,6 +366,7 @@ public final class DurableConfig {
         private DurableExecutionClient durableExecutionClient;
         private SerDes serDes;
         private ExecutorService executorService;
+        private Supplier<? extends ExecutorService> invocationExecutorFactory;
         private LoggerConfig loggerConfig;
         private PollingStrategy pollingStrategy;
         private Duration checkpointDelay;
@@ -419,6 +445,26 @@ public final class DurableConfig {
          */
         public Builder withExecutorService(ExecutorService executorService) {
             this.executorService = executorService;
+            return this;
+        }
+
+        /**
+         * Sets a factory that creates an isolated executor for each Lambda invocation.
+         *
+         * <p>The factory is called once by each {@code DurableExecutor.execute()} call and may be called concurrently
+         * on Lambda Managed Instances. It must return a fresh, non-null {@link ExecutorService}; the SDK shuts that
+         * executor down only after actual admitted work and End finish, then observes termination within the remaining
+         * cleanup budget. Running code that ignores interruption may delay shutdown beyond that budget. Do not return
+         * an executor shared with another invocation or application component. This option cannot be combined with
+         * {@link #withExecutorService(ExecutorService)}.
+         *
+         * @param invocationExecutorFactory factory for invocation-owned executors
+         * @return This builder
+         * @throws NullPointerException if invocationExecutorFactory is null
+         */
+        public Builder withInvocationExecutorFactory(Supplier<? extends ExecutorService> invocationExecutorFactory) {
+            this.invocationExecutorFactory =
+                    Objects.requireNonNull(invocationExecutorFactory, "Invocation executor factory cannot be null");
             return this;
         }
 

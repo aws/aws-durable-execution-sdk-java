@@ -10,6 +10,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -203,5 +206,37 @@ class LocalDurableTestRunnerTest {
         assertTrue(ex.isRetryable());
         assertTrue(ex.getMessage().contains("Invalid suspension. No operation is pending."));
         assertTrue(ex.getMessage().contains("unregistered-op"));
+    }
+
+    @Test
+    void preservesInvocationExecutorFactoryAcrossReinvocations() {
+        var executors = new CopyOnWriteArrayList<ExecutorService>();
+        var config = DurableConfig.builder()
+                .withInvocationExecutorFactory(() -> {
+                    var executor = Executors.newFixedThreadPool(2);
+                    executors.add(executor);
+                    return executor;
+                })
+                .build();
+        var runner = LocalDurableTestRunner.create(
+                String.class,
+                (input, context) -> {
+                    context.wait("wait", Duration.ofMinutes(1));
+                    return input;
+                },
+                config);
+
+        try {
+            var first = runner.run("test");
+            runner.advanceTime();
+            var second = runner.run("test");
+
+            assertEquals(ExecutionStatus.PENDING, first.getStatus());
+            assertEquals(ExecutionStatus.SUCCEEDED, second.getStatus());
+            assertEquals(2, executors.size());
+            assertTrue(executors.stream().allMatch(ExecutorService::isTerminated));
+        } finally {
+            executors.forEach(ExecutorService::shutdownNow);
+        }
     }
 }
