@@ -66,10 +66,21 @@ After **Publish Maven Release** succeeds:
 
 ## 4. Update the shared documentation
 
-After the artifacts are available in Maven Central, open a pull request in
-[`aws/aws-durable-execution-docs`](https://github.com/aws/aws-durable-execution-docs)
-that updates every literal Java SDK version to the release version without the
-leading `v`.
+The release engineer owns this step for every new version release. Complete it
+after the artifacts are available in Maven Central.
+
+The shared documentation lives in
+[`aws/aws-durable-execution-docs`](https://github.com/aws/aws-durable-execution-docs).
+Checking version strings alone is insufficient. Review the changes in every
+package released, including the testing library, OpenTelemetry plugin, and
+Durable Execution Telemetry plugin when applicable, and update the
+documentation to match:
+
+- [ ] API references and guides that describe new or changed behavior
+- [ ] `examples/java/` snippets that use new or changed APIs
+- [ ] Every literal Java SDK version, set to the release version without the
+      leading `v`
+- [ ] Dependency versions, compatibility guidance, and migration instructions
 
 For a prerelease, update the shared documentation only when that prerelease is
 intended to become the recommended version. Otherwise, wait for the final
@@ -83,13 +94,14 @@ At minimum, check the Java runtime and testing dependencies in:
 - `docs/getting-started/development-environment.md`
 - `docs/testing/authoring.md`
 
-Search the entire documentation repository so new dependency snippets are not
-missed:
+Search the entire documentation repository so new dependency snippets and API
+references are not missed:
 
 ```bash
 rg -n -B2 -A2 \
   '<artifactId>aws-durable-execution-sdk-java(-testing|-plugin-otel)?</artifactId>' \
   docs
+rg -n 'aws-durable-execution-sdk-java|software.amazon.lambda.durable' docs examples/java
 ```
 
 Update literal versions for the runtime SDK, testing library, and OpenTelemetry
@@ -105,5 +117,8 @@ python3 scripts/check_example_refs.py
 zensical build --clean
 ```
 
-Link the Java GitHub release in the pull request description and merge the
-documentation pull request after its required checks pass.
+Open or update the documentation pull request, link the Java GitHub release in
+its description, and follow through on review and merge after its required
+checks pass. If the release needs no documentation changes, add a note to the
+GitHub release stating that the documentation review was completed and found no
+changes needed.
