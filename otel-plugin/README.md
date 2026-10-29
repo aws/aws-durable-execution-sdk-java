@@ -411,12 +411,17 @@ This telemetry decision does not remove the SDK's failure notification: a presen
 remains a `DurableOperationException` in operation hooks and snapshots. An absent container retains its existing
 null metadata behavior. Persisted errors, caller failures, replay, and user-function error handling are unchanged.
 
+Operation exception events use the original `ErrorObject.errorType` when supplied, including types from another
+language such as `RejectedError`. If the stored type is absent, the exception's Java type is used.
+Workflow and Invocation spans report failure through their `ERROR` status and status description without
+recording exception events. Operation and attempt spans carry the exception events.
+
 Execution-view operation spans with a known, nonzero backend end timestamp record the exception event at that
 same timestamp. This path uses the public `exception` event with standard `exception.type`, `exception.message`
 (when present), and `exception.stacktrace` attributes. Java's standard stack-trace text and the provider's ordinary
 event attribute count/value limits apply; native `recordException` resolver behavior is not preserved on this path.
-Invocation-view events and operations without a backend end (including the SDK's epoch-zero clock sentinel) keep
-native `recordException` behavior.
+Invocation-view events and operations without a backend end (including the SDK's epoch-zero clock sentinel) use
+native `recordException` with the stored exception type supplied as an attribute override.
 
 When an Execution-view completion has no observed or backend start timestamp, its known end also supplies the start.
 Existing earliest-known-start selection is unchanged and is not clamped to the backend end, so clock skew can still

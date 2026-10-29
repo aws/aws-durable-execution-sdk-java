@@ -98,7 +98,7 @@ final class OtelPluginSupport {
             span.setStatus(StatusCode.ERROR, info.error().getMessage());
             if (endTimestamp == null || endTimestamp.equals(Instant.EPOCH)) {
                 // The SDK treats epoch zero as its current-clock sentinel when ending a span.
-                span.recordException(info.error());
+                span.recordException(info.error(), operationExceptionAttributes(info.error()));
             } else {
                 recordExceptionAt(span, info.error(), endTimestamp);
             }
@@ -111,6 +111,16 @@ final class OtelPluginSupport {
             // Retain successful statusless virtual operations; unrelated cancellation/nonterminal statuses stay UNSET.
             span.setStatus(StatusCode.OK);
         }
+    }
+
+    /** Checkpoint metadata carries the original type, which may belong to another language. */
+    private static Attributes operationExceptionAttributes(Throwable error) {
+        var attributes = Attributes.builder();
+        if (error instanceof DurableOperationException failure && failure.getErrorObject() != null) {
+            var type = failure.getErrorObject().errorType();
+            if (type != null) attributes.put("exception.type", type);
+        }
+        return attributes.build();
     }
 
     /** Timestamped public exception event; the provider applies its event attribute limits. */
@@ -126,6 +136,7 @@ final class OtelPluginSupport {
             error.printStackTrace(writer);
         }
         attributes.put("exception.stacktrace", stacktrace.toString());
+        attributes.putAll(operationExceptionAttributes(error));
         span.addEvent("exception", attributes.build(), timestamp);
     }
 

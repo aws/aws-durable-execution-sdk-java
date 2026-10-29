@@ -20,9 +20,15 @@ import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -33,6 +39,43 @@ class OperationExceptionEventTest {
     private static final AttributeKey<String> TYPE = AttributeKey.stringKey("exception.type");
     private static final AttributeKey<String> MESSAGE = AttributeKey.stringKey("exception.message");
     private static final AttributeKey<String> STACK = AttributeKey.stringKey("exception.stacktrace");
+
+    static Stream<Arguments> storedErrors() {
+        return Stream.of("java.lang.RuntimeException", "RejectedError", "", null)
+                .flatMap(type -> Stream.of(null, Instant.EPOCH, Instant.ofEpochSecond(20))
+                        .map(end -> Arguments.of(type, end)));
+    }
+
+    @ParameterizedTest
+    @MethodSource("storedErrors")
+    void operationExceptionUsesStoredTypeWithoutChangingTheFailure(String type, Instant end) {
+        var details = ErrorObject.builder()
+                .errorType(type)
+                .errorMessage("original failure")
+                .build();
+        var error = new DurableOperationException(Operation.builder().build(), details);
+        try (var exporter = InMemorySpanExporter.create();
+                var provider = SdkTracerProvider.builder()
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+                        .build()) {
+            var span = provider.get("test").spanBuilder(NAME).startSpan();
+            var info = new OperationEndInfo(
+                    "op", NAME, "CALLBACK", "Callback", null, null, end, "FAILED", null, true, error, null);
+            OtelPluginSupport.applyOperationStatus(span, info, end);
+            span.end();
+            var events = exporter.getFinishedSpanItems().get(0).getEvents();
+            assertEquals(1, events.size());
+            assertEquals(
+                    type != null ? type : DurableOperationException.class.getCanonicalName(),
+                    events.get(0).getAttributes().get(TYPE));
+            assertEquals("original failure", events.get(0).getAttributes().get(MESSAGE));
+            assertSame(error, info.error());
+            assertSame(details, error.getErrorObject());
+            if (end != null && !end.equals(Instant.EPOCH)) {
+                assertEquals(20_000_000_000L, events.get(0).getEpochNanos());
+            }
+        }
+    }
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})

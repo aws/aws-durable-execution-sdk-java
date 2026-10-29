@@ -2125,9 +2125,8 @@ class InvocationOtelPluginTest {
                 StatusCode.ERROR,
                 invocationSpan.getStatus().getStatusCode(),
                 "Invocation span should be ERROR on a FAILED invocation");
-        assertTrue(
-                workflowSpan.getEvents().stream().anyMatch(e -> e.getName().equals("exception")),
-                "Workflow span should record the execution exception on FAILED");
+        assertTrue(workflowSpan.getEvents().isEmpty(), "Workflow reports failure through its status");
+        assertTrue(invocationSpan.getEvents().isEmpty(), "Invocation reports failure through its status");
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
