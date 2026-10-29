@@ -1,0 +1,36 @@
+name: Release build tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish_maven.yml'
+      - '.github/workflows/test-release-build.yml'
+      - '.github/scripts/set_release_timestamp.sh'
+      - '.github/scripts/test_release_timestamp.py'
+      - 'pom.xml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish_maven.yml'
+      - '.github/workflows/test-release-build.yml'
+      - '.github/scripts/set_release_timestamp.sh'
+      - '.github/scripts/test_release_timestamp.py'
+      - 'pom.xml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-timestamp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          java-version: '17'
+          distribution: corretto
+          cache: maven
+      - name: Test release timestamp and Javadoc reproducibility
+        run: python3 .github/scripts/test_release_timestamp.py
