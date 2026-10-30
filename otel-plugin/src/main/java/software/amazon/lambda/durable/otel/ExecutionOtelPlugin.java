@@ -450,9 +450,6 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
                             ? info.executionError().getMessage()
                             : null;
                     workflowSpan.setStatus(StatusCode.ERROR, message);
-                    if (info.executionError() != null) {
-                        workflowSpan.recordException(info.executionError());
-                    }
                 }
                 default -> workflowSpan.setStatus(StatusCode.OK); // SUCCEEDED
             }
@@ -666,7 +663,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
     private void applyInvocationStatus(Span span, InvocationEndInfo info) {
         // Invocation span status mapping:
         //   SUCCEEDED, PENDING -> OK
-        //   FAILED             -> ERROR (records the execution error when present)
+        //   FAILED             -> ERROR (exception events belong to operations and attempts)
         //   RETRYING           -> UNSET (left unset)
         // RETRYING is left UNSET on purpose: the plugin interface does not expose whether the invocation/workflow
         // was STOPPED or TIMED_OUT versus retried for a transient error, so an ERROR status cannot be asserted
@@ -677,9 +674,6 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
                 var message =
                         info.executionError() != null ? info.executionError().getMessage() : null;
                 span.setStatus(StatusCode.ERROR, message);
-                if (info.executionError() != null) {
-                    span.recordException(info.executionError());
-                }
             }
             case RETRYING -> {
                 // UNSET — see note above.
