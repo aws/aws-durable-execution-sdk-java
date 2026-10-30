@@ -56,6 +56,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     private final Function<DurableContext, T> function;
     private final AtomicBoolean replayChildren = new AtomicBoolean(false);
     private final AtomicBoolean skipped = new AtomicBoolean(false);
+    private final AtomicBoolean skipPublished = new AtomicBoolean(false);
     private final Object settlementLock = new Object();
     private final AtomicReference<DeserializedOperationResult<T>> cachedOperationResult = new AtomicReference<>(null);
 
@@ -160,6 +161,9 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
             // A parallel snapshot may already have recorded this branch as skipped. Do not publish a result after that
             // decision, or get() can return a value and later throw.
             if (skipped.get()) {
+                if (isVirtual) {
+                    fireOnOperationEnd(null, null, false);
+                }
                 return;
             }
             publishSuccess(serializedResult);
@@ -221,6 +225,9 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
 
         synchronized (settlementLock) {
             if (skipped.get()) {
+                if (isVirtual) {
+                    fireOnOperationEnd(null, exception, false);
+                }
                 return;
             }
             publishFailure(exception, errorObject);
@@ -270,7 +277,9 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     ParallelResult.Status settleForParallelSnapshot() {
         synchronized (settlementLock) {
             if (skipped.get() || !isOperationCompleted()) {
-                markSkipped();
+                if (!skipped.get()) {
+                    reserveSkip();
+                }
                 return ParallelResult.Status.SKIPPED;
             }
             try {
@@ -284,18 +293,36 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
         }
     }
 
-    private void markSkipped() {
+    private void reserveSkip() {
         skipped.set(true);
+    }
+
+    void publishReservedSkip() {
+        synchronized (settlementLock) {
+            if (!skipped.get() || skipPublished.get()) {
+                return;
+            }
+            publishSkip();
+        }
+    }
+
+    private void publishSkip() {
+        skipPublished.set(true);
         markAlreadyCompleted();
     }
 
+    private void markSkipped() {
+        skipped.set(true);
+        publishSkip();
+    }
+
     boolean isSkipped() {
-        return skipped.get();
+        return skipPublished.get();
     }
 
     @Override
     public boolean isSkipSettlement() {
-        return skipped.get();
+        return skipPublished.get();
     }
 
     @Override
@@ -323,7 +350,7 @@ public class ChildContextOperation<T> extends SerializableDurableOperation<T> {
     }
 
     private void throwIfSkipped() {
-        if (skipped.get()) {
+        if (skipPublished.get()) {
             throw new ParallelBranchSkippedException(getName());
         }
     }

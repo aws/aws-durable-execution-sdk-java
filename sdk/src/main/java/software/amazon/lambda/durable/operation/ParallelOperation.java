@@ -8,6 +8,7 @@ import java.util.function.Function;
 import software.amazon.awssdk.services.lambda.model.ContextOptions;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
+import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableFuture;
@@ -87,6 +88,20 @@ public class ParallelOperation extends ConcurrencyOperation<ParallelResult> impl
                 .subType(getSubType().getValue())
                 .payload(serializedResult.serialized())
                 .contextOptions(ContextOptions.builder().replayChildren(true).build()));
+    }
+
+    @Override
+    public void onCheckpointComplete(Operation operation) {
+        super.onCheckpointComplete(operation);
+        if (operation.status() == OperationStatus.SUCCEEDED) {
+            publishReservedBranchSkips();
+        }
+    }
+
+    private void publishReservedBranchSkips() {
+        for (var branch : getBranches()) {
+            branch.publishReservedSkip();
+        }
     }
 
     private void snapshotBranches(CompletionConfig.CompletionDecision completionDecision) {

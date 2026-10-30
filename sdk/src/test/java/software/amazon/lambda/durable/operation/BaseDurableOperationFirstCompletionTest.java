@@ -140,6 +140,17 @@ class BaseDurableOperationFirstCompletionTest {
     }
 
     @Test
+    void returnsSkippedFallbackWhenTheOnlyCandidateBecomesSkippedDuringWait() {
+        executionManager.registerActiveThread(OTHER_THREAD);
+        var branch = operation(FIRST_OP_ID);
+        CompletableFuture.runAsync(branch::skip, CompletableFuture.delayedExecutor(20, MILLISECONDS));
+
+        var settled = awaitFirstSettled(List.of(branch));
+
+        assertEquals(branch, settled);
+    }
+
+    @Test
     void returnsAlreadySettledOperationAheadOfAnEarlierSkippedFuture() {
         var skipped = operation(FIRST_OP_ID);
         var winner = operation(SECOND_OP_ID);

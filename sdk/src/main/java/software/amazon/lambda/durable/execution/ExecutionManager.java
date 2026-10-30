@@ -714,6 +714,9 @@ public class ExecutionManager implements SafeCloseable {
                 return settled;
             }
             pending.remove(settled);
+            if (pending.isEmpty()) {
+                return settled;
+            }
         }
     }
 

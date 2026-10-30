@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
 import software.amazon.lambda.durable.config.CompletionConfig;
@@ -66,9 +65,7 @@ class ParallelSkippedBranchReviewTest {
     void branchGetKeepsTheSameOutcomeWhenItFinishesDuringResultSerialization() {
         var branchRunning = new CountDownLatch(1);
         var allowBranch = new CountDownLatch(1);
-        var branch = new AtomicReference<DurableFuture<String>>();
-        var duringSerialization = new AtomicReference<String>();
-        var serDes = new ParallelResultSerializationGate(branch, allowBranch, duringSerialization);
+        var serDes = new ParallelResultSerializationGate(allowBranch);
         var config = DurableConfig.builder().withSerDes(serDes).build();
         var runner = LocalDurableTestRunner.create(
                 String.class,
@@ -83,23 +80,45 @@ class ParallelSkippedBranchReviewTest {
                         await(allowBranch, "release branch-b");
                         return "B";
                     });
-                    branch.set(slow);
                     parallel.branch("branch-a", String.class, ctx -> {
                         await(branchRunning, "branch-b to start");
                         return "A";
                     });
                     var result = parallel.get();
-                    return duringSerialization.get() + "|" + observe(slow) + "|" + result.statuses();
+                    return "after-parallel|" + observe(slow) + "|" + result.statuses();
                 },
                 config);
 
         try {
             var execution = assertTimeoutPreemptively(DEADLINE, () -> runner.runUntilComplete("input"));
             assertEquals(ExecutionStatus.SUCCEEDED, execution.getStatus());
-            assertEquals("SKIPPED:branch-b|SKIPPED:branch-b|[SKIPPED, SUCCEEDED]", execution.getResult(String.class));
+            assertEquals("after-parallel|SKIPPED:branch-b|[SKIPPED, SUCCEEDED]", execution.getResult(String.class));
         } finally {
             allowBranch.countDown();
         }
+    }
+
+    @Test
+    void skippedBranchStaysSkippedOnReplayWhenParallelResultIsAlreadyCheckpointed() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var parallel = context.parallel(
+                    "first-successful",
+                    ParallelConfig.builder()
+                            .completionConfig(CompletionConfig.firstSuccessful())
+                            .build());
+            parallel.branch("branch-a", String.class, ctx -> "A");
+            var skipped = parallel.branch("branch-b", String.class, ctx -> "B");
+            var result = parallel.get();
+            context.step("record", String.class, stepCtx -> observe(skipped) + "|" + result.statuses());
+            return "done";
+        });
+
+        var first = assertTimeoutPreemptively(DEADLINE, () -> runner.runUntilComplete("input"));
+        assertEquals(ExecutionStatus.SUCCEEDED, first.getStatus());
+
+        var replay = assertTimeoutPreemptively(DEADLINE, () -> runner.run("input"));
+        assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+        assertEquals("done", replay.getResult(String.class));
     }
 
     @Test
@@ -174,25 +193,17 @@ class ParallelSkippedBranchReviewTest {
     /** Blocks inside {@link ParallelResult} serialization so a branch can finish in that window. */
     private static final class ParallelResultSerializationGate implements SerDes {
         private final JacksonSerDes delegate = new JacksonSerDes();
-        private final AtomicReference<DurableFuture<String>> branch;
         private final CountDownLatch allowBranch;
-        private final AtomicReference<String> duringSerialization;
         private final AtomicBoolean gated = new AtomicBoolean();
 
-        private ParallelResultSerializationGate(
-                AtomicReference<DurableFuture<String>> branch,
-                CountDownLatch allowBranch,
-                AtomicReference<String> duringSerialization) {
-            this.branch = branch;
+        private ParallelResultSerializationGate(CountDownLatch allowBranch) {
             this.allowBranch = allowBranch;
-            this.duringSerialization = duringSerialization;
         }
 
         @Override
         public String serialize(Object value) {
             if (value instanceof ParallelResult && gated.compareAndSet(false, true)) {
                 allowBranch.countDown();
-                duringSerialization.set(observe(branch.get()));
             }
             return delegate.serialize(value);
         }
