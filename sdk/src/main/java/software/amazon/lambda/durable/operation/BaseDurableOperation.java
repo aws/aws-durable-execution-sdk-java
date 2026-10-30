@@ -208,6 +208,17 @@ public abstract class BaseDurableOperation {
     }
 
     /**
+     * Whether this operation settled because it was skipped, rather than because its own work finished.
+     *
+     * <p>{@link software.amazon.lambda.durable.DurableFuture#anyOf} ignores a skipped operation while another future
+     * can still settle. A branch marked skipped on replay therefore does not replace the winner observed on the first
+     * invocation.
+     */
+    public boolean isSkipSettlement() {
+        return false;
+    }
+
+    /**
      * Waits for the first of the given operations to complete.
      *
      * @param operations operations to wait on
@@ -243,13 +254,22 @@ public abstract class BaseDurableOperation {
     }
 
     /**
+     * Waits for this operation's completion future without looking up a checkpointed {@code Operation}.
+     *
+     * <p>Skipped parallel branches that never started can settle this way because they have no checkpointed operation.
+     */
+    protected void waitForCompletionFuture() {
+        executionManager.waitForOperationCompletion(this);
+    }
+
+    /**
      * Waits for the operation to complete. Deregisters the current thread to allow Lambda suspension if the operation
      * is still in progress, then re-registers when the operation completes.
      *
      * @return the completed operation
      */
     protected Operation waitForOperationCompletion() {
-        executionManager.waitForOperationCompletion(this);
+        waitForCompletionFuture();
 
         if (isVirtual) {
             // We don't  store virtual operations so they don't corresponding Operation in storage
