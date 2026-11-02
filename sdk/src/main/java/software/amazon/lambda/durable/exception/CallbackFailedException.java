@@ -20,7 +20,13 @@ public class CallbackFailedException extends CallbackException {
         var errorMessage = error.errorMessage();
 
         if (errorType != null && !errorType.isEmpty()) {
+            if (errorMessage == null || errorMessage.isEmpty()) {
+                return errorType;
+            }
             return errorType + ": " + errorMessage;
+        }
+        if (errorMessage == null || errorMessage.isEmpty()) {
+            return "Callback failed";
         }
         return errorMessage;
     }
