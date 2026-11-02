@@ -51,7 +51,12 @@ class OperationExceptionEventTest {
                         Arguments.of(end, storedFailure(null), DurableOperationException.class.getCanonicalName()),
                         Arguments.of(end, storedFailure("java.lang.RuntimeException"), "java.lang.RuntimeException"),
                         Arguments.of(end, storedFailure("RejectedError"), "RejectedError"),
-                        Arguments.of(end, storedFailure(""), "")));
+                        Arguments.of(end, storedFailure(" RejectedError "), " RejectedError "),
+                        Arguments.of(end, storedFailure(""), DurableOperationException.class.getCanonicalName()),
+                        Arguments.of(end, storedFailure("   "), DurableOperationException.class.getCanonicalName()),
+                        Arguments.of(end, storedFailure("\t\r\n"), DurableOperationException.class.getCanonicalName()),
+                        Arguments.of(
+                                end, storedFailure("\u2003"), DurableOperationException.class.getCanonicalName())));
     }
 
     @ParameterizedTest
