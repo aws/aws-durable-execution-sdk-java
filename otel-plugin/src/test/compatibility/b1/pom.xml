@@ -10,7 +10,7 @@
     <version>1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <properties>
-        <otel.api.version>1.66.0</otel.api.version>
+        <otel.api.version>1.67.0</otel.api.version>
     </properties>
     <dependencies>
         <dependency>
