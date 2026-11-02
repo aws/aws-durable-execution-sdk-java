@@ -135,7 +135,9 @@ final class OtelPluginSupport {
         if (error instanceof DurableOperationException failure) {
             var details = failure.getErrorObject();
             if (details != null && details.errorType() != null) {
-                return Attributes.builder().put("exception.type", details.errorType()).build();
+                return Attributes.builder()
+                        .put("exception.type", details.errorType())
+                        .build();
             }
         }
         return Attributes.empty();

@@ -92,8 +92,9 @@ class OperationExceptionEventTest {
         assertEquals(
                 baseline.getEvents().get(0).getAttributes().toBuilder()
                         .put(TYPE, expectedType)
-                        .build(),
-                event.getAttributes());
+                        .build()
+                        .asMap(),
+                event.getAttributes().asMap());
         assertEquals(expectedTime, event.getEpochNanos());
     }
 

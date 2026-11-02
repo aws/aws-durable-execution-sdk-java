@@ -3,13 +3,14 @@
 package software.amazon.lambda.durable.otel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -103,7 +104,9 @@ class OperationExceptionTypeIntegrationTest {
 
         var result = runner.runUntilComplete("input");
         assertEquals(ExecutionStatus.FAILED, result.getStatus());
-        assertEquals(stored, result.getOperation(name + "-callback").getCallbackDetails().error());
+        assertEquals(
+                stored,
+                result.getOperation(name + "-callback").getCallbackDetails().error());
         assertEquals(stored, result.getOperation(name).getContextDetails().error());
         assertEquals(stored, result.getError().orElseThrow());
         assertExceptionType(name, "RejectedError");
@@ -180,8 +183,14 @@ class OperationExceptionTypeIntegrationTest {
         assertEquals(ExecutionStatus.FAILED, replay.getStatus());
         assertEquals(result.getError(), replay.getError());
         assertEquals(1, calls.get(), "completed user code must not run again");
-        assertTrue(exporter.getFinishedSpanItems().stream()
-                .allMatch(span -> "Workflow".equals(span.getName()) || "Invocation".equals(span.getName())));
+        // Without a remote parent, each invocation also re-exports the deterministic execution root.
+        assertEquals(
+                List.of("DurableExecutionRoot", "Invocation", "Workflow"),
+                exporter.getFinishedSpanItems().stream()
+                        .map(SpanData::getName)
+                        .sorted()
+                        .toList(),
+                "replay must not emit operation or attempt spans");
     }
 
     private static ErrorObject remoteError(String type) {
