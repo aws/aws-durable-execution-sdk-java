@@ -127,7 +127,8 @@ terminal summary. Complete remote parents are externally owned and are never exp
 With the managed `DurableSampler`, anchors use only the sampled decision and stable SDK identity. Custom sampler
 attributes and trace state remain on Workflow, Invocation, operation and attempt descendants; they are not copied to
 re-exported anchors. `RECORD_ONLY` still records descendants but produces no anchor, and `DROP` produces neither.
-Visible plain replacement providers retain their documented independent per-span policy described below.
+Visible plain replacement providers retain their independent per-span policy and do not provide the SDK-wide
+sampling guarantees described below.
 
 Each invocation may re-export the zero-duration anchor to recover an earlier lost export. Managed sampled re-exports
 keep identity, timestamps and SDK span fields stable. Provider resources still apply and may differ between execution
@@ -352,6 +353,20 @@ Operation and attempt spans link to the Workflow span. `ExecutionOtelPlugin` rev
 
 ### Sampling
 
+Durable execution traces support an authoritative upstream sampling decision or deterministic local sampling. See
+[Supported sampling modes](https://docs.aws.amazon.com/durable-execution/sdk-reference/observability/opentelemetry/#supported-sampling-modes)
+for the cross-language contract.
+
+Without an authoritative upstream decision, a local sampler must make the same decision for the same canonical trace
+ID and unchanged sampling configuration across durable spans, retries and reinvocations, including when execution
+resumes in another environment.
+`Sampler.alwaysOn()` and `Sampler.alwaysOff()` are supported constant decisions; `Sampler.traceIdRatioBased(ratio)`
+is supported with an unchanged ratio.
+
+Without an authoritative upstream decision, local policies whose decisions vary with fresh randomness, time, load or
+mutable state are unsupported for durable execution traces. In-memory decision reuse does not make such policies
+supported or persist their decisions across execution environments.
+
 The SDK-wide sampling guarantees below require `DurableSampler` itself to be the final installed sampler. The
 [builder constructors](#configuration) and [ADOT extension setup](#1-adot-lambda-layer) install it automatically;
 configure its delegate through these documented paths and retain `DurableSampler` as the final sampler. An
@@ -363,39 +378,39 @@ the sampled decision and stable SDK identity, and is omitted for `RECORD_ONLY` o
 The supported SDK sampler follows this precedence, highest first:
 
 1. **Backend decision** — with `DurableSampler` installed, `Sampled=1` / `Sampled=0` in the propagated header is
-   authoritative, regardless of the wrapped delegate's policy.
+   authoritative, regardless of the wrapped delegate's policy. `Sampled=1` therefore exports SDK spans even when
+   `OTEL_TRACES_SAMPLER=always_off`; `Sampled=0` drops them even with `always_on`. A local ratio sampler does not
+   override either decision.
 2. **Same-trace ambient span** — without an explicit header decision, a valid ambient span already on the execution
    trace supplies its decision: sampled → sampled; unsampled and recording → `RECORD_ONLY`; unsampled and
-   non-recording → dropped.
+   non-recording → dropped. The ambient span's sampling policy must meet the same deterministic requirement for
+   consistency across reinvocations.
 3. **Same-copy durable sampler** — the visible SDK sampler is evaluated against root context once per invocation
    using the canonical trace ID, span name and attributes. Its complete result is carried in that loader's context.
+   The supported delegate must keep its decision stable across these evaluations.
 4. **Foreign or opaque SDK sampler** — resolution is deferred to the installed wrapper's actual delegate. Its full
-   result is cached by execution ARN and canonical trace ID in a 256-entry LRU cache and reused while resident.
-   Eviction can cause another evaluation. The delegate still receives the canonical trace ID; drop and
-   `RECORD_ONLY` decisions, attributes and updated trace state are retained.
-
-For a visible plain replacement sampler with no explicit upstream or same-trace ambient decision, a fallback anchor
-uses the provider's actual root sampling result for its parent context. It does not spend a preliminary decision before
-creating that root. Descendants still use the provider's own per-span sampling, so a stateful policy can select them
-differently. Explicit and ambient decisions retain their existing context behavior. The legacy complete-remote-parent
-path still evaluates root policy before span creation when sampling is undecided; a stateful replacement can observe
-that additional query. The query resolves the remote parent's otherwise-unknown sampled flag from the configured
-root policy; omitting it can bypass `ParentBased(alwaysOff)`. Supply an explicit upstream decision or retain
-`DurableSampler` when a policy result must be reused authoritatively. A plain replacement receives no SDK sampling carrier and does not provide SDK-wide decision
-reuse or full-result overrides. Opaque providers cannot expose a later sampler replacement to the
-application, so retain the wrapper through the documented customization setup.
+   result is cached by execution ARN and canonical trace ID in a 256-entry, process-local LRU cache and reused while
+   resident. Eviction or a new execution environment can cause another evaluation, so the delegate must meet the same
+   deterministic requirement. The cache is not durable storage and does not extend the supported sampling modes.
+   Drop and `RECORD_ONLY` decisions, attributes and updated trace state are retained while cached.
 
 For explicit execution-level control, keep `DurableSampler` as the final installed sampler and set `Sampled` upstream,
-for example through X-Ray
-active tracing. The SDK sampling wrapper preserves that decision.
+for example through X-Ray active tracing. The SDK sampling wrapper preserves that decision. Spans from ordinary
+application code or ADOT auto-instrumentation still use the configured delegate; the SDK's upstream override applies
+only to its durable spans.
 
-Parentless fallback-root exports also use the provider's sampler. If the SDK wrapper is replaced by a plain
-sampler, those anchors can follow its normal root policy independently of the flags used by their descendants;
-full upstream sampling overrides require the installed SDK wrapper. For example, a sampler that selects spans by name
-can export only the anchor or only its Invocation child. This behavior is covered for both views by
-`ExecutionRootParityTest.plainReplacementRetainsIndependentPerSpanSampling`; installing `DurableSampler` restores the
-shared decision. Merely delaying anchor creation until terminal completion would not make an arbitrary replacement
-sampler consistent across spans.
+Replacing `DurableSampler` with a plain sampler does not provide SDK-wide sampling guarantees. A plain replacement
+receives no SDK sampling carrier and does not provide execution-wide decision reuse or full-result
+upstream overrides. Its fallback root and descendants use the provider's own per-span sampling policy and can be
+selected differently. A visible replacement's fallback anchor uses its actual root sampling result without a preliminary
+query. The complete-remote-parent path still queries the configured root policy to resolve an otherwise-unknown parent
+sampled flag, so the replacement can observe an additional query. Explicit and ambient decisions retain their existing
+context behavior, but cannot force a plain sampler to preserve them.
+
+Opaque providers cannot expose a later sampler replacement to the application, so retain the wrapper through the
+documented customization setup. Installing `DurableSampler` with a supported deterministic delegate preserves a shared
+decision for durable spans; installing the wrapper alone does not make a nondeterministic delegate consistent across
+reinvocations.
 
 ### Operation error details
 
