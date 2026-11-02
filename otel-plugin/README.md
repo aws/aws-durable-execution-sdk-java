@@ -411,6 +411,11 @@ This telemetry decision does not remove the SDK's failure notification: a presen
 remains a `DurableOperationException` in operation hooks and snapshots. An absent container retains its existing
 null metadata behavior. Persisted errors, caller failures, replay, and user-function error handling are unchanged.
 
+In both trace views, operation exception events use a nonblank stored `ErrorObject.errorType` verbatim, including
+remote-language error types. A missing, empty, or whitespace-only type retains the existing throwable-type reporting.
+Blank stored types still count as supplied error details and do not suppress the exception event.
+The throwable's message and stack diagnostics, attempt events, and Workflow/Invocation exception reporting are unchanged.
+
 Execution-view operation spans with a known, nonzero backend end timestamp record the exception event at that
 same timestamp. This path uses the public `exception` event with standard `exception.type`, `exception.message`
 (when present), and `exception.stacktrace` attributes. Java's standard stack-trace text and the provider's ordinary

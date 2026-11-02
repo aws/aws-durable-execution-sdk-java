@@ -98,7 +98,7 @@ final class OtelPluginSupport {
             span.setStatus(StatusCode.ERROR, info.error().getMessage());
             if (endTimestamp == null || endTimestamp.equals(Instant.EPOCH)) {
                 // The SDK treats epoch zero as its current-clock sentinel when ending a span.
-                span.recordException(info.error());
+                span.recordException(info.error(), operationExceptionAttributes(info.error()));
             } else {
                 recordExceptionAt(span, info.error(), endTimestamp);
             }
@@ -126,7 +126,23 @@ final class OtelPluginSupport {
             error.printStackTrace(writer);
         }
         attributes.put("exception.stacktrace", stacktrace.toString());
+        attributes.putAll(operationExceptionAttributes(error));
         span.addEvent("exception", attributes.build(), timestamp);
+    }
+
+    /** Override only the operation event's type; retain the actual throwable's message and stack diagnostics. */
+    private static Attributes operationExceptionAttributes(Throwable error) {
+        if (error instanceof DurableOperationException failure) {
+            var details = failure.getErrorObject();
+            if (details != null
+                    && details.errorType() != null
+                    && !details.errorType().isBlank()) {
+                return Attributes.builder()
+                        .put("exception.type", details.errorType())
+                        .build();
+            }
+        }
+        return Attributes.empty();
     }
 
     /** Distinguishes operation telemetry details without changing the SDK's failure notification object. */

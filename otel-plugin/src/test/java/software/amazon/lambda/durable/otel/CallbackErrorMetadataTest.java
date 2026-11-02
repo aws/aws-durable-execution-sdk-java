@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.otel;
 import static org.junit.jupiter.api.Assertions.*;
 import static software.amazon.lambda.durable.otel.SpanAttributes.*;
 
+import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
@@ -49,6 +50,12 @@ class CallbackErrorMetadataTest {
                                 executionView,
                                 "empty-type",
                                 ErrorObject.builder().errorType("").build(),
+                                true,
+                                false),
+                        Arguments.of(
+                                executionView,
+                                "blank-type",
+                                ErrorObject.builder().errorType(" \t\n").build(),
                                 true,
                                 false),
                         Arguments.of(
@@ -176,6 +183,16 @@ class CallbackErrorMetadataTest {
             assertEquals(1, terminalSpans.size());
             assertEquals(StatusCode.ERROR, terminalSpans.get(0).getStatus().getStatusCode());
             assertEquals(hasDetails ? 1 : 0, terminalSpans.get(0).getEvents().size());
+            if (hasDetails) {
+                assertEquals(
+                        "type".equals(label) ? "ExternalFailure" : DurableOperationException.class.getCanonicalName(),
+                        terminalSpans
+                                .get(0)
+                                .getEvents()
+                                .get(0)
+                                .getAttributes()
+                                .get(AttributeKey.stringKey("exception.type")));
+            }
             var replay = runner.run("input");
             assertEquals(ExecutionStatus.FAILED, replay.getStatus());
             assertEquals(result.getError(), replay.getError());

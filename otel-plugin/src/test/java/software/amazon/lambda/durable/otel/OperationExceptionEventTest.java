@@ -9,6 +9,7 @@ import static org.mockito.Mockito.*;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
+import io.opentelemetry.sdk.testing.time.TestClock;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.SpanLimits;
 import io.opentelemetry.sdk.trace.data.SpanData;
@@ -20,9 +21,14 @@ import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
+import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
@@ -33,6 +39,83 @@ class OperationExceptionEventTest {
     private static final AttributeKey<String> TYPE = AttributeKey.stringKey("exception.type");
     private static final AttributeKey<String> MESSAGE = AttributeKey.stringKey("exception.message");
     private static final AttributeKey<String> STACK = AttributeKey.stringKey("exception.stacktrace");
+
+    static Stream<Arguments> storedErrors() {
+        return Stream.of(null, Instant.EPOCH, Instant.ofEpochSecond(20))
+                .flatMap(end -> Stream.of(
+                        Arguments.of(end, new RuntimeException("ordinary failure"), "java.lang.RuntimeException"),
+                        Arguments.of(
+                                end,
+                                new DurableOperationException(null, null, "no stored error"),
+                                DurableOperationException.class.getCanonicalName()),
+                        Arguments.of(end, storedFailure(null), DurableOperationException.class.getCanonicalName()),
+                        Arguments.of(end, storedFailure("java.lang.RuntimeException"), "java.lang.RuntimeException"),
+                        Arguments.of(end, storedFailure("RejectedError"), "RejectedError"),
+                        Arguments.of(end, storedFailure(" RejectedError "), " RejectedError "),
+                        Arguments.of(end, storedFailure(""), DurableOperationException.class.getCanonicalName()),
+                        Arguments.of(end, storedFailure("   "), DurableOperationException.class.getCanonicalName()),
+                        Arguments.of(end, storedFailure("\t\r\n"), DurableOperationException.class.getCanonicalName()),
+                        Arguments.of(
+                                end, storedFailure("\u2003"), DurableOperationException.class.getCanonicalName())));
+    }
+
+    @ParameterizedTest
+    @MethodSource("storedErrors")
+    void storedTypeChangesOnlyTheOperationExceptionType(Instant end, Throwable error, String expectedType) {
+        try (var exporter = InMemorySpanExporter.create();
+                var provider = SdkTracerProvider.builder()
+                        .setClock(TestClock.create(Instant.ofEpochSecond(100)))
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+                        .build()) {
+            var tracer = provider.get("operation-exception-test");
+            var baseline = tracer.spanBuilder("baseline").startSpan();
+            baseline.recordException(error);
+            baseline.end();
+            var span = tracer.spanBuilder(NAME).startSpan();
+            OtelPluginSupport.applyOperationStatus(
+                    span,
+                    new OperationEndInfo(
+                            "op", NAME, "CALLBACK", "Callback", null, null, end, "FAILED", null, false, error),
+                    end);
+            span.end();
+            var spans = exporter.getFinishedSpanItems();
+            assertEquals(StatusCode.ERROR, spans.get(1).getStatus().getStatusCode());
+            assertEquals(error.getMessage(), spans.get(1).getStatus().getDescription());
+            assertExceptionDetails(
+                    spans.get(0),
+                    spans.get(1),
+                    expectedType,
+                    end == null || end.equals(Instant.EPOCH) ? 100_000_000_000L : 20_000_000_000L);
+        }
+    }
+
+    private static void assertExceptionDetails(
+            SpanData baseline, SpanData actual, String expectedType, long expectedTime) {
+        assertEquals(1, actual.getEvents().size());
+        var event = actual.getEvents().get(0);
+        assertEquals("exception", event.getName());
+        assertEquals(
+                baseline.getEvents().get(0).getAttributes().toBuilder()
+                        .put(TYPE, expectedType)
+                        .build()
+                        .asMap(),
+                event.getAttributes().asMap());
+        assertEquals(expectedTime, event.getEpochNanos());
+    }
+
+    private static DurableOperationException storedFailure(String type) {
+        var error = new DurableOperationException(
+                null,
+                ErrorObject.builder()
+                        .errorType(type)
+                        .errorMessage("stored failure")
+                        .stackTrace("Example|step|Workflow.java|42")
+                        .build(),
+                "wrapper message",
+                new IllegalArgumentException("cause"));
+        error.addSuppressed(new IllegalStateException("suppressed cleanup"));
+        return error;
+    }
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
