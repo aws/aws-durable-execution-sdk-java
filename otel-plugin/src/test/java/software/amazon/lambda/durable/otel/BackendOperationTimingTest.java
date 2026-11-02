@@ -156,7 +156,7 @@ class BackendOperationTimingTest {
             var diagnostic = span.getEvents().get(0);
             var failure = ends.get(0).error();
             assertEquals(
-                    failure.getClass().getCanonicalName(),
+                    details.errorType(),
                     diagnostic.getAttributes().get(AttributeKey.stringKey("exception.type")));
             assertEquals(
                     failure.getMessage(), diagnostic.getAttributes().get(AttributeKey.stringKey("exception.message")));
