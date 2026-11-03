@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -29,9 +30,11 @@ import software.amazon.lambda.durable.otel.ExecutionOtelPlugin;
 import software.amazon.lambda.durable.otel.ExecutionOtelPluginProvider;
 import software.amazon.lambda.durable.otel.InvocationOtelPlugin;
 import software.amazon.lambda.durable.otel.InvocationOtelPluginProvider;
+import software.amazon.lambda.durable.otel.OtelPlugin;
 import software.amazon.lambda.durable.otel.OtelPluginConfig;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
+import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.testing.LocalDurableTestRunner;
 
@@ -135,7 +138,7 @@ class OtelViewRegistrationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"otel-invocation", "otel-execution"})
+    @ValueSource(strings = {"otel-invocation", "otel-execution", "otel"})
     void environmentSelectedSingleViewCanBeCopiedIntoLocalRunner(String provider, @TempDir Path directory)
             throws Exception {
         var java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
@@ -152,6 +155,37 @@ class OtelViewRegistrationTest {
         } finally {
             child.destroyForcibly();
         }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"otel,otel-invocation", "otel-invocation,otel", "otel,otel-execution"})
+    void defaultAliasRetainsExclusiveGroupDuringEnvironmentLoading(String names) {
+        var factories = DynamicPluginLoader.loadConfiguredPluginFactories(
+                names, ServiceLoader.load(DurableExecutionPluginProvider.class), List.of());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DurableConfig.builder()
+                        .withPlugins(factories.toArray(DurableExecutionPluginFactory[]::new))
+                        .build());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void unifiedFactoryConflictsWithExistingFactoriesAndProviders(boolean invocationMode) {
+        var unified = OtelPlugin.factory(invocationMode ? OtelPlugin.Mode.INVOCATION : OtelPlugin.Mode.EXECUTION);
+        var existing = invocationMode ? ExecutionOtelPlugin.factory() : InvocationOtelPlugin.factory();
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DurableConfig.builder().withPlugins(unified, existing).build());
+        var factories = DynamicPluginLoader.loadConfiguredPluginFactories(
+                invocationMode ? "otel" : "otel-invocation",
+                ServiceLoader.load(DurableExecutionPluginProvider.class),
+                List.of(unified));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DurableConfig.builder()
+                        .withPlugins(factories.toArray(DurableExecutionPluginFactory[]::new))
+                        .build());
     }
 
     private static String read(Path path) {
