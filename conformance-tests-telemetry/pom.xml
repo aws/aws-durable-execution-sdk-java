@@ -21,7 +21,7 @@
     <name>AWS Lambda Durable Execution SDK Telemetry Conformance Tests</name>
     <description>
         Java SDK handlers and SAM template for the Durable Execution Telemetry conformance
-        suite (telemetry-1).
+        suite (telemetry-1, telemetry-2).
     </description>
 
     <properties>

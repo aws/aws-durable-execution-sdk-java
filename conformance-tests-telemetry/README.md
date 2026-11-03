@@ -19,6 +19,7 @@ template that maps it to the requirement ID.
 | Suite       | Requirement   | What it pins down                                                                                                                              |
 | ----------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `telemetry` | `telemetry-1` | One successful single-step execution emits one `SUCCEEDED` record with `input`, `output`, ARN-derived identity fields, and `operationsByName`. |
+| `telemetry` | `telemetry-2` | One failed execution emits one `FAILED` record. The execution `error` and `operationsByName.charge.error` carry a cause chain.                 |
 
 ## Layout
 
@@ -27,10 +28,11 @@ pom.xml                                   # standalone Maven project (not a reac
 template.yaml                             # telemetry suite; declares TelemetryLogGroupName and creates the group
 src/main/java/software/amazon/lambda/durable/conformance/telemetry/
   Telemetry1Success.java                  # single step "increment"; plugin + CloudWatchLogsExporter
+  Telemetry2Failure.java                  # step "charge" fails; handler throws "payment failed" with the step error as cause
 ```
 
-The handler uses the real SDK API only. It constructs no record and calls no exporter method. A missing or wrong record
-is the plugin's defect. That defect is the signal the suite measures.
+The handlers use the real SDK API only. They construct no record and call no exporter method. A missing or wrong
+record is the plugin's defect. That defect is the signal the suite measures.
 
 The handler configuration is: one `CloudWatchLogsExporter`, emit mode `ON_COMPLETE`, sampling rate 1, operation detail
 `TOP_LEVEL`, and content input and output enabled.
