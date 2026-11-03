@@ -304,7 +304,7 @@ public class MyHandler extends DurableHandler<MyInput, MyOutput> {
 ### OpenTelemetry version compatibility
 
 Keep the OpenTelemetry API, context, SDK, and Java agent versions aligned. This plugin is built and tested against
-OpenTelemetry 1.66.0. Global-provider binding needs `GlobalOpenTelemetry.isSet()` and `getOrNoop()`; when the visible
+OpenTelemetry 1.67.0. Global-provider binding needs `GlobalOpenTelemetry.isSet()` and `getOrNoop()`; when the visible
 API lacks either method (for example, API 1.49.0), the plugin logs a compatibility diagnostic and disables its telemetry
 for that invocation. It does not install a no-op global that would prevent a provider from being registered later.
 
@@ -344,7 +344,7 @@ DurableExecutionRoot (materialized and re-exported each invocation)
 
 - **Execution ancestor** — the common parent both the Workflow and Invocation spans resolve onto. A valid remote server span (`Root` and `Parent`) is used directly, whether or not `Sampled` is present; only when a valid remote parent cannot be constructed does a synthetic execution root take its place. The remote ancestor is used as a non-recording context; the synthetic ancestor is materialized as `DurableExecutionRoot` and re-exported on each invocation with its stable span ID and execution start time, subject to sampling.
 - **Workflow span** — one logical span per durable execution, joining the execution trace with a stable span ID derived from the ARN. Exported only on the terminal invocation (SUCCEEDED/FAILED).
-- **Invocation span** — one per Lambda invocation, parented to the ambient span only when it is on the execution trace, otherwise to the execution ancestor
+- **Invocation span** — one per Lambda invocation, parented to a sampled or recording ambient span on the execution trace, otherwise to the execution ancestor
 - **Operation span** — one per durable operation, named after your step/wait names
 - **Attempt span** — one per user function execution (retries produce additional attempt spans)
 
@@ -353,49 +353,75 @@ Operation and attempt spans link to the Workflow span. `ExecutionOtelPlugin` rev
 ### Sampling
 
 The SDK-wide sampling guarantees below require `DurableSampler` itself to be the final installed sampler. The
-[builder constructors](#configuration) and [ADOT extension setup](#1-adot-lambda-layer) install it automatically;
+[builder-based factory overloads](#configuration) and [ADOT extension setup](#1-adot-lambda-layer) install it automatically;
 configure its delegate through these documented paths and retain `DurableSampler` as the final sampler. An
 unrecognized outer wrapper is treated as a plain replacement. The SDK wrapper applies its sampling intent to every durable
 span. Workflow, Invocation, operation and attempt spans preserve the full result, including `RECORD_ONLY`, sampler
 attributes and trace state. The re-exported `DurableExecutionRoot` is the narrow exception described above: it uses only
 the sampled decision and stable SDK identity, and is omitted for `RECORD_ONLY` or `DROP`.
 
-The supported SDK sampler follows this precedence, highest first:
+The configured provider sampler decides sampling for both views. The plugin does not parse
+`OTEL_TRACES_SAMPLER` or `OTEL_TRACES_SAMPLER_ARG`: the supported ADOT extension / OpenTelemetry
+autoconfiguration setup resolves them and passes the resulting sampler to the durable wrapper.
 
-1. **Backend decision** — with `DurableSampler` installed, `Sampled=1` / `Sampled=0` in the propagated header is
-   authoritative, regardless of the wrapped delegate's policy.
-2. **Same-trace ambient span** — without an explicit header decision, a valid ambient span already on the execution
-   trace supplies its decision: sampled → sampled; unsampled and recording → `RECORD_ONLY`; unsampled and
-   non-recording → dropped.
-3. **Same-copy durable sampler** — the visible SDK sampler is evaluated against root context once per invocation
-   using the canonical trace ID, span name and attributes. Its complete result is carried in that loader's context.
-4. **Foreign or opaque SDK sampler** — resolution is deferred to the installed wrapper's actual delegate. Its full
-   result is cached by execution ARN and canonical trace ID in a 256-entry LRU cache and reused while resident.
-   Eviction can cause another evaluation. The delegate still receives the canonical trace ID; drop and
-   `RECORD_ONLY` decisions, attributes and updated trace state are retained.
+| Sampler | Sampled remote parent | Unsampled remote parent | No usable parent |
+| --- | --- | --- | --- |
+| `always_on` | Sample | Sample | Sample |
+| `always_off` | Drop | Drop | Drop |
+| `traceidratio` | Trace ID and ratio | Trace ID and ratio | Trace ID and ratio |
+| `parentbased_always_on` | Sample | Drop | Sample |
+| `parentbased_always_off` | Sample | Drop | Drop |
+| `parentbased_traceidratio` | Sample | Drop | Trace ID and ratio |
 
-For a visible plain replacement sampler with no explicit upstream or same-trace ambient decision, a fallback anchor
-uses the provider's actual root sampling result for its parent context. It does not spend a preliminary decision before
-creating that root. Descendants still use the provider's own per-span sampling, so a stateful policy can select them
-differently. Explicit and ambient decisions retain their existing context behavior. The legacy complete-remote-parent
-path still evaluates root policy before span creation when sampling is undecided; a stateful replacement can observe
-that additional query. The query resolves the remote parent's otherwise-unknown sampled flag from the configured
-root policy; omitting it can bypass `ParentBased(alwaysOff)`. Supply an explicit upstream decision or retain
-`DurableSampler` when a policy result must be reused authoritatively. A plain replacement receives no SDK sampling carrier and does not provide SDK-wide decision
-reuse or full-result overrides. Opaque providers cannot expose a later sampler replacement to the
-application, so retain the wrapper through the documented customization setup.
+The input is the canonical execution trace ID and the original propagated remote parent, with its
+original sampled flag. Both trace ID and parent span ID must be valid. A valid parent without a
+sampled flag is **unsampled**, not absent. An invalid or incomplete parent, including `Sampled=1`
+without a valid parent span ID, supplies root context. An ambient Lambda span or synthesized
+execution ancestor is never used as this sampling input. X-Ray headers carry no trace state;
+where a sampler supplies trace state, the existing full-result propagation applies.
 
-For explicit execution-level control, keep `DurableSampler` as the final installed sampler and set `Sampled` upstream,
-for example through X-Ray
-active tracing. The SDK sampling wrapper preserves that decision.
+Autoconfiguration defaults to `parentbased_always_on` when the sampler is unset. Ratio samplers
+use `OTEL_TRACES_SAMPLER_ARG` (default `1.0`); invalid sampler names and invalid/out-of-range ratios
+use OpenTelemetry's configuration validation and fail provider initialization. System properties
+such as `otel.traces.sampler` take precedence over environment variables under OpenTelemetry's
+standard rules. An application-owned `SdkTracerProvider.builder()` does not read these environment
+variables: configure its sampler explicitly before passing the builder to the plugin. The plugin
+wraps that sampler unchanged. An already-built provider keeps its configuration and ownership;
+the plugin does not replace or shut it down.
 
-Parentless fallback-root exports also use the provider's sampler. If the SDK wrapper is replaced by a plain
-sampler, those anchors can follow its normal root policy independently of the flags used by their descendants;
-full upstream sampling overrides require the installed SDK wrapper. For example, a sampler that selects spans by name
-can export only the anchor or only its Invocation child. This behavior is covered for both views by
-`ExecutionRootParityTest.plainReplacementRetainsIndependentPerSpanSampling`; installing `DurableSampler` restores the
-shared decision. Merely delaying anchor creation until terminal completion would not make an arbitrary replacement
-sampler consistent across spans.
+With a visible `SdkTracerProvider` and a same-loader durable wrapper, the full result is evaluated
+once per invocation and carried through the local context. Opaque providers (including the global
+autoconfiguration facade) and the documented agent extension / separate-loader setup defer
+resolution to the wrapper in the provider's loader. The original remote parent travels through
+the scoped bridge so ParentBased sees the same input. Use matching plugin versions in the
+application and agent extension; mixed private bridge versions are not supported. The existing 256-entry process cache is an
+optimization; eviction, a new process or provider can cause evaluation again. It does not persist
+sampling decisions or extend the supported policies. Keep policy/configuration and original
+propagated context stable throughout an execution. Custom samplers must be deterministic from
+stable execution inputs; random, time-, load-, quota- or mutable-state-dependent decisions are
+unsupported even when a process cache happens to reuse them.
+
+Ordinary application and ADOT spans use the provider's own sampler normally. Replacing the durable
+wrapper, including hiding it inside an unrecognized outer sampler, retains normal per-span provider
+behavior and is outside the guarantee of one shared durable decision. Opaque providers cannot
+expose a later replacement to the application, so retain the wrapper through the documented setup.
+
+Span parenting is a separate choice. Invocation spans can use a compatible same-trace ambient
+handler, but a known dropped handler (unsampled and not recording) is skipped. The fallback is the
+propagated execution ancestor or the materialized synthetic root. A remote unsampled parent can
+still be absent from exported data when a direct sampler selects its durable descendants. These
+are exporter-level guarantees; they do not establish X-Ray backend or console behavior.
+
+**Compatibility:** this proposed, unreleased change removes unconditional upstream/ambient sampling
+precedence. Use `parentbased_*` to inherit upstream decisions; direct samplers intentionally ignore
+that bit. With unset configuration, the autoconfiguration default still inherits a valid parent,
+but a valid parent with no sampled flag now drops, and an incomplete parent uses root policy.
+Keep the old contract for previously released versions. Release requires agreement on the
+[shared sampling contract](https://github.com/aws/aws-durable-execution-docs/pull/308), coordinated
+[JavaScript implementation](https://github.com/aws/aws-durable-execution-sdk-js/pull/1173),
+[Python feature](https://github.com/aws/aws-durable-execution-sdk-python/issues/887), and applicable
+language-neutral conformance requirements. See the [design note](../docs/design/configured-durable-sampling.md) and
+[autoconfiguration acceptance probe](src/test/compatibility/SAMPLING.md).
 
 ### Operation error details
 

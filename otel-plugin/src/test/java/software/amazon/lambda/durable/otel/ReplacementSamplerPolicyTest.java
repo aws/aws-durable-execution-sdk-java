@@ -35,10 +35,10 @@ class ReplacementSamplerPolicyTest {
     @CsvSource({
         "invocation,false,root,false,plain", "execution,false,root,false,plain",
         "invocation,true,root,true,plain", "execution,true,root,true,plain",
-        "invocation,false,sampled,true,plain", "execution,false,sampled,true,plain",
-        "invocation,true,unsampled,false,plain", "execution,true,unsampled,false,plain",
+        "invocation,false,sampled,false,plain", "execution,false,sampled,false,plain",
+        "invocation,true,unsampled,true,plain", "execution,true,unsampled,true,plain",
         "invocation,false,remote,false,plain", "execution,false,remote,false,plain",
-        "invocation,true,remote,true,plain", "execution,true,remote,true,plain",
+        "invocation,true,remote,false,plain", "execution,true,remote,false,plain",
         "invocation,false,root,false,local", "execution,false,root,false,local",
         "invocation,false,root,false,opaque", "execution,false,root,false,opaque"
     })
@@ -120,9 +120,7 @@ class ReplacementSamplerPolicyTest {
             assertTrue(decisions.stream().allMatch(decision -> decision == expectedSampled), decisions.toString());
             if (!upstream.equals("remote")) {
                 assertEquals(
-                        topology.equals("plain")
-                                ? decisions.size()
-                                : upstream.equals("root") ? (topology.equals("opaque") ? 1 : decisions.size()) : 0,
+                        topology.equals("opaque") ? 1 : decisions.size(),
                         evaluations.get(),
                         "A plain provider evaluates its actual fallback root once per invocation");
             }
