@@ -60,6 +60,17 @@ public abstract class TypeToken<T> {
     }
 
     /**
+     * Creates a TypeToken for an already-resolved {@link Type}, for example a parameterized type built at runtime.
+     *
+     * @param type the type to wrap
+     * @param <U> the type
+     * @return a TypeToken representing the given type
+     */
+    public static <U> TypeToken<U> of(Type type) {
+        return new TypeToken<>(type) {};
+    }
+
+    /**
      * Creates a TypeToken by extracting a type parameter from a generic superclass.
      *
      * @param clazz the subclass to extract the type from

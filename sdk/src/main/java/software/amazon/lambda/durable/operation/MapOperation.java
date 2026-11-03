@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -80,7 +82,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
             DurableContextImpl durableContext) {
         super(
                 operationIdentifier,
-                new TypeToken<>() {},
+                mapResultType(itemResultType),
                 config.serDes(),
                 durableContext,
                 config.maxConcurrency(),
@@ -100,6 +102,29 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         if (this.iterationNames.size() != this.items.size()) {
             throw new IllegalArgumentException("iterationNames must have one entry per item");
         }
+    }
+
+    /**
+     * Builds {@code MapResult<O>} from the item type. A {@code new TypeToken<MapResult<O>>() {}} here would capture
+     * {@code O} as an unresolved type variable, and the serializer would then read each item as a plain map.
+     */
+    private static <O> TypeToken<MapResult<O>> mapResultType(TypeToken<O> itemType) {
+        return TypeToken.of(new ParameterizedType() {
+            @Override
+            public Type[] getActualTypeArguments() {
+                return new Type[] {itemType.getType()};
+            }
+
+            @Override
+            public Type getRawType() {
+                return MapResult.class;
+            }
+
+            @Override
+            public Type getOwnerType() {
+                return null;
+            }
+        });
     }
 
     /**
