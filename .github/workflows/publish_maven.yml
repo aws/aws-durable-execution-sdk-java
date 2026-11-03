@@ -87,6 +87,9 @@ jobs:
           MVN_ACCOUNT_KEYS_USERNAME: ${{ secrets.MVN_ACCOUNT_KEYS_USERNAME }}
           MVN_ACCOUNT_KEYS_PASSWORD: ${{ secrets.MVN_ACCOUNT_KEYS_PASSWORD }}
 
+      - name: Package Maven release bundles
+        run: python3 .github/scripts/package_release_bundles.py "$RELEASE_VERSION" release-bundles
+
       - name: Upload GitHub release artifacts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -96,6 +99,7 @@ jobs:
             "sdk-testing/target/aws-durable-execution-sdk-java-testing-${RELEASE_VERSION}.jar" \
             "otel-plugin/target/aws-durable-execution-sdk-java-plugin-otel-${RELEASE_VERSION}.jar" \
             "telemetry-exporter/target/aws-durable-execution-sdk-java-plugin-telemetry-exporter-${RELEASE_VERSION}.jar" \
+            release-bundles/*-bundle.zip \
             --clobber
 
       - name: Checkout default branch
