@@ -6,6 +6,7 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -128,6 +129,21 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         @Override
         public Type getOwnerType() {
             return null;
+        }
+
+        // equals and hashCode follow the ParameterizedType contract, so this type is interchangeable with the JDK's own
+        // implementation as a cache key.
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof ParameterizedType that
+                    && getRawType().equals(that.getRawType())
+                    && that.getOwnerType() == null
+                    && Arrays.equals(getActualTypeArguments(), that.getActualTypeArguments());
+        }
+
+        @Override
+        public int hashCode() {
+            return Arrays.hashCode(getActualTypeArguments()) ^ getRawType().hashCode();
         }
 
         @Override
