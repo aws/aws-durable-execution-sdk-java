@@ -107,24 +107,38 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
     /**
      * Builds {@code MapResult<O>} from the item type. A {@code new TypeToken<MapResult<O>>() {}} here would capture
      * {@code O} as an unresolved type variable, and the serializer would then read each item as a plain map.
+     *
+     * <p>The type has value equality, because the serializer caches by type and every map operation builds a new one.
      */
-    private static <O> TypeToken<MapResult<O>> mapResultType(TypeToken<O> itemType) {
-        return TypeToken.of(new ParameterizedType() {
-            @Override
-            public Type[] getActualTypeArguments() {
-                return new Type[] {itemType.getType()};
-            }
+    static <O> TypeToken<MapResult<O>> mapResultType(TypeToken<O> itemType) {
+        return TypeToken.of(new MapResultType(itemType.getType()));
+    }
 
-            @Override
-            public Type getRawType() {
-                return MapResult.class;
-            }
+    private record MapResultType(Type itemType) implements ParameterizedType {
+        @Override
+        public Type[] getActualTypeArguments() {
+            return new Type[] {itemType};
+        }
 
-            @Override
-            public Type getOwnerType() {
-                return null;
-            }
-        });
+        @Override
+        public Type getRawType() {
+            return MapResult.class;
+        }
+
+        @Override
+        public Type getOwnerType() {
+            return null;
+        }
+
+        @Override
+        public String getTypeName() {
+            return MapResult.class.getTypeName() + "<" + itemType.getTypeName() + ">";
+        }
+
+        @Override
+        public String toString() {
+            return getTypeName();
+        }
     }
 
     /**
