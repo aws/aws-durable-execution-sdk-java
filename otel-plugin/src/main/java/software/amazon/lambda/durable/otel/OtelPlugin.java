@@ -19,9 +19,9 @@ import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
  * <p>Each call returns a new factory of the selected view's type, carrying that view's configuration and
  * exclusive-group metadata; the returned factory then creates a fresh plugin for every invocation. Calls are not
  * memoized, so registering two of them puts two factories in one exclusive group and
- * {@code DurableConfig.builder().build()} rejects the configuration. The existing execution and invocation factory
- * APIs remain supported. Default configuration uses the global provider configured by ADOT or the application;
- * exporters and provider setup remain the application's responsibility.
+ * {@code DurableConfig.builder().build()} rejects the configuration. The existing execution and invocation factory APIs
+ * remain supported. Default configuration uses the global provider configured by ADOT or the application; exporters and
+ * provider setup remain the application's responsibility.
  *
  * <p>{@link #factory()} covers the zero-configuration default. Every call that passes configuration or a provider
  * builder names its {@link Mode}, so the selected view is explicit wherever it is not the bare default.

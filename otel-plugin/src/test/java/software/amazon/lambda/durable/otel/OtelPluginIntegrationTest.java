@@ -55,7 +55,7 @@ class OtelPluginIntegrationTest {
                 String.class,
                 (input, context) -> {
                     context.step("before", Integer.class, step -> {
-                        assertNull(MDC.get("trace_id"));
+                        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
                         return effects.incrementAndGet();
                     });
                     context.wait("pause", Duration.ofSeconds(1));
