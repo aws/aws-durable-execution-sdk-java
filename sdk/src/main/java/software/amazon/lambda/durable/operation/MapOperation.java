@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.operation;
 
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -80,7 +83,7 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
             DurableContextImpl durableContext) {
         super(
                 operationIdentifier,
-                new TypeToken<>() {},
+                mapResultType(itemResultType),
                 config.serDes(),
                 durableContext,
                 config.maxConcurrency(),
@@ -99,6 +102,59 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
         this.iterationNames = Collections.unmodifiableList(new ArrayList<>(iterationNames));
         if (this.iterationNames.size() != this.items.size()) {
             throw new IllegalArgumentException("iterationNames must have one entry per item");
+        }
+    }
+
+    /**
+     * Builds {@code MapResult<O>} from the item type. A {@code new TypeToken<MapResult<O>>() {}} here would capture
+     * {@code O} as an unresolved type variable, and the serializer would then read each item as a plain map.
+     *
+     * <p>The type has value equality, because the serializer caches by type and every map operation builds a new one.
+     */
+    @SuppressWarnings("unchecked")
+    static <O> TypeToken<MapResult<O>> mapResultType(TypeToken<O> itemType) {
+        return (TypeToken<MapResult<O>>) TypeToken.of(new MapResultType(itemType.getType()));
+    }
+
+    private record MapResultType(Type itemType) implements ParameterizedType {
+        @Override
+        public Type[] getActualTypeArguments() {
+            return new Type[] {itemType};
+        }
+
+        @Override
+        public Type getRawType() {
+            return MapResult.class;
+        }
+
+        @Override
+        public Type getOwnerType() {
+            return null;
+        }
+
+        // equals and hashCode follow the ParameterizedType contract, so this type is interchangeable with the JDK's own
+        // implementation as a cache key.
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof ParameterizedType that
+                    && getRawType().equals(that.getRawType())
+                    && that.getOwnerType() == null
+                    && Arrays.equals(getActualTypeArguments(), that.getActualTypeArguments());
+        }
+
+        @Override
+        public int hashCode() {
+            return Arrays.hashCode(getActualTypeArguments()) ^ getRawType().hashCode();
+        }
+
+        @Override
+        public String getTypeName() {
+            return MapResult.class.getTypeName() + "<" + itemType.getTypeName() + ">";
+        }
+
+        @Override
+        public String toString() {
+            return getTypeName();
         }
     }
 

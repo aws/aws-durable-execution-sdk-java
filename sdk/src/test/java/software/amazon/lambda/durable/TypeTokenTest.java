@@ -24,6 +24,16 @@ class TypeTokenTest {
     }
 
     @Test
+    void testOfWrapsTheGivenType() {
+        assertEquals(String.class, TypeToken.of(String.class).getType());
+    }
+
+    @Test
+    void testOfRejectsNull() {
+        assertThrows(NullPointerException.class, () -> TypeToken.of(null));
+    }
+
+    @Test
     void testNestedGenericType() {
         var token = new TypeToken<Map<String, List<Integer>>>() {};
         Type type = token.getType();
