@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -27,12 +28,14 @@ import software.amazon.lambda.durable.config.RunInChildContextConfig;
 import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.ChildContextFailedException;
 import software.amazon.lambda.durable.exception.NonDeterministicExecutionException;
+import software.amazon.lambda.durable.exception.ParallelBranchSkippedException;
 import software.amazon.lambda.durable.exception.SerDesException;
 import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.execution.ThreadContext;
 import software.amazon.lambda.durable.execution.ThreadType;
 import software.amazon.lambda.durable.model.OperationIdentifier;
 import software.amazon.lambda.durable.model.OperationSubType;
+import software.amazon.lambda.durable.model.ParallelResult;
 import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 
@@ -431,5 +434,41 @@ class ChildContextOperationTest {
         // sendOperationUpdate should not be called with FAIL action
         verify(executionManager, never())
                 .sendOperationUpdate(argThat(update -> update.action() == OperationAction.FAIL));
+    }
+
+    /** Reserved skip stays invisible to {@code get()} until the parallel parent publishes it. */
+    @Test
+    void reservedSkipDoesNotCompleteBranchUntilPublished() throws Exception {
+        when(executionManager.getOperationAndUpdateReplayState("1")).thenReturn(null);
+
+        var userStarted = new CountDownLatch(1);
+        var releaseUser = new CountDownLatch(1);
+        var operation = createVirtualOperation(ctx -> {
+            userStarted.countDown();
+            awaitQuietly(releaseUser);
+            return "done";
+        });
+
+        operation.execute();
+        assertTrue(userStarted.await(5, TimeUnit.SECONDS));
+        assertEquals(ParallelResult.Status.SKIPPED, operation.settleForParallelSnapshot());
+        assertFalse(operation.isOperationCompleted());
+
+        operation.publishReservedSkip();
+        releaseUser.countDown();
+        operation.getRunningUserHandler().get(5, TimeUnit.SECONDS);
+
+        assertThrows(ParallelBranchSkippedException.class, operation::get);
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            if (!latch.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("timed out waiting on latch");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
     }
 }
