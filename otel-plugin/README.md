@@ -70,6 +70,73 @@ user workers already admitted to their executor, and End does not mean all unawa
 late-worker and mandatory large-result acknowledgment boundaries in [#787](https://github.com/aws/aws-durable-execution-sdk-java/issues/787)
 remain outside this change.
 
+## Select an OTel view
+
+Import `OtelPlugin` to select the view through one API. Execution mode is the
+default; invocation mode is an explicit choice:
+
+```java
+import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.otel.OtelPlugin;
+
+// Workflow-rooted operations (default).
+var config = DurableConfig.builder().withPlugins(OtelPlugin.factory()).build();
+
+// Invocation-rooted operations.
+var invocationConfig = DurableConfig.builder()
+        .withPlugins(OtelPlugin.factory(OtelPlugin.Mode.INVOCATION))
+        .build();
+```
+
+`OtelPlugin.factory(OtelPlugin.Mode.EXECUTION)` explicitly selects execution mode.
+Each call returns a *new* factory of the selected view's type, carrying that
+view's configuration and exclusive-group metadata; the SDK then creates a fresh
+plugin for each invocation, including concurrent invocations sharing a factory.
+
+Calls are not memoized, so register exactly one. Passing two — for example
+`withPlugins(OtelPlugin.factory(), OtelPlugin.factory())` — puts two factories in
+the `durable-otel-view` exclusive group and `build()` throws
+`IllegalArgumentException`.
+
+Both modes accept the existing `OtelPluginConfig` and application-owned provider
+builder. For example:
+
+```java
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import software.amazon.lambda.durable.otel.OtelPlugin;
+import software.amazon.lambda.durable.otel.OtelPluginConfig;
+
+var settings = OtelPluginConfig.builder().enableMdc(false).build();
+var factory = OtelPlugin.factory(OtelPlugin.Mode.INVOCATION,
+        SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)),
+        settings);
+```
+
+`OtelPlugin.factory()` is the zero-configuration default. Every overload that
+takes configuration or a provider builder names its mode, so the selected view is
+explicit wherever it is not the bare default; omit the builder to use the global
+provider with the supplied settings. For an execution-view factory with your own
+configuration, write `OtelPlugin.factory(OtelPlugin.Mode.EXECUTION, settings)`.
+Existing `ExecutionOtelPlugin.factory(...)` and `InvocationOtelPlugin.factory(...)`
+calls remain supported.
+
+For loading without handler-side imports or registration, set
+`DURABLE_EXECUTION_PLUGINS=otel`. This selects execution mode; `otel-execution`
+is still supported and `otel-invocation` selects invocation mode.
+
+**Set exactly one OTel entry name.** `otel` and `otel-execution` select the same
+view, but they are separate providers, so listing both puts two factories in the
+`durable-otel-view` exclusive group. For example,
+`DURABLE_EXECUTION_PLUGINS=otel-execution,otel` fails at startup with:
+
+```text
+Conflicting plugin factories otel-execution (ExecutionOtelPlugin) and otel (ExecutionOtelPlugin) in exclusive group 'durable-otel-view'. Configure only one plugin from this group.
+```
+
+The plugin JAR and configured ADOT/provider/exporter must still be available as
+described below. Installing the JAR alone does not enable instrumentation.
+
 ## Installation
 
 ```xml
@@ -258,10 +325,11 @@ MyFunction:
 
 With the layer and `DURABLE_EXECUTION_PLUGINS=otel-invocation` configured above, no OTel plugin dependency or registration code is required in the function artifact. The function can use its existing `DurableConfig`.
 
-The OTel plugin JAR exposes two dynamic provider names:
+The OTel plugin JAR exposes three dynamic provider names:
 
 | Provider name | Plugin | Trace model |
 |---------------|--------|-------------|
+| `otel` | `ExecutionOtelPlugin` | Workflow-rooted (default) |
 | `otel-invocation` | `InvocationOtelPlugin` | Invocation-rooted |
 | `otel-execution` | `ExecutionOtelPlugin` | Workflow-rooted |
 
