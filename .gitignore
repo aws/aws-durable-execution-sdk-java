@@ -47,3 +47,4 @@ samconfig.toml.bak
 
 # OSS
 .flattened-pom.xml
+release-bundles/
