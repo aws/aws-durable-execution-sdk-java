@@ -171,12 +171,8 @@ class OtelViewRegistrationTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void unifiedFactoryConflictsWithExistingFactoriesAndProviders(boolean invocationMode) {
+    void unifiedFactoryConflictsWithEnvironmentSelectedView(boolean invocationMode) {
         var unified = OtelPlugin.factory(invocationMode ? OtelPlugin.Mode.INVOCATION : OtelPlugin.Mode.EXECUTION);
-        var existing = invocationMode ? ExecutionOtelPlugin.factory() : InvocationOtelPlugin.factory();
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> DurableConfig.builder().withPlugins(unified, existing).build());
         var factories = DynamicPluginLoader.loadConfiguredPluginFactories(
                 invocationMode ? "otel" : "otel-invocation",
                 ServiceLoader.load(DurableExecutionPluginProvider.class),

@@ -114,9 +114,12 @@ and `InvocationOtelPlugin.factory(...)` calls remain supported.
 
 For loading without handler-side imports or registration, set
 `DURABLE_EXECUTION_PLUGINS=otel`. This selects execution mode; `otel-execution`
-is still supported and `otel-invocation` selects invocation mode. The plugin
-JAR and configured ADOT/provider/exporter must still be available as described
-below. Installing the JAR alone does not enable instrumentation.
+is still supported and `otel-invocation` selects invocation mode. Configure only
+one entry-point name: `otel` and `otel-execution` select the same view, but listing
+both creates two factories and fails exclusive-group validation.
+
+The plugin JAR and configured ADOT/provider/exporter must still be available as
+described below. Installing the JAR alone does not enable instrumentation.
 
 ## Installation
 
