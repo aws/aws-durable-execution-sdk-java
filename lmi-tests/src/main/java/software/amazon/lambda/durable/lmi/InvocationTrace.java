@@ -27,6 +27,7 @@ final class InvocationTrace {
     final String executionArn;
     final long deadlineNanos;
     final AtomicInteger tasks = new AtomicInteger();
+    private final AtomicInteger exports = new AtomicInteger();
     volatile boolean rootExited;
     volatile boolean wrapperReturned;
 
@@ -41,6 +42,20 @@ final class InvocationTrace {
         synchronized (EVENT_LOCK) {
             LIVE_WRAPPERS.incrementAndGet();
             event("WRAPPER_ENTER");
+        }
+    }
+
+    void exportEnter() {
+        synchronized (EVENT_LOCK) {
+            exports.incrementAndGet();
+            event("OTEL_EXPORT_ENTER");
+        }
+    }
+
+    void exportExit() {
+        synchronized (EVENT_LOCK) {
+            exports.decrementAndGet();
+            event("OTEL_EXPORT_EXIT");
         }
     }
 
@@ -131,6 +146,7 @@ final class InvocationTrace {
         data.put("executionArn", executionArn);
         data.put("thread", Thread.currentThread().getName());
         data.put("tasks", tasks.get());
+        data.put("exports", exports.get());
         data.put("rootExited", rootExited);
         data.put("wrapperReturned", wrapperReturned);
         data.put("liveRoots", LIVE_ROOTS.get());
