@@ -3,7 +3,6 @@
 package software.amazon.lambda.durable.otel;
 
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
-import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 
@@ -16,20 +15,26 @@ import software.amazon.lambda.durable.plugin.InvocationInfo;
  */
 public final class InvocationOtelPluginProvider implements DurableExecutionPluginProvider {
 
-    private final DurableExecutionPluginFactory factory = InvocationOtelPlugin.factory();
+    private final DurableExecutionPluginProvider delegate =
+            new DelegatingOtelPluginProvider("otel-invocation", InvocationOtelPlugin.factory());
 
     @Override
     public String getName() {
-        return "otel-invocation";
+        return delegate.getName();
     }
 
     @Override
     public DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo) {
-        return factory.createPlugin(invocationInfo);
+        return delegate.createPlugin(invocationInfo);
     }
 
     @Override
     public String getExclusiveGroup() {
-        return factory.getExclusiveGroup();
+        return delegate.getExclusiveGroup();
+    }
+
+    @Override
+    public String toString() {
+        return delegate.toString();
     }
 }
