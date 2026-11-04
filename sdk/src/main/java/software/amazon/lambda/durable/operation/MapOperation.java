@@ -111,8 +111,9 @@ public class MapOperation<I, O> extends ConcurrencyOperation<MapResult<O>> {
      *
      * <p>The type has value equality, because the serializer caches by type and every map operation builds a new one.
      */
+    @SuppressWarnings("unchecked")
     static <O> TypeToken<MapResult<O>> mapResultType(TypeToken<O> itemType) {
-        return TypeToken.of(new MapResultType(itemType.getType()));
+        return (TypeToken<MapResult<O>>) TypeToken.of(new MapResultType(itemType.getType()));
     }
 
     private record MapResultType(Type itemType) implements ParameterizedType {

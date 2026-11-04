@@ -4,6 +4,7 @@ package software.amazon.lambda.durable;
 
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.Objects;
 
 /**
  * Framework-agnostic type token for capturing generic type information at runtime.
@@ -63,10 +64,11 @@ public abstract class TypeToken<T> {
      * Creates a TypeToken for an already-resolved {@link Type}, for example a parameterized type built at runtime.
      *
      * @param type the type to wrap
-     * @param <U> the type
      * @return a TypeToken representing the given type
+     * @throws NullPointerException if {@code type} is null
      */
-    public static <U> TypeToken<U> of(Type type) {
+    public static TypeToken<?> of(Type type) {
+        Objects.requireNonNull(type, "type must not be null");
         return new TypeToken<>(type) {};
     }
 
