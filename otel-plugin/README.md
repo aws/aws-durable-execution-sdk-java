@@ -127,16 +127,12 @@ is still supported and `otel-invocation` selects invocation mode.
 
 **Set exactly one OTel entry name.** `otel` and `otel-execution` select the same
 view, but they are separate providers, so listing both puts two factories in the
-`durable-otel-view` exclusive group and the function fails at startup with:
+`durable-otel-view` exclusive group. For example,
+`DURABLE_EXECUTION_PLUGINS=otel-execution,otel` fails at startup with:
 
 ```text
-Conflicting plugin factories otel-execution (ExecutionOtelPlugin) and otel (ExecutionOtelPlugin)
-in exclusive group 'durable-otel-view'. Configure only one plugin from this group.
+Conflicting plugin factories otel-execution (ExecutionOtelPlugin) and otel (ExecutionOtelPlugin) in exclusive group 'durable-otel-view'. Configure only one plugin from this group.
 ```
-
-The Python and JS/TypeScript SDKs enforce the same one-view contract; each
-reports a redundant second alias in its own idiom, so do not rely on a
-multi-alias value behaving identically across languages.
 
 The plugin JAR and configured ADOT/provider/exporter must still be available as
 described below. Installing the JAR alone does not enable instrumentation.

@@ -3,7 +3,6 @@
 package software.amazon.lambda.durable.otel;
 
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
-import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 
@@ -15,29 +14,26 @@ import software.amazon.lambda.durable.plugin.InvocationInfo;
  * OTel entry name.
  */
 public final class OtelPluginProvider implements DurableExecutionPluginProvider {
-    private final DurableExecutionPluginFactory factory = OtelPlugin.factory();
+    private final DurableExecutionPluginProvider delegate =
+            new DelegatingOtelPluginProvider("otel", OtelPlugin.factory());
 
     @Override
     public String getName() {
-        return "otel";
+        return delegate.getName();
     }
 
     @Override
     public DurableExecutionPlugin createPlugin(InvocationInfo invocationInfo) {
-        return factory.createPlugin(invocationInfo);
+        return delegate.createPlugin(invocationInfo);
     }
 
     @Override
     public String getExclusiveGroup() {
-        return factory.getExclusiveGroup();
+        return delegate.getExclusiveGroup();
     }
 
-    /**
-     * Names the selected entry and the view it loads, so an exclusive-group conflict reports the
-     * {@code DURABLE_EXECUTION_PLUGINS} value the operator set rather than an object identity hash.
-     */
     @Override
     public String toString() {
-        return getName() + " (" + factory + ")";
+        return delegate.toString();
     }
 }
