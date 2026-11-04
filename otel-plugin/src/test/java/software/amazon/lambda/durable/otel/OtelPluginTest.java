@@ -12,10 +12,12 @@ import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import java.time.Instant;
 import java.util.List;
 import java.util.ServiceLoader;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginProvider;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -27,16 +29,21 @@ class OtelPluginTest {
     }
 
     @Test
-    void allDefaultOverloadsSelectExecution() {
-        var factories = List.of(
-                OtelPlugin.factory(),
-                OtelPlugin.factory(OtelPluginConfig.defaults()),
-                OtelPlugin.factory(SdkTracerProvider.builder()),
-                OtelPlugin.factory(SdkTracerProvider.builder(), OtelPluginConfig.defaults()));
-        for (var factory : factories) {
-            assertEquals("ExecutionOtelPlugin", factory.toString());
-            assertEquals("durable-otel-view", factory.getExclusiveGroup());
-        }
+    void noArgumentFactorySelectsExecution() {
+        var factory = OtelPlugin.factory();
+        assertEquals("ExecutionOtelPlugin", factory.toString());
+        assertEquals("durable-otel-view", factory.getExclusiveGroup());
+    }
+
+    @Test
+    void repeatedCallsReturnDistinctFactoriesThatCannotBothBeRegistered() {
+        var first = OtelPlugin.factory();
+        var second = OtelPlugin.factory();
+        assertNotSame(first, second);
+        var conflict = assertThrows(
+                IllegalArgumentException.class,
+                () -> DurableConfig.builder().withPlugins(first, second).build());
+        assertTrue(conflict.getMessage().contains("durable-otel-view"), conflict.getMessage());
     }
 
     @ParameterizedTest
@@ -69,8 +76,9 @@ class OtelPluginTest {
     void nullModeIsRejectedBeforeProviderBuilderIsTouched() {
         var builder = mock(SdkTracerProviderBuilder.class);
         var settings = OtelPluginConfig.defaults();
-        assertThrows(NullPointerException.class, () -> OtelPlugin.factory((OtelPlugin.Mode) null));
-        assertThrows(NullPointerException.class, () -> OtelPlugin.factory((OtelPlugin.Mode) null, settings));
+        // Mode is the only single-argument overload, so an untyped null needs no cast to resolve.
+        assertThrows(NullPointerException.class, () -> OtelPlugin.factory(null));
+        assertThrows(NullPointerException.class, () -> OtelPlugin.factory(null, settings));
         assertThrows(NullPointerException.class, () -> OtelPlugin.factory(null, builder));
         var error = assertThrows(NullPointerException.class, () -> OtelPlugin.factory(null, builder, settings));
         assertEquals("mode must not be null", error.getMessage());
@@ -97,6 +105,35 @@ class OtelPluginTest {
                 .orElseThrow();
         assertEquals("durable-otel-view", provider.getExclusiveGroup());
         assertExecutionInstancesAreDistinct(provider);
+    }
+
+    @Test
+    void providerDescriptionsNameTheConfiguredEntryAndItsView() {
+        var described = ServiceLoader.load(DurableExecutionPluginProvider.class).stream()
+                .map(ServiceLoader.Provider::get)
+                .filter(candidate -> candidate.getName().startsWith("otel"))
+                .collect(Collectors.toMap(DurableExecutionPluginProvider::getName, Object::toString));
+        assertEquals("otel (ExecutionOtelPlugin)", described.get("otel"));
+        assertEquals("otel-execution (ExecutionOtelPlugin)", described.get("otel-execution"));
+        assertEquals("otel-invocation (InvocationOtelPlugin)", described.get("otel-invocation"));
+    }
+
+    @Test
+    void conflictingAliasesReportTheEntryNamesTheOperatorSet() {
+        var providers = ServiceLoader.load(DurableExecutionPluginProvider.class).stream()
+                .map(ServiceLoader.Provider::get)
+                .filter(candidate -> candidate.getName().equals("otel")
+                        || candidate.getName().equals("otel-execution"))
+                .map(DurableExecutionPluginFactory.class::cast)
+                .toList();
+        assertEquals(2, providers.size());
+        var error = assertThrows(
+                IllegalArgumentException.class,
+                () -> DurableConfig.builder()
+                        .withPlugins(providers.toArray(DurableExecutionPluginFactory[]::new))
+                        .build());
+        assertTrue(error.getMessage().contains("otel (ExecutionOtelPlugin)"), error.getMessage());
+        assertTrue(error.getMessage().contains("otel-execution (ExecutionOtelPlugin)"), error.getMessage());
     }
 
     private static void assertExecutionInstancesAreDistinct(DurableExecutionPluginFactory factory) {

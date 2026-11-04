@@ -89,9 +89,14 @@ var invocationConfig = DurableConfig.builder()
 ```
 
 `OtelPlugin.factory(OtelPlugin.Mode.EXECUTION)` explicitly selects execution mode.
-Each call returns the existing view's factory with its registration metadata;
-the SDK creates a fresh plugin for each invocation, including concurrent
-invocations sharing a factory. Configure only one OTel view.
+Each call returns a *new* factory of the selected view's type, carrying that
+view's configuration and exclusive-group metadata; the SDK then creates a fresh
+plugin for each invocation, including concurrent invocations sharing a factory.
+
+Calls are not memoized, so register exactly one. Passing two — for example
+`withPlugins(OtelPlugin.factory(), OtelPlugin.factory())` — puts two factories in
+the `durable-otel-view` exclusive group and `build()` throws
+`IllegalArgumentException`.
 
 Both modes accept the existing `OtelPluginConfig` and application-owned provider
 builder. For example:
@@ -108,15 +113,30 @@ var factory = OtelPlugin.factory(OtelPlugin.Mode.INVOCATION,
         settings);
 ```
 
-Omit the mode argument for execution defaults. Omit the builder to use the
-global provider with the supplied settings. Existing `ExecutionOtelPlugin.factory(...)`
-and `InvocationOtelPlugin.factory(...)` calls remain supported.
+`OtelPlugin.factory()` is the zero-configuration default. Every overload that
+takes configuration or a provider builder names its mode, so the selected view is
+explicit wherever it is not the bare default; omit the builder to use the global
+provider with the supplied settings. For an execution-view factory with your own
+configuration, write `OtelPlugin.factory(OtelPlugin.Mode.EXECUTION, settings)`.
+Existing `ExecutionOtelPlugin.factory(...)` and `InvocationOtelPlugin.factory(...)`
+calls remain supported.
 
 For loading without handler-side imports or registration, set
 `DURABLE_EXECUTION_PLUGINS=otel`. This selects execution mode; `otel-execution`
-is still supported and `otel-invocation` selects invocation mode. Configure only
-one entry-point name: `otel` and `otel-execution` select the same view, but listing
-both creates two factories and fails exclusive-group validation.
+is still supported and `otel-invocation` selects invocation mode.
+
+**Set exactly one OTel entry name.** `otel` and `otel-execution` select the same
+view, but they are separate providers, so listing both puts two factories in the
+`durable-otel-view` exclusive group and the function fails at startup with:
+
+```text
+Conflicting plugin factories otel-execution (ExecutionOtelPlugin) and otel (ExecutionOtelPlugin)
+in exclusive group 'durable-otel-view'. Configure only one plugin from this group.
+```
+
+The Python and JS/TypeScript SDKs enforce the same one-view contract; each
+reports a redundant second alias in its own idiom, so do not rely on a
+multi-alias value behaving identically across languages.
 
 The plugin JAR and configured ADOT/provider/exporter must still be available as
 described below. Installing the JAR alone does not enable instrumentation.

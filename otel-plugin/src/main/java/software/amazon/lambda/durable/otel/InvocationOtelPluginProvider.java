@@ -32,4 +32,13 @@ public final class InvocationOtelPluginProvider implements DurableExecutionPlugi
     public String getExclusiveGroup() {
         return factory.getExclusiveGroup();
     }
+
+    /**
+     * Names the selected entry and the view it loads, so an exclusive-group conflict reports the
+     * {@code DURABLE_EXECUTION_PLUGINS} value the operator set rather than an object identity hash.
+     */
+    @Override
+    public String toString() {
+        return getName() + " (" + factory + ")";
+    }
 }
