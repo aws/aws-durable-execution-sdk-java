@@ -17,9 +17,10 @@ import software.amazon.lambda.durable.telemetry.exporters.CloudWatchLogsExporter
  *
  * <p>The step {@code charge} throws {@code card declined}. The retry strategy declines, so the step fails on its first
  * attempt. The handler catches the step error and throws {@code payment failed} with the step error as its cause. So
- * the execution fails and the exported record carries a cause chain on the execution {@code error} and an
- * {@code error} on {@code operationsByName.charge}. telemetry-2 pins the messages {@code card declined} and
- * {@code payment failed}. Do not change them.
+ * the execution fails and the exported record carries an {@code error} on the execution and on
+ * {@code operationsByName.charge}. Error names and cause depth differ per SDK by design, so telemetry-2 asserts only
+ * that each error is an object. It pins the messages {@code card declined} and {@code payment failed} through the
+ * core execution-result and history sections. Do not change them.
  *
  * <p>The handler configures the telemetry plugin exactly as {@link Telemetry1Success}. It constructs no record and
  * calls no exporter method. The plugin builds and exports the record.
