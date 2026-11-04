@@ -2193,4 +2193,30 @@ class MapIntegrationTest {
     }
 
     public record Order(String id) {}
+
+    public record Payload(String value) {}
+
+    @Test
+    void testPojoItemsKeepDeclaredTypeOnFirstExecutionAndReplay() {
+        var runner = LocalDurableTestRunner.create(String.class, (input, context) -> {
+            var result = context.map(
+                    "pojo-map",
+                    List.of("a", "b"),
+                    Payload.class,
+                    (item, index, ctx) -> new Payload(item),
+                    MapConfig.builder().build());
+            Payload first = result.getResult(0);
+            Payload second = result.getResult(1);
+            return first.value() + second.value();
+        });
+
+        var first = runner.runUntilComplete("x");
+        assertEquals(ExecutionStatus.SUCCEEDED, first.getStatus());
+        assertEquals("ab", first.getResult(String.class));
+
+        // Replay of the completed map must return the declared type as well.
+        var replay = runner.run("x");
+        assertEquals(ExecutionStatus.SUCCEEDED, replay.getStatus());
+        assertEquals("ab", replay.getResult(String.class));
+    }
 }
