@@ -98,6 +98,16 @@ jobs:
             "telemetry-exporter/target/aws-durable-execution-sdk-java-plugin-telemetry-exporter-${RELEASE_VERSION}.jar" \
             --clobber
 
+      # Packaged after the JARs are attached so that a bundling failure cannot
+      # withhold the release assets that the JAR upload above already published.
+      - name: Package Maven release bundles
+        run: python3 .github/scripts/package_release_bundles.py "$RELEASE_VERSION" release-bundles
+
+      - name: Upload GitHub release bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" release-bundles/*-bundle.zip --clobber
+
       - name: Checkout default branch
         uses: actions/checkout@v7
         with:

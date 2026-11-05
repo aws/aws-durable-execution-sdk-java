@@ -46,7 +46,13 @@ The publication workflow:
 2. Builds, signs, and uploads the SDK, testing library, OpenTelemetry plugin,
    and Durable Execution Telemetry Exporter to Sonatype Central Portal.
 3. Uploads the four JARs to the existing GitHub release.
-4. Opens a pull request for the next development version. A final release
+4. Attaches one ZIP bundle per module to the same release. Each bundle holds
+   every file that module published to Sonatype: the POM, the runtime, source,
+   and Javadoc JARs, and a detached GPG signature for each of them. It also
+   holds a `manifest.json` recording the Maven coordinates and a SHA-256 for
+   every bundled file. The standalone JARs stay available, so archive consumers
+   and Maven consumers get the same artifacts.
+5. Opens a pull request for the next development version. A final release
    increments the patch version, so `2.1.1` produces `2.1.2-SNAPSHOT`. A
    prerelease keeps the same base version, so `2.1.1-rc1` produces
    `2.1.1-SNAPSHOT` until the final `2.1.1` release.
@@ -62,7 +68,12 @@ After **Publish Maven Release** succeeds:
    The workflow uses `autoPublish=false`, so this manual action is required.
 4. Confirm that the GitHub release contains the expected JARs and that the
    artifacts are available in Maven Central.
-5. Review, approve, and merge the next development version pull request.
+5. Confirm that the GitHub release also contains the four `*-bundle.zip`
+   assets and that each one is for the release version. A bundle verifies on
+   its own: extract it, check the SHA-256 of every file against
+   `manifest.json`, then verify a signature against the release signing key
+   with `gpg --verify <file>.asc <file>`.
+6. Review, approve, and merge the next development version pull request.
 
 ## 4. Update the shared documentation
 
