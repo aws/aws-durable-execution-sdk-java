@@ -6,7 +6,6 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
 import software.amazon.lambda.durable.config.StepConfig;
-import software.amazon.lambda.durable.exception.StepFailedException;
 import software.amazon.lambda.durable.retry.RetryStrategies;
 
 /**
@@ -45,7 +44,10 @@ public final class Telemetry2Failure extends DurableHandler<Telemetry2Failure.In
                     StepConfig.builder()
                             .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                             .build());
-        } catch (StepFailedException stepError) {
+        } catch (RuntimeException stepError) {
+            // The SDK rebuilds the step's original exception from the checkpoint and rethrows it, so the
+            // step surfaces as RuntimeException("card declined"). StepFailedException is only the fallback
+            // when that rebuild fails. Catching StepFailedException would let "card declined" escape.
             throw new RuntimeException("payment failed", stepError);
         }
         return null;
