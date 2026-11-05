@@ -7,13 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryConfig.EmitMode.ON_COMPLETE;
+import static software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryConfig.OperationDetail.TOP_LEVEL;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryConfig.EmitMode;
-import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryConfig.OperationDetail;
 import software.amazon.lambda.durable.telemetry.exporters.CloudWatchLogsExporter;
 
 /**
@@ -53,9 +53,9 @@ class TelemetryConformanceConfigTest {
     void telemetryConfigMatchesTheRunnerExpectations() {
         var config = TelemetryConformanceConfig.telemetryConfig(LOG_GROUP);
         // The runner reads one record per execution with its input and output. These four settings produce that.
-        assertEquals(EmitMode.ON_COMPLETE, config.emitMode());
+        assertEquals(ON_COMPLETE, config.emitMode());
         assertEquals(1.0, config.samplingRate());
-        assertEquals(OperationDetail.TOP_LEVEL, config.operationDetail());
+        assertEquals(TOP_LEVEL, config.operationDetail());
         assertTrue(config.content().includeInput());
         assertTrue(config.content().includeOutput());
     }
