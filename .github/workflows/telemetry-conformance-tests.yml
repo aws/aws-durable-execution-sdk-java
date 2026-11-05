@@ -109,7 +109,9 @@ jobs:
         echo "Using Java SDK version $JAVA_SDK_VERSION"
         # The runner's sam build runs in a later step. Only GITHUB_ENV carries the version to it.
         echo "JAVA_SDK_VERSION=$JAVA_SDK_VERSION" >> "$GITHUB_ENV"
-        mvn -B -q -DskipTests package \
+        # No -DskipTests: the module is outside the SDK reactor, so this is the only place its
+        # unit tests run. The package phase runs them before the deploy artifact is built.
+        mvn -B -q package \
           -Ddurable.sdk.version="$JAVA_SDK_VERSION" \
           --file "$EXAMPLES_DIR/pom.xml"
     secrets:

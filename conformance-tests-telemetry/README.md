@@ -29,6 +29,9 @@ template.yaml                             # telemetry suite; declares TelemetryL
 src/main/java/software/amazon/lambda/durable/conformance/telemetry/
   Telemetry1Success.java                  # single step "increment"; plugin + CloudWatchLogsExporter
   Telemetry2Failure.java                  # step "charge" fails; handler throws "payment failed" with the step error as cause
+  TelemetryConformanceConfig.java         # shared log-group guard and plugin config; both handlers call it
+src/test/java/software/amazon/lambda/durable/conformance/telemetry/
+  TelemetryConformanceConfigTest.java     # guard rejects null/blank; config registers one plugin
 ```
 
 The handlers use the real SDK API only. They construct no record and call no exporter method. A missing or wrong
@@ -58,6 +61,7 @@ mvn -B -q -Dmaven.test.skip=true install
 export JAVA_SDK_VERSION=$(mvn -q help:evaluate -Dexpression=project.version -DforceStdout)
 
 cd conformance-tests-telemetry
+mvn -B -q package        # runs the unit tests; the module is outside the reactor, so the root build does not
 sam build
 ```
 
@@ -76,7 +80,7 @@ durable-execution-conformance \
 
 ## CI
 
-[`.github/workflows/telemetry-conformance-tests.yml:1–118`](../.github/workflows/telemetry-conformance-tests.yml#L1-L118)
+[`.github/workflows/telemetry-conformance-tests.yml:1–120`](../.github/workflows/telemetry-conformance-tests.yml#L1-L120)
 runs on pull requests and pushes to `main` that touch the SDK, telemetry
 exporter, this module, or the root `pom.xml`. It also supports manual dispatch.
 
