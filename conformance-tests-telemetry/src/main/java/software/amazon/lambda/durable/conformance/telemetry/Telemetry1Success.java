@@ -5,10 +5,6 @@ package software.amazon.lambda.durable.conformance.telemetry;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.DurableHandler;
-import software.amazon.lambda.durable.telemetry.ContentConfig;
-import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetry;
-import software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryConfig;
-import software.amazon.lambda.durable.telemetry.exporters.CloudWatchLogsExporter;
 
 /**
  * Single successful step scenario for requirement telemetry-1.
@@ -18,34 +14,13 @@ import software.amazon.lambda.durable.telemetry.exporters.CloudWatchLogsExporter
  */
 public final class Telemetry1Success extends DurableHandler<Telemetry1Success.Input, Telemetry1Success.Output> {
 
-    // The deployed function must export to the log group the runner reads.
-    // A missing variable would produce a function that exports nowhere.
-    // So class initialization fails when the variable is unset.
-    private static final String LOG_GROUP_NAME = System.getenv("TELEMETRY_LOG_GROUP_NAME");
-
-    static {
-        if (LOG_GROUP_NAME == null || LOG_GROUP_NAME.isBlank()) {
-            throw new IllegalStateException("TELEMETRY_LOG_GROUP_NAME must be set");
-        }
-    }
+    // Class initialization fails when the variable is unset. See TelemetryConformanceConfig.requireLogGroupName.
+    private static final String LOG_GROUP_NAME =
+            TelemetryConformanceConfig.requireLogGroupName(System.getenv(TelemetryConformanceConfig.LOG_GROUP_ENV));
 
     @Override
     protected DurableConfig createConfiguration() {
-        return DurableConfig.builder()
-                .withPlugins(DurableExecutionTelemetry.durableExecutionTelemetry(
-                        DurableExecutionTelemetryConfig.builder()
-                                .addExporter(CloudWatchLogsExporter.builder()
-                                        .logGroupName(LOG_GROUP_NAME)
-                                        .build())
-                                .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_COMPLETE)
-                                .samplingRate(1.0)
-                                .operationDetail(DurableExecutionTelemetryConfig.OperationDetail.TOP_LEVEL)
-                                .content(ContentConfig.builder()
-                                        .input(true)
-                                        .output(true)
-                                        .build())
-                                .build()))
-                .build();
+        return TelemetryConformanceConfig.durableConfig(LOG_GROUP_NAME);
     }
 
     @Override

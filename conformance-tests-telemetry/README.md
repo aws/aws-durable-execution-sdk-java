@@ -19,6 +19,7 @@ template that maps it to the requirement ID.
 | Suite       | Requirement   | What it pins down                                                                                                                              |
 | ----------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `telemetry` | `telemetry-1` | One successful single-step execution emits one `SUCCEEDED` record with `input`, `output`, ARN-derived identity fields, and `operationsByName`. |
+| `telemetry` | `telemetry-2` | One failed execution emits one `FAILED` record with an `error` on the execution and on `operationsByName.charge`.                             |
 
 ## Layout
 
@@ -27,10 +28,14 @@ pom.xml                                   # standalone Maven project (not a reac
 template.yaml                             # telemetry suite; declares TelemetryLogGroupName and creates the group
 src/main/java/software/amazon/lambda/durable/conformance/telemetry/
   Telemetry1Success.java                  # single step "increment"; plugin + CloudWatchLogsExporter
+  Telemetry2Failure.java                  # step "charge" fails; handler throws "payment failed" with the step error as cause
+  TelemetryConformanceConfig.java         # shared log-group guard and plugin config; both handlers call it
+src/test/java/software/amazon/lambda/durable/conformance/telemetry/
+  TelemetryConformanceConfigTest.java     # guard rejects null/blank; telemetry settings match the runner
 ```
 
-The handler uses the real SDK API only. It constructs no record and calls no exporter method. A missing or wrong record
-is the plugin's defect. That defect is the signal the suite measures.
+The handlers use the real SDK API only. They construct no record and call no exporter method. A missing or wrong
+record is the plugin's defect. That defect is the signal the suite measures.
 
 The handler configuration is: one `CloudWatchLogsExporter`, emit mode `ON_COMPLETE`, sampling rate 1, operation detail
 `TOP_LEVEL`, and content input and output enabled.
@@ -56,6 +61,7 @@ mvn -B -q -Dmaven.test.skip=true install
 export JAVA_SDK_VERSION=$(mvn -q help:evaluate -Dexpression=project.version -DforceStdout)
 
 cd conformance-tests-telemetry
+mvn -B -q package        # runs the unit tests; the module is outside the reactor, so the root build does not
 sam build
 ```
 
@@ -74,7 +80,7 @@ durable-execution-conformance \
 
 ## CI
 
-[`.github/workflows/telemetry-conformance-tests.yml:1–118`](../.github/workflows/telemetry-conformance-tests.yml#L1-L118)
+[`.github/workflows/telemetry-conformance-tests.yml:1–120`](../.github/workflows/telemetry-conformance-tests.yml#L1-L120)
 runs on pull requests and pushes to `main` that touch the SDK, telemetry
 exporter, this module, or the root `pom.xml`. It also supports manual dispatch.
 

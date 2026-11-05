@@ -21,7 +21,7 @@
     <name>AWS Lambda Durable Execution SDK Telemetry Conformance Tests</name>
     <description>
         Java SDK handlers and SAM template for the Durable Execution Telemetry conformance
-        suite (telemetry-1).
+        suite (telemetry-1, telemetry-2).
     </description>
 
     <properties>
@@ -33,6 +33,9 @@
         <durable.sdk.version>${env.JAVA_SDK_VERSION}</durable.sdk.version>
         <aws.sdk.version>2.56.0</aws.sdk.version>
         <aws.lambda.java.core.version>1.4.1</aws.lambda.java.core.version>
+        <!-- Standalone pom: test tool versions are repeated here from the SDK root pom. -->
+        <junit.version>6.1.3</junit.version>
+        <surefire.version>3.6.1</surefire.version>
     </properties>
 
     <dependencies>
@@ -56,6 +59,14 @@
             <artifactId>aws-lambda-java-core</artifactId>
             <version>${aws.lambda.java.core.version}</version>
         </dependency>
+
+        <!-- Test dependencies -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -64,6 +75,13 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.15.0</version>
+            </plugin>
+
+            <!-- Runs the unit tests in src/test. The telemetry conformance workflow runs them before packaging. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${surefire.version}</version>
             </plugin>
 
             <!-- Shaded (uber) JAR so the Lambda deploys as a single artifact. -->
