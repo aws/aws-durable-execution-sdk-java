@@ -31,7 +31,7 @@ src/main/java/software/amazon/lambda/durable/conformance/telemetry/
   Telemetry2Failure.java                  # step "charge" fails; handler throws "payment failed" with the step error as cause
   TelemetryConformanceConfig.java         # shared log-group guard and plugin config; both handlers call it
 src/test/java/software/amazon/lambda/durable/conformance/telemetry/
-  TelemetryConformanceConfigTest.java     # guard rejects null/blank; config registers one plugin
+  TelemetryConformanceConfigTest.java     # guard rejects null/blank; telemetry settings match the runner
 ```
 
 The handlers use the real SDK API only. They construct no record and call no exporter method. A missing or wrong

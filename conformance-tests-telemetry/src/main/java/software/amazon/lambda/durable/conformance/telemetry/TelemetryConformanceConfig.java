@@ -41,28 +41,39 @@ final class TelemetryConformanceConfig {
     }
 
     /**
-     * Builds the handler configuration with one telemetry plugin and one CloudWatch Logs exporter.
+     * Builds the telemetry plugin settings: one CloudWatch Logs exporter for the given log group, emit on completion,
+     * sample every execution, top-level operation detail, input and output included.
      *
-     * <p>The exporter creates its client on first export, so calling this method makes no network call.
+     * <p>This method constructs no client. The exporter creates its CloudWatch Logs client on first export, and the
+     * settings object is a plain value. So a unit test can call it with no credentials and no network.
+     *
+     * @param logGroupName the log group the exporter writes to
+     * @return the plugin settings every handler in this module uses
+     */
+    static DurableExecutionTelemetryConfig telemetryConfig(String logGroupName) {
+        return DurableExecutionTelemetryConfig.builder()
+                .addExporter(CloudWatchLogsExporter.builder()
+                        .logGroupName(logGroupName)
+                        .build())
+                .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_COMPLETE)
+                .samplingRate(1.0)
+                .operationDetail(DurableExecutionTelemetryConfig.OperationDetail.TOP_LEVEL)
+                .content(ContentConfig.builder().input(true).output(true).build())
+                .build();
+    }
+
+    /**
+     * Builds the handler configuration with the telemetry plugin from {@link #telemetryConfig(String)}.
+     *
+     * <p>{@code DurableConfig.build()} constructs the default Lambda client, and that constructor sends one warm-up
+     * request. So this method is for the deployed handler only. Tests check {@link #telemetryConfig(String)} instead.
      *
      * @param logGroupName the log group the exporter writes to
      * @return the configuration a telemetry conformance handler returns from {@code createConfiguration()}
      */
     static DurableConfig durableConfig(String logGroupName) {
         return DurableConfig.builder()
-                .withPlugins(
-                        DurableExecutionTelemetry.durableExecutionTelemetry(DurableExecutionTelemetryConfig.builder()
-                                .addExporter(CloudWatchLogsExporter.builder()
-                                        .logGroupName(logGroupName)
-                                        .build())
-                                .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_COMPLETE)
-                                .samplingRate(1.0)
-                                .operationDetail(DurableExecutionTelemetryConfig.OperationDetail.TOP_LEVEL)
-                                .content(ContentConfig.builder()
-                                        .input(true)
-                                        .output(true)
-                                        .build())
-                                .build()))
+                .withPlugins(DurableExecutionTelemetry.durableExecutionTelemetry(telemetryConfig(logGroupName)))
                 .build();
     }
 }
