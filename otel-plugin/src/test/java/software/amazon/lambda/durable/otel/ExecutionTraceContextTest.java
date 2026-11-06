@@ -97,17 +97,15 @@ class ExecutionTraceContextTest {
     }
 
     @Test
-    void completeRemoteParentUndecided_becomesAncestor_supplierDecidesSampling() {
-        // Row: valid Root, Parent, no valid Sampled -> reuse Root, remote parent, and resolve the undecided decision
-        // from the configured sampler (via the supplier). Trace flags have no "unset" state, so a remote parent built
-        // unsampled would make a parent-based sampler drop every child span; the supplier's decision applies instead.
+    void completeRemoteParentUndecided_preservesUnsetSampledFlag() {
+        // Remote context retains its flags; durable sampling is evaluated separately.
         var extracted = new ExtractedContext(REMOTE_TRACE_ID, REMOTE_PARENT_ID);
 
         var sampledCtx = resolve(extracted, REMOTE_TRACE_ID, () -> true);
         assertEquals(REMOTE_TRACE_ID, sampledCtx.executionAncestor().getTraceId());
         assertEquals(REMOTE_PARENT_ID, sampledCtx.executionAncestor().getSpanId());
         assertTrue(sampledCtx.executionAncestor().isRemote(), "The remote server span is the ancestor");
-        assertTrue(sampledCtx.traceFlags().isSampled(), "Undecided upstream defers to the sampler (sampled)");
+        assertFalse(sampledCtx.traceFlags().isSampled(), "No sampled flag is an unsampled remote parent");
 
         var droppedCtx = resolve(extracted, REMOTE_TRACE_ID, () -> false);
         assertEquals(REMOTE_PARENT_ID, droppedCtx.executionAncestor().getSpanId());
@@ -144,15 +142,15 @@ class ExecutionTraceContextTest {
     }
 
     @Test
-    void remoteTraceWithoutParent_explicitSampledPreserved_overSupplier() {
-        // Row: valid Root, missing Parent, Sampled=1 -> reuse Root, synthetic root, preserve explicit decision.
+    void remoteTraceWithoutParent_usesResolvedDecision() {
+        // An incomplete parent does not override the configured root policy.
         var extracted = new ExtractedContext(REMOTE_TRACE_ID, null, ExtractedContext.Sampling.SAMPLED);
         var execCtx = resolve(extracted, REMOTE_TRACE_ID, () -> false);
 
         assertEquals(
                 idGenerator.generateExecutionRootSpanId(ARN),
                 execCtx.executionAncestor().getSpanId());
-        assertTrue(execCtx.traceFlags().isSampled(), "Explicit decision is preserved even on a synthetic root");
+        assertFalse(execCtx.traceFlags().isSampled(), "Synthetic roots use the resolved decision");
     }
 
     @Test

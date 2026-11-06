@@ -39,7 +39,7 @@ class PluginStartupOrderTest {
         };
         var exporter = InMemorySpanExporter.create();
         var builder = SdkTracerProvider.builder()
-                .setSampler(Sampler.alwaysOff())
+                .setSampler(Sampler.parentBased(Sampler.alwaysOff()))
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter));
         var config = OtelPluginConfig.builder()
                 .enableMdc(false)
@@ -53,7 +53,8 @@ class PluginStartupOrderTest {
             runner.onInvocationStart(new InvocationInfo("request", "arn", true, Instant.EPOCH));
             runner.onInvocationEnd(new InvocationEndInfo("request", "arn", true, InvocationStatus.SUCCEEDED, null));
             var spans = exporter.getFinishedSpanItems();
-            assertEquals(2, spans.size(), "Initializer's sampled context must override the always-off fallback");
+            assertEquals(
+                    2, spans.size(), "ParentBased must see the initializer's sampled parent before its root fallback");
             assertTrue(spans.stream().allMatch(span -> expected.traceId().equals(span.getTraceId())));
             assertTrue(spans.stream().allMatch(span -> expected.parentSpanId().equals(span.getParentSpanId())));
         } finally {

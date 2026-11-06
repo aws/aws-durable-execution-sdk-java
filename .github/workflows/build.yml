@@ -89,6 +89,21 @@ jobs:
         if: ${{ matrix.java == 17 }}
         run: python3 .github/scripts/verify_otel_api_compatibility.py
 
+      - name: Verify sampler environment autoconfiguration
+        if: ${{ matrix.java == 17 }}
+        run: |
+          otel_version=$(python3 -c 'import xml.etree.ElementTree as E; print(E.parse("otel-plugin/pom.xml").findtext("{*}properties/{*}opentelemetry.version"))')
+          mvn -B -pl otel-plugin dependency:build-classpath \
+            -DincludeScope=test -Dmdep.outputFile=target/sampling-classpath.txt
+          mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.11.0:get \
+            -Dartifact="io.opentelemetry:opentelemetry-sdk-extension-autoconfigure:$otel_version" \
+            -Dtransitive=false
+          python3 otel-plugin/src/test/compatibility/run_sampler_matrix.py \
+            --core sdk/target/classes --plugin otel-plugin/target/classes \
+            --dependencies-classpath otel-plugin/target/sampling-classpath.txt \
+            --autoconfigure "$HOME/.m2/repository/io/opentelemetry/opentelemetry-sdk-extension-autoconfigure/$otel_version/opentelemetry-sdk-extension-autoconfigure-$otel_version.jar" \
+            --java-home "$JAVA_HOME"
+
       - name: Setup uv for coverage badge
         if: ${{ matrix.java == 17 }}
         # cicirello/jacoco-badge-generator is a Docker-based action; the

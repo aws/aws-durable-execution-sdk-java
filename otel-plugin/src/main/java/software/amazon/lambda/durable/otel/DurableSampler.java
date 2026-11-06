@@ -25,9 +25,8 @@ import java.util.Map;
  * verbatim for descendants. Re-exported execution anchors use only the sampled decision and stable SDK identity, so:
  *
  * <ul>
- *   <li>the wrapped (customer-configured or ADOT/community default) sampler is invoked at most once per invocation for
- *       durable spans, which is safe for stateful or quota-based samplers that would otherwise be consumed multiple
- *       times; and
+ *   <li>the wrapped sampler uses the canonical trace ID and original propagated parent, independently of the
+ *       synthesized parents used to organize durable spans; and
  *   <li>the full decision is preserved, including {@code RECORD_ONLY}, rather than being reduced to a sampled/dropped
  *       bit and re-derived at span creation.
  * </ul>
@@ -39,14 +38,13 @@ import java.util.Map;
 final class DurableSampler implements Sampler {
 
     // Cap on the deferred-decision cache. The sampler is long-lived (installed once), so an unbounded map would grow
-    // per execution on a warm container. A modest LRU cap bounds memory while keeping the "consult once per execution"
-    // guarantee for the handful of executions active on one Lambda instance; an evicted entry at worst re-consults the
-    // delegate for a later span of that execution, which is a rare, benign degradation rather than a correctness bug.
+    // per execution on a warm container. Eviction or a new process re-evaluates the delegate from stable inputs;
+    // this optimization does not add support for stateful, random, or time-dependent sampling policies.
     private static final int MAX_CACHED_DEFERRED_DECISIONS = 256;
 
     private final Sampler delegate;
     // Caches the delegate's decision for a deferred durable execution, keyed by execution ARN and canonical trace ID,
-    // so a stateful or quota-based delegate is reused while that execution entry remains resident.
+    // so its full result is reused while that execution entry remains resident.
     // Access-ordered LRU, size-capped and synchronized; eviction permits another delegate evaluation.
     private record ExecutionKey(String traceId, String executionArn) {}
 
@@ -126,7 +124,12 @@ final class DurableSampler implements Sampler {
                         new ExecutionKey(
                                 intent.deferredTraceId(), attributes.get(SpanAttributes.DURABLE_EXECUTION_ARN)),
                         key -> delegate.shouldSample(
-                                Context.root(), key.traceId(), name, spanKind, attributes, Collections.emptyList()))
+                                intent.samplingParent(),
+                                key.traceId(),
+                                name,
+                                spanKind,
+                                attributes,
+                                Collections.emptyList()))
                 : intent.resolved();
         if (OtelPluginAutoConfigurationState.isConfiguredSampler(this)) {
             DurableSamplingDecision.confirmConsumption(
