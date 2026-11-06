@@ -6,16 +6,22 @@ on:
     paths:
       - '.github/workflows/publish_maven.yml'
       - '.github/workflows/test-release-build.yml'
+      - '.github/scripts/maven_publish.sh'
       - '.github/scripts/set_release_timestamp.sh'
       - '.github/scripts/test_release_timestamp.py'
+      - '.github/scripts/package_release_bundles.py'
+      - '.github/scripts/test_release_bundles.py'
       - 'pom.xml'
   push:
     branches: [main]
     paths:
       - '.github/workflows/publish_maven.yml'
       - '.github/workflows/test-release-build.yml'
+      - '.github/scripts/maven_publish.sh'
       - '.github/scripts/set_release_timestamp.sh'
       - '.github/scripts/test_release_timestamp.py'
+      - '.github/scripts/package_release_bundles.py'
+      - '.github/scripts/test_release_bundles.py'
       - 'pom.xml'
   workflow_dispatch:
 
@@ -34,3 +40,10 @@ jobs:
           cache: maven
       - name: Test release timestamp and Javadoc reproducibility
         run: python3 .github/scripts/test_release_timestamp.py
+
+  release-bundles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test Maven release bundles
+        run: python3 .github/scripts/test_release_bundles.py
