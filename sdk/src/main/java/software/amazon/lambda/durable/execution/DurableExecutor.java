@@ -77,9 +77,9 @@ public class DurableExecutor {
             BiFunction<I, DurableContext, O> handler,
             DurableConfig config) {
         try (var manager = new ExecutionManager(input, config, lambdaContext)) {
-            manager.registerActiveThread(ROOT_THREAD_ID);
-            var invocation = new Invocation<>(input, lambdaContext, inputType, handler, config, manager);
             try {
+                manager.registerActiveThread(ROOT_THREAD_ID);
+                var invocation = new Invocation<>(input, lambdaContext, inputType, handler, config, manager);
                 var completion = invocation.execute();
                 var ready = invocation.outcome.applyToEither(
                         completion.handle((ignored, failure) -> new Outcome<O>(null, failure)), Function.identity());
@@ -88,14 +88,15 @@ public class DurableExecutor {
                         ? selected.failure()
                         : ExceptionHelper.unwrapInvocationFailure(
                                 selected.result().failure());
-                var finalFailure = manager.finishInvocation(originalFailure);
+                var finalFailure = manager.finishInvocation(originalFailure, completion);
                 var completedFailure = completion.isDone()
                         ? completion
                                 .handle((ignored, failure) -> ExceptionHelper.unwrapInvocationFailure(failure))
                                 .join()
                         : null;
                 if (ExecutionManager.isFatal(completedFailure)) ExceptionHelper.sneakyThrow(completedFailure);
-                if (ExecutionManager.isFatal(finalFailure)) ExceptionHelper.sneakyThrow(finalFailure);
+                if (ExecutionManager.isFatal(finalFailure))
+                    ExceptionHelper.sneakyThrow(retainCompletionDiagnostic(finalFailure, completedFailure));
                 if (ExecutionManager.isLifecycleFailure(finalFailure) && manager.isTerminalExecutionAcknowledged()) {
                     // ACK outranks a lifecycle cutoff, not an unrelated failure already reported by delivery.
                     if (completedFailure != null && !ExecutionManager.isLifecycleFailure(completedFailure))
@@ -103,13 +104,13 @@ public class DurableExecutor {
                     return DurableExecutionOutput.success("");
                 }
                 if (finalFailure != null && (selected.failure() != null || finalFailure != originalFailure))
-                    ExceptionHelper.sneakyThrow(finalFailure);
+                    ExceptionHelper.sneakyThrow(retainCompletionDiagnostic(finalFailure, completedFailure));
                 // Preserve the stored failure after control precedence; newer JDKs wrap join() cancellation.
                 if (completedFailure != null) ExceptionHelper.sneakyThrow(completedFailure);
                 return completion.join();
             } catch (Throwable failure) {
-                var originalFailure = ExceptionHelper.unwrapInvocationFailure(failure);
-                // Finalize synchronous admission/dispatch failures before automatic close observes them again.
+                var originalFailure = ExecutionManager.normalizeInvocationBoundaryFailure(failure);
+                // Finalize synchronous setup/admission/dispatch failures before automatic close observes them again.
                 var finalFailure = manager.finishInvocation(originalFailure);
                 ExceptionHelper.sneakyThrow(finalFailure != null ? finalFailure : originalFailure);
                 return null;
@@ -117,6 +118,23 @@ public class DurableExecutor {
                 manager.markInvocationReported();
             }
         }
+    }
+
+    private static Throwable retainCompletionDiagnostic(Throwable primary, Throwable completion) {
+        if (completion == null || completion == primary) return primary;
+        // Re-observing the same delivery error as an SDK cleanup cause does not add a new diagnostic.
+        if (hasSdkLifecycleCause(primary, completion) || hasSdkLifecycleCause(completion, primary)) return primary;
+        for (var diagnostic : primary.getSuppressed()) {
+            if (diagnostic == completion || hasSdkLifecycleCause(diagnostic, completion)) return primary;
+        }
+        primary.addSuppressed(completion);
+        return primary;
+    }
+
+    private static boolean hasSdkLifecycleCause(Throwable failure, Throwable cause) {
+        return failure.getClass() == UnrecoverableDurableExecutionException.class
+                && ExecutionManager.isLifecycleFailure(failure)
+                && failure.getCause() == cause;
     }
 
     /** Invocation-local state, accessed on the handler thread when plugins are present. */
