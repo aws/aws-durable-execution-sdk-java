@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.exception;
 
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 
 /**
@@ -13,7 +14,13 @@ import software.amazon.awssdk.services.lambda.model.Operation;
 public class WaitForConditionFailedException extends DurableOperationException {
 
     public WaitForConditionFailedException(String message) {
-        super(null, null, message);
+        super(
+                null,
+                ErrorObject.builder()
+                        .errorType(WaitForConditionFailedException.class.getName())
+                        .errorMessage(message)
+                        .build(),
+                message);
     }
 
     public WaitForConditionFailedException(Operation operation) {
