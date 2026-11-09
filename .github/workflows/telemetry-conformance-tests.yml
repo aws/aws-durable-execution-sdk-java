@@ -45,7 +45,7 @@ jobs:
     # The pinned SHA also selects the runner and telemetry-extension revision the shared
     # workflow installs, so it must be reachable from a branch. It is the head of
     # aws-durable-execution-conformance-tests PR #183, which adds requirement telemetry-3.
-    # TODO before this PR leaves draft: re-pin to the merge commit of #183 on main.
+    # TODO before this PR merges: re-pin to the merge commit of #183 on main.
     uses: aws/aws-durable-execution-conformance-tests/.github/workflows/telemetry-suite.yml@cb3753e02ed14460d9deb18716b75d2294f49eef
     with:
       language: java

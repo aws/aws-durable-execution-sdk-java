@@ -13,9 +13,11 @@ import software.amazon.lambda.durable.telemetry.exporters.CloudWatchLogsExporter
 /**
  * Shared plugin setup for the telemetry conformance handlers.
  *
- * <p>Every handler in this module exports to the same log group with the same plugin settings. The runner reads that
- * log group and compares the record to the requirement. A handler with different settings would produce a record the
- * runner cannot match. So the settings live here once and each handler calls these methods.
+ * <p>Every handler in this module exports to the same log group. Every handler shares the exporter, emit mode, sampling
+ * rate and operation detail. The content section differs per requirement: telemetry-1 and telemetry-2 include input and
+ * output; telemetry-3 excludes them and adds one result transform. The runner reads that log group and compares the
+ * record to the requirement. A handler with different shared settings would produce a record the runner cannot match.
+ * So the shared settings live here once and each handler calls these methods.
  */
 final class TelemetryConformanceConfig {
 

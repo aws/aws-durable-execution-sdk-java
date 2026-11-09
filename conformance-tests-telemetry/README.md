@@ -20,7 +20,7 @@ template that maps it to the requirement ID.
 | ----------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `telemetry` | `telemetry-1` | One successful single-step execution emits one `SUCCEEDED` record with `input`, `output`, ARN-derived identity fields, and `operationsByName`. |
 | `telemetry` | `telemetry-2` | One failed execution emits one `FAILED` record with an `error` on the execution and on `operationsByName.charge`.                             |
-| `telemetry` | `telemetry-3` | An `OperationOverride.withResult` transform exports exactly `{userId}` of a three-key step result; the record has no `input` or `output`.  |
+| `telemetry` | `telemetry-3` | An `OperationOverride.withResult` transform exports exactly `{userId}` of a three-key step result; the record has no `input` or `output`.      |
 
 ## Layout
 
@@ -33,7 +33,7 @@ src/main/java/software/amazon/lambda/durable/conformance/telemetry/
   Telemetry3ResultSelect.java             # step "fetch-user"; override transform keeps only userId in the record
   TelemetryConformanceConfig.java         # shared log-group guard and plugin config; every handler calls it
 src/test/java/software/amazon/lambda/durable/conformance/telemetry/
-  TelemetryConformanceConfigTest.java     # guard rejects null/blank; telemetry settings match the runner
+  TelemetryConformanceConfigTest.java     # guard rejects null/blank; telemetry settings match the runner; telemetry-3 transform and content section
 ```
 
 The handlers use the real SDK API only. They construct no record and call no exporter method. A missing or wrong
