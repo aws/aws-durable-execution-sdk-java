@@ -3,17 +3,21 @@
 package software.amazon.lambda.durable.conformance.telemetry;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryConfig.EmitMode.ON_COMPLETE;
 import static software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryConfig.OperationDetail.TOP_LEVEL;
 
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import software.amazon.lambda.durable.telemetry.OperationOverride;
 import software.amazon.lambda.durable.telemetry.exporters.CloudWatchLogsExporter;
 
 /**
@@ -26,6 +30,9 @@ import software.amazon.lambda.durable.telemetry.exporters.CloudWatchLogsExporter
 class TelemetryConformanceConfigTest {
 
     private static final String LOG_GROUP = "/aws/lambda/durable-execution-telemetry";
+    // The shape the plugin hands to a result transform: the checkpointed step result, JSON-parsed to a Map.
+    private static final Map<String, Object> PARSED_FETCH_USER_RESULT =
+            Map.of("userId", "u-123", "email", "test@example.com", "token", "tok-456");
 
     @ParameterizedTest
     @NullSource
@@ -58,5 +65,42 @@ class TelemetryConformanceConfigTest {
         assertEquals(TOP_LEVEL, config.operationDetail());
         assertTrue(config.content().includeInput());
         assertTrue(config.content().includeOutput());
+    }
+
+    @Test
+    void selectUserIdKeepsOnlyTheUserIdKey() {
+        assertEquals(Map.of("userId", "u-123"), TelemetryConformanceConfig.selectUserId(PARSED_FETCH_USER_RESULT));
+    }
+
+    @Test
+    void resultSelectTelemetryConfigKeepsTheSharedSettings() {
+        var config = TelemetryConformanceConfig.resultSelectTelemetryConfig(LOG_GROUP);
+        assertEquals(1, config.exporters().size());
+        assertInstanceOf(CloudWatchLogsExporter.class, config.exporters().get(0));
+        assertEquals(ON_COMPLETE, config.emitMode());
+        assertEquals(1.0, config.samplingRate());
+        assertEquals(TOP_LEVEL, config.operationDetail());
+    }
+
+    @Test
+    void resultSelectTelemetryConfigExcludesInputAndOutput() {
+        var content = TelemetryConformanceConfig.resultSelectTelemetryConfig(LOG_GROUP)
+                .content();
+        // telemetry-3 requires that the record carry no input and no output key.
+        assertFalse(content.includeInput());
+        assertFalse(content.includeOutput());
+    }
+
+    @Test
+    void resultSelectTelemetryConfigOverridesTheStepResultWithTheSelectingTransform() {
+        var overrides = TelemetryConformanceConfig.resultSelectTelemetryConfig(LOG_GROUP)
+                .content()
+                .overrides();
+        assertEquals(1, overrides.size());
+        OperationOverride override = overrides.get(0);
+        assertEquals("fetch-user", override.operationName());
+        assertFalse(override.isExclude());
+        assertNotNull(override.result());
+        assertEquals(Map.of("userId", "u-123"), override.result().apply(PARSED_FETCH_USER_RESULT));
     }
 }
