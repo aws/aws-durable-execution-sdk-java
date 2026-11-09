@@ -54,3 +54,14 @@ Resources:
       CodeUri: .
       Handler: software.amazon.lambda.durable.conformance.telemetry.Telemetry2Failure
       Role: !Ref LambdaExecutionRoleArn
+
+  Telemetry3ResultSelect:
+    Type: AWS::Serverless::Function
+    DependsOn: TelemetryLogGroup
+    TestingMetadata:
+      TestDescription:
+        - telemetry-3
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.telemetry.Telemetry3ResultSelect
+      Role: !Ref LambdaExecutionRoleArn
