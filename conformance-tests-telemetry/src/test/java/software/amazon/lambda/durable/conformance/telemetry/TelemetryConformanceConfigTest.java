@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryConfig.EmitMode.ON_COMPLETE;
+import static software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryConfig.OperationDetail.FULL_TREE;
 import static software.amazon.lambda.durable.telemetry.DurableExecutionTelemetryConfig.OperationDetail.TOP_LEVEL;
 
 import java.util.Map;
@@ -102,5 +103,33 @@ class TelemetryConformanceConfigTest {
         assertFalse(override.isExclude());
         assertNotNull(override.result());
         assertEquals(Map.of("userId", "u-123"), override.result().apply(PARSED_FETCH_USER_RESULT));
+    }
+
+    @Test
+    void fullTreeMapTelemetryConfigKeepsTheSharedSettings() {
+        var config = TelemetryConformanceConfig.fullTreeMapTelemetryConfig(LOG_GROUP);
+        assertEquals(1, config.exporters().size());
+        assertInstanceOf(CloudWatchLogsExporter.class, config.exporters().get(0));
+        assertEquals(ON_COMPLETE, config.emitMode());
+        assertEquals(1.0, config.samplingRate());
+    }
+
+    @Test
+    void fullTreeMapTelemetryConfigUsesFullTreeDetailWithInputOutputAndNoOverrides() {
+        var config = TelemetryConformanceConfig.fullTreeMapTelemetryConfig(LOG_GROUP);
+        assertEquals(FULL_TREE, config.operationDetail());
+        assertTrue(config.content().includeInput());
+        assertTrue(config.content().includeOutput());
+        assertTrue(config.content().overrides().isEmpty());
+    }
+
+    @Test
+    void otherConfigsStillUseTopLevelDetail() {
+        assertEquals(
+                TOP_LEVEL,
+                TelemetryConformanceConfig.telemetryConfig(LOG_GROUP).operationDetail());
+        assertEquals(
+                TOP_LEVEL,
+                TelemetryConformanceConfig.resultSelectTelemetryConfig(LOG_GROUP).operationDetail());
     }
 }

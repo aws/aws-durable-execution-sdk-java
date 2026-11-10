@@ -65,3 +65,14 @@ Resources:
       CodeUri: .
       Handler: software.amazon.lambda.durable.conformance.telemetry.Telemetry3ResultSelect
       Role: !Ref LambdaExecutionRoleArn
+
+  Telemetry4FullTreeMap:
+    Type: AWS::Serverless::Function
+    DependsOn: TelemetryLogGroup
+    TestingMetadata:
+      TestDescription:
+        - telemetry-4
+    Properties:
+      CodeUri: .
+      Handler: software.amazon.lambda.durable.conformance.telemetry.Telemetry4FullTreeMap
+      Role: !Ref LambdaExecutionRoleArn
