@@ -63,6 +63,11 @@ class WaitStrategiesTest {
         var exception = assertThrows(WaitForConditionFailedException.class, () -> strategy.evaluate("x", 3));
         assertTrue(exception.getMessage().contains("maximum attempts"));
         assertTrue(exception.getMessage().contains("3"));
+        assertNotNull(exception.getErrorObject());
+        assertEquals(exception.getMessage(), exception.getErrorObject().errorMessage());
+        assertEquals(
+                WaitForConditionFailedException.class.getName(),
+                exception.getErrorObject().errorType());
     }
 
     @RepeatedTest(10)
