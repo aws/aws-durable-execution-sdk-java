@@ -39,7 +39,13 @@ try (var parallel = ctx.parallel("work")) {
 | `size()` | Total number of registered branches |
 | `succeeded()` | Number of branches that succeeded |
 | `failed()` | Number of branches that failed |
+| `skipped()` | Number of branches recorded as `SKIPPED` |
+| `statuses()` | Per-branch status: `SUCCEEDED`, `FAILED`, or `SKIPPED` |
 | `completionStatus()` | Why the operation completed (`ALL_COMPLETED`, `MIN_SUCCESSFUL_REACHED`, `FAILURE_TOLERANCE_EXCEEDED`) |
+
+When a completion config finishes the parallel operation early, branches that never started — and branches that were still running at completion — are recorded as `SKIPPED`. The snapshot and the skip happen together with that branch's own completion, so `get()` does not return a value and later throw for the same call sequence. `get()` on a skipped branch throws `ParallelBranchSkippedException` on the first invocation and on every replay. The SDK does not start or resume that branch later.
+
+`DurableFuture.anyOf` does not select a skipped branch while another future can still settle, so the winner from the first invocation is the winner on replay. If every future passed to `anyOf` is skipped, it throws `ParallelBranchSkippedException`.
 
 ### ParallelConfig
 
@@ -110,9 +116,29 @@ try {
 }
 ```
 
+A skipped branch is different: the parallel result recorded it as `SKIPPED`, so `get()` throws `ParallelBranchSkippedException` instead of waiting:
+
+```java
+var parallel = ctx.parallel("first-successful", ParallelConfig.builder()
+        .maxConcurrency(1)
+        .completionConfig(CompletionConfig.firstSuccessful())
+        .build());
+var a = parallel.branch("branch-a", String.class, branchCtx -> "A");
+var b = parallel.branch("branch-b", String.class, branchCtx -> "B");
+parallel.get(); // statuses [SUCCEEDED, SKIPPED]
+a.get();        // "A"
+try {
+    b.get();    // throws on the first invocation and on every replay
+} catch (ParallelBranchSkippedException e) {
+    // Branch never started, or was still running when the parallel completed.
+    // e.getBranchName() is the name passed to branch().
+}
+```
+
 | Exception | When Thrown |
 |-----------|-------------|
 | `ParallelBranchFailedException` | Branch failed and the original exception could not be reconstructed |
+| `ParallelBranchSkippedException` | Branch was recorded as `SKIPPED` in the parallel result |
 | User's exception | Branch threw a reconstructable exception — propagated through `get()` |
 
 ### Checkpoint-and-Replay
@@ -121,4 +147,4 @@ Parallel operations are fully durable. On replay after interruption:
 
 - Completed branches return cached results without re-execution
 - Incomplete branches resume from their last checkpoint
-- Branches that never started execute fresh
+- Branches recorded as `SKIPPED` are not started; `get()` on those branch futures throws `ParallelBranchSkippedException`

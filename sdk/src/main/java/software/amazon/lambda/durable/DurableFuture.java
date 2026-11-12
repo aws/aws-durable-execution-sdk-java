@@ -58,6 +58,10 @@ public interface DurableFuture<T> {
     /**
      * Waits for any of the provided futures to settle and returns its result.
      *
+     * <p>A parallel branch that settled only because it was skipped does not win while another future can still settle.
+     * That keeps the winner stable when the skipped branch is completed immediately on replay. If every future is
+     * skipped, this throws {@code ParallelBranchSkippedException} from {@link #get()}.
+     *
      * @param futures the futures to wait for
      * @return the result of the first future to settle
      */
