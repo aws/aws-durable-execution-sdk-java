@@ -9,6 +9,7 @@ import static org.mockito.Mockito.*;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -18,6 +19,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -28,6 +30,16 @@ import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.http.SdkHttpResponse;
 import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.DistributedMapCsvFormatOptions;
+import software.amazon.awssdk.services.lambda.model.DistributedMapInlineSourceConfig;
+import software.amazon.awssdk.services.lambda.model.DistributedMapOptions;
+import software.amazon.awssdk.services.lambda.model.DistributedMapReaderFunctionSourceConfig;
+import software.amazon.awssdk.services.lambda.model.DistributedMapS3ObjectConfig;
+import software.amazon.awssdk.services.lambda.model.DistributedMapS3SourceConfig;
+import software.amazon.awssdk.services.lambda.model.DistributedMapS3SourceType;
+import software.amazon.awssdk.services.lambda.model.DistributedMapSourceConfig;
+import software.amazon.awssdk.services.lambda.model.DistributedMapSourceFormat;
+import software.amazon.awssdk.services.lambda.model.DistributedMapSourceType;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -81,6 +93,143 @@ class CheckpointManagerTest {
 
         verify(client).checkpoint(eq("arn:test"), eq("token-1"), anyList());
         assertTrue(future.isDone());
+    }
+
+    @Test
+    void checkpoint_sendsLargeInlineSourceInItsOwnRequest() throws Exception {
+        // 800 KB of inline items, over the 750 KB batch limit, so this update cannot share a request.
+        var items = Collections.nCopies(800, "x".repeat(1024));
+        var dmapStart = OperationUpdate.builder()
+                .id("op-dmap")
+                .type(OperationType.DISTRIBUTED_MAP)
+                .action(OperationAction.START)
+                .distributedMapOptions(DistributedMapOptions.builder()
+                        .source(DistributedMapSourceConfig.builder()
+                                .type(DistributedMapSourceType.INLINE)
+                                .inlineSourceConfig(DistributedMapInlineSourceConfig.builder()
+                                        .items(items)
+                                        .build())
+                                .build())
+                        .build())
+                .build();
+        var step = OperationUpdate.builder()
+                .id("op-step")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .build();
+
+        var sent = new ArrayList<List<OperationUpdate>>();
+        when(client.checkpoint(anyString(), anyString(), anyList())).thenAnswer(invocation -> {
+            sent.add(invocation.getArgument(2));
+            return CheckpointDurableExecutionResponse.builder()
+                    .checkpointToken("token-2")
+                    .build();
+        });
+
+        var first = batcher.checkpoint(dmapStart);
+        var second = batcher.checkpoint(step);
+        first.get(500, TimeUnit.MILLISECONDS);
+        second.get(500, TimeUnit.MILLISECONDS);
+
+        assertEquals(2, sent.size(), "the oversized update must not share a request");
+        assertEquals(
+                List.of("op-dmap"),
+                sent.get(0).stream().map(OperationUpdate::id).toList());
+        assertEquals(
+                List.of("op-step"),
+                sent.get(1).stream().map(OperationUpdate::id).toList());
+    }
+
+    @Test
+    void checkpoint_countsCsvHeadersTowardBatchSize() throws Exception {
+        // The step payload fills the 750 KB batch limit to within 15,000 characters. The two updates fit in one
+        // request only if the 30,000 characters of CSV headers are left out of the estimate.
+        var step = OperationUpdate.builder()
+                .id("op-step")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .payload("x".repeat(750 * 1024 - 243 - 15_000))
+                .build();
+        var headers = IntStream.range(0, 200)
+                .mapToObj(i -> String.format("%03d", i) + "h".repeat(147))
+                .toList();
+        var dmapStart = OperationUpdate.builder()
+                .id("op-dmap")
+                .type(OperationType.DISTRIBUTED_MAP)
+                .action(OperationAction.START)
+                .distributedMapOptions(DistributedMapOptions.builder()
+                        .source(DistributedMapSourceConfig.builder()
+                                .type(DistributedMapSourceType.S3)
+                                .s3SourceConfig(DistributedMapS3SourceConfig.builder()
+                                        .type(DistributedMapS3SourceType.OBJECT)
+                                        .bucket("bucket")
+                                        .objectConfig(DistributedMapS3ObjectConfig.builder()
+                                                .key("data.csv")
+                                                .format(DistributedMapSourceFormat.CSV)
+                                                .csvFormatOptions(DistributedMapCsvFormatOptions.builder()
+                                                        .headers(headers)
+                                                        .build())
+                                                .build())
+                                        .build())
+                                .build())
+                        .build())
+                .build();
+
+        var sent = new ArrayList<List<OperationUpdate>>();
+        when(client.checkpoint(anyString(), anyString(), anyList())).thenAnswer(invocation -> {
+            sent.add(invocation.getArgument(2));
+            return CheckpointDurableExecutionResponse.builder()
+                    .checkpointToken("token-2")
+                    .build();
+        });
+
+        var first = batcher.checkpoint(step);
+        var second = batcher.checkpoint(dmapStart);
+        first.get(500, TimeUnit.MILLISECONDS);
+        second.get(500, TimeUnit.MILLISECONDS);
+
+        assertEquals(2, sent.size(), "the CSV headers must count toward the batch size");
+    }
+
+    @Test
+    void checkpoint_countsReaderInitialStateTowardBatchSize() throws Exception {
+        // The step payload fills the 750 KB batch limit to within 15,000 characters. The two updates fit in one
+        // request only if the reader's 30,000-character initial state is left out of the estimate.
+        var step = OperationUpdate.builder()
+                .id("op-step")
+                .type(OperationType.STEP)
+                .action(OperationAction.START)
+                .payload("x".repeat(750 * 1024 - 243 - 15_000))
+                .build();
+        var dmapStart = OperationUpdate.builder()
+                .id("op-dmap")
+                .type(OperationType.DISTRIBUTED_MAP)
+                .action(OperationAction.START)
+                .distributedMapOptions(DistributedMapOptions.builder()
+                        .source(DistributedMapSourceConfig.builder()
+                                .type(DistributedMapSourceType.READER_FUNCTION)
+                                .readerFunctionSourceConfig(DistributedMapReaderFunctionSourceConfig.builder()
+                                        .functionName("reader")
+                                        .initialState("s".repeat(30_000))
+                                        .build())
+                                .build())
+                        .build())
+                .build();
+
+        var sent = new ArrayList<List<OperationUpdate>>();
+        when(client.checkpoint(anyString(), anyString(), anyList())).thenAnswer(invocation -> {
+            sent.add(invocation.getArgument(2));
+            return CheckpointDurableExecutionResponse.builder()
+                    .checkpointToken("token-2")
+                    .build();
+        });
+
+        var first = batcher.checkpoint(step);
+        var second = batcher.checkpoint(dmapStart);
+        first.get(500, TimeUnit.MILLISECONDS);
+        second.get(500, TimeUnit.MILLISECONDS);
+
+        assertEquals(2, sent.size(), "the reader state must count toward the batch size");
     }
 
     @Test

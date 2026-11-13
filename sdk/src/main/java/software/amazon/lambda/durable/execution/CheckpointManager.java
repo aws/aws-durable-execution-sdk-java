@@ -5,6 +5,7 @@ package software.amazon.lambda.durable.execution;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -17,6 +18,8 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.SdkField;
+import software.amazon.awssdk.core.SdkPojo;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationType;
@@ -451,6 +454,7 @@ class CheckpointManager {
                 + update.type().toString().length()
                 + update.action().toString().length()
                 + (update.payload() != null ? update.payload().length() : 0)
+                + stringSize(update.distributedMapOptions())
                 + 100;
         var options = update.chainedInvokeOptions();
         if (options != null) {
@@ -479,5 +483,41 @@ class CheckpointManager {
             }
         }
         return size;
+    }
+
+    /**
+     * Total length of every string in a model object, including nested objects, lists and maps. A distributed map START
+     * update carries its customer-supplied values (inline items, reader state, CSV headers, S3 locations, function
+     * names) in its options rather than the payload, so they are counted here.
+     */
+    private static int stringSize(Object value) {
+        if (value == null) {
+            return 0;
+        }
+        if (value instanceof String string) {
+            return string.length();
+        }
+        if (value instanceof SdkPojo pojo) {
+            var size = 0;
+            for (SdkField<?> field : pojo.sdkFields()) {
+                size += stringSize(field.getValueOrDefault(pojo));
+            }
+            return size;
+        }
+        if (value instanceof Collection<?> collection) {
+            var size = 0;
+            for (var element : collection) {
+                size += stringSize(element);
+            }
+            return size;
+        }
+        if (value instanceof Map<?, ?> map) {
+            var size = 0;
+            for (var entry : map.entrySet()) {
+                size += stringSize(entry.getKey()) + stringSize(entry.getValue());
+            }
+            return size;
+        }
+        return 0;
     }
 }
