@@ -1263,10 +1263,8 @@ class ExecutionOtelPluginTest {
     }
 
     @Test
-    void xrayExtraction_undecidedSampling_parentBasedSampler_defersToSamplerAndExports() {
-        // With a ParentBased(root=alwaysOn) sampler and no explicit upstream Sampled, the undecided decision is
-        // resolved from the configured sampler (sampled here) rather than forced unsampled. The remote parent is
-        // therefore built sampled, so the execution trace is exported instead of dropped.
+    void xrayExtraction_undecidedSampling_parentBasedSampler_dropsExecutionTrace() {
+        // A valid remote parent without Sampled is unsampled. ParentBased uses that parent, not its root policy.
         var xrayTraceId = "aabbccddee112233445566778899aabb";
         var parentSpanId = "53995c3f42cd8ad8";
         var exporter = InMemorySpanExporter.create();
@@ -1282,21 +1280,12 @@ class ExecutionOtelPluginTest {
         var xrayPlugin = started(xrayPluginFactory, new InvocationInfo("req-1", ARN, true, Instant.now()));
         xrayPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
 
-        var spans = exporter.getFinishedSpanItems();
-        assertFalse(
-                spans.isEmpty(),
-                "Undecided upstream defers to the configured sampler (alwaysOn), so spans are exported");
-        var workflowSpan = spanByName(spans, "Workflow");
-        assertEquals(xrayTraceId, workflowSpan.getTraceId());
-        assertEquals(parentSpanId, workflowSpan.getParentSpanId(), "Workflow parents onto the remote span");
-        assertTrue(workflowSpan.getSpanContext().isSampled(), "Resolved from the sampler, the trace is sampled");
+        assertTrue(exporter.getFinishedSpanItems().isEmpty(), "ParentBased drops a valid unsampled remote parent");
     }
 
     @Test
     void xrayExtraction_undecidedSampling_parentBasedNeverSampler_dropsExecutionTrace() {
-        // Symmetric case: when the configured sampler's root decision is "drop" (ParentBased(root=alwaysOff)) and the
-        // upstream is undecided, the resolved decision is not-sampled, so nothing is exported. This confirms the
-        // undecided path follows the sampler in both directions rather than being hardcoded.
+        // The same valid unsampled parent drops regardless of the ParentBased root policy.
         var xrayTraceId = "aabbccddee112233445566778899aabb";
         var parentSpanId = "53995c3f42cd8ad8";
         var exporter = InMemorySpanExporter.create();

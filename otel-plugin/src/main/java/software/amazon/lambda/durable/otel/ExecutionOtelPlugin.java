@@ -295,12 +295,10 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
         var canonicalTraceId =
                 ExecutionTraceContext.canonicalTraceId(extracted, arn(), executionStartTime, idGenerator);
         // Resolve the execution's sampling decision once for this invocation as a full SamplingResult, then apply it to
-        // every durable span via DurableSampler. The execution ancestor's trace flags are derived from the same
-        // decision so a parent-based sampler stays consistent with it.
+        // every durable span via DurableSampler. Original remote-parent flags stay independent of that decision.
         var decision = OtelPluginSupport.resolveSamplingResult(
                 sdkTracerProvider,
                 extracted,
-                Span.current(),
                 canonicalTraceId,
                 workflowSpanName,
                 Attributes.of(DURABLE_EXECUTION_ARN, arn()));
@@ -308,7 +306,8 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
         // a decision that bypasses an installed drop/rate-limit policy.
         this.samplingIntent = decision != null
                 ? DurableSamplingDecision.Intent.resolved(decision)
-                : DurableSamplingDecision.Intent.deferred(canonicalTraceId);
+                : DurableSamplingDecision.Intent.deferred(
+                        canonicalTraceId, OtelPluginSupport.samplingParent(extracted));
         var sampled = OtelPluginSupport.isSampled(decision);
         var execCtx = ExecutionTraceContext.resolve(extracted, canonicalTraceId, arn(), idGenerator, () -> sampled);
         // Materialize and immediately end the SDK-owned anchor before creating descendants or user code.
@@ -323,10 +322,8 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
                 OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider));
         DurableExecutionRoot.end(root, executionStartTime);
         this.executionRootSpan = root;
-        // An unresolved plain fallback uses the real root's decision; explicit/ambient decisions and the
-        // legacy remote-parent path retain their existing behavior. Plain samplers still own each child decision.
-        if (executionRootSpan != null
-                && (OtelPluginSupport.usesDurableSamplingBridge(sdkTracerProvider) || decision == null)) {
+        // An unresolved plain fallback uses the real root's decision. Plain samplers still own each child decision.
+        if (executionRootSpan != null) {
             execCtx = new ExecutionTraceContext(executionRootSpan.getSpanContext());
         }
         this.executionTrace = new ExecutionTrace(canonicalTraceId, execCtx.traceFlags());
@@ -703,8 +700,7 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
      * otherwise the execution ancestor so the Invocation span stays within the same trace.
      */
     private Context invocationParentContext(ExecutionTraceContext execCtx, String canonicalTraceId) {
-        var ambient = Span.current().getSpanContext();
-        if (ambient.isValid() && ambient.getTraceId().equals(canonicalTraceId)) {
+        if (OtelPluginSupport.usableAmbientParent(Span.current(), canonicalTraceId)) {
             return withDurableDecision(Context.root().with(Span.current()));
         }
         return withDurableDecision(Context.root().with(Span.wrap(execCtx.executionAncestor())));

@@ -88,9 +88,12 @@ class InvokePropagationIntegrationTest {
         GlobalOpenTelemetry.resetForTest();
         OtelPluginAutoConfigurationState.markInstalled();
         var delegateSamples = explicitDecision ? !sampled : sampled;
+        var rootPolicy = delegateSamples ? Sampler.alwaysOn() : Sampler.alwaysOff();
+        // ParentBased explicitly inherits the propagated decision; a direct policy controls the unset case.
+        var configured = explicitDecision ? Sampler.parentBased(rootPolicy) : rootPolicy;
         try (var exporter = InMemorySpanExporter.create();
                 var provider = SdkTracerProvider.builder()
-                        .setSampler(DurableSampler.wrap(delegateSamples ? Sampler.alwaysOn() : Sampler.alwaysOff()))
+                        .setSampler(DurableSampler.wrap(configured))
                         .setIdGenerator(new DeterministicIdGenerator())
                         .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                         .build()) {
@@ -309,7 +312,7 @@ class InvokePropagationIntegrationTest {
     void batchedPublicInvokesCarryTheirOwnActualOperationSpan(boolean executionView, boolean sampled) {
         var exporter = InMemorySpanExporter.create();
         var builder = SdkTracerProvider.builder()
-                .setSampler(sampled ? Sampler.alwaysOff() : Sampler.alwaysOn())
+                .setSampler(Sampler.parentBased(sampled ? Sampler.alwaysOff() : Sampler.alwaysOn()))
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter));
         var config = OtelPluginConfig.builder()
                 .enableMdc(false)
