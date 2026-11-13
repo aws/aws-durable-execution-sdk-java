@@ -95,6 +95,7 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 | [SimpleMapExample](src/main/java/software/amazon/lambda/durable/examples/map/SimpleMapExample.java) | Concurrent map over a collection with durable steps |
 | [CustomShouldCompleteMapExample](src/main/java/software/amazon/lambda/durable/examples/map/CustomShouldCompleteMapExample.java) | Custom map completion with `shouldComplete` decisions |
 | [WaitForConditionExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitForConditionExample.java) | Poll a condition until met with `waitForCondition()` |
+| [WorkflowInsightExample](src/main/java/software/amazon/lambda/durable/examples/insight/WorkflowInsightExample.java) | Emit a curated per-execution insight record to CloudWatch Logs via the Workflow Insight plugin (zero extra infrastructure) |
 
 ## Cleanup
 
