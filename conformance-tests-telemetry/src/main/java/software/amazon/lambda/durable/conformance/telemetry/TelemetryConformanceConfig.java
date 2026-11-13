@@ -27,6 +27,9 @@ final class TelemetryConformanceConfig {
     /** Name of the telemetry-3 step. The override and the step call must use the same string. */
     static final String RESULT_SELECT_STEP_NAME = "fetch-user";
 
+    /** Name of the telemetry-4 map. The handler's map call uses this string. */
+    static final String FULL_TREE_MAP_NAME = "process-items";
+
     private TelemetryConformanceConfig() {}
 
     /**
@@ -74,15 +77,51 @@ final class TelemetryConformanceConfig {
      * @return the plugin settings with the shared fields fixed and the given content
      */
     static DurableExecutionTelemetryConfig telemetryConfig(String logGroupName, ContentConfig content) {
+        return telemetryConfig(logGroupName, DurableExecutionTelemetryConfig.OperationDetail.TOP_LEVEL, content);
+    }
+
+    /**
+     * Builds the telemetry plugin settings with a caller-supplied operation detail and content section.
+     *
+     * <p>This overload holds the settings every handler shares: one CloudWatch Logs exporter, emit on completion, and a
+     * sampling rate of 1. The operation detail and content differ per requirement. telemetry-1 to telemetry-3 use
+     * top-level detail. telemetry-4 uses full-tree detail. So both are parameters.
+     *
+     * @param logGroupName the log group the exporter writes to
+     * @param operationDetail which operations the record keeps
+     * @param content the content section for the requirement the handler covers
+     * @return the plugin settings with the shared fields fixed
+     */
+    static DurableExecutionTelemetryConfig telemetryConfig(
+            String logGroupName,
+            DurableExecutionTelemetryConfig.OperationDetail operationDetail,
+            ContentConfig content) {
         return DurableExecutionTelemetryConfig.builder()
                 .addExporter(CloudWatchLogsExporter.builder()
                         .logGroupName(logGroupName)
                         .build())
                 .emitMode(DurableExecutionTelemetryConfig.EmitMode.ON_COMPLETE)
                 .samplingRate(1.0)
-                .operationDetail(DurableExecutionTelemetryConfig.OperationDetail.TOP_LEVEL)
+                .operationDetail(operationDetail)
                 .content(content)
                 .build();
+    }
+
+    /**
+     * Builds the telemetry-4 settings: the shared exporter and modes, full-tree operation detail, input and output
+     * included, and no overrides.
+     *
+     * <p>Full-tree detail keeps the map iteration contexts and the steps inside them. telemetry-4 requires all five
+     * operations in {@code operationsByName}, so no filter and no override may remove one.
+     *
+     * @param logGroupName the log group the exporter writes to
+     * @return the plugin settings the telemetry-4 handler uses
+     */
+    static DurableExecutionTelemetryConfig fullTreeMapTelemetryConfig(String logGroupName) {
+        return telemetryConfig(
+                logGroupName,
+                DurableExecutionTelemetryConfig.OperationDetail.FULL_TREE,
+                ContentConfig.builder().input(true).output(true).build());
     }
 
     /**
