@@ -9,6 +9,7 @@ import re
 import subprocess
 import tempfile
 import time
+import uuid
 
 
 TERMINAL_DURABLE_STATUSES = {"SUCCEEDED", "FAILED", "TIMED_OUT", "STOPPED"}
@@ -29,7 +30,7 @@ def require(condition, message):
 
 def scrub(value):
     if isinstance(value, dict):
-        return {k: ("<redacted>" if k in {"controlUrl", "CheckpointToken"} else scrub(v))
+        return {k: ("<redacted>" if k in {"controlUrl", "exportControlUrl", "CheckpointToken"} else scrub(v))
                 for k, v in value.items()}
     if isinstance(value, list):
         return [scrub(v) for v in value]
@@ -289,6 +290,16 @@ class Cloud:
         payload = {"runId": self.manifest["runId"], "cohort": cohort or marker,
                    "scenario": scenario, "marker": marker, "controlUrl": gate,
                    "targetEnvironment": target, "peers": peers, "holdMillis": hold_ms}
+        observed = getattr(self, "observability", None)
+        if isinstance(observed, dict):
+            header = (f"Root=1-{int(time.time()):08x}-{uuid.uuid4().hex[:24]};"
+                      f"Parent={uuid.uuid4().hex[:16]};Sampled={observed.get('sampled', '1')}")
+            mode = observed.get("export", "success")
+            payload.update(otelView=observed["view"], otelExport=mode, traceHeader=header)
+            item["otel"] = {"view": observed["view"], "mode": mode, "traceHeader": header}
+            if mode == "held":
+                item["exportGate"] = marker + "-export"
+                payload["exportControlUrl"] = self.gate(item["exportGate"])
         item["future"] = self.pool.submit(self._invoke, fixture, payload)
         self.invocations.append(item)
         return item
@@ -311,6 +322,18 @@ class Cloud:
             raise
 
     def _invoke_request(self, fixture, payload):
+        if payload.get("otelView"):
+            jar = Path(__file__).resolve().parent / "target/lmi-fixtures.jar"
+            request = {"function": self.manifest["functions"][fixture]["arn"],
+                       "executionName": invocation_name(payload["runId"], payload["marker"]),
+                       "traceHeader": payload["traceHeader"],
+                       "payload": json.dumps({key: value for key, value in payload.items() if key != "traceHeader"})}
+            result = subprocess.run(
+                ["java", "-cp", str(jar), "software.amazon.lambda.durable.lmi.OtelInvoke"],
+                input=json.dumps(request), capture_output=True, text=True, timeout=40)
+            if result.returncode:
+                raise CollectionError(f"Instrumented Invoke failed: {scrub(result.stderr[-4000:])}")
+            return json.loads(result.stdout)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "response.json"
             source = Path(directory) / "payload.json"

@@ -52,6 +52,7 @@ public final class LifecycleHandler implements RequestStreamHandler {
     private static final StepConfig NO_RETRY =
             StepConfig.builder().retryStrategy(RetryStrategies.Presets.NO_RETRY).build();
     private final DurableConfig shared = createSharedConfiguration();
+    private final ConcurrentHashMap<String, OtelRuntime> telemetry = new ConcurrentHashMap<>();
 
     private static DurableConfig createSharedConfiguration() {
         if ("fixed".equals(System.getenv("LMI_EXECUTOR"))) {
@@ -78,10 +79,15 @@ public final class LifecycleHandler implements RequestStreamHandler {
         trace.wrapperEnter();
         var status = "THREW";
         try {
-            var config = DurableConfig.builder()
+            var builder = DurableConfig.builder()
                     .withExecutorService(shared.getExecutorService())
-                    .withDurableExecutionClient(new ObservedClient(shared.getDurableExecutionClient(), trace))
-                    .build();
+                    .withDurableExecutionClient(new ObservedClient(shared.getDurableExecutionClient(), trace));
+            if (trace.input.otelView() != null) {
+                var observed = telemetry.computeIfAbsent(trace.input.otelView(), OtelRuntime::new);
+                observed.enter(trace, runtime);
+                builder.withPlugins(observed.forInvocation(trace));
+            }
+            var config = builder.build();
             var response = DurableExecutor.execute(
                     input,
                     runtime,
