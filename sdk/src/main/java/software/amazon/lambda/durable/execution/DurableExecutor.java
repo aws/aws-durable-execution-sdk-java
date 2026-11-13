@@ -29,6 +29,7 @@ import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.DurableContext;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.context.DurableContextImpl;
+import software.amazon.lambda.durable.dmap.ProcessorEvent;
 import software.amazon.lambda.durable.exception.DurableOperationException;
 import software.amazon.lambda.durable.exception.IllegalDurableOperationException;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
@@ -41,6 +42,7 @@ import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.PluginInfoConverter;
 import software.amazon.lambda.durable.plugin.PluginRunner;
+import software.amazon.lambda.durable.serde.JacksonSerDes;
 import software.amazon.lambda.durable.serde.SerDes;
 import software.amazon.lambda.durable.util.ExceptionHelper;
 
@@ -58,6 +60,7 @@ public class DurableExecutor {
 
     // Lambda response size limit is 6MB minus small epsilon for envelope
     private static final int LAMBDA_RESPONSE_SIZE_LIMIT = 6 * 1024 * 1024 - 50;
+    private static final SerDes JSON = new JacksonSerDes();
 
     private DurableExecutor() {}
 
@@ -96,6 +99,7 @@ public class DurableExecutor {
         private final DurableConfig config;
         private final ExecutionManager manager;
         private final PluginRunner plugins;
+        private final SerDes invocationSerDes;
         private final String requestId;
         private final String executionArn;
         private final boolean isFirstInvocation;
@@ -117,6 +121,9 @@ public class DurableExecutor {
             this.config = config;
             this.manager = manager;
             plugins = manager.getPluginRunner();
+            // A distributed map processor's input and result have a format the service defines, so a customer's SerDes
+            // must not change them. Durable operations inside the processor still use the config's SerDes.
+            invocationSerDes = inputType.getType() == ProcessorEvent.class ? JSON : config.getSerDes();
             // Read on the runtime caller before executor dispatch: LMI carriers can be thread-local.
             xRayTraceId = plugins.isEmpty() ? null : RuntimeTraceHeader.capture(lambdaContext);
             requestId = lambdaContext != null ? lambdaContext.getAwsRequestId() : null;
@@ -167,7 +174,7 @@ public class DurableExecutor {
             manager.setCurrentThreadContext(new ThreadContext(ROOT_THREAD_ID, ThreadType.CONTEXT));
             Throwable inputFailure = null;
             try {
-                userInput = extractUserInput(manager.getExecutionOperation(), config.getSerDes(), inputType);
+                userInput = extractUserInput(manager.getExecutionOperation(), invocationSerDes, inputType);
             } catch (Throwable failure) {
                 // Deserialize only once. Even failed input gets paired start/end hooks with a null input value.
                 inputFailure = failure;
@@ -212,7 +219,7 @@ public class DurableExecutor {
             if (failure != null) return finishFailure(ExceptionHelper.unwrapInvocationFailure(failure));
             DurableExecutionOutput output;
             try {
-                var payload = config.getSerDes().serialize(value);
+                var payload = invocationSerDes.serialize(value);
                 output = DurableExecutionOutput.success(handleLargePayload(manager, payload));
             } catch (Throwable deliveryFailure) {
                 // Checkpointing a large result fails with SuspendExecutionException when the token is already gone.
@@ -250,7 +257,7 @@ public class DurableExecutor {
             DurableExecutionOutput output;
             try {
                 logger.debug("Execution failed: {}", cause.getMessage());
-                output = DurableExecutionOutput.failure(buildErrorObject(cause, config.getSerDes()));
+                output = DurableExecutionOutput.failure(buildErrorObject(cause, invocationSerDes));
             } catch (Throwable deliveryFailure) {
                 return failDelivery(deliveryFailure);
             }
