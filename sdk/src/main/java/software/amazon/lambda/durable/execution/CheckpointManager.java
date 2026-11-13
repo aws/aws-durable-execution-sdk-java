@@ -11,6 +11,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -19,9 +21,11 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.Operation;
+import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.retry.PollingStrategy;
 import software.amazon.lambda.durable.util.DurableApiErrorClassifier;
@@ -48,7 +52,9 @@ class CheckpointManager {
     private final BooleanSupplier tryStartCheckpointProcessing;
     private final Runnable onCheckpointProcessingFinish;
     private final Runnable onTokenRevoked;
+    private final Runnable requestAdmission;
     private final Object checkpointLock = new Object();
+    private volatile boolean terminalExecutionAcknowledged;
     private volatile String checkpointToken;
     private boolean pollingStopped; // Guarded by pollingFutures.
     /**
@@ -130,6 +136,50 @@ class CheckpointManager {
             Runnable onCheckpointProcessingFinish,
             Runnable onTokenRevoked,
             Supplier<Error> pluginFatal) {
+        this(
+                config,
+                durableExecutionArn,
+                checkpointToken,
+                callback,
+                tryStartCheckpointProcessing,
+                onCheckpointProcessingFinish,
+                onTokenRevoked,
+                pluginFatal,
+                () -> {});
+    }
+
+    CheckpointManager(
+            DurableConfig config,
+            String durableExecutionArn,
+            String checkpointToken,
+            Consumer<List<Operation>> callback,
+            BooleanSupplier tryStartCheckpointProcessing,
+            Runnable onCheckpointProcessingFinish,
+            Runnable onTokenRevoked,
+            Runnable requestAdmission) {
+        this(
+                config,
+                durableExecutionArn,
+                checkpointToken,
+                callback,
+                tryStartCheckpointProcessing,
+                onCheckpointProcessingFinish,
+                onTokenRevoked,
+                () -> null,
+                requestAdmission);
+    }
+
+    CheckpointManager(
+            DurableConfig config,
+            String durableExecutionArn,
+            String checkpointToken,
+            Consumer<List<Operation>> callback,
+            BooleanSupplier tryStartCheckpointProcessing,
+            Runnable onCheckpointProcessingFinish,
+            Runnable onTokenRevoked,
+            Supplier<Error> pluginFatal,
+            Runnable requestAdmission) {
+        this.requestAdmission = requestAdmission;
         this.config = config;
         this.durableExecutionArn = durableExecutionArn;
         this.callback = callback;
@@ -256,6 +306,15 @@ class CheckpointManager {
         checkpointApiRequestDelayedBatcher.shutdown();
     }
 
+    void shutdown(Duration timeout) throws InterruptedException, ExecutionException, TimeoutException {
+        stopPolling(new IllegalStateException("CheckpointManager shutdown"));
+        checkpointApiRequestDelayedBatcher.shutdown(timeout);
+    }
+
+    boolean isTerminalExecutionAcknowledged() {
+        return terminalExecutionAcknowledged;
+    }
+
     private void stopPolling(Throwable cause) {
         List<List<CompletableFuture<Operation>>> allFutures;
         synchronized (pollingFutures) {
@@ -274,6 +333,11 @@ class CheckpointManager {
      * nextMarker)
      */
     List<Operation> fetchAllPages(CheckpointUpdatedExecutionState checkpointUpdatedExecutionState) {
+        return fetchAllPages(checkpointUpdatedExecutionState, false);
+    }
+
+    private List<Operation> fetchAllPages(
+            CheckpointUpdatedExecutionState checkpointUpdatedExecutionState, boolean terminal) {
         rethrowFatalIfAborted();
         List<Operation> operations = new ArrayList<>();
         if (checkpointUpdatedExecutionState == null) {
@@ -285,6 +349,12 @@ class CheckpointManager {
         var nextMarker = checkpointUpdatedExecutionState.nextMarker();
         while (nextMarker != null && !nextMarker.isEmpty()) {
             rethrowFatalIfAborted();
+            try {
+                requestAdmission.run();
+            } catch (UnrecoverableDurableExecutionException failure) {
+                if (!terminal || !ExecutionManager.isLifecycleFailure(failure)) throw failure;
+                break; // Preserve inline/already-read metadata without issuing a new request after terminal ACK.
+            }
             var startTime = System.nanoTime();
             try {
                 var response = config.getDurableExecutionClient()
@@ -312,6 +382,7 @@ class CheckpointManager {
                     return entry.getValue().isEmpty();
                 });
             }
+
             // filter the null values from pollers
             var request = updates.stream().filter(Objects::nonNull).toList();
 
@@ -353,8 +424,15 @@ class CheckpointManager {
         var startTime = System.nanoTime();
         logger.debug("Calling durable checkpoint API with {} updates: {}", request.size(), request);
         rethrowFatalIfAborted();
+        requestAdmission.run();
         var response = config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);
+        if (request.stream()
+                .anyMatch(update ->
+                        update.type() == OperationType.EXECUTION && update.action() == OperationAction.SUCCEED))
+            terminalExecutionAcknowledged = true;
         rethrowFatalIfAborted();
+        // A late response is durable at the service, but must not resume old SDK work after invocation cleanup.
+        if (!terminalExecutionAcknowledged) requestAdmission.run();
         logger.debug("Durable checkpoint API called (latency={}ns): {}.", System.nanoTime() - startTime, response);
 
         rethrowFatalIfAborted();
@@ -366,7 +444,7 @@ class CheckpointManager {
 
         var state = response.newExecutionState();
         if (state != null) {
-            processUpdatedOperations(fetchAllPages(state));
+            processUpdatedOperations(fetchAllPages(state, terminalExecutionAcknowledged));
         }
     }
 

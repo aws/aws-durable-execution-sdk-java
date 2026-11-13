@@ -32,7 +32,9 @@ class InFlightFatalAbortTest {
         var request = batcher.submit("START", Duration.ZERO);
         try {
             assertTrue(entered.await(3, TimeUnit.SECONDS));
-            var shutdown = closing.submit(batcher::shutdown);
+            var shutdown = closing.submit(() -> {
+                batcher.shutdown();
+            });
             assertThrows(TimeoutException.class, () -> shutdown.get(100, TimeUnit.MILLISECONDS));
             batcher.abortPending(fatal);
             assertFatal(request, fatal);
@@ -76,7 +78,9 @@ class InFlightFatalAbortTest {
                 .build());
         try {
             assertTrue(entered.await(3, TimeUnit.SECONDS));
-            var shutdown = closing.submit(manager::shutdown);
+            var shutdown = closing.submit(() -> {
+                manager.shutdown();
+            });
             assertThrows(TimeoutException.class, () -> shutdown.get(100, TimeUnit.MILLISECONDS));
             signal.set(fatal);
             manager.abortPending(fatal);

@@ -95,3 +95,36 @@ file retention.
 Custom serializers can override `serialize(value, SerDesContext)` and
 `deserialize(data, typeToken, SerDesContext)` to receive stable execution/entity
 identity. Existing implementations inherit defaults that call the original methods.
+
+## Invocation deadline cleanup
+
+The SDK captures the Lambda invocation's remaining time once and uses monotonic
+cutoffs for admission and its wait policy. Deadline exhaustion selects a retryable
+invocation interruption; it is not checkpointed as a business-operation failure.
+Catching an admission rejection cannot turn the stopped invocation into a
+successful fallback. Completed operation results and failures remain available for
+replay.
+
+Cleanup allowances determine when the SDK requests cooperative cancellation and
+stops ordinary admission. They do not make cancellation equivalent to actual task
+exit. Finalization still waits for admitted user work, continuations and in-flight
+checkpoint/poll transport, and runs the matching invocation End on its owner.
+The runtime caller waits for that owner and
+End to finish, including after a deadline or interruption. End is not moved to a
+completion-observer thread or deferred until after the SDK call returns.
+
+Interruption is recorded, remaining required cleanup still runs, and the interrupt
+flag is restored. A terminal execution result acknowledged by the
+service remains authoritative for a handled deadline cutoff. An accepted result
+does not suppress an otherwise-propagating delivery or metadata failure, and an
+available JVM fatal keeps its original identity and priority.
+
+These cutoffs do not guarantee bounded caller return or worker reclamation.
+Already-running application I/O, synchronous initial-state reads, custom clients,
+plugin hooks and other code that ignores interruption can keep the caller waiting
+for actual cleanup beyond the policy budget. An executor that runs the root inline,
+including a saturated `CallerRunsPolicy`, can also block the runtime caller before
+it reaches a timeout-aware wait. Use finite downstream I/O timeouts and executor
+configurations that allow progress. Cancellation cannot undo a request already
+accepted by the service; interrupted side effects still require the documented
+retry and idempotency strategy.
