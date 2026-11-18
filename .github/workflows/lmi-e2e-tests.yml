@@ -7,6 +7,7 @@ on:
     paths:
       - 'lmi-tests/**'
       - 'sdk/**'
+      - 'otel-plugin/**'
       - 'pom.xml'
       - '.github/workflows/lmi-e2e-tests.yml'
 
@@ -35,7 +36,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     needs: local
     runs-on: ubuntu-latest
-    timeout-minutes: 95
+    timeout-minutes: 130
     permissions:
       contents: read
       id-token: write
@@ -83,7 +84,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ secrets.TEST_ACCOUNT_ID }}
       - name: LMI cloud regression assertions (expected red until issue 726 is fixed)
-        timeout-minutes: 30
+        timeout-minutes: 60
         run: python3 -u lmi-tests/cloud_suite.py test --cloud-enabled
       - name: Refresh AWS credentials for evidence collection
         if: always() && hashFiles('lmi-tests/artifacts/manifest.json') != ''
