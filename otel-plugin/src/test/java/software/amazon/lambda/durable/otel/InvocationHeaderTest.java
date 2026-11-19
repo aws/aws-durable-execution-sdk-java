@@ -36,7 +36,7 @@ class InvocationHeaderTest {
     void factoryHeaderPrecedesSpanCreationAndPreservesExtractorOverride(boolean executionView) {
         var exporter = InMemorySpanExporter.create();
         var builder = SdkTracerProvider.builder()
-                .setSampler(Sampler.alwaysOn())
+                .setSampler(Sampler.parentBased(Sampler.alwaysOn()))
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter));
         var calls = new AtomicInteger();
         var config = OtelPluginConfig.builder()
@@ -52,8 +52,12 @@ class InvocationHeaderTest {
         var factory = executionView
                 ? ExecutionOtelPlugin.factory(builder, config)
                 : InvocationOtelPlugin.factory(builder, config);
-        var info =
-                invocation("request", "arn", true, Instant.EPOCH, "Root=1-6955b900-123456789012345678901234;Sampled=0");
+        var info = invocation(
+                "request",
+                "arn",
+                true,
+                Instant.EPOCH,
+                "Root=1-6955b900-123456789012345678901234;Parent=1234567890123456;Sampled=0");
         var plugin = factory.createPlugin(info);
         plugin.onInvocationEnd(new InvocationEndInfo("request", "arn", true, InvocationStatus.SUCCEEDED, null));
         assertEquals(1, calls.get());
@@ -78,7 +82,7 @@ class InvocationHeaderTest {
             var missing = CompletableFuture.runAsync(() -> {
                 var exporter = InMemorySpanExporter.create();
                 var builder = SdkTracerProvider.builder()
-                        .setSampler(Sampler.alwaysOn())
+                        .setSampler(Sampler.parentBased(Sampler.alwaysOn()))
                         .addSpanProcessor(SimpleSpanProcessor.create(exporter));
                 var config = OtelPluginConfig.builder()
                         .enableMdc(false)
@@ -126,7 +130,7 @@ class InvocationHeaderTest {
     private static void runInvocations(boolean executionView, boolean sampled, CyclicBarrier barrier) {
         var exporter = InMemorySpanExporter.create();
         var builder = SdkTracerProvider.builder()
-                .setSampler(Sampler.alwaysOn())
+                .setSampler(Sampler.parentBased(Sampler.alwaysOn()))
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter));
         var config = OtelPluginConfig.builder().enableMdc(false).build();
         DurableExecutionPluginFactory factory = executionView
@@ -149,7 +153,7 @@ class InvocationHeaderTest {
         }
         var spans = exporter.getFinishedSpanItems();
         if (!sampled) {
-            assertTrue(spans.isEmpty(), "Upstream Sampled=0 overrides always-on fallback");
+            assertTrue(spans.isEmpty(), "ParentBased inherits upstream Sampled=0");
             return;
         }
         assertEquals(3, spans.size());

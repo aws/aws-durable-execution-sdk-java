@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -468,6 +469,7 @@ class DurableSamplingDecisionClassLoaderTest {
             var agentIdType = Class.forName(DeterministicIdGenerator.class.getName(), true, agentLoader);
             var callbacks = new AtomicInteger();
             var leakedSampling = new AtomicBoolean();
+            // Durable spans must record so the processor runs; ordinary app spans retain their DROP policy.
             try (var appProvider = SdkTracerProvider.builder()
                             .setSampler((Sampler) appWrap.invoke(null, Sampler.alwaysOff()))
                             .build();
@@ -476,13 +478,19 @@ class DurableSamplingDecisionClassLoaderTest {
                                     plainSampler
                                             ? Sampler.alwaysOn()
                                             : (Sampler) (localSampler ? appWrap : agentWrap)
-                                                    .invoke(null, Sampler.alwaysOff()))
+                                                    .invoke(null, Sampler.alwaysOn()))
                             .setIdGenerator(
                                     (IdGenerator) agentIdType.getConstructor().newInstance())
                             .addSpanProcessor(new SpanProcessor() {
                                 @Override
                                 public void onStart(Context parent, ReadWriteSpan span) {
                                     if (!span.getName().equals(spanName)) return;
+                                    assertNull(
+                                            assertDoesNotThrow(() -> appGet.invoke(null, parent)),
+                                            "The application carrier must be consumed before processors run");
+                                    assertNull(
+                                            assertDoesNotThrow(() -> agentGet.invoke(null, parent)),
+                                            "The agent carrier must be consumed before processors run");
                                     var unrelated = appProvider
                                             .get("processor")
                                             .spanBuilder("unrelated-forwarded-parent")

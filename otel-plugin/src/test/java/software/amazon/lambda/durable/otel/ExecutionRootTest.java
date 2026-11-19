@@ -131,8 +131,7 @@ class ExecutionRootTest {
                 new ExtractedContext[] {null, new ExtractedContext(TRACE, null, ExtractedContext.Sampling.NOT_SAMPLED)
                 }) {
             var exporter = InMemorySpanExporter.create();
-            var plugin = plugin(
-                    executionView, exporter, extracted, extracted == null ? Sampler.alwaysOff() : Sampler.alwaysOn());
+            var plugin = plugin(executionView, exporter, extracted, Sampler.alwaysOff());
             invoke(plugin, ARN, true, InvocationStatus.PENDING);
             invoke(plugin, ARN, false, InvocationStatus.SUCCEEDED);
             assertTrue(exporter.getFinishedSpanItems().isEmpty());
@@ -142,7 +141,7 @@ class ExecutionRootTest {
         for (var service : List.of("caller", "callee")) {
             var builder = SdkTracerProvider.builder()
                     .setResource(Resource.create(Attributes.of(AttributeKey.stringKey("service.name"), service)))
-                    .setSampler(Sampler.alwaysOff())
+                    .setSampler(Sampler.alwaysOn())
                     .addSpanProcessor(SimpleSpanProcessor.create(exporter));
             var plugin = plugin(executionView, builder, extracted);
             var start = service.equals("caller") ? START : START.plusSeconds(10);
@@ -245,7 +244,7 @@ class ExecutionRootTest {
                 .setSampler(DurableSampler.wrap(Sampler.alwaysOff()))
                 .build()) {
             var builder = SdkTracerProvider.builder()
-                    .setSampler(Sampler.alwaysOff())
+                    .setSampler(Sampler.alwaysOn())
                     .addSpanProcessor(new SamplingObserver(unrelated, observed, observeStart))
                     .addSpanProcessor(SimpleSpanProcessor.create(exporter));
             var config = OtelPluginConfig.builder()

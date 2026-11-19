@@ -199,7 +199,7 @@ class ExecutionRootParityTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void completeRemoteParentRetainsItsLegacyAncestorPolicy(boolean executionView) {
+    void completeRemoteParentRetainsNormalPerSpanPolicy(boolean executionView) {
         GlobalOpenTelemetry.resetForTest();
         OtelPluginAutoConfigurationState.markInstalled();
         var calls = new ArrayList<String>();
@@ -227,7 +227,7 @@ class ExecutionRootParityTest {
             var plugin = factory.createPlugin(start(true));
             plugin.onInvocationStart(start(true));
             plugin.onInvocationEnd(end(false));
-            assertEquals(List.of("Workflow", "Invocation", "Workflow"), calls);
+            assertEquals(List.of("Invocation", "Workflow"), calls);
             assertTrue(roots(exporter).isEmpty(), "The complete remote parent remains externally owned");
             var spans = exporter.getFinishedSpanItems();
             assertEquals(2, spans.size());

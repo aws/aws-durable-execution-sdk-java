@@ -5,8 +5,11 @@ package software.amazon.lambda.durable.otel;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.api.trace.TraceFlags;
+import io.opentelemetry.api.trace.TraceState;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.TracerProvider;
 import io.opentelemetry.context.Context;
@@ -171,117 +174,54 @@ final class OtelPluginSupport {
     }
 
     /**
-     * Resolves the durable execution's sampling decision for one invocation as a full {@link SamplingResult}, evaluated
-     * exactly once. The decision is applied to every durable span of the invocation (Workflow, Invocation, operation,
-     * attempt) via {@link DurableSampler}, so the configured sampler is not re-invoked per span and the three-way
-     * decision — including {@code RECORD_ONLY} — is preserved rather than reduced to a boolean.
-     *
-     * <p>Sampling precedence, highest first:
-     *
-     * <ol>
-     *   <li><b>Explicit upstream {@code Sampled}</b> on the propagated header ({@code Sampled=1} /{@code Sampled=0}).
-     *       An authoritative backend decision is preserved regardless of the configured sampler;
-     *   <li><b>Same-trace ambient span.</b> When no explicit {@code Sampled} is present but a valid ambient span (an
-     *       auto-instrumentation Lambda handler span, {@code Span.current()}) is already on the canonical execution
-     *       trace, its established decision is followed. The ambient span is a same-trace descendant of the propagated
-     *       parent, so its decision is representative of this trace. Its full three-way decision is preserved: a
-     *       sampled span yields {@code RECORD_AND_SAMPLE}; an unsampled but recording span yields {@code RECORD_ONLY}
-     *       (its spans still reach processors); only an unsampled, non-recording span yields {@code DROP};
-     *   <li><b>Application-owned provider: configured sampler, once.</b> When the tracer provider is reachable (the
-     *       application-owned provider path), its sampler is read directly and evaluated a single time with
-     *       {@code ROOT_CONTEXT} (so a parent-based sampler applies its root policy), the canonical trace ID, span
-     *       name, and attributes, and its full result is returned;
-     *   <li><b>Java-agent path: defer to the installed sampler.</b> When the provider is not visible
-     *       ({@code sdkTracerProvider == null}), this returns {@code null} to defer. It does <em>not</em> reconstruct
-     *       the sampler from environment settings: the agent's effective sampler is whatever its autoconfiguration
-     *       pipeline finally installs, and another extension's customizer can wrap or replace a recognized configured
-     *       sampler, so a reconstruction could disagree with the real delegate. Deferring routes the decision to the
-     *       agent-installed {@link DurableSampler}, which consults its actual delegate once per execution, caches the
-     *       result by execution ARN and trace ID, and reuses it for the execution's remaining durable spans (see
-     *       {@link DurableSampler#shouldSample}). The delegate's decision is honored in full — including a
-     *       {@code DROP}/rate-limited outcome — so durable spans are not force-sampled.
-     * </ol>
-     *
-     * <p>For the app-path branches, nothing is persisted across invocations: each invocation recomputes the decision
-     * from stable inputs (the canonical trace ID and the upstream {@code Sampled} value), so deterministic samplers
-     * reach the same decision on every reinvocation. The ambient-span branch is inherently per-invocation because the
-     * ambient span is recreated each invocation, which the shared spec accepts for same-trace ambient membership. On
-     * the agent path the delegate is consulted once per execution within a process and cached; the delegate itself (for
-     * example a ratio sampler) governs cross-invocation consistency.
-     *
-     * @param sdkTracerProvider the resolved provider, or null when it is not visible to the application (agent path)
-     * @param extracted the context parsed from the propagated header, or null when none is present
-     * @param ambientSpan the current ambient span ({@code Span.current()}); its context may be invalid and its
-     *     recording state distinguishes RECORD_ONLY from DROP for an unsampled same-trace parent
-     * @param canonicalTraceId the canonical execution trace ID (used for the ambient same-trace check and the sampler)
-     * @param spanName the span name passed to the sampler
-     * @param attributes the attributes the span is started with
-     * @return the resolved {@link SamplingResult}, or {@code null} when the first fallback root resolves a visible
-     *     replacement's policy or the agent-side {@link DurableSampler} resolves its own delegate
+     * Resolves the provider's full sampling result once per invocation using the stable propagated parent and canonical
+     * trace ID. Ambient spans and synthesized ancestors must not feed a new decision back into a ParentBased policy.
+     * Foreign/opaque durable samplers resolve in their own loader, preserving attributes and trace state. A plain
+     * replacement retains normal per-span sampling; its fallback root supplies its own result at creation time.
      */
     static SamplingResult resolveSamplingResult(
             SdkTracerProvider sdkTracerProvider,
             ExtractedContext extracted,
-            Span ambientSpan,
             String canonicalTraceId,
             String spanName,
             Attributes attributes) {
-        // 1. An explicit upstream decision is authoritative.
-        if (extracted != null) {
-            switch (extracted.sampling()) {
-                case SAMPLED:
-                    return SamplingResult.recordAndSample();
-                case NOT_SAMPLED:
-                    return SamplingResult.drop();
-                case UNDECIDED:
-                    break;
-            }
-        }
-        // 2. No explicit decision: follow a valid same-trace ambient span's established decision. The sampled bit alone
-        // cannot distinguish RECORD_ONLY (recording, unsampled) from DROP (not recording, unsampled), so a sampled bit
-        // maps to RECORD_AND_SAMPLE, an unsampled-but-recording span maps to RECORD_ONLY (its spans still reach
-        // processors), and only an unsampled, non-recording span maps to DROP.
-        var ambient = ambientSpan != null ? ambientSpan.getSpanContext() : null;
-        if (ambient != null && ambient.isValid() && ambient.getTraceId().equals(canonicalTraceId)) {
-            if (ambient.getTraceFlags().isSampled()) {
-                return SamplingResult.recordAndSample();
-            }
-            return ambientSpan.isRecording() ? SamplingResult.recordOnly() : SamplingResult.drop();
-        }
-        // 3. Resolve a local durable sampler's full result, or a visible replacement's root policy for ancestor flags.
-        // A foreign DurableSampler still resolves in its own loader to retain full attributes and trace state.
-        // A plain replacement receives no carrier; the provider keeps its normal per-span sampling behavior.
-        // A visible plain sampler resolves a fallback ancestor through its actual root span below. Probing it
-        // first would consume a stateful policy before any span exists. Preserve the legacy remote-parent path.
-        if (sdkTracerProvider != null
-                && (usesLocalDurableSampler(sdkTracerProvider)
-                        || (!usesDurableSamplingBridge(sdkTracerProvider)
-                                && extracted != null
-                                && extracted.hasCompleteRemoteParent()))) {
+        if (usesLocalDurableSampler(sdkTracerProvider)) {
             return sdkTracerProvider
                     .getSampler()
                     .shouldSample(
-                            Context.root(),
+                            samplingParent(extracted),
                             canonicalTraceId,
                             spanName,
                             SpanKind.INTERNAL,
                             attributes,
                             Collections.emptyList());
         }
-        // 4. A plain fallback root, or an agent provider not visible from this loader, resolves at span creation. The
-        // agent's effective sampler
-        // is whatever the autoconfiguration pipeline finally installs — a recognized configured sampler can be wrapped
-        // or replaced by another extension's customizer, so it cannot be reliably reconstructed from environment
-        // settings here. Return null so the agent-installed DurableSampler consults its actual delegate once per
-        // execution and caches the result, honoring the customer's effective policy (including drop/rate-limit).
         return null;
     }
 
+    /** The original remote parent, never a per-invocation ambient span or a synthesized ancestor. */
+    static Context samplingParent(ExtractedContext extracted) {
+        if (extracted == null || !extracted.hasCompleteRemoteParent()) return Context.root();
+        // X-Ray carries no tracestate. A valid parent with no sampled flag is unsampled, not absent.
+        var flags = extracted.sampling() == ExtractedContext.Sampling.SAMPLED
+                ? TraceFlags.getSampled()
+                : TraceFlags.getDefault();
+        return Context.root()
+                .with(Span.wrap(SpanContext.createFromRemoteParent(
+                        extracted.traceId(), extracted.parentSpanId(), flags, TraceState.getDefault())));
+    }
+
+    /** A known dropped ambient span cannot anchor exported durable spans. */
+    static boolean usableAmbientParent(Span ambient, String canonicalTraceId) {
+        var context = ambient.getSpanContext();
+        return context.isValid()
+                && context.getTraceId().equals(canonicalTraceId)
+                && (context.isSampled() || ambient.isRecording());
+    }
+
     /**
-     * True when the decision records and samples, used to derive the (never-exported) execution-ancestor trace flags. A
-     * {@code null} decision is unresolved (deferred to the agent-side sampler); it defaults the ancestor flag to
-     * sampled so a parent-based delegate is not biased toward dropping, while the agent-side {@link DurableSampler}
-     * still makes the authoritative per-span decision from its real delegate.
+     * Provisional synthetic-ancestor flags. A deferred result is resolved by the actual root span before descendants
+     * are created. Neither these flags nor the synthesized ancestor are inputs to the configured sampler.
      */
     static boolean isSampled(SamplingResult samplingResult) {
         return samplingResult == null
