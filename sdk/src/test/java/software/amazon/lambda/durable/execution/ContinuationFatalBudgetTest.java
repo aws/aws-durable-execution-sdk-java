@@ -18,7 +18,7 @@ class ContinuationFatalBudgetTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     @Timeout(10)
-    void admittedContinuationMustSettleBeforeFatalClose(boolean reportWhileClosing) throws Exception {
+    void admittedContinuationMustExitBeforeFatalClose(boolean reportWhileClosing) throws Exception {
         var input = new DurableExecutionInput(
                 "arn:aws:lambda:us-east-1:123456789012:function:test/durable-execution/budget/execution",
                 "token",
@@ -40,6 +40,7 @@ class ContinuationFatalBudgetTest {
         var caller = Executors.newSingleThreadExecutor();
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
+        var bodyExited = new CountDownLatch(1);
         var fatal = new InternalError("simulated invocation fatal");
         var selected = manager.runUntilCompleteOrSuspend(new CompletableFuture<String>());
         var observed = manager.runCheckpointContinuation(
@@ -50,6 +51,8 @@ class ContinuationFatalBudgetTest {
                     } catch (InterruptedException failure) {
                         Thread.currentThread().interrupt();
                         throw new AssertionError(failure);
+                    } finally {
+                        bodyExited.countDown();
                     }
                 },
                 worker);
@@ -69,14 +72,15 @@ class ContinuationFatalBudgetTest {
                 manager.recordInvocationFatal(fatal);
             }
             assertThrows(TimeoutException.class, () -> closing.get(700, TimeUnit.MILLISECONDS));
+            assertEquals(1, bodyExited.getCount(), "The continuation body is still held");
             assertFalse(observed.isDone(), "The actual continuation is still owned while held");
             release.countDown();
             var closeFailure = closing.get(2, TimeUnit.SECONDS);
             if (closeFailure != null) assertSame(fatal, ExceptionHelper.unwrapAsyncFailure(closeFailure));
             assertSame(
                     fatal, ExceptionHelper.unwrapAsyncFailure(assertThrows(CompletionException.class, selected::join)));
-            assertTrue(observed.isDone(), "Close must await actual continuation settlement");
-            release.countDown();
+            assertEquals(0, bodyExited.getCount(), "Close must await actual continuation exit");
+            // Observer publication follows lease release so its inline callbacks can safely call close again.
             observed.get(2, TimeUnit.SECONDS);
         } finally {
             release.countDown();
