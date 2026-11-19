@@ -80,10 +80,41 @@ public class DurableExecutor {
             manager.registerActiveThread(ROOT_THREAD_ID);
             var invocation = new Invocation<>(input, lambdaContext, inputType, handler, config, manager);
             try {
-                return invocation.execute().join();
-            } catch (CompletionException failure) {
-                ExceptionHelper.sneakyThrow(ExceptionHelper.unwrapCompletableFuture(failure));
+                var completion = invocation.execute();
+                var ready = invocation.outcome.applyToEither(
+                        completion.handle((ignored, failure) -> new Outcome<O>(null, failure)), Function.identity());
+                var selected = manager.awaitInvocationOutcome(ready);
+                var originalFailure = selected.failure() != null
+                        ? selected.failure()
+                        : ExceptionHelper.unwrapInvocationFailure(
+                                selected.result().failure());
+                var finalFailure = manager.finishInvocation(originalFailure);
+                var completedFailure = completion.isDone()
+                        ? completion
+                                .handle((ignored, failure) -> ExceptionHelper.unwrapInvocationFailure(failure))
+                                .join()
+                        : null;
+                if (ExecutionManager.isFatal(completedFailure)) ExceptionHelper.sneakyThrow(completedFailure);
+                if (ExecutionManager.isFatal(finalFailure)) ExceptionHelper.sneakyThrow(finalFailure);
+                if (ExecutionManager.isLifecycleFailure(finalFailure) && manager.isTerminalExecutionAcknowledged()) {
+                    // ACK outranks a lifecycle cutoff, not an unrelated failure already reported by delivery.
+                    if (completedFailure != null && !ExecutionManager.isLifecycleFailure(completedFailure))
+                        ExceptionHelper.sneakyThrow(completedFailure);
+                    return DurableExecutionOutput.success("");
+                }
+                if (finalFailure != null && (selected.failure() != null || finalFailure != originalFailure))
+                    ExceptionHelper.sneakyThrow(finalFailure);
+                // Preserve the stored failure after control precedence; newer JDKs wrap join() cancellation.
+                if (completedFailure != null) ExceptionHelper.sneakyThrow(completedFailure);
+                return completion.join();
+            } catch (Throwable failure) {
+                var originalFailure = ExceptionHelper.unwrapInvocationFailure(failure);
+                // Finalize synchronous admission/dispatch failures before automatic close observes them again.
+                var finalFailure = manager.finishInvocation(originalFailure);
+                ExceptionHelper.sneakyThrow(finalFailure != null ? finalFailure : originalFailure);
                 return null;
+            } finally {
+                manager.markInvocationReported();
             }
         }
     }
@@ -102,6 +133,8 @@ public class DurableExecutor {
         private final String xRayTraceId;
         private I userInput;
         private boolean started;
+        private boolean ended;
+        private CompletableFuture<Outcome<O>> outcome;
         private final AtomicReference<Error> losingBodyFatal = new AtomicReference<>();
 
         private Invocation(
@@ -128,9 +161,10 @@ public class DurableExecutor {
             var body = new CompletableFuture<O>();
             // Select the invocation outcome before scheduling, including with an inline executor. A suspension or
             // termination can win while the handler is still unwinding; its finally block must not replace it.
-            var outcome = manager.runUntilCompleteOrSuspend(body).handle(Outcome<O>::new);
+            outcome = manager.runUntilCompleteOrSuspend(body).handle(Outcome<O>::new);
             Supplier<DurableExecutionOutput> task = () -> {
                 var bodyOutcome = Outcome.capture(this::invokeHandler);
+                manager.markRootHandlerExited();
                 bodyOutcome.complete(body);
                 var selected = outcome.join();
                 var selectedCause = ExceptionHelper.unwrapInvocationFailure(selected.failure());
@@ -152,7 +186,13 @@ public class DurableExecutor {
                     // No terminal response exists yet, so the service must retry this invocation. Plugins still
                     // need their end hook. Classifying this as a handler failure would mark the execution FAILED,
                     // so it is reported as a delivery failure: RETRYING, then the original exception is rethrown.
-                    return failDelivery(drainFailure);
+                    var selectedFailure = ExceptionHelper.unwrapInvocationFailure(selected.failure());
+                    if (ExecutionManager.isFatal(selectedFailure)) {
+                        var diagnostic = ExecutionManager.ownerDrainDiagnostic(drainFailure);
+                        if (selectedFailure != diagnostic) selectedFailure.addSuppressed(diagnostic);
+                        return failDelivery(selectedFailure);
+                    }
+                    return failDelivery(ExecutionManager.selectOwnerDrainFailure(drainFailure));
                 } catch (Error fatal) {
                     return failDelivery(fatal);
                 }
@@ -172,16 +212,36 @@ public class DurableExecutor {
                 // Deserialize only once. Even failed input gets paired start/end hooks with a null input value.
                 inputFailure = failure;
             }
+            checkInputAdmission(inputFailure);
             fireOnInvocationStart();
+            checkInputAdmission(inputFailure);
             if (inputFailure != null) ExceptionHelper.sneakyThrow(inputFailure);
             var context = DurableContextImpl.createRootContext(manager, config, lambdaContext);
             DurableContextImpl.setCurrentContext(context);
             try (var ignored = DurableLogger.attachContext()) {
                 return plugins.runHandler(
-                        () -> handler.apply(userInput, context),
+                        () -> {
+                            manager.checkUserFunctionExecutionAllowed();
+                            return handler.apply(userInput, context);
+                        },
                         () -> {},
                         manager::recordHandlerScopeFatal,
                         manager::recordRootHandlerFatal);
+            }
+        }
+
+        private void checkInputAdmission(Throwable inputFailure) {
+            try {
+                manager.checkUserFunctionExecutionAllowed();
+            } catch (Throwable admissionFailure) {
+                // Keep existing input Start/End behavior while admission remains open. If it closes during input
+                // preparation, the captured JVM fatal must win without starting any additional plugin or user work.
+                var inputCause = ExceptionHelper.unwrapInvocationFailure(inputFailure);
+                if (isFatal(inputCause)) {
+                    manager.recordInvocationFatal((Error) inputCause);
+                    throw manager.getInvocationFatal();
+                }
+                ExceptionHelper.sneakyThrow(admissionFailure);
             }
         }
 
@@ -205,6 +265,12 @@ public class DurableExecutor {
         private DurableExecutionOutput finishInvocation(O value, Throwable failure) {
             var fatal = manager.getInvocationFatal();
             if (fatal != null) return finishFailure(fatal);
+            if (manager.isInvocationReported())
+                return failDelivery(
+                        manager.getLifecycleFailure() != null
+                                ? manager.getLifecycleFailure()
+                                : new IllegalStateException("Invocation has already returned"));
+            if (manager.getLifecycleFailure() != null) return failDelivery(manager.getLifecycleFailure());
             // A withdrawn token means this invocation must stop and report PENDING. That overrides a handler success,
             // a handler failure, and a retryable failure, so it is checked before any of them.
             if (manager.isCheckpointTokenRevoked())
@@ -217,7 +283,7 @@ public class DurableExecutor {
             } catch (Throwable deliveryFailure) {
                 // Checkpointing a large result fails with SuspendExecutionException when the token is already gone.
                 // That is a suspension, not a delivery error, so it reports PENDING rather than RETRYING.
-                if (ExceptionHelper.unwrapCompletableFuture(deliveryFailure) instanceof SuspendExecutionException) {
+                if (ExceptionHelper.unwrapInvocationFailure(deliveryFailure) instanceof SuspendExecutionException) {
                     return finishFailure(new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE));
                 }
                 return failDelivery(deliveryFailure);
@@ -273,7 +339,21 @@ public class DurableExecutor {
         }
 
         private void fireOnInvocationEnd(InvocationStatus status, Throwable error, Object result) {
-            if (!started) return;
+            if (!started || ended) return;
+            ended = true;
+            // End stays on its actual owner, including after a cutoff requested cancellation. The defensive
+            // reported-state guard must never reopen work or prepare another execution result.
+            var lifecycleFailure = manager.getLifecycleFailure();
+            var terminal = status == InvocationStatus.SUCCEEDED || status == InvocationStatus.FAILED;
+            if ((manager.isInvocationReported() || (terminal && lifecycleFailure != null))
+                    && !manager.isTerminalExecutionAcknowledged()
+                    && !ExecutionManager.isFatal(error)) {
+                status = InvocationStatus.RETRYING;
+                error = lifecycleFailure != null
+                        ? lifecycleFailure
+                        : new IllegalStateException("Invocation already ended before owner cleanup");
+                result = null;
+            }
             plugins.onInvocationEnd(new InvocationEndInfo(
                     requestId,
                     executionArn,
@@ -546,14 +626,13 @@ public class DurableExecutor {
                     LAMBDA_RESPONSE_SIZE_LIMIT);
 
             // Checkpoint the large result and wait for it to complete
-            executionManager
-                    .sendExecutionResultUpdate(OperationUpdate.builder()
+            executionManager.awaitCheckpointCompletion(
+                    executionManager.sendExecutionResultUpdate(OperationUpdate.builder()
                             .type(OperationType.EXECUTION)
                             .id(executionManager.getExecutionOperation().id())
                             .action(OperationAction.SUCCEED)
                             .payload(outputPayload)
-                            .build())
-                    .join();
+                            .build()));
 
             // Return empty result, we checkpointed the data manually
             logger.debug("Execution completed (large response checkpointed)");

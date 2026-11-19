@@ -19,6 +19,7 @@ import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.DurableConfig;
 import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.execution.DurableExecutor;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
@@ -147,10 +148,19 @@ class LegacyEndThreadProbeTest {
     private static void awaitCallerJoin(Thread caller) {
         var end = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
         while (System.nanoTime() < end) {
-            if (caller.getState() == Thread.State.WAITING
-                    && Arrays.stream(caller.getStackTrace())
+            var state = caller.getState();
+            var frames = caller.getStackTrace();
+            var legacyJoin = Arrays.stream(frames)
+                    .anyMatch(frame -> frame.getClassName().equals(CompletableFuture.class.getName())
+                            && frame.getMethodName().equals("join"));
+            var budgetedWait = Arrays.stream(frames)
+                            .anyMatch(frame -> frame.getClassName().equals(ExecutionManager.class.getName())
+                                    && frame.getMethodName().equals("awaitInvocationOutcome"))
+                    && Arrays.stream(frames)
                             .anyMatch(frame -> frame.getClassName().equals(CompletableFuture.class.getName())
-                                    && frame.getMethodName().equals("join"))) return;
+                                    && frame.getMethodName().equals("get"));
+            if ((state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING) && (legacyJoin || budgetedWait))
+                return;
             LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
         }
         fail("invocation caller did not reach its future join before releasing the handler");
