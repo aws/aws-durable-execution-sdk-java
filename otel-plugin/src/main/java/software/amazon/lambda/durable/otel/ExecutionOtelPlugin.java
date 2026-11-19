@@ -622,12 +622,15 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
 
         var key = attemptKey(info.id(), info.attempt());
 
-        // A late user-function End still closes the scope on the owning thread.
-        attemptScopes.close(key);
-
-        // Clear span-level MDC after user function completes (keep traceId for handler-level logs between steps)
-        if (enableMdc) {
-            MDC.remove(MdcSpanEnricher.MDC_SPAN_ID);
+        try {
+            // A late user-function End still closes the scope on the owning thread.
+            attemptScopes.close(key);
+        } finally {
+            // Clear span-level MDC after user function completes (keep traceId for handler-level logs between
+            // steps), even if closing the scope throws.
+            if (enableMdc) {
+                MDC.remove(MdcSpanEnricher.MDC_SPAN_ID);
+            }
         }
 
         if (ended) return;

@@ -104,6 +104,32 @@ class ExecutionOtelPluginTest {
         assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
     }
 
+    @Test
+    void userFunction_withMdcDisabled_doesNotInjectSpanId() {
+        var disabledPlugin = started(factory, new InvocationInfo("req-1", ARN, true, Instant.now()));
+
+        disabledPlugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "step", "STEP", "Step", null, Instant.now(), false, 1));
+        assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID), "spanId should not be injected when MDC is disabled");
+        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID), "traceId should not be injected when MDC is disabled");
+
+        disabledPlugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1",
+                "step",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
+        assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
+
+        disabledPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+    }
+
     // ─── Java agent path (global provider) ───────────────────────────────
 
     @Test
