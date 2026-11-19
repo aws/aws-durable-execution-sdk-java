@@ -261,6 +261,14 @@ public abstract class BaseDurableOperation {
                 throw terminateExecutionWithIllegalDurableOperationException(
                         String.format("%s operation not found: %s", getType(), getOperationId()));
             }
+            // An operation that completed while the execution was suspended is the first new event of this
+            // invocation. Once its result is consumed, the code that follows is no longer a replay, so leave
+            // replay mode and stop suppressing the handler's logs.
+            if (replayCompletedOperation.get()
+                    && durableContext.isReplaying()
+                    && executionManager.isOperationUpdatedSinceLastInvocation(getOperationId())) {
+                durableContext.setExecutionMode();
+            }
             return op;
         }
     }
