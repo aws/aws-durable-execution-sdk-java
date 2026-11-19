@@ -625,6 +625,11 @@ public final class ExecutionOtelPlugin implements DurableExecutionPlugin {
         // A late user-function End still closes the scope on the owning thread.
         attemptScopes.close(key);
 
+        // Clear span-level MDC after user function completes (keep traceId for handler-level logs between steps)
+        if (enableMdc) {
+            MDC.remove(MdcSpanEnricher.MDC_SPAN_ID);
+        }
+
         if (ended) return;
 
         // CONTEXT operations don't have attempt spans — scope cleanup is all we need

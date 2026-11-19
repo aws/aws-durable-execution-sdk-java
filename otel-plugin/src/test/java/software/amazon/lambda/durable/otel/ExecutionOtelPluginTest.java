@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import software.amazon.lambda.durable.execution.SuspendExecutionException;
 import software.amazon.lambda.durable.plugin.*;
 
@@ -66,6 +67,41 @@ class ExecutionOtelPluginTest {
         DeterministicIdGenerator.clearSharedStateForTest();
         DurableSamplingDecision.clearSharedStateForTest();
         OtelPluginAutoConfigurationState.resetInstalledForTest();
+    }
+
+    @Test
+    void onUserFunctionEnd_withMdcEnabled_clearsSpanIdButKeepsTraceId() {
+        var mdcPluginFactory = ExecutionOtelPlugin.factory(
+                SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(InMemorySpanExporter.create())),
+                OtelPluginConfig.builder()
+                        .contextExtractor(() -> null)
+                        .enableMdc(true)
+                        .workflowSpanName("Workflow")
+                        .build());
+        var mdcPlugin = started(mdcPluginFactory, new InvocationInfo("req-1", ARN, true, Instant.now()));
+
+        mdcPlugin.onUserFunctionStart(
+                new UserFunctionStartInfo("op-1", "step", "STEP", "Step", null, Instant.now(), false, 1));
+        assertNotNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID));
+
+        mdcPlugin.onUserFunctionEnd(new UserFunctionEndInfo(
+                "op-1",
+                "step",
+                "STEP",
+                "Step",
+                null,
+                Instant.now(),
+                Instant.now(),
+                false,
+                1,
+                UserFunctionOutcome.SUCCEEDED,
+                null));
+
+        assertNull(MDC.get(MdcSpanEnricher.MDC_SPAN_ID), "spanId should be cleared after the attempt ends");
+        assertNotNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID), "traceId should persist between steps");
+
+        mdcPlugin.onInvocationEnd(new InvocationEndInfo("req-1", ARN, true, InvocationStatus.SUCCEEDED, null));
+        assertNull(MDC.get(MdcSpanEnricher.MDC_TRACE_ID));
     }
 
     // ─── Java agent path (global provider) ───────────────────────────────
