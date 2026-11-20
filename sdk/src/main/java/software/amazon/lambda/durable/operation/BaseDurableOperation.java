@@ -685,6 +685,10 @@ public abstract class BaseDurableOperation {
                         : null;
             case CONTEXT ->
                 operation.contextDetails() != null ? operation.contextDetails().error() : null;
+            case DISTRIBUTED_MAP ->
+                operation.distributedMapDetails() != null
+                        ? operation.distributedMapDetails().error()
+                        : null;
             default -> null;
         };
     }
