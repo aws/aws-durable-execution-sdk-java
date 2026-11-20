@@ -17,6 +17,7 @@ import software.amazon.lambda.durable.plugin.InvocationEndInfo;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
 import software.amazon.lambda.durable.plugin.InvocationStatus;
 import software.amazon.lambda.durable.plugin.OperationChangeItemInfo;
+import software.amazon.lambda.durable.telemetry.exporters.CloudWatchLogsExporter;
 import software.amazon.lambda.durable.telemetry.exporters.LambdaLogExporter;
 import software.amazon.lambda.durable.telemetry.internal.FatalErrors;
 
@@ -80,15 +81,30 @@ public final class DurableExecutionTelemetry {
             // so without this a custom exporter that mutates operations or nested content would corrupt every
             // other exporter's view of the same record.
             DurableExecutionTelemetryRecord isolated = record.deepCopy();
-            DurableExecutionTelemetryRecord shaped = exporter instanceof LambdaLogExporter lambdaLog
-                    ? Truncation.truncateMeasured(isolated, exporter.maxRecordSizeBytes(), lambdaLog::renderedSize)
-                    : Truncation.truncateRecord(isolated, exporter.maxRecordSizeBytes(), exporter::render);
-            exporter.export(shaped);
+            exporter.export(shapedForExport(isolated, exporter));
         } catch (Throwable t) {
             // Ordinary Errors (such as missing optional dependencies) are isolated too.
             // logSafely rethrows VM/thread termination before logging or continuing.
             logSafely("exporter failed", t);
         }
+    }
+
+    /**
+     * Built-in exporters render the record JSON, or that JSON embedded once as a string. The shrink bound covers two
+     * copies so {@code OperationsFormat.BOTH} (the array and the by-name map) drops the same operations as checking
+     * every step. {@link LambdaLogExporter} already measures its line with one copy. A custom exporter is not in the
+     * built-in package and keeps a check after every drop.
+     */
+    static DurableExecutionTelemetryRecord shapedForExport(
+            DurableExecutionTelemetryRecord record, TelemetryExporter exporter) {
+        Integer limit = exporter.maxRecordSizeBytes();
+        if (exporter instanceof LambdaLogExporter lambdaLog) {
+            return Truncation.truncateMeasured(record, limit, lambdaLog::renderedSize);
+        }
+        if (exporter.getClass().getPackageName().equals(CloudWatchLogsExporter.class.getPackageName())) {
+            return Truncation.truncateMeasured(record, limit, r -> Json.byteSize(exporter.render(r)), 2);
+        }
+        return Truncation.truncateRecord(record, limit, exporter::render);
     }
 
     /**

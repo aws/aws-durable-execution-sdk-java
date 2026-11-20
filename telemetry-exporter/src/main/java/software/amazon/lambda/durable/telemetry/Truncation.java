@@ -36,7 +36,7 @@ public final class Truncation {
             DurableExecutionTelemetryRecord record,
             Integer maxBytes,
             Function<DurableExecutionTelemetryRecord, Object> render) {
-        return truncate(record, maxBytes, r -> Json.byteSize(render.apply(r)), false);
+        return truncate(record, maxBytes, r -> Json.byteSize(render.apply(r)), false, 1);
     }
 
     /**
@@ -50,7 +50,21 @@ public final class Truncation {
             DurableExecutionTelemetryRecord record,
             Integer maxBytes,
             Function<DurableExecutionTelemetryRecord, Integer> size) {
-        return truncate(record, maxBytes, size, true);
+        return truncateMeasured(record, maxBytes, size, 1);
+    }
+
+    /**
+     * {@link #truncateMeasured(DurableExecutionTelemetryRecord, Integer, Function)} when the rendering contains
+     * {@code representations} copies of each operation, such as {@code OperationsFormat.BOTH} (the operations array and
+     * the by-name map). The shrink bound is that many times one copy, so a check is skipped only when it still could
+     * not succeed. A larger bound skips fewer checks and drops the same operations.
+     */
+    static DurableExecutionTelemetryRecord truncateMeasured(
+            DurableExecutionTelemetryRecord record,
+            Integer maxBytes,
+            Function<DurableExecutionTelemetryRecord, Integer> size,
+            int representations) {
+        return truncate(record, maxBytes, size, true, representations);
     }
 
     /**
@@ -64,7 +78,8 @@ public final class Truncation {
             DurableExecutionTelemetryRecord record,
             Integer maxBytes,
             Function<DurableExecutionTelemetryRecord, Integer> size,
-            boolean bounded) {
+            boolean bounded,
+            int representations) {
         if (maxBytes == null || maxBytes <= 0) {
             return record;
         }
@@ -94,7 +109,7 @@ public final class Truncation {
         boolean[] kept = new boolean[ops.size()];
         java.util.Arrays.fill(kept, true);
         int[] order = oldestFirstOrder(ops);
-        long[] shrinkBound = bounded ? shrinkBounds(ops) : null;
+        long[] shrinkBound = bounded ? shrinkBounds(ops, representations) : null;
         Meter meter = new Meter(size, maxBytes, bounded);
 
         boolean[] anyResultDropped = {false};
@@ -159,23 +174,23 @@ public final class Truncation {
 
     /**
      * Upper bound, per operation, on how much dropping its result or the whole operation can shrink the rendering: the
-     * operation's JSON and its name, sized as if escaped again inside a JSON string, plus {@link #SHRINK_SLACK_BYTES}.
-     * Each operation is serialized once.
+     * operation's JSON and its name, sized as if escaped again inside a JSON string, plus {@link #SHRINK_SLACK_BYTES},
+     * times {@code representations} when the rendering contains that many copies. Each operation is serialized once.
      */
-    private static long[] shrinkBounds(List<OperationRecord> ops) {
+    private static long[] shrinkBounds(List<OperationRecord> ops, int representations) {
         long[] bounds = new long[ops.size()];
         for (int i = 0; i < bounds.length; i++) {
             OperationRecord op = ops.get(i);
-            long bound = SHRINK_SLACK_BYTES;
+            long one = SHRINK_SLACK_BYTES;
             try {
-                bound += Json.escapedUtf8Size(Json.stringify(op.toWireMap()));
+                one += Json.escapedUtf8Size(Json.stringify(op.toWireMap()));
                 if (op.name() != null) {
-                    bound += Json.escapedUtf8Size(Json.stringify(op.name()));
+                    one += Json.escapedUtf8Size(Json.stringify(op.name()));
                 }
+                bounds[i] = one * representations;
             } catch (IllegalStateException e) {
-                bound = Long.MAX_VALUE / 4; // Unknown: never skip a check after dropping this operation.
+                bounds[i] = Long.MAX_VALUE / 4; // Unknown: never skip a check after dropping this operation.
             }
-            bounds[i] = bound;
         }
         return bounds;
     }
