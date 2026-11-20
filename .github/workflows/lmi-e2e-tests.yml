@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: corretto
           # Enforce the SDK's minimum JDK API compatibility for fixture-only changes.
@@ -48,7 +48,7 @@ jobs:
       CAPACITY_PROVIDER_ARN: ${{ secrets.CAPACITY_PROVIDER_ARN }}
       TEST_LAMBDA_EXECUTION_ROLE_ARN: ${{ secrets.TEST_LAMBDA_EXECUTION_ROLE_ARN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate configuration
         shell: bash
         run: |
@@ -57,7 +57,7 @@ jobs:
           test -n "$TEST_LAMBDA_EXECUTION_ROLE_ARN"
           region=$(cut -d: -f4 <<< "$CAPACITY_PROVIDER_ARN")
           echo "AWS_REGION=$region" >> "$GITHUB_ENV"
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: corretto
           java-version: '25'
@@ -102,7 +102,7 @@ jobs:
           fi
       - name: Publish failure evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lmi-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           retention-days: 7

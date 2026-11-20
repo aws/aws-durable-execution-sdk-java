@@ -71,12 +71,12 @@ jobs:
           - 25
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'milestone' && github.event.repository.default_branch || github.ref }}
 
       - name: Setup Java ${{ matrix.java }}
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: corretto
           java-version: ${{ matrix.java }}
@@ -145,7 +145,7 @@ jobs:
 
       - name: Configure GitHub Pages
         if: ${{ matrix.java == 17 }}
-        uses: actions/configure-pages@v6
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
       - name: Prepare GitHub Pages artifact
         if: ${{ matrix.java == 17 }}
@@ -158,7 +158,7 @@ jobs:
 
       - name: Upload GitHub Pages artifact
         if: ${{ matrix.java == 17 }}
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: github-pages
 
@@ -173,4 +173,4 @@ jobs:
     steps:
       - name: Deploy GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
