@@ -22,7 +22,8 @@ public enum OperationSubType {
     PARALLEL_BRANCH(OperationType.CONTEXT, "ParallelBranch"),
     WAIT_FOR_CALLBACK(OperationType.CONTEXT, "WaitForCallback"),
     WAIT_FOR_CONDITION(OperationType.STEP, "WaitForCondition"),
-    WITH_RETRY(OperationType.CONTEXT, "WithRetry");
+    WITH_RETRY(OperationType.CONTEXT, "WithRetry"),
+    DISTRIBUTED_MAP(OperationType.DISTRIBUTED_MAP, "DistributedMap");
 
     private final OperationType operationType;
     private final String value;
