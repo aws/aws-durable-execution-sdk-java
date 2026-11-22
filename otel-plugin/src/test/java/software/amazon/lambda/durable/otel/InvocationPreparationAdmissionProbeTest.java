@@ -21,6 +21,7 @@ import software.amazon.lambda.durable.TypeToken;
 import software.amazon.lambda.durable.config.*;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.DurableExecutor;
+import software.amazon.lambda.durable.execution.ExecutionManager;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
 import software.amazon.lambda.durable.model.ExecutionStatus;
 import software.amazon.lambda.durable.model.WaitForConditionResult;
@@ -273,7 +274,9 @@ class InvocationPreparationAdmissionProbeTest {
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
         while (System.nanoTime() < deadline) {
             if (Arrays.stream(root.getStackTrace())
-                    .anyMatch(frame -> frame.getMethodName().equals("waitForRunningUserHandlers"))) return;
+                    .anyMatch(frame -> frame.getClassName().equals(ExecutionManager.class.getName())
+                            && (frame.getMethodName().equals("waitForRunningUserHandlers")
+                                    || frame.getMethodName().equals("waitForRunningUserHandlersUntil")))) return;
             LockSupport.parkNanos(100_000);
         }
         fail("Root did not begin draining the pending child");
