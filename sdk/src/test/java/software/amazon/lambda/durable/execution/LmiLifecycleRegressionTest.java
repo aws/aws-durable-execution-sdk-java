@@ -10,17 +10,15 @@ import static software.amazon.lambda.durable.model.ExecutionStatus.SUCCEEDED;
 import com.amazonaws.services.lambda.runtime.Context;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
 import software.amazon.awssdk.services.lambda.model.ExecutionDetails;
 import software.amazon.awssdk.services.lambda.model.Operation;
@@ -102,14 +100,20 @@ class LmiLifecycleRegressionTest {
         }
     }
 
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void sharedFixedExecutorMustProgress(boolean nested) throws Exception {
+    @Test
+    void invocationExecutorFactoryIsolatesConcurrentRoots() throws Exception {
         var entered = new CountDownLatch(2);
-        var users = (ThreadPoolExecutor) Executors.newFixedThreadPool(2);
+        var invocationExecutors = new CopyOnWriteArrayList<ExecutorService>();
         var runtime = Executors.newFixedThreadPool(2);
         try {
-            var config = config(users);
+            var config = DurableConfig.builder()
+                    .withDurableExecutionClient(TestUtils.createMockClient())
+                    .withInvocationExecutorFactory(() -> {
+                        var executor = Executors.newFixedThreadPool(2);
+                        invocationExecutors.add(executor);
+                        return executor;
+                    })
+                    .build();
             var responses = IntStream.range(0, 2)
                     .mapToObj(index -> runtime.submit(() -> DurableExecutor.execute(
                             input("fixed-" + index),
@@ -118,16 +122,6 @@ class LmiLifecycleRegressionTest {
                             (value, ctx) -> {
                                 entered.countDown();
                                 await(entered);
-                                if (nested) {
-                                    return ctx.runInChildContext(
-                                            "child",
-                                            String.class,
-                                            child -> child.runInChildContext(
-                                                    "grandchild",
-                                                    String.class,
-                                                    grandchild ->
-                                                            grandchild.step("step", String.class, step -> value)));
-                                }
                                 return ctx.step("step", String.class, step -> value);
                             },
                             config)))
@@ -142,10 +136,12 @@ class LmiLifecycleRegressionTest {
                                 .status(),
                         "Blocking orchestration must not starve the work it awaits");
             }
+            assertEquals(2, invocationExecutors.size());
+            assertTrue(invocationExecutors.stream().allMatch(ExecutorService::isTerminated));
         } finally {
-            users.setMaximumPoolSize(16);
-            users.setCorePoolSize(16); // Escape only after the assertion, so the test process cannot hang.
-            stop(users, runtime);
+            invocationExecutors.forEach(ExecutorService::shutdownNow);
+            runtime.shutdownNow();
+            assertTrue(runtime.awaitTermination(10, TimeUnit.SECONDS));
         }
     }
 

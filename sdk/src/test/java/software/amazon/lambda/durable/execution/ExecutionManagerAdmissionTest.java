@@ -266,7 +266,10 @@ class ExecutionManagerAdmissionTest {
     @ValueSource(booleans = {false, true})
     void admittedContextTasksCanRegisterDescendantsWithoutLeakingAdmission(boolean coordinator) throws Exception {
         var executor = Executors.newSingleThreadExecutor();
+        manager.close();
         when(config.getExecutorService()).thenReturn(executor);
+        manager = createManager();
+        manager.registerActiveThread(null);
         var parent =
                 contextOperation("parent", coordinator ? OperationSubType.MAP : OperationSubType.RUN_IN_CHILD_CONTEXT);
         var descendant = step("descendant");
@@ -311,7 +314,10 @@ class ExecutionManagerAdmissionTest {
                 })
                 .when(inline)
                 .execute(any(Runnable.class));
+        manager.close();
         when(config.getExecutorService()).thenReturn(inline);
+        manager = createManager();
+        manager.registerActiveThread(null);
         var other = createManager();
         var parent = contextOperation("parent", OperationSubType.RUN_IN_CHILD_CONTEXT);
         var nested = contextOperation("nested", OperationSubType.RUN_IN_CHILD_CONTEXT);

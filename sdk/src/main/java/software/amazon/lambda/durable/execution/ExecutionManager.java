@@ -11,6 +11,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -78,6 +79,8 @@ public class ExecutionManager implements SafeCloseable {
     private static final Logger logger = LoggerFactory.getLogger(ExecutionManager.class);
 
     private static final AtomicLong LOCAL_INVOCATION_SEQUENCE = new AtomicLong();
+    private static final Set<ExecutorService> ACTIVE_INVOCATION_EXECUTORS =
+            Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
 
     // Stop waiting for the root early enough to cancel tasks and flush checkpoints before the platform deadline.
     private static final Duration EXECUTION_DEADLINE_HEADROOM = Duration.ofMillis(500);
@@ -88,6 +91,7 @@ public class ExecutionManager implements SafeCloseable {
     private static final Duration MAX_CLEANUP_DURATION = Duration.ofSeconds(30);
     private static final Duration MAX_GRACEFUL_DRAIN_DURATION = Duration.ofSeconds(5);
     private static final Duration MAX_CANCELLATION_DRAIN_DURATION = Duration.ofSeconds(1);
+    private static final Duration EXECUTOR_SHUTDOWN_RESERVE = Duration.ofMillis(100);
     private static final Duration CHECKPOINT_CLEANUP_RESERVE = Duration.ofMillis(100);
     private static final String LIFECYCLE_ERROR_TYPE =
             "software.amazon.lambda.durable.execution.InvocationLifecycleException";
@@ -117,6 +121,8 @@ public class ExecutionManager implements SafeCloseable {
     private final Context lambdaContext;
     private final AtomicReference<ExecutionMode> executionMode;
     private final DurableConfig durableConfig;
+    private final ExecutorService executorService;
+    private final boolean ownsExecutorService;
     private final Set<String> updatedOperationIdsSinceLastInvocation;
     private final Set<String> initialOperationIds;
 
@@ -230,10 +236,80 @@ public class ExecutionManager implements SafeCloseable {
         if (executionOp == null) {
             throw new IllegalStateException("EXECUTION operation not found");
         }
-        logger.debug("DurableExecution.execute() called");
-        logger.debug("DurableExecutionArn: {}", durableExecutionArn);
-        logger.debug("Initial operations count: {}", operationStorage.size());
-        logger.debug("EXECUTION operation found: {}", executionOp.id());
+        var invocationExecutorFactory = config.getInvocationExecutorFactory();
+        if (invocationExecutorFactory.isPresent()) {
+            this.executorService = Objects.requireNonNull(
+                    invocationExecutorFactory.get().get(), "Invocation executor factory returned null");
+            this.ownsExecutorService = true;
+        } else {
+            this.executorService = config.getExecutorService();
+            this.ownsExecutorService = false;
+        }
+        var leaseAcquired = ownsExecutorService && ACTIVE_INVOCATION_EXECUTORS.add(executorService);
+        if (ownsExecutorService && !leaseAcquired) {
+            throw new IllegalStateException("Invocation executor factory returned an executor already in use");
+        }
+        try {
+            if (ownsExecutorService && executorService.isShutdown()) {
+                throw new IllegalStateException("Invocation executor factory returned a shutdown executor");
+            }
+            logger.debug("DurableExecution.execute() called");
+            logger.debug("DurableExecutionArn: {}", durableExecutionArn);
+            logger.debug("Initial operations count: {}", operationStorage.size());
+            logger.debug("EXECUTION operation found: {}", executionOp.id());
+        } catch (Throwable initializationFailure) {
+            if (leaseAcquired) initializationFailure = cleanupFailedExecutorInitialization(initializationFailure);
+            ExceptionHelper.sneakyThrow(initializationFailure);
+        }
+    }
+
+    private Throwable cleanupFailedExecutorInitialization(Throwable initializationFailure) {
+        var initial = inspectOwnedExecutorFailure(initializationFailure);
+        var initialCause = normalizeOwnedExecutorFailure(initial, null);
+        var initialFatal = isFatal(initialCause) ? (Error) initialCause : null;
+        var deadline = cleanupDeadlineNanos();
+        try {
+            Throwable cleanupFailure;
+            try {
+                // No SDK work has been dispatched. Avoid repeating the state callback that failed validation.
+                cleanupFailure = attemptOwnedExecutorShutdown(deadline, null, false, initialFatal);
+            } catch (Throwable failure) {
+                cleanupFailure = failure;
+            }
+            var selected = combineOwnedExecutorFailures(initializationFailure, initial, cleanupFailure);
+            return cleanupFailure == null ? selected : forceStopOwnedExecutor(deadline, selected);
+        } finally {
+            ACTIVE_INVOCATION_EXECUTORS.remove(executorService);
+            restoreCleanupInterrupt();
+        }
+    }
+
+    private Throwable forceStopOwnedExecutor(long deadline, Throwable priorFailure) {
+        var failure = priorFailure;
+        try {
+            executorService.shutdownNow();
+        } catch (Throwable shutdownFailure) {
+            failure = combineOwnedExecutorFailures(failure, shutdownFailure);
+        }
+        try {
+            if (!awaitOwnedExecutorTermination(deadline))
+                failure = combineOwnedExecutorFailures(
+                        failure, lifecycleFailure("Invocation executor did not terminate during forced cleanup", null));
+        } catch (InterruptedException interrupted) {
+            cleanupInterrupted.set(true);
+            failure = combineOwnedExecutorFailures(
+                    failure, lifecycleFailure("Interrupted while forcing invocation executor shutdown", interrupted));
+        } catch (Throwable terminationFailure) {
+            failure = combineOwnedExecutorFailures(failure, terminationFailure);
+        }
+        return failure;
+    }
+
+    private boolean awaitOwnedExecutorTermination(long deadline) throws InterruptedException {
+        var terminated = executorService.awaitTermination(remainingNanos(deadline), TimeUnit.NANOSECONDS);
+        // A later state-query failure must not retain an executor whose termination was already confirmed.
+        if (terminated) ACTIVE_INVOCATION_EXECUTORS.remove(executorService);
+        return terminated;
     }
 
     private static String resolveInvocationId(Context lambdaContext, String durableExecutionArn) {
@@ -373,7 +449,7 @@ public class ExecutionManager implements SafeCloseable {
 
     /** Submits the invocation's root handler and records its executor task separately from its logical result. */
     <T> CompletableFuture<T> submitRootTask(Supplier<T> action) {
-        return submitExecutorTask(ExecutorTaskHandle.Role.ROOT, null, durableConfig.getExecutorService(), action);
+        return submitExecutorTask(ExecutorTaskHandle.Role.ROOT, null, executorService, action);
     }
 
     /** Submits an operation handler and records its executor task separately from its logical result. */
@@ -388,7 +464,7 @@ public class ExecutionManager implements SafeCloseable {
         ExecutorTaskHandle<Void> task = registerExecutorTask(
                 operationRole(operation),
                 operation,
-                durableConfig.getExecutorService(),
+                executorService,
                 () -> {
                     started.set(true);
                     command.run();
@@ -409,7 +485,7 @@ public class ExecutionManager implements SafeCloseable {
         return submitExecutorTask(
                 operationRole(operation),
                 operation,
-                durableConfig.getExecutorService(),
+                executorService,
                 () -> {
                     action.run();
                     return null;
@@ -439,7 +515,7 @@ public class ExecutionManager implements SafeCloseable {
         submitExecutorTask(
                 ExecutorTaskHandle.Role.ROOT,
                 null,
-                durableConfig.getExecutorService(),
+                executorService,
                 () -> {
                     command.run();
                     return null;
@@ -1186,7 +1262,7 @@ public class ExecutionManager implements SafeCloseable {
     @Override
     public void close() {
         try {
-            var failure = finishInvocation(null);
+            var failure = finishInvocation(null, true);
             if (failure != null) ExceptionHelper.sneakyThrow(failure);
         } finally {
             pluginRunner.releasePlugins();
@@ -1478,7 +1554,7 @@ public class ExecutionManager implements SafeCloseable {
 
     private void validateExecutorPool() {
         // double check if the thread pool is empty
-        if (durableConfig.getExecutorService() instanceof ThreadPoolExecutor threadPoolExecutor) {
+        if (executorService instanceof ThreadPoolExecutor threadPoolExecutor) {
             var threadCount = threadPoolExecutor.getActiveCount();
             // This may or may not be a problem because getActiveCount doesn't return an accurate number
             if (threadCount > 0) {
@@ -1613,10 +1689,24 @@ public class ExecutionManager implements SafeCloseable {
     }
     /** Called only by the invocation caller, so root exit and owned-executor cleanup never self-join. */
     Throwable finishInvocation(Throwable originalFailure) {
+        return finishInvocation(originalFailure, false);
+    }
+
+    Throwable finishInvocation(Throwable originalFailure, CompletableFuture<?> completedRoot) {
+        return finishInvocation(originalFailure, false, completedRoot);
+    }
+
+    private Throwable finishInvocation(Throwable originalFailure, boolean closeObservation) {
+        return finishInvocation(originalFailure, closeObservation, null);
+    }
+
+    private Throwable finishInvocation(
+            Throwable originalFailure, boolean closeObservation, CompletableFuture<?> completedRoot) {
         if (cleanupFinished) return originalFailure;
         beginDraining();
         var hardDeadline = cleanupDeadlineNanos();
         Throwable failure = null;
+        Throwable completionFatal = null;
         if (Thread.interrupted()) cleanupInterrupted.set(true);
         try {
             if (cleanupInterrupted.get() && !getActiveExecutorTasks().isEmpty())
@@ -1631,20 +1721,232 @@ public class ExecutionManager implements SafeCloseable {
         } catch (RuntimeException problem) {
             failure = signalLifecycleFailure(problem);
         } finally {
-            failure = finishActualInvocationCleanup(failure);
+            failure = finishActualInvocationCleanup(failure, ownsExecutorService && !closeObservation);
+            if (ownsExecutorService && !closeObservation && isFatal(originalFailure))
+                failure = combineCompletionFailure(originalFailure, failure);
+            if (ownsExecutorService && !closeObservation && failure != null && failure == getInvocationFatal())
+                completionFatal = failure;
+            if (completedRoot != null && completedRoot.isDone() && getInvocationFatal() == null) {
+                var rootFailure =
+                        completedRoot.handle((ignored, problem) -> problem).join();
+                // MDC restoration runs after End. Keep its fatal local so cleanup can retain later diagnostics
+                // without changing the selected End outcome or publishing new checkpoint/cancellation control.
+                if (isFatal(rootFailure)) {
+                    completionFatal = rootFailure;
+                    failure = combineCompletionFailure(rootFailure, failure);
+                }
+            }
+            try {
+                failure = shutdownOwnedExecutor(hardDeadline, failure);
+            } catch (Throwable shutdownFailure) {
+                // Executor callbacks, including fallback shutdown and state queries, must not skip finalization.
+                shutdownFailure = normalizeOwnedExecutorFailure(
+                        inspectOwnedExecutorFailure(shutdownFailure), isFatal(failure) ? (Error) failure : null);
+                failure = combineFailures(failure, shutdownFailure);
+                var firstFatal = getInvocationFatal();
+                if (firstFatal != null) failure = combineFailures(firstFatal, failure);
+                // Inline execution can already be throwing this fatal through try-with-resources close.
+                // Normal completion keeps the raw fatal ahead of lifecycle/ACK handling.
+                if (closeObservation && isFatal(failure)) failure = new CompletionException(failure);
+            }
             cleanupFinished = true;
             restoreCleanupInterrupt();
         }
         var recordedFailure = lifecycleFailure.get();
         var selectedFailure = isFatal(originalFailure) || recordedFailure == null ? originalFailure : recordedFailure;
         if (failure == null) return selectedFailure;
-        return isFatal(selectedFailure)
-                ? combineFailures(selectedFailure, failure)
+        // Cleanup can return a later lifecycle failure without signaling it; retain the latched invocation failure.
+        if (isFatal(selectedFailure) || (recordedFailure != null && isLifecycleFailure(failure)))
+            return combineFailures(selectedFailure, failure);
+        return failure == completionFatal
+                ? combineCompletionFailure(failure, selectedFailure)
                 : combineFailures(failure, selectedFailure);
     }
 
+    private static Throwable combineCompletionFailure(Throwable completionFatal, Throwable additional) {
+        // The completed root may already carry this same delivery failure from MDC restoration handling.
+        for (var diagnostic : completionFatal.getSuppressed()) {
+            if (diagnostic == additional) return completionFatal;
+        }
+        return combineFailures(completionFatal, additional);
+    }
+
+    private Throwable shutdownOwnedExecutor(long hardDeadline, Throwable priorFailure) {
+        if (!ownsExecutorService) return priorFailure;
+        Throwable result = priorFailure;
+        Throwable thrown = null;
+        try {
+            result = attemptOwnedExecutorShutdown(
+                    hardDeadline, priorFailure, true, isFatal(priorFailure) ? (Error) priorFailure : null);
+        } catch (Throwable failure) {
+            thrown = isFatal(priorFailure) ? combineOwnedExecutorFailures(priorFailure, failure) : failure;
+        }
+        try {
+            if (executorService.isShutdown()) ACTIVE_INVOCATION_EXECUTORS.remove(executorService);
+        } catch (Throwable stateFailure) {
+            // The lease query must not replace the shutdown attempt's fatal or erase its diagnostics.
+            thrown = combineOwnedExecutorFailures(thrown != null ? thrown : result, stateFailure);
+        }
+        // Preserve the outer finalizer's first-fatal and explicit-close observation handling.
+        if (thrown != null) ExceptionHelper.sneakyThrow(thrown);
+        return result;
+    }
+
+    private static Throwable combineOwnedExecutorFailures(Throwable earlier, Throwable later) {
+        return combineOwnedExecutorFailures(earlier, inspectOwnedExecutorFailure(earlier), later);
+    }
+
+    private static Throwable combineOwnedExecutorFailures(Throwable earlier, OwnedFailure inspected, Throwable later) {
+        var earlierCause = normalizeOwnedExecutorFailure(inspected, null);
+        var laterCause = normalizeOwnedExecutorFailure(
+                inspectOwnedExecutorFailure(later), isFatal(earlierCause) ? (Error) earlierCause : null);
+        return combineFailures(
+                isFatal(earlierCause) ? earlierCause : earlier, isFatal(laterCause) ? laterCause : later);
+    }
+
+    static Throwable normalizeInvocationBoundaryFailure(Throwable failure) {
+        var inspected = inspectOwnedExecutorFailure(failure);
+        var discarded = new ArrayList<Throwable>();
+        // A retained application ExecutionException and its cause graph remain intact, including their diagnostics.
+        for (var wrapper : inspected.wrappers()) {
+            if (wrapper == inspected.selected()) break;
+            discarded.add(wrapper);
+        }
+        if (!discarded.isEmpty()) retainOwnedWrapperDiagnostics(inspected.selected(), inspected.selected(), discarded);
+        return inspected.selected();
+    }
+
+    private record OwnedFailure(Throwable selected, List<Throwable> wrappers) {}
+
+    @SuppressWarnings("removal")
+    private static OwnedFailure inspectOwnedExecutorFailure(Throwable failure) {
+        // Match invocation unwrapping, retaining its observed wrappers without reading a cause accessor twice.
+        var wrappers = new ArrayList<Throwable>();
+        var visited = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        Throwable applicationWrapper = null;
+        while (failure instanceof CompletionException || failure instanceof ExecutionException) {
+            if (!visited.add(failure)) break;
+            wrappers.add(failure);
+            if (applicationWrapper == null && failure instanceof ExecutionException) applicationWrapper = failure;
+            Throwable cause;
+            try {
+                cause = failure.getCause();
+            } catch (VirtualMachineError | ThreadDeath fatal) {
+                failure = fatal;
+                break;
+            } catch (Throwable unreadableCause) {
+                break;
+            }
+            if (cause == null) break;
+            failure = cause;
+        }
+        return new OwnedFailure(
+                applicationWrapper != null && !isFatal(failure) ? applicationWrapper : failure, wrappers);
+    }
+
+    private static Throwable normalizeOwnedExecutorFailure(OwnedFailure failure, Error preferredFatal) {
+        if (isFatal(failure.selected()) && !failure.wrappers().isEmpty()) {
+            var fatal = (Error) failure.selected();
+            retainOwnedWrapperDiagnostics(preferredFatal != null ? preferredFatal : fatal, fatal, failure.wrappers());
+        }
+        return failure.selected();
+    }
+
+    private static void retainOwnedWrapperDiagnostics(Throwable primary, Throwable cause, List<Throwable> wrappers) {
+        var omitted = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        omitted.addAll(wrappers);
+        var pending = new ArrayList<Throwable>();
+        wrappers.forEach(wrapper -> Collections.addAll(pending, wrapper.getSuppressed()));
+        var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        for (var index = 0; index < pending.size(); index++) {
+            var diagnostic = pending.get(index);
+            if (diagnostic == primary || diagnostic == cause || omitted.contains(diagnostic) || !seen.add(diagnostic))
+                continue;
+            var aliases = ownedAliasWrappers(diagnostic, primary, cause, omitted);
+            if (aliases != null) {
+                omitted.addAll(aliases);
+                aliases.forEach(alias -> Collections.addAll(pending, alias.getSuppressed()));
+            } else {
+                retainWrapperDiagnostic(primary, diagnostic);
+            }
+        }
+    }
+
+    private static void retainWrapperDiagnostic(Throwable primary, Throwable diagnostic) {
+        // This transfers diagnostics from a discarded wrapper; it must not select a different failure.
+        for (var retained : primary.getSuppressed()) {
+            if (retained == diagnostic) return;
+        }
+        primary.addSuppressed(diagnostic);
+    }
+
+    private static List<Throwable> ownedAliasWrappers(
+            Throwable failure, Throwable primary, Throwable cause, Set<Throwable> omitted) {
+        var aliases = new ArrayList<Throwable>();
+        var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        while (failure != primary && failure != cause && !omitted.contains(failure)) {
+            if (failure == null || !seen.add(failure)) return null;
+            var type = failure.getClass();
+            if (type != CompletionException.class && type != ExecutionException.class) return null;
+            aliases.add(failure);
+            try {
+                failure = failure.getCause();
+            } catch (Throwable unreadableCause) {
+                // An unreadable diagnostic link must not replace the selected fatal.
+                return null;
+            }
+        }
+        return aliases;
+    }
+
+    private void requestOwnedExecutorShutdown(long deadline, boolean forceOnFailure, Error preferredFatal) {
+        try {
+            executorService.shutdown();
+        } catch (Throwable shutdownFailure) {
+            if (preferredFatal != null) shutdownFailure = combineOwnedExecutorFailures(preferredFatal, shutdownFailure);
+            if (forceOnFailure) shutdownFailure = forceStopOwnedExecutor(deadline, shutdownFailure);
+            // The existing attempt and outer finalizer still classify the original failure and any later fatal.
+            ExceptionHelper.sneakyThrow(shutdownFailure);
+        }
+    }
+
+    private Throwable attemptOwnedExecutorShutdown(
+            long hardDeadline, Throwable priorFailure, boolean forceOnShutdownFailure, Error preferredFatal) {
+        var executorDeadline = Math.max(System.nanoTime(), hardDeadline - CHECKPOINT_CLEANUP_RESERVE.toNanos());
+        try {
+            // Constructor cleanup already recovers any failed attempt; normal finalization recovers this callback.
+            requestOwnedExecutorShutdown(executorDeadline, forceOnShutdownFailure, preferredFatal);
+            if (!getActiveExecutorTasks().isEmpty()) {
+                executorService.shutdownNow();
+            }
+            if (awaitOwnedExecutorTermination(executorDeadline)) {
+                return priorFailure;
+            }
+            executorService.shutdownNow();
+            if (awaitOwnedExecutorTermination(executorDeadline)) {
+                return priorFailure;
+            }
+            return combineFailures(
+                    priorFailure,
+                    lifecycleFailure("Invocation executor did not terminate before cleanup deadline", null));
+        } catch (InterruptedException interrupted) {
+            cleanupInterrupted.set(true);
+            executorService.shutdownNow();
+            return combineFailures(
+                    priorFailure, lifecycleFailure("Interrupted while shutting down invocation executor", interrupted));
+        } catch (RuntimeException failure) {
+            var cause = normalizeOwnedExecutorFailure(inspectOwnedExecutorFailure(failure), preferredFatal);
+            if (isFatal(cause)) ExceptionHelper.sneakyThrow(cause);
+            return combineFailures(priorFailure, lifecycleFailure("Invocation executor shutdown failed", failure));
+        }
+    }
+
     private Throwable drainInvocationTasks(Throwable originalFailure, long hardDeadline) throws InterruptedException {
-        var taskDeadline = Math.max(System.nanoTime(), hardDeadline - CHECKPOINT_CLEANUP_RESERVE.toNanos());
+        var taskDeadline = Math.max(
+                System.nanoTime(),
+                hardDeadline
+                        - CHECKPOINT_CLEANUP_RESERVE.toNanos()
+                        - (ownsExecutorService ? EXECUTOR_SHUTDOWN_RESERVE.toNanos() : 0));
         var recordedFailure = lifecycleFailure.get();
         // Fatal publication already stops operation peers. Retain the root/scope owner's cleanup allowance;
         // only lifecycle cutoffs or interruption require immediate registry cancellation.
@@ -1839,7 +2141,7 @@ public class ExecutionManager implements SafeCloseable {
     }
 
     /** Cutoffs request cancellation; actual owner, continuation, and transport completion remain mandatory. */
-    private Throwable finishActualInvocationCleanup(Throwable priorFailure) {
+    private Throwable finishActualInvocationCleanup(Throwable priorFailure, boolean retainRecordedFatal) {
         var drain = new DrainFailure(true);
         drain.run(() -> stopCheckpointContinuations(drain));
         drain.run(() -> awaitActualInvocationTasks(drain));
@@ -1848,10 +2150,36 @@ public class ExecutionManager implements SafeCloseable {
         try {
             drain.finish();
         } catch (Throwable failure) {
+            var recordedFatal = retainRecordedFatal ? getInvocationFatal() : null;
+            if (recordedFatal != null && isRecordedFatalAlias(failure, recordedFatal))
+                return combineRecordedFatal(recordedFatal, priorFailure, failure);
             // Keep shutdown's transport wrapper: close can run while its fatal cause already escapes the body.
             return combineFailures(priorFailure, failure);
         }
         return priorFailure;
+    }
+
+    private static boolean isRecordedFatalAlias(Throwable failure, Error fatal) {
+        var type = failure.getClass();
+        return (type == CompletionException.class || type == ExecutionException.class) && failure.getCause() == fatal;
+    }
+
+    private static Throwable combineRecordedFatal(Error fatal, Throwable priorFailure, Throwable observation) {
+        var pending = new ArrayList<Throwable>();
+        if (priorFailure != null) pending.add(priorFailure);
+        pending.add(observation);
+        var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+        for (var index = 0; index < pending.size(); index++) {
+            var diagnostic = pending.get(index);
+            if (diagnostic == fatal || !seen.add(diagnostic)) continue;
+            if (isRecordedFatalAlias(diagnostic, fatal)) {
+                // Omit the observation carrier, which points back to this fatal, but keep its diagnostics.
+                Collections.addAll(pending, diagnostic.getSuppressed());
+            } else {
+                combineCompletionFailure(fatal, diagnostic);
+            }
+        }
+        return fatal;
     }
 
     private void awaitActualInvocationTasks(DrainFailure drain) {
