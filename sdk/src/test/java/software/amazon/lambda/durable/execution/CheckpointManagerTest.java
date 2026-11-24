@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import java.net.UnknownHostException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -25,6 +26,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.http.SdkHttpResponse;
 import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
@@ -227,9 +229,11 @@ class CheckpointManagerTest {
                 // Put the explicit request last, so its failure observes completion of both preceding poll requests.
                 doThrow(ordinary).when(client).checkpoint(anyString(), anyString(), anyList());
                 var failedBatch = batcher.checkpoint(update);
+                var failure = assertThrows(ExecutionException.class, () -> failedBatch.get(2, TimeUnit.SECONDS))
+                        .getCause();
                 assertSame(
                         ordinary,
-                        assertThrows(ExecutionException.class, () -> failedBatch.get(2, TimeUnit.SECONDS))
+                        assertInstanceOf(UnrecoverableDurableExecutionException.class, failure)
                                 .getCause());
                 assertFalse(first.isDone());
                 assertFalse(second.isDone());
@@ -762,6 +766,19 @@ class CheckpointManagerTest {
         assertInstanceOf(UnrecoverableDurableExecutionException.class, ex.getCause());
     }
 
+    @Test
+    void checkpointBatch_clientError_throwsRetryableUnrecoverable() {
+        var dnsFailure = SdkClientException.create("DNS lookup failed", new UnknownHostException("lambda"));
+        when(client.checkpoint(anyString(), anyString(), anyList())).thenThrow(dnsFailure);
+
+        var future = batcher.checkpoint(stepUpdate("op-1"));
+
+        var ex = assertThrows(Exception.class, () -> future.get(200, TimeUnit.MILLISECONDS));
+        var unrecoverable = assertInstanceOf(UnrecoverableDurableExecutionException.class, ex.getCause());
+        assertTrue(unrecoverable.isRetryable());
+        assertSame(dnsFailure, unrecoverable.getCause());
+    }
+
     // --- Checkpoint token revocation tests (a checkpoint response with no checkpoint token) ---
 
     @Test
@@ -916,6 +933,21 @@ class CheckpointManagerTest {
                 .build();
 
         assertThrows(UnrecoverableDurableExecutionException.class, () -> batcher.fetchAllPages(state));
+    }
+
+    @Test
+    void fetchAllPages_clientError_throwsRetryableUnrecoverable() {
+        var dnsFailure = SdkClientException.create("DNS lookup failed", new UnknownHostException("lambda"));
+        when(client.getExecutionState(eq("arn:test"), eq("token-1"), eq("marker-1")))
+                .thenThrow(dnsFailure);
+        var state = CheckpointUpdatedExecutionState.builder()
+                .operations(List.of(Operation.builder().id("op-1").build()))
+                .nextMarker("marker-1")
+                .build();
+
+        var ex = assertThrows(UnrecoverableDurableExecutionException.class, () -> batcher.fetchAllPages(state));
+        assertTrue(ex.isRetryable());
+        assertSame(dnsFailure, ex.getCause());
     }
 
     private CheckpointDurableExecutionResponse missingTokenResponse(OperationUpdate update) {
