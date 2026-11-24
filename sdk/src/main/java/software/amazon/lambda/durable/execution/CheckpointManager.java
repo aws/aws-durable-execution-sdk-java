@@ -370,16 +370,18 @@ class CheckpointManager {
 
     /**
      * Runs one Durable Execution API call and turns any exception it throws into an
-     * {@link UnrecoverableDurableExecutionException}, so a checkpoint failure ends the invocation and never reaches
-     * step failure handling. An {@link AwsServiceException} is classified by {@link DurableApiErrorClassifier}. Any
-     * other exception, such as an {@code SdkClientException} for a DNS failure or a connection timeout, got no response
-     * from the service, so it is retryable: the next invocation resumes from the last checkpoint.
+     * {@link UnrecoverableDurableExecutionException}, which ends the invocation. An {@link AwsServiceException} is
+     * classified by {@link DurableApiErrorClassifier}. An {@link UnrecoverableDurableExecutionException} from a custom
+     * client keeps its classification. Any other exception, such as an {@code SdkClientException} for a DNS failure or
+     * a timeout, is retryable.
      */
     private static <T> T callDurableApi(Supplier<T> call) {
         try {
             return call.get();
         } catch (AwsServiceException e) {
             throw DurableApiErrorClassifier.classifyException(e);
+        } catch (UnrecoverableDurableExecutionException e) {
+            throw e;
         } catch (RuntimeException e) {
             throw new UnrecoverableDurableExecutionException(
                     ErrorObject.builder()

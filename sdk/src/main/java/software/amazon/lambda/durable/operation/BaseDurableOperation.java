@@ -295,6 +295,12 @@ public abstract class BaseDurableOperation {
                 // Anything else reaching here is unexpected and terminates the execution.
                 if (!executionManager.isExecutionCompletedExceptionally()
                         && !(throwable instanceof SuspendExecutionException)) {
+                    // A failed checkpoint sent from an operation's own failure handling, such as a step RETRY or
+                    // FAIL, keeps its classification, so a retryable one ends the invocation as RETRYING.
+                    if (ExceptionHelper.unwrapCompletableFuture(throwable)
+                            instanceof UnrecoverableDurableExecutionException unrecoverable) {
+                        throw terminateExecution(unrecoverable);
+                    }
                     logger.error("An unhandled exception is thrown from user function: ", throwable);
                     throw terminateExecutionWithIllegalDurableOperationException(
                             "An unhandled exception is thrown from user function: " + throwable);

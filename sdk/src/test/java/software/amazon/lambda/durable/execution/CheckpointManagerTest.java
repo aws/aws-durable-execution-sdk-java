@@ -30,6 +30,7 @@ import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.http.SdkHttpResponse;
 import software.amazon.awssdk.services.lambda.model.CheckpointDurableExecutionResponse;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateResponse;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
@@ -762,8 +763,31 @@ class CheckpointManagerTest {
                 .action(OperationAction.START)
                 .build());
 
-        var ex = assertThrows(Exception.class, () -> future.get(200, TimeUnit.MILLISECONDS));
-        assertInstanceOf(UnrecoverableDurableExecutionException.class, ex.getCause());
+        var ex = assertThrows(ExecutionException.class, () -> future.get(2, TimeUnit.SECONDS));
+        var unrecoverable = assertInstanceOf(UnrecoverableDurableExecutionException.class, ex.getCause());
+        assertFalse(unrecoverable.isRetryable());
+    }
+
+    @Test
+    void checkpointBatch_clientError4xx_throwsNonRetryableUnrecoverable() {
+        when(client.checkpoint(anyString(), anyString(), anyList()))
+                .thenThrow(AwsServiceException.builder()
+                        .message("Operation payload is too large")
+                        .awsErrorDetails(AwsErrorDetails.builder()
+                                .errorCode("InvalidParameterValueException")
+                                .errorMessage("Operation payload is too large")
+                                .sdkHttpResponse(SdkHttpResponse.builder()
+                                        .statusCode(400)
+                                        .build())
+                                .build())
+                        .statusCode(400)
+                        .build());
+
+        var future = batcher.checkpoint(stepUpdate("op-1"));
+
+        var ex = assertThrows(ExecutionException.class, () -> future.get(2, TimeUnit.SECONDS));
+        var unrecoverable = assertInstanceOf(UnrecoverableDurableExecutionException.class, ex.getCause());
+        assertFalse(unrecoverable.isRetryable());
     }
 
     @Test
@@ -773,10 +797,26 @@ class CheckpointManagerTest {
 
         var future = batcher.checkpoint(stepUpdate("op-1"));
 
-        var ex = assertThrows(Exception.class, () -> future.get(200, TimeUnit.MILLISECONDS));
+        var ex = assertThrows(ExecutionException.class, () -> future.get(2, TimeUnit.SECONDS));
         var unrecoverable = assertInstanceOf(UnrecoverableDurableExecutionException.class, ex.getCause());
         assertTrue(unrecoverable.isRetryable());
         assertSame(dnsFailure, unrecoverable.getCause());
+        assertEquals(
+                SdkClientException.class.getName(),
+                unrecoverable.getErrorObject().errorType());
+        assertEquals("DNS lookup failed", unrecoverable.getErrorObject().errorMessage());
+    }
+
+    @Test
+    void checkpointBatch_customClientUnrecoverable_keepsItsClassification() {
+        var stop = new UnrecoverableDurableExecutionException(
+                ErrorObject.builder().errorType("Custom").errorMessage("stop").build(), false);
+        when(client.checkpoint(anyString(), anyString(), anyList())).thenThrow(stop);
+
+        var future = batcher.checkpoint(stepUpdate("op-1"));
+
+        var ex = assertThrows(ExecutionException.class, () -> future.get(2, TimeUnit.SECONDS));
+        assertSame(stop, ex.getCause());
     }
 
     // --- Checkpoint token revocation tests (a checkpoint response with no checkpoint token) ---
@@ -932,7 +972,8 @@ class CheckpointManagerTest {
                 .nextMarker("marker-1")
                 .build();
 
-        assertThrows(UnrecoverableDurableExecutionException.class, () -> batcher.fetchAllPages(state));
+        var ex = assertThrows(UnrecoverableDurableExecutionException.class, () -> batcher.fetchAllPages(state));
+        assertFalse(ex.isRetryable());
     }
 
     @Test
