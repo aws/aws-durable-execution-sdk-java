@@ -69,6 +69,13 @@
             <version>${slf4j.version}</version>
             <scope>test</scope>
         </dependency>
+        <!-- The Lambda Java runtime's event serializer, the version aws-lambda-java-runtime-interface-client 2.12.2 uses -->
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-lambda-java-serialization</artifactId>
+            <version>1.4.1</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
