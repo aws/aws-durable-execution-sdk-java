@@ -34,10 +34,9 @@ import java.util.function.BooleanSupplier;
  * Root or a custom extractor may yield) is treated as absent, so an invalid Root falls back to the derived trace ID and
  * an invalid Parent drops to the synthetic-root path.
  *
- * <p>Sampling flags: an explicit upstream decision is preserved; when it is absent the configured sampler's decision is
- * applied to both a remote parent and a synthetic root. Trace flags carry a single sampled bit with no "unset" state,
- * so a remote parent left unsampled would make a parent-based sampler drop every child span; deferring to the sampler
- * avoids that.
+ * <p>Remote ancestor flags describe the original upstream span, including an unset sampled bit. Synthetic ancestor
+ * flags use the resolved durable decision. Sampling is evaluated separately using the original propagated parent; the
+ * synthesized ancestor is never supplied as a sampling input.
  *
  * <p>The ancestor is a non-recording context: it is either the external backend server span or an SDK-owned synthetic
  * root. Both plugins export the synthetic root before each invocation returns, including suspension, with its stable
@@ -63,8 +62,7 @@ record ExecutionTraceContext(SpanContext executionAncestor) {
      * @param canonicalTraceId the trace ID the ancestor is anchored on (remote, else ARN-derived)
      * @param arn the durable execution ARN
      * @param idGenerator the deterministic ID generator
-     * @param rootSampled the configured sampler's decision for this trace, applied to a remote parent or synthetic root
-     *     when the header carries no explicit Sampled value
+     * @param rootSampled the configured sampler's decision for this trace, applied only to a synthetic root
      */
     static ExecutionTraceContext resolve(
             ExtractedContext extracted,
@@ -75,11 +73,10 @@ record ExecutionTraceContext(SpanContext executionAncestor) {
 
         // A valid remote backend parent is the authoritative ancestor, regardless of whether Sampled is present.
         if (extracted != null && extracted.hasCompleteRemoteParent()) {
-            // Resolve an undecided upstream decision from the configured sampler. Trace flags are a single sampled bit
-            // with no "unset" state, so a remote parent built unsampled would make a parent-based sampler drop every
-            // child span; defer to the sampler when Sampled is absent, but always preserve an explicit Sampled=0/1. The
-            // sampler is only consulted for the UNDECIDED case (lazy), not when the upstream is explicit.
-            var flags = explicitFlags(extracted.sampling(), rootSampled);
+            // The remote parent's flags describe the original upstream span, not the durable decision.
+            var flags = extracted.sampling() == ExtractedContext.Sampling.SAMPLED
+                    ? TraceFlags.getSampled()
+                    : TraceFlags.getDefault();
             // Tracestate is intentionally not propagated: the X-Ray header carries only Root/Parent/Sampled, so there
             // is no upstream tracestate to preserve on this path. An empty TraceState is correct here.
             var remoteParent = SpanContext.createFromRemoteParent(
@@ -89,11 +86,10 @@ record ExecutionTraceContext(SpanContext executionAncestor) {
 
         // No backend parent: synthesize an execution root on the canonical (ARN/start-time-derived) trace. This is
         // stable across reinvocations, unlike the per-invocation ambient span.
-        var sampling = extracted != null ? extracted.sampling() : ExtractedContext.Sampling.UNDECIDED;
         var syntheticRoot = SpanContext.create(
                 canonicalTraceId,
                 idGenerator.generateExecutionRootSpanId(arn),
-                explicitFlags(sampling, rootSampled),
+                rootSampled.getAsBoolean() ? TraceFlags.getSampled() : TraceFlags.getDefault(),
                 TraceState.getDefault());
         return new ExecutionTraceContext(syntheticRoot);
     }
@@ -109,18 +105,5 @@ record ExecutionTraceContext(SpanContext executionAncestor) {
             return extracted.traceId();
         }
         return idGenerator.generateTraceIdForExecution(arn, executionStartTime);
-    }
-
-    /**
-     * Flags for an explicit upstream decision, or the sampler's decision when the upstream did not decide. The sampler
-     * is consulted lazily, only for the {@code UNDECIDED} case, so an explicit {@code Sampled=0/1} never triggers a
-     * (discarded) sampler query.
-     */
-    private static TraceFlags explicitFlags(ExtractedContext.Sampling sampling, BooleanSupplier whenUndecided) {
-        return switch (sampling) {
-            case SAMPLED -> TraceFlags.getSampled();
-            case NOT_SAMPLED -> TraceFlags.getDefault();
-            case UNDECIDED -> whenUndecided.getAsBoolean() ? TraceFlags.getSampled() : TraceFlags.getDefault();
-        };
     }
 }

@@ -281,15 +281,15 @@ class DurableSamplerTest {
     }
 
     @Test
-    void explicitSampled_winsOverConfiguredAlwaysOff() {
+    void configuredAlwaysOff_dropsExplicitSampled() {
         var exporter = exportedWith(Sampler.alwaysOff(), ExtractedContext.Sampling.SAMPLED);
-        assertFalse(exporter.getFinishedSpanItems().isEmpty(), "Explicit Sampled=1 exports spans despite always_off");
+        assertTrue(exporter.getFinishedSpanItems().isEmpty(), "always_off drops spans even with Sampled=1");
     }
 
     @Test
-    void explicitNotSampled_winsOverConfiguredAlwaysOn() {
+    void configuredAlwaysOn_samplesExplicitNotSampled() {
         var exporter = exportedWith(Sampler.alwaysOn(), ExtractedContext.Sampling.NOT_SAMPLED);
-        assertTrue(exporter.getFinishedSpanItems().isEmpty(), "Explicit Sampled=0 drops spans despite always_on");
+        assertFalse(exporter.getFinishedSpanItems().isEmpty(), "always_on samples spans even with Sampled=0");
     }
 
     /**

@@ -140,7 +140,7 @@ class OtelPropagationMetadataTest {
         var exporter = InMemorySpanExporter.create();
         var builder = SdkTracerProvider.builder()
                 .setResource(Resource.create(Attributes.of(SERVICE, "configured-service")))
-                .setSampler(sampled ? Sampler.alwaysOff() : Sampler.alwaysOn())
+                .setSampler(Sampler.parentBased(sampled ? Sampler.alwaysOff() : Sampler.alwaysOn()))
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter));
         var config = OtelPluginConfig.builder()
                 .enableMdc(false)

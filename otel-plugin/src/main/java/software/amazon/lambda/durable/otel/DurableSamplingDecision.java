@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.otel;
 
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
 import io.opentelemetry.context.Context;
 import io.opentelemetry.context.ContextKey;
+import io.opentelemetry.context.propagation.TextMapGetter;
 import io.opentelemetry.sdk.trace.samplers.SamplingDecision;
 import io.opentelemetry.sdk.trace.samplers.SamplingResult;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -14,13 +18,13 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>Computed once per invocation (see the plugins' {@code onInvocationStart}), the intent is one of two forms:
  *
  * <ul>
- *   <li>a <b>resolved</b> {@link SamplingResult} — an explicit upstream {@code Sampled}, a same-trace ambient span's
- *       bit, or a locally reproducible configured sampler's result. {@link DurableSampler} returns it verbatim,
- *       preserving the full three-way decision (including {@code RECORD_ONLY}) and consulting no delegate; or
- *   <li>a <b>deferral</b> marker (carrying the canonical trace ID) — used on the Java-agent path when the real sampler
- *       (a remote/custom/file-only policy) cannot be reproduced here. {@link DurableSampler} then evaluates its actual
+ *   <li>a <b>resolved</b> {@link SamplingResult} from the configured sampler. {@link DurableSampler} returns it
+ *       verbatim, preserving the full three-way decision (including {@code RECORD_ONLY}) and consulting no delegate; or
+ *   <li>a <b>deferral</b> marker (carrying the canonical trace ID and original propagated parent) — used on the
+ *       Java-agent path when the real sampler is not accessible here. {@link DurableSampler} evaluates its actual
  *       delegate once per execution, caches the result by execution ARN and trace ID, and reuses it for the execution's
- *       remaining durable spans, so an installed drop/rate-limit policy is honored and consulted only once.
+ *       remaining durable spans while the entry remains cached. This cache does not make stateful or random policies
+ *       deterministic across reinvocations or eviction.
  * </ul>
  *
  * <p><b>Two carriers, because the plugin runs across two class loaders.</b> Under the documented ADOT setup the plugin
@@ -37,7 +41,8 @@ import java.util.concurrent.atomic.AtomicReference;
  *       durable span until its sampler consumes the value (before synchronous span processors run), keyed by thread ID
  *       under a bootstrap-visible {@link System} property so both class loaders read the same value. A resolved
  *       decision bridges its {@link SamplingDecision} name (the three built-in decisions carry no attributes, so
- *       reconstructing them is faithful); a deferral bridges a sentinel plus the canonical trace ID.
+ *       reconstructing them is faithful); a deferral bridges the canonical trace ID and the original parent's W3C trace
+ *       context, including flags and trace state. It never samples from a synthesized durable ancestor.
  * </ol>
  *
  * <p>The scope is opened immediately around each durable {@code startSpan()} call and closed right after, so the
@@ -53,14 +58,19 @@ final class DurableSamplingDecision {
      *
      * @param resolved the resolved decision, or null when deferring
      * @param deferredTraceId the canonical trace ID passed to the agent-side delegate, or null when resolved
+     * @param samplingParent the original propagated parent context, or root when there is no usable parent
      */
-    record Intent(SamplingResult resolved, String deferredTraceId) {
+    record Intent(SamplingResult resolved, String deferredTraceId, Context samplingParent) {
         static Intent resolved(SamplingResult result) {
-            return new Intent(result, null);
+            return new Intent(result, null, Context.root());
         }
 
         static Intent deferred(String traceId) {
-            return new Intent(null, traceId);
+            return deferred(traceId, Context.root());
+        }
+
+        static Intent deferred(String traceId, Context samplingParent) {
+            return new Intent(null, traceId, samplingParent);
         }
 
         boolean isDeferred() {
@@ -74,6 +84,17 @@ final class DurableSamplingDecision {
     private static final String SCOPED_PROPERTY_PREFIX = "software.amazon.lambda.durable.otel.scopedSamplingDecision.";
     // Sentinel prefix distinguishing a deferral (carrying the trace ID) from a resolved decision name.
     private static final String DEFERRED_PREFIX = "DEFER:";
+    private static final TextMapGetter<Map<String, String>> PROPAGATION_GETTER = new TextMapGetter<>() {
+        @Override
+        public Iterable<String> keys(Map<String, String> carrier) {
+            return carrier.keySet();
+        }
+
+        @Override
+        public String get(Map<String, String> carrier, String key) {
+            return carrier.get(key);
+        }
+    };
 
     private DurableSamplingDecision() {}
 
@@ -152,9 +173,12 @@ final class DurableSamplingDecision {
     }
 
     private static String encode(Intent intent) {
-        return intent.isDeferred()
-                ? DEFERRED_PREFIX + intent.deferredTraceId()
-                : intent.resolved().getDecision().name();
+        if (!intent.isDeferred()) return intent.resolved().getDecision().name();
+        var carrier = new HashMap<String, String>();
+        W3CTraceContextPropagator.getInstance().inject(intent.samplingParent(), carrier, Map::put);
+        return DEFERRED_PREFIX + intent.deferredTraceId() + "\n"
+                + carrier.getOrDefault("traceparent", "") + "\n"
+                + carrier.getOrDefault("tracestate", "");
     }
 
     private static Intent fromScopedProperty() {
@@ -163,7 +187,10 @@ final class DurableSamplingDecision {
             return null;
         }
         if (value.startsWith(DEFERRED_PREFIX)) {
-            return Intent.deferred(value.substring(DEFERRED_PREFIX.length()));
+            var fields = value.substring(DEFERRED_PREFIX.length()).split("\n", -1);
+            var carrier = Map.of("traceparent", fields[1], "tracestate", fields[2]);
+            var parent = W3CTraceContextPropagator.getInstance().extract(Context.root(), carrier, PROPAGATION_GETTER);
+            return Intent.deferred(fields[0], parent);
         }
         return Intent.resolved(
                 switch (SamplingDecision.valueOf(value)) {

@@ -138,7 +138,7 @@ class RootStartProcessorIsolationTest {
     }
 
     private static Sampler rootSampler(boolean recordOnly, Sampler policy) {
-        if (!recordOnly) return policy;
+        // Resolve durable spans independently so both ordinary on/off policies exercise the processor callback.
         return new Sampler() {
             @Override
             public SamplingResult shouldSample(
@@ -148,14 +148,15 @@ class RootStartProcessorIsolationTest {
                     SpanKind kind,
                     Attributes attributes,
                     List<LinkData> links) {
-                return name.equals("Workflow")
-                        ? SamplingResult.recordOnly()
-                        : policy.shouldSample(parent, trace, name, kind, attributes, links);
+                if (name.equals("Workflow")) {
+                    return recordOnly ? SamplingResult.recordOnly() : SamplingResult.recordAndSample();
+                }
+                return policy.shouldSample(parent, trace, name, kind, attributes, links);
             }
 
             @Override
             public String getDescription() {
-                return "RecordOnlyWorkflow";
+                return "DurableWorkflowWithIndependentOrdinaryPolicy";
             }
         };
     }

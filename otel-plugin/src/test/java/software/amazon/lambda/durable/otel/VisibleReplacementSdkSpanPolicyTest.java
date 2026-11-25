@@ -34,8 +34,8 @@ class VisibleReplacementSdkSpanPolicyTest {
     @CsvSource({
         "invocation,false,root,false", "execution,false,root,false",
         "invocation,true,root,true", "execution,true,root,true",
-        "invocation,false,sampled,true", "execution,false,sampled,true",
-        "invocation,true,unsampled,false", "execution,true,unsampled,false"
+        "invocation,false,sampled,false", "execution,false,sampled,false",
+        "invocation,true,unsampled,true", "execution,true,unsampled,true"
     })
     void actualSdkSpansHonorVisibleReplacementRootPolicy(
             String view, boolean rootSamples, String upstream, boolean expectedSampled) {
