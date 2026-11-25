@@ -260,3 +260,44 @@ sets the limits in the resource declaration. LMI provisioning and version behavi
 are documented in the AWS guides for
 [scaling](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-scaling.html)
 and [$LATEST.PUBLISHED](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-version-publishing.html).
+
+## OpenTelemetry acceptance
+
+The suite adds 32 observability cases to the original 13 lifecycle cases. Both
+OTel views run on the existing concurrency-1 and concurrency-2 fixtures with
+native sampled/unsampled headers, warm reuse and replay, export failures and
+flush-budget controls. Concurrency-2 also repeats overlap, suspension cleanup,
+deadline, non-cooperative-child and in-flight-return contracts with plugins enabled.
+The existing default8/fixed/nested core fixtures and assertions remain in the suite.
+
+The fixture uses the real Java 3.x OTel factories and a process-owned provider.
+Its observing adapter forwards every hook and the actual `@HandlerScoped` opener;
+it only supplies an independent diagnostic owner to the span exporter. Raw span
+IDs, attributes, status and timestamps are retained with runtime request/JVM IDs.
+The Logback binding exercises MDC restoration. Export completion has its own
+counter, so post-return export work must settle before another case or deployment.
+
+`OtelInvoke`, packaged in the same shaded fixture JAR, uses the AWS SDK's signed
+Invoke request with an explicit X-Ray header. The header is never injected into
+the handler payload. Runtime `Context.getXrayTraceId()` observations are compared
+with the immutable snapshot captured before worker dispatch and with actual
+exported trace/parent/sampling values.
+
+The controllable exporter implements the OpenTelemetry export/flush interfaces.
+A held export can outlive the plugin's five-second flush wait; the test records
+that boundary before releasing the exporter. Shared-provider ownership, End on
+the handler owner, context/MDC restoration, and late export drainage remain
+separate assertions. These fixtures do not repair non-cooperative code or claim
+lossless delivery after timeout.
+
+Local public-executor tests cover sampling, missing/invalid/unreadable carriers,
+concurrent owners, real local suspend/resume, exported fallback roots, MDC and
+exporter/flush behavior. A loopback AWS SDK test checks the actual Invoke header
+and payload. Python negative controls reject wrong attribution, missing evidence,
+changed owner threads and unexpected sampled output. Final collection revalidates
+the observability assertions as well as the original lifecycle assertions.
+
+Fresh deployed LMI evidence is still required before closing #727. The #726
+lifecycle limitations and the remaining #733/#735 fixes remain independently
+tracked. The expanded assertion phase has a 60-minute bound within a 130-minute
+cloud job; the five persistent functions and provider capacity are unchanged.

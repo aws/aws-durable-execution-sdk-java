@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 import traceback
 import uuid
@@ -534,6 +535,13 @@ def runtime_requests_drained(events, markers, allow_no_entry=False):
         task_exits = Counter(event.get("name") for event in selected(trace, "TASK_EXIT"))
         if task_enters != task_exits:
             return False
+        if len(selected(trace, "OTEL_EXPORT_ENTER")) != len(selected(trace, "OTEL_EXPORT_EXIT")):
+            return False
+        if len(selected(trace, "OTEL_EXPORT_ENTER")) != (
+                len(selected(trace, "OTEL_EXPORT")) + len(selected(trace, "OTEL_EXPORT_ERROR"))):
+            return False
+        if trace and max(trace, key=lambda event: event["sequence"]).get("exports", 0):
+            return False
         returned_at = wrapper_returns[-1]["sequence"]
         if any(event["sequence"] > returned_at and event["kind"] in {
                 "BODY", "CHECKPOINT_CALL", "POLL_CALL", "CHECKPOINT_EXIT", "POLL_EXIT",
@@ -890,7 +898,7 @@ def collect_warm_snapshots(cloud, items, seconds=30):
             time.sleep(1)
 
 
-def cases_for_fixture(cloud, fixture):
+def core_cases_for_fixture(cloud, fixture):
     if fixture == "default1":
         return [("baseline-concurrency1", lambda: replay_case(cloud, fixture, "baseline"))]
     if fixture in {"fixed2", "nested2"}:
@@ -906,6 +914,13 @@ def cases_for_fixture(cloud, fixture):
                   ("failure-with-inflight-step", lambda: inflight_case(cloud, fixture, "failure-inflight")),
                   ("warm-repeated-batches", lambda: warm_case(cloud, fixture))]
     return cases
+
+
+def cases_for_fixture(cloud, fixture):
+    from otel_cases import additional_cases
+    observed = [(name, case) for target, name, case in additional_cases(cloud, sys.modules[__name__])
+                if target == fixture]
+    return core_cases_for_fixture(cloud, fixture) + observed
 
 
 def assert_original_healthy_admission(events, admission):
@@ -961,6 +976,9 @@ def assert_case_request_lifecycles(cloud, invocation_start, invocation_end=None)
             assert_original_timeout_admission(events, item["timeoutAdmission"])
         if "replayHistory" in item:
             assert_replay(events, item["replayHistory"], item["marker"])
+        if "otel" in item:
+            from otel_evidence import validate_invocations
+            validate_invocations(events, item["otel"])
         if "warmEnvironment" in item:
             warm_environment(events, item["warmEnvironment"])
             warm_snapshots.extend(selected(events, "SNAPSHOT"))
@@ -1001,7 +1019,7 @@ def record_failure(node, failure, kind=None):
 
 def save_case_assertions(cloud, records):
     fields = {"marker", "fixture", "scenario", "healthyAdmission", "timeoutAdmission", "warmEnvironment",
-              "warmRequests", "fixedAdmission", "replayHistory"}
+              "warmRequests", "fixedAdmission", "replayHistory", "otel"}
     save(ARTIFACTS / "case-assertions.json", {
         "runId": cloud.manifest["runId"], "commit": cloud.manifest["commit"],
         "cases": [{"name": node.get("name"), "items": [

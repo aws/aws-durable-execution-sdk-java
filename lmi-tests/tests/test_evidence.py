@@ -219,9 +219,11 @@ class EvidenceTest(unittest.TestCase):
 
     def test_full_suite_preserves_all_cases_on_their_own_fixture(self):
         cloud = Mock()
+        cloud.invocations = []
         names = []
         patches = [patch("cloud_suite." + name) for name in
                    ["replay_case", "overlap_case", "fixed_case", "timeout_case", "inflight_case", "warm_case"]]
+        patches += [patch("otel_cases." + name) for name in ["single", "warm", "held_export"]]
         mocks = [p.start() for p in patches]
         try:
             for fixture in FIXTURES:
@@ -237,8 +239,8 @@ class EvidenceTest(unittest.TestCase):
         finally:
             for p in patches:
                 p.stop()
-        self.assertEqual(13, len(names))
-        self.assertEqual(13, len(set(names)))
+        self.assertEqual(45, len(names))
+        self.assertEqual(45, len(set(names)))
 
     @patch("cloud_suite.Cloud")
     def test_cloud_suite_requires_all_five_functions(self, cloud):
