@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.function.BiPredicate;
 import java.util.function.Function;
 import java.util.function.IntPredicate;
@@ -30,12 +31,19 @@ import java.util.function.IntPredicate;
  * execution {@code error} and identity fields are never dropped, so a record can still be over a limit smaller than
  * those fields.
  *
+ * <p>Clearing a result replaces {@code "result":<json>} with {@code "truncated":true} on the operation. When the result
+ * JSON is 7 bytes or shorter, that makes the array form bigger. A by-name rendering writes no per-operation marker, so
+ * there clearing any result makes the record smaller. So when small results exist, step 2 renders the record once with
+ * every small result cleared. If that render is smaller, small results are cleared like any other result. Otherwise
+ * they stay in the record and their operations are not marked.
+ *
  * <p>Steps 2 and 3 binary search how many results, then how many operations, to drop. So the pass renders the record
  * about {@code 2 * log2(n)} times for {@code n} operations, with any {@code render}. The search assumes that dropping
- * more never makes the record larger. In the {@code operationsByName} format that is not always true: dropping one of
- * two operations with the same name can add the remaining operation's result and error to the summary. There the search
- * can drop a few more old operations than the fewest that fit. The chosen record is always one that was measured to
- * fit, so the output never goes over the limit.
+ * more never makes the record larger. In the array format that is true, so the pass drops the fewest results and
+ * operations that fit. In the {@code operationsByName} rendering, and in the by-name part of "both", it is not always
+ * true: dropping one of two operations with the same name can add the remaining operation's result and error to the
+ * summary. Only there can the search drop a few more old results or operations than the fewest that fit. The chosen
+ * record is always one that was measured to fit, so the output never goes over the limit.
  */
 public final class Truncation {
 
@@ -106,10 +114,49 @@ public final class Truncation {
                         incomingDroppedInput,
                         incomingDroppedOutput));
 
+        // Size of the record with these operations and no operation dropped.
+        Function<List<OperationRecord>, Integer> sizeWith = shapedOps -> size.apply(candidate(
+                record0,
+                shapedOps,
+                keptAfterDropping(order, 0),
+                incomingDroppedOperations,
+                incomingDroppedInput,
+                incomingDroppedOutput));
+
         // Step 2: drop operation results, oldest first (kept + marked truncated).
         int[] withResult =
                 Arrays.stream(order).filter(i -> ops.get(i).result() != null).toArray();
-        int results = smallestFitting(0, withResult.length, j -> fitsWith.test(withoutResults(ops, withResult, j), 0));
+        // j = 0 keeps every result. Without dropped causes that record is the input with markers added, which was
+        // measured not to fit, so its fit is checked only when causes were dropped.
+        Integer keptSize = causesDropped ? sizeWith.apply(ops) : null;
+        int results;
+        if (keptSize != null && keptSize <= maxBytes) {
+            results = 0;
+        } else {
+            // Clearing a result replaces "result":<json> with "truncated":true on the operation. When the result JSON
+            // is 7 bytes or shorter, that makes the array form bigger, so it cannot help the record fit. A by-name
+            // rendering writes no per-operation marker, so there clearing any result makes the record smaller. One
+            // render with every small result cleared tells which case this rendering is: if it is smaller than the
+            // record with every result kept, small results stay candidates; otherwise only larger results are.
+            int[] small = Arrays.stream(withResult)
+                    .filter(i -> !shrinksWhenCleared(ops.get(i).result()))
+                    .toArray();
+            if (small.length > 0) {
+                if (keptSize == null) {
+                    keptSize = sizeWith.apply(ops);
+                }
+                Integer smallClearedSize = sizeWith.apply(withoutResults(ops, small, small.length));
+                boolean clearingSmallShrinks =
+                        keptSize != null && smallClearedSize != null && smallClearedSize < keptSize;
+                if (!clearingSmallShrinks) {
+                    withResult = Arrays.stream(withResult)
+                            .filter(i -> shrinksWhenCleared(ops.get(i).result()))
+                            .toArray();
+                }
+            }
+            int[] candidates = withResult;
+            results = smallestFitting(1, candidates.length, j -> fitsWith.test(withoutResults(ops, candidates, j), 0));
+        }
         boolean fitting = results >= 0;
         int resultsDropped = fitting ? results : withResult.length;
         List<OperationRecord> shaped = withoutResults(ops, withResult, resultsDropped);
@@ -144,6 +191,14 @@ public final class Truncation {
             return record;
         }
         return candidate(record, shaped, kept, droppedOperations, droppedInput, droppedOutput);
+    }
+
+    private static final Integer CLEARED_RESULT_SIZE = Json.byteSize(Map.of("truncated", Boolean.TRUE));
+
+    /** Whether {@code "result":<result>} is larger than {@code "truncated":true}: the result JSON is over 7 bytes. */
+    private static boolean shrinksWhenCleared(Object result) {
+        Integer size = Json.byteSize(Map.of("result", result));
+        return size == null || size > CLEARED_RESULT_SIZE;
     }
 
     private static ErrorInfo withoutCause(ErrorInfo error) {
