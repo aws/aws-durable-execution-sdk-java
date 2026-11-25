@@ -3,10 +3,12 @@
 package software.amazon.lambda.durable.telemetry;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.BiPredicate;
 import java.util.function.Function;
-import java.util.function.Supplier;
+import java.util.function.IntPredicate;
 
 /**
  * Best-effort size limiter. When the record is over the limit it drops, in order:
@@ -27,6 +29,13 @@ import java.util.function.Supplier;
  * the exact value the exporter serializes so the size check measures what is actually emitted. This is one pass; the
  * execution {@code error} and identity fields are never dropped, so a record can still be over a limit smaller than
  * those fields.
+ *
+ * <p>Steps 2 and 3 binary search how many results, then how many operations, to drop. So the pass renders the record
+ * about {@code 2 * log2(n)} times for {@code n} operations, with any {@code render}. The search assumes that dropping
+ * more never makes the record larger. In the {@code operationsByName} format that is not always true: dropping one of
+ * two operations with the same name can add the remaining operation's result and error to the summary. There the search
+ * can drop a few more old operations than the fewest that fit. The chosen record is always one that was measured to
+ * fit, so the output never goes over the limit.
  */
 public final class Truncation {
 
@@ -36,35 +45,25 @@ public final class Truncation {
             DurableExecutionTelemetryRecord record,
             Integer maxBytes,
             Function<DurableExecutionTelemetryRecord, Object> render) {
-        return truncate(record, maxBytes, r -> Json.byteSize(render.apply(r)), false);
+        return truncate(record, maxBytes, r -> Json.byteSize(render.apply(r)));
     }
 
     /**
      * {@link #truncateRecord} for a rendering whose size {@code size} measures directly, such as
-     * {@link software.amazon.lambda.durable.telemetry.exporters.LambdaLogExporter#renderedSize}. The rendering must be
-     * the record's JSON, or that JSON embedded as one JSON string value, so that dropping one result or operation
-     * shrinks it by at most that operation's escaped JSON size plus a small constant. Size checks that cannot succeed
-     * under that bound are skipped; the outcome is the same as checking after every step.
+     * {@link software.amazon.lambda.durable.telemetry.exporters.LambdaLogExporter#renderedSize}, so the pass does not
+     * build the rendering.
      */
     static DurableExecutionTelemetryRecord truncateMeasured(
             DurableExecutionTelemetryRecord record,
             Integer maxBytes,
             Function<DurableExecutionTelemetryRecord, Integer> size) {
-        return truncate(record, maxBytes, size, true);
+        return truncate(record, maxBytes, size);
     }
-
-    /**
-     * Slack added to each operation's escaped JSON size when bounding how much dropping its result, or the whole
-     * operation, can shrink the rendering. It covers the {@code operationsByName} summary fields that are not in the
-     * operation's own JSON ({@code count}, {@code failedCount} and the duration aggregates) and separators.
-     */
-    private static final long SHRINK_SLACK_BYTES = 1_024;
 
     private static DurableExecutionTelemetryRecord truncate(
             DurableExecutionTelemetryRecord record,
             Integer maxBytes,
-            Function<DurableExecutionTelemetryRecord, Integer> size,
-            boolean bounded) {
+            Function<DurableExecutionTelemetryRecord, Integer> size) {
         if (maxBytes == null || maxBytes <= 0) {
             return record;
         }
@@ -91,63 +90,60 @@ public final class Truncation {
             record = base;
         }
         DurableExecutionTelemetryRecord record0 = record;
-        boolean[] kept = new boolean[ops.size()];
-        java.util.Arrays.fill(kept, true);
         int[] order = oldestFirstOrder(ops);
-        long[] shrinkBound = bounded ? shrinkBounds(ops) : null;
-        Meter meter = new Meter(size, maxBytes, bounded);
-
-        boolean[] anyResultDropped = {false};
-        int[] droppedOperations = {record.droppedOperations != null ? record.droppedOperations : 0};
-        boolean[] droppedInput = {Boolean.TRUE.equals(record.droppedInput)};
-        boolean[] droppedOutput = {Boolean.TRUE.equals(record.droppedOutput)};
-        int incomingDroppedOperations = droppedOperations[0];
+        int incomingDroppedOperations = record.droppedOperations != null ? record.droppedOperations : 0;
+        boolean incomingDroppedInput = Boolean.TRUE.equals(record.droppedInput);
+        boolean incomingDroppedOutput = Boolean.TRUE.equals(record.droppedOutput);
+        // Whether the record fits with these operations, the first k operations in oldest-first order dropped.
+        BiPredicate<List<OperationRecord>, Integer> fitsWith = (shapedOps, k) -> fits(
+                size,
+                maxBytes,
+                candidate(
+                        record0,
+                        shapedOps,
+                        keptAfterDropping(order, k),
+                        incomingDroppedOperations + k,
+                        incomingDroppedInput,
+                        incomingDroppedOutput));
 
         // Step 2: drop operation results, oldest first (kept + marked truncated).
-        for (int idx : order) {
-            if (meter.fits(
-                    () -> candidate(record0, ops, kept, droppedOperations[0], droppedInput[0], droppedOutput[0]))) {
-                break;
-            }
-            if (kept[idx] && ops.get(idx).result() != null) {
-                ops.set(idx, ops.get(idx).copy().result(null).truncated(true));
-                anyResultDropped[0] = true;
-                meter.shrunkBy(bounded ? shrinkBound[idx] : 0);
-            }
-        }
+        int[] withResult =
+                Arrays.stream(order).filter(i -> ops.get(i).result() != null).toArray();
+        int results = smallestFitting(0, withResult.length, j -> fitsWith.test(withoutResults(ops, withResult, j), 0));
+        boolean fitting = results >= 0;
+        int resultsDropped = fitting ? results : withResult.length;
+        List<OperationRecord> shaped = withoutResults(ops, withResult, resultsDropped);
 
         // Step 3: drop whole operations, oldest first.
-        for (int idx : order) {
-            if (meter.fits(
-                    () -> candidate(record0, ops, kept, droppedOperations[0], droppedInput[0], droppedOutput[0]))) {
-                break;
-            }
-            if (kept[idx]) {
-                kept[idx] = false;
-                droppedOperations[0]++;
-                meter.shrunkBy(bounded ? shrinkBound[idx] : 0);
-            }
+        int dropped = 0;
+        if (!fitting) {
+            dropped = smallestFitting(1, ops.size(), k -> fitsWith.test(shaped, k));
+            fitting = dropped >= 0;
+            dropped = fitting ? dropped : ops.size();
         }
+        boolean[] kept = keptAfterDropping(order, dropped);
+        int droppedOperations = incomingDroppedOperations + dropped;
+        boolean droppedInput = incomingDroppedInput;
+        boolean droppedOutput = incomingDroppedOutput;
 
         // Step 4 (last resort): drop execution input, then output.
-        if (!meter.fits(() -> candidate(record0, ops, kept, droppedOperations[0], droppedInput[0], droppedOutput[0]))
-                && record.input != null) {
-            droppedInput[0] = true;
-            meter.forget(); // Input can be any size: measure again.
+        if (!fitting && record.input != null) {
+            droppedInput = true;
+            fitting = fits(
+                    size, maxBytes, candidate(record0, shaped, kept, droppedOperations, droppedInput, droppedOutput));
         }
-        if (!meter.fits(() -> candidate(record0, ops, kept, droppedOperations[0], droppedInput[0], droppedOutput[0]))
-                && record.output != null) {
-            droppedOutput[0] = true;
+        if (!fitting && record.output != null) {
+            droppedOutput = true;
         }
 
         if (!causesDropped
-                && !anyResultDropped[0]
-                && droppedOperations[0] == incomingDroppedOperations
-                && Boolean.TRUE.equals(record.droppedInput) == droppedInput[0]
-                && Boolean.TRUE.equals(record.droppedOutput) == droppedOutput[0]) {
+                && resultsDropped == 0
+                && dropped == 0
+                && incomingDroppedInput == droppedInput
+                && incomingDroppedOutput == droppedOutput) {
             return record;
         }
-        return candidate(record, ops, kept, droppedOperations[0], droppedInput[0], droppedOutput[0]);
+        return candidate(record, shaped, kept, droppedOperations, droppedInput, droppedOutput);
     }
 
     private static ErrorInfo withoutCause(ErrorInfo error) {
@@ -158,64 +154,49 @@ public final class Truncation {
     }
 
     /**
-     * Upper bound, per operation, on how much dropping its result or the whole operation can shrink the rendering: the
-     * operation's JSON and its name, sized as if escaped again inside a JSON string, plus {@link #SHRINK_SLACK_BYTES}.
-     * Each operation is serialized once.
+     * The smallest value in {@code lo..hi} for which {@code fits} is true, found by binary search, or -1 when the
+     * search finds none. The search assumes that {@code fits} stays true for larger values. When it does not, the
+     * result is still a value for which {@code fits} returned true, but maybe not the smallest.
      */
-    private static long[] shrinkBounds(List<OperationRecord> ops) {
-        long[] bounds = new long[ops.size()];
-        for (int i = 0; i < bounds.length; i++) {
-            OperationRecord op = ops.get(i);
-            long bound = SHRINK_SLACK_BYTES;
-            try {
-                bound += Json.escapedUtf8Size(Json.stringify(op.toWireMap()));
-                if (op.name() != null) {
-                    bound += Json.escapedUtf8Size(Json.stringify(op.name()));
-                }
-            } catch (IllegalStateException e) {
-                bound = Long.MAX_VALUE / 4; // Unknown: never skip a check after dropping this operation.
+    private static int smallestFitting(int lo, int hi, IntPredicate fits) {
+        int none = hi + 1;
+        int high = none;
+        while (lo < high) {
+            int mid = (lo + high) >>> 1;
+            if (fits.test(mid)) {
+                high = mid;
+            } else {
+                lo = mid + 1;
             }
-            bounds[i] = bound;
         }
-        return bounds;
+        return high == none ? -1 : high;
     }
 
-    /**
-     * Runs the size checks. With a bound, after an exact measurement it skips checks while the measured size minus the
-     * most the drops since then could have removed is still over the limit; such a check could not succeed, so the
-     * outcome is the same as measuring every time.
-     */
-    static final class Meter {
-        private final Function<DurableExecutionTelemetryRecord, Integer> size;
-        private final int maxBytes;
-        private final boolean bounded;
-        private long lastSize = -1; // -1: no usable measurement
-        private long shrinkSinceLast;
+    private static boolean fits(
+            Function<DurableExecutionTelemetryRecord, Integer> size,
+            int maxBytes,
+            DurableExecutionTelemetryRecord candidate) {
+        Integer measured = size.apply(candidate);
+        return measured != null && measured <= maxBytes;
+    }
 
-        Meter(Function<DurableExecutionTelemetryRecord, Integer> size, int maxBytes, boolean bounded) {
-            this.size = size;
-            this.maxBytes = maxBytes;
-            this.bounded = bounded;
+    /** {@code ops} with the results of the operations {@code withResult[0..count)} dropped and marked truncated. */
+    private static List<OperationRecord> withoutResults(List<OperationRecord> ops, int[] withResult, int count) {
+        List<OperationRecord> out = new ArrayList<>(ops);
+        for (int i = 0; i < count; i++) {
+            out.set(withResult[i], ops.get(withResult[i]).copy().result(null).truncated(true));
         }
+        return out;
+    }
 
-        boolean fits(Supplier<DurableExecutionTelemetryRecord> candidate) {
-            if (bounded && lastSize >= 0 && lastSize - shrinkSinceLast > maxBytes) {
-                return false;
-            }
-            Integer measured = size.apply(candidate.get());
-            lastSize = measured != null ? measured : -1;
-            shrinkSinceLast = 0;
-            return measured != null && measured <= maxBytes;
+    /** Which operations are kept after dropping the first {@code count} operations in {@code order}. */
+    private static boolean[] keptAfterDropping(int[] order, int count) {
+        boolean[] kept = new boolean[order.length];
+        Arrays.fill(kept, true);
+        for (int i = 0; i < count; i++) {
+            kept[order[i]] = false;
         }
-
-        void shrunkBy(long bound) {
-            shrinkSinceLast += bound;
-        }
-
-        /** The next check measures, whatever was dropped since the last measurement. */
-        void forget() {
-            lastSize = -1;
-        }
+        return kept;
     }
 
     private static DurableExecutionTelemetryRecord candidate(
