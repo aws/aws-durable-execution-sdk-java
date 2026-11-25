@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class TruncationTest {
@@ -125,5 +127,43 @@ class TruncationTest {
         assertTrue(out.droppedOperations > 0);
         assertEquals(400, out.operations().size() + out.droppedOperations);
         assertTrue(Json.byteSize(out.toWireMap()) <= 100_000);
+    }
+
+    /** {@code n} successful steps with distinct names and no results, one second apart. */
+    static DurableExecutionTelemetryRecord namedSteps(int n) {
+        DurableExecutionTelemetryRecord r = new DurableExecutionTelemetryRecord();
+        r.executionArn = "arn:aws:lambda:us-west-2:1:function:f:$LATEST/durable-execution/e/i";
+        r.status = "SUCCEEDED";
+        r.startTime = "2026-08-05T00:00:00Z";
+        Instant start = Instant.parse("2026-08-05T00:00:00Z");
+        for (int i = 0; i < n; i++) {
+            r.operations.add(new OperationRecord()
+                    .id("op-" + i)
+                    .name("step-" + i)
+                    .type("STEP")
+                    .status("SUCCEEDED")
+                    .startTime(start.plusSeconds(i).toString())
+                    .durationMs(3L)
+                    .attempt(1));
+        }
+        return r;
+    }
+
+    /**
+     * Issue #877: 2,000 named steps in the by-name format, over the 256,000-byte limit. The pass renders the record a
+     * logarithmic number of times, not once per dropped operation.
+     */
+    @Test
+    void renderCountGrowsWithTheLogOfTheOperationCount() {
+        DurableExecutionTelemetryRecord r = namedSteps(2_000);
+        assertTrue(Json.byteSize(r.toByNameWireMap()) > 256_000, "the record is over the limit");
+        AtomicInteger renders = new AtomicInteger();
+        DurableExecutionTelemetryRecord out = Truncation.truncateRecord(r, 256_000, rec -> {
+            renders.incrementAndGet();
+            return rec.toByNameWireMap();
+        });
+        assertTrue(renders.get() < 40, renders + " renders");
+        assertTrue(Json.byteSize(out.toByNameWireMap()) <= 256_000);
+        assertEquals(2_000, out.operations().size() + out.droppedOperations);
     }
 }
