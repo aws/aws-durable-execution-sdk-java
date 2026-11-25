@@ -18,10 +18,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.services.lambda.model.CheckpointUpdatedExecutionState;
+import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
 import software.amazon.lambda.durable.DurableConfig;
+import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.retry.PollingStrategies;
 import software.amazon.lambda.durable.retry.PollingStrategy;
 import software.amazon.lambda.durable.util.DurableApiErrorClassifier;
@@ -286,19 +288,16 @@ class CheckpointManager {
         while (nextMarker != null && !nextMarker.isEmpty()) {
             rethrowFatalIfAborted();
             var startTime = System.nanoTime();
-            try {
-                var response = config.getDurableExecutionClient()
-                        .getExecutionState(durableExecutionArn, checkpointToken, nextMarker);
-                rethrowFatalIfAborted();
-                logger.debug(
-                        "Durable getExecutionState API called (latency={}ns): {}.",
-                        System.nanoTime() - startTime,
-                        response);
-                operations.addAll(response.operations());
-                nextMarker = response.nextMarker();
-            } catch (AwsServiceException e) {
-                throw DurableApiErrorClassifier.classifyException(e);
-            }
+            var marker = nextMarker;
+            var response = callDurableApi(() ->
+                    config.getDurableExecutionClient().getExecutionState(durableExecutionArn, checkpointToken, marker));
+            rethrowFatalIfAborted();
+            logger.debug(
+                    "Durable getExecutionState API called (latency={}ns): {}.",
+                    System.nanoTime() - startTime,
+                    response);
+            operations.addAll(response.operations());
+            nextMarker = response.nextMarker();
         }
         return operations;
     }
@@ -341,8 +340,6 @@ class CheckpointManager {
 
             try {
                 checkpointRequest(request);
-            } catch (AwsServiceException e) {
-                throw DurableApiErrorClassifier.classifyException(e);
             } finally {
                 onCheckpointProcessingFinish.run();
             }
@@ -353,7 +350,8 @@ class CheckpointManager {
         var startTime = System.nanoTime();
         logger.debug("Calling durable checkpoint API with {} updates: {}", request.size(), request);
         rethrowFatalIfAborted();
-        var response = config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request);
+        var response = callDurableApi(
+                () -> config.getDurableExecutionClient().checkpoint(durableExecutionArn, checkpointToken, request));
         rethrowFatalIfAborted();
         logger.debug("Durable checkpoint API called (latency={}ns): {}.", System.nanoTime() - startTime, response);
 
@@ -367,6 +365,31 @@ class CheckpointManager {
         var state = response.newExecutionState();
         if (state != null) {
             processUpdatedOperations(fetchAllPages(state));
+        }
+    }
+
+    /**
+     * Runs one Durable Execution API call and turns any exception it throws into an
+     * {@link UnrecoverableDurableExecutionException}, which ends the invocation. An {@link AwsServiceException} is
+     * classified by {@link DurableApiErrorClassifier}. An {@link UnrecoverableDurableExecutionException} from a custom
+     * client keeps its classification. Any other exception, such as an {@code SdkClientException} for a DNS failure or
+     * a timeout, is retryable.
+     */
+    private static <T> T callDurableApi(Supplier<T> call) {
+        try {
+            return call.get();
+        } catch (AwsServiceException e) {
+            throw DurableApiErrorClassifier.classifyException(e);
+        } catch (UnrecoverableDurableExecutionException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new UnrecoverableDurableExecutionException(
+                    ErrorObject.builder()
+                            .errorType(e.getClass().getName())
+                            .errorMessage(e.getMessage())
+                            .build(),
+                    true,
+                    e);
         }
     }
 
