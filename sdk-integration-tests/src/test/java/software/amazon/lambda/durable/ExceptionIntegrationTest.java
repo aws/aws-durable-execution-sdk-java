@@ -166,7 +166,7 @@ class ExceptionIntegrationTest {
                         return "result";
                     },
                     StepConfig.builder()
-                            .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                            .semanticsPerRetry(StepSemantics.AT_MOST_ONCE)
                             .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                             .build());
         });
@@ -200,7 +200,7 @@ class ExceptionIntegrationTest {
                             return "payment-success";
                         },
                         StepConfig.builder()
-                                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE)
                                 .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                                 .build());
             } catch (StepInterruptedException e) {

@@ -76,7 +76,7 @@ class StepAtLeastOnceAsyncIntegrationTest {
                     String.class,
                     stepCtx -> "done",
                     StepConfig.builder()
-                            .semanticsPerRetry(StepSemantics.AT_LEAST_ONCE_PER_RETRY)
+                            .semanticsPerRetry(StepSemantics.AT_LEAST_ONCE)
                             .build());
             stepReturned.countDown();
             return result;

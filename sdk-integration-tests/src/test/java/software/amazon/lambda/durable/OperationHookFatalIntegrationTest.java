@@ -66,7 +66,7 @@ class OperationHookFatalIntegrationTest {
                 .withPlugins(faulty)
                 .build();
         var atLeastOnce = StepConfig.builder()
-                .semanticsPerRetry(StepSemantics.AT_LEAST_ONCE_PER_RETRY)
+                .semanticsPerRetry(StepSemantics.AT_LEAST_ONCE)
                 .build();
         try {
             var response = caller.submit(() -> DurableExecutor.execute(
@@ -213,9 +213,7 @@ class OperationHookFatalIntegrationTest {
         var step = StepConfig.builder()
                 // Await START for the checkpoint-hook case so its fatal is known before end-hook dispatch.
                 .semanticsPerRetry(
-                        stage.equals("operation-change")
-                                ? StepSemantics.AT_MOST_ONCE_PER_RETRY
-                                : StepSemantics.AT_LEAST_ONCE_PER_RETRY)
+                        stage.equals("operation-change") ? StepSemantics.AT_MOST_ONCE : StepSemantics.AT_LEAST_ONCE)
                 .retryStrategy((error, attempt) -> {
                     retries.incrementAndGet();
                     return RetryDecision.fail();

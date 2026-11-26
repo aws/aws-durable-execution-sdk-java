@@ -35,12 +35,12 @@ class StepConfigTest {
 
         var config = StepConfig.builder()
                 .retryStrategy(strategy)
-                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE)
                 .serDes(customSerDes)
                 .build();
 
         assertEquals(strategy, config.retryStrategy());
-        assertEquals(StepSemantics.AT_MOST_ONCE_PER_RETRY, config.semanticsPerRetry());
+        assertEquals(StepSemantics.AT_MOST_ONCE, config.semanticsPerRetry());
         assertEquals(customSerDes, config.serDes());
     }
 
@@ -55,16 +55,16 @@ class StepConfigTest {
     void testSemanticsPerRetryDefaultsToAtLeastOnce() {
         var config = StepConfig.builder().build();
 
-        assertEquals(StepSemantics.AT_LEAST_ONCE_PER_RETRY, config.semanticsPerRetry());
+        assertEquals(StepSemantics.AT_LEAST_ONCE, config.semanticsPerRetry());
     }
 
     @Test
     void testBuilderWithSemanticsPerRetry() {
         var config = StepConfig.builder()
-                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE)
                 .build();
 
-        assertEquals(StepSemantics.AT_MOST_ONCE_PER_RETRY, config.semanticsPerRetry());
+        assertEquals(StepSemantics.AT_MOST_ONCE, config.semanticsPerRetry());
     }
 
     @Test
@@ -98,12 +98,12 @@ class StepConfigTest {
 
         var config = StepConfig.builder()
                 .retryStrategy(strategy)
-                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE)
                 .serDes(customSerDes)
                 .build();
 
         assertEquals(strategy, config.retryStrategy());
-        assertEquals(StepSemantics.AT_MOST_ONCE_PER_RETRY, config.semanticsPerRetry());
+        assertEquals(StepSemantics.AT_MOST_ONCE, config.semanticsPerRetry());
         assertEquals(customSerDes, config.serDes());
     }
 }

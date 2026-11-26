@@ -70,7 +70,7 @@ class PluginFatalQueuedCheckpointTest {
                 .withPlugins(fault)
                 .build();
         var atMostOnce = StepConfig.builder()
-                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                .semanticsPerRetry(StepSemantics.AT_MOST_ONCE)
                 .build();
         try {
             var response = callers.submit(() -> DurableExecutor.execute(

@@ -93,7 +93,7 @@ class DelayedCheckpointFatalIntegrationTest {
                         return "unexpected";
                     },
                     StepConfig.builder()
-                            .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                            .semanticsPerRetry(StepSemantics.AT_MOST_ONCE)
                             .build());
             assertTrue(startQueued.await(3, TimeUnit.SECONDS));
             assertSame(

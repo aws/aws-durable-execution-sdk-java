@@ -30,7 +30,7 @@ public class StepConfig {
 
     /** Returns the delivery semantics per retry for this step. */
     public StepSemantics semanticsPerRetry() {
-        return semanticsPerRetry != null ? semanticsPerRetry : StepSemantics.AT_LEAST_ONCE_PER_RETRY;
+        return semanticsPerRetry != null ? semanticsPerRetry : StepSemantics.AT_LEAST_ONCE;
     }
 
     /** Returns the custom serializer for this step, or null if not specified (uses default SerDes). */

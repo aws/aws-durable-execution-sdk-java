@@ -38,7 +38,7 @@ try {
     var result = ctx.step("charge-payment", Payment.class,
         stepCtx -> paymentService.charge(amount),
         StepConfig.builder()
-            .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+            .semanticsPerRetry(StepSemantics.AT_MOST_ONCE)
             .build());
 } catch (StepInterruptedException e) {
     // Step started but we don't know if it completed

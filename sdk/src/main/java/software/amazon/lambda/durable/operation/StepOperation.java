@@ -290,7 +290,12 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         }
     }
 
+    // The deprecated AT_MOST_ONCE_PER_RETRY is a separate constant with the same behavior. The deprecated
+    // AT_LEAST_ONCE_PER_RETRY needs no check, because every semantics that is not checked here behaves as
+    // at-least-once.
+    @SuppressWarnings("deprecation")
     private boolean isAtMostOnce() {
-        return config.semanticsPerRetry() == StepSemantics.AT_MOST_ONCE_PER_RETRY;
+        var semantics = config.semanticsPerRetry();
+        return semantics == StepSemantics.AT_MOST_ONCE || semantics == StepSemantics.AT_MOST_ONCE_PER_RETRY;
     }
 }
