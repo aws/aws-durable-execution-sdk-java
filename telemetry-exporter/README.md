@@ -319,22 +319,23 @@ and the `cause` chain.
   input, then output — setting `truncated`, `droppedCauses`, `droppedOperations`, `droppedInput`,
   `droppedOutput` as applicable. Markers already on a record are kept. The size is measured against
   the exact value each exporter emits (its `render`). `LambdaLogExporter` computes that size without
-  building the line. Clearing a result replaces `"result":<json>` with `"truncated":true` on the
-  operation. When the result JSON is 7 bytes or shorter (such as `true`, `1`, `null` or `"ok"`),
-  that makes the array form bigger. The `operationsByName` format writes no per-operation marker, so
-  there clearing any result makes the record smaller. So when small results exist, the pass renders
-  the record once with every small result cleared. If that render is smaller, small results are
-  cleared like any other result. Otherwise they stay in the record, without the `truncated` mark.
-  The pass binary searches how many results, then how many operations, to drop. So it measures a
-  record of `n` operations about `2 * log2(n)` times, with any exporter. The search assumes that
-  dropping more never makes the record larger. That is not always true. So the pass can drop more
-  results or operations than a one-at-a-time pass. Two known cases: in the `operationsByName`
-  format, dropping one of two operations with the same name can add the other one's result and
-  error to the summary. In `OTelExporter`, the record is escaped into the log body string, so the
-  7-byte rule and the probe render can misjudge small results. The chosen record was always
-  measured to fit. So the output never goes over the limit, as long as dropping everything
-  droppable makes it fit. The execution `error` and identity fields are never dropped. So when
-  even dropping everything droppable does not fit, the output can be over the limit.
+  building the line. The pass binary searches how many results, then how many operations, to drop.
+  So it measures a record of `n` operations about `2 * log2(n)` times, with any exporter. The
+  search assumes that dropping more never makes the record larger. That is not always true. Known
+  causes:
+  - In the `operationsByName` format, dropping one of two operations with the same name can add
+    the other operation's result and error to the summary.
+  - The `truncated` marker that replaces a dropped result is larger than a short result such as
+    `true`.
+  - `OTelExporter` escapes the record into the log body string, which changes each size.
+
+  So the pass can drop more results and operations than the fewest that fit. Example: 2,000
+  steps in the array format, one 100-byte result on the oldest step and `true` on every other
+  step, at 1 byte under the full size. Clearing the oldest result fits. The pass instead drops 41
+  operations and clears 1,959 results. The chosen record was always measured to fit. So the output
+  never goes over the limit, as long as dropping everything droppable makes it fit. The execution
+  `error` and identity fields are never dropped. So when even dropping everything droppable does
+  not fit, the output can be over the limit.
 - **Exporter isolation.** Every exporter receives its own copy of each record, truncated to its own
   limit; ordinary exporter failures are logged without preventing the other exporters from running.
 - **Export scheduling.** Exporter I/O never runs on the SDK threads that deliver plugin hooks.

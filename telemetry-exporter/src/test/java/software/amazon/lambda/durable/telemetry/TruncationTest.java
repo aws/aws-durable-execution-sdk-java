@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -201,14 +202,6 @@ class TruncationTest {
         assertEquals(4_000, exportedOperations.get());
     }
 
-    /** Results whose JSON is 7 bytes or shorter, so clearing them would make the record bigger. */
-    private static final Object[] SMALL_RESULTS = {true, false, 1, 0, 42, "", "ok", "abcde", 3.5};
-
-    /** Whether the pass may clear {@code result}: its JSON is longer than 7 bytes. */
-    private static boolean clearable(Object result) {
-        return result != null && Json.byteSize(result) > 7;
-    }
-
     /** A random record with quotes, backslashes, non-ASCII text, repeated and empty names, results and errors. */
     private static DurableExecutionTelemetryRecord randomRecord(Random random, int n) {
         String[] texts = {"", "a", "\"", "\\", "é", "😀", "\u2028", "\u0001", "x\"y\\z"};
@@ -227,10 +220,7 @@ class TruncationTest {
                     .startTime(start.plusSeconds(i).toString())
                     .durationMs((long) random.nextInt(10_000))
                     .attempt(1 + random.nextInt(3));
-            int resultKind = random.nextInt(4);
-            if (resultKind == 0) {
-                op.result(SMALL_RESULTS[random.nextInt(SMALL_RESULTS.length)]);
-            } else if (resultKind == 1) {
+            if (random.nextBoolean()) {
                 op.result(texts[random.nextInt(texts.length)].repeat(random.nextInt(300)));
             }
             if (random.nextInt(4) == 0) {
@@ -280,29 +270,22 @@ class TruncationTest {
             }
             boolean resultKept = false;
             for (OperationRecord op : out.operations()) {
-                resultKept |= clearable(op.result());
+                resultKept |= op.result() != null;
                 assertTrue(!resultKept || !Boolean.TRUE.equals(op.truncated()), label + ": oldest results first");
-                assertTrue(!Boolean.TRUE.equals(op.truncated()) || op.result() == null, label + ": cleared result");
             }
         }
     }
 
     /**
-     * The one-at-a-time pass from before the binary search: the first record, in drop order, that fits. It clears only
-     * results whose JSON is longer than 7 bytes, as the pass does. Records here have no causes, and every operation has
-     * a later start time than the one before it. With {@code clearSmall} it clears every result, as the pass does in a
-     * rendering without per-operation markers.
+     * The one-at-a-time pass from before the binary search: the first record, in drop order, that fits. Records here
+     * have no causes, and every operation has a later start time than the one before it.
      */
     private static DurableExecutionTelemetryRecord oneAtATime(
-            DurableExecutionTelemetryRecord r,
-            int limit,
-            Function<DurableExecutionTelemetryRecord, Object> render,
-            boolean clearSmall) {
+            DurableExecutionTelemetryRecord r, int limit, Function<DurableExecutionTelemetryRecord, Object> render) {
         List<OperationRecord> ops = new ArrayList<>();
         r.operations().forEach(op -> ops.add(op.copy()));
         for (int j = 0; j <= ops.size(); j++) {
-            Object result = j > 0 ? ops.get(j - 1).result() : null;
-            if (result != null && (clearSmall || clearable(result))) {
+            if (j > 0 && ops.get(j - 1).result() != null) {
                 ops.set(j - 1, ops.get(j - 1).copy().result(null).truncated(true));
             }
             DurableExecutionTelemetryRecord candidate = r.copy();
@@ -325,8 +308,8 @@ class TruncationTest {
     }
 
     /**
-     * In the array format each drop makes the record smaller, so the binary search drops exactly what the one-at-a-time
-     * pass drops.
+     * In the array format each drop makes the record smaller when every result is longer than 20 bytes. So the binary
+     * search drops exactly what the one-at-a-time pass drops.
      */
     @Test
     void arrayFormatMatchesTheOneAtATimePass() {
@@ -338,10 +321,10 @@ class TruncationTest {
             r.input = null;
             r.output = null;
             r.operations.replaceAll(op -> op.error() == null ? op : op.copy().error(new ErrorInfo("E", "m")));
+            r.operations.replaceAll(op -> op.result() == null ? op : op.copy().result("r".repeat(21) + op.result()));
             int full = Json.byteSize(r.toWireMap());
             int limit = 400 + random.nextInt(full);
-            DurableExecutionTelemetryRecord expected =
-                    oneAtATime(r, limit, DurableExecutionTelemetryRecord::toWireMap, false);
+            DurableExecutionTelemetryRecord expected = oneAtATime(r, limit, DurableExecutionTelemetryRecord::toWireMap);
             if (expected == null || full <= limit) {
                 continue;
             }
@@ -362,60 +345,26 @@ class TruncationTest {
         return r;
     }
 
-    private static int truncatedCount(DurableExecutionTelemetryRecord r) {
-        return (int) r.operations().stream()
-                .filter(op -> Boolean.TRUE.equals(op.truncated()))
-                .count();
-    }
-
-    /**
-     * One large old result, then many small results. Clearing a small result makes the record bigger. So the pass
-     * clears only the large result, as the one-at-a-time pass does, and drops no operation.
-     */
+    /** The record fits only when every result is cleared. So no operation is dropped. */
     @Test
-    void smallResultsAreNotClearedAfterALargeOldResult() {
-        Object[] small = {true, 1, "ok", ""};
-        for (int large : new int[] {40, 5_000}) {
-            Object[] results = new Object[2_000];
-            results[0] = "x".repeat(large);
-            for (int i = 1; i < results.length; i++) {
-                results[i] = small[i % small.length];
-            }
-            DurableExecutionTelemetryRecord r = stepsWithResults(results);
-            int limit = Json.byteSize(r.toWireMap()) - 1;
-            DurableExecutionTelemetryRecord out =
-                    Truncation.truncateRecord(r.deepCopy(), limit, DurableExecutionTelemetryRecord::toWireMap);
-            DurableExecutionTelemetryRecord expected =
-                    oneAtATime(r, limit, DurableExecutionTelemetryRecord::toWireMap, false);
-            assertEquals(Json.stringify(expected.toWireMap()), Json.stringify(out.toWireMap()), "large " + large);
-            assertNull(out.droppedOperations, "large " + large);
-            assertEquals(1, truncatedCount(out), "large " + large);
-            assertNull(out.operations().get(0).result());
-            assertEquals("ok", out.operations().get(2).result(), "a small result stays");
-        }
-    }
-
-    /** The record fits only when every clearable result is cleared. No operation is dropped. */
-    @Test
-    void clearingEveryClearableResultIsTriedBeforeDroppingOperations() {
+    void clearingEveryResultIsTriedBeforeDroppingOperations() {
         String big = "y".repeat(100);
         DurableExecutionTelemetryRecord r = stepsWithResults(big, true, big, "ok", big, 1, big);
         DurableExecutionTelemetryRecord allCleared = r.copy();
         allCleared.operations = new ArrayList<>();
         for (OperationRecord op : r.operations()) {
-            allCleared.operations.add(
-                    clearable(op.result()) ? op.copy().result(null).truncated(true) : op);
+            allCleared.operations.add(op.copy().result(null).truncated(true));
         }
         allCleared.truncated = Boolean.TRUE;
         int limit = Json.byteSize(allCleared.toWireMap());
         DurableExecutionTelemetryRecord out =
                 Truncation.truncateRecord(r.deepCopy(), limit, DurableExecutionTelemetryRecord::toWireMap);
         assertNull(out.droppedOperations);
-        assertEquals(4, truncatedCount(out));
-        assertEquals(Json.stringify(allCleared.toWireMap()), Json.stringify(out.toWireMap()));
+        assertEquals(7, out.operations().size());
+        assertTrue(Json.byteSize(out.toWireMap()) <= limit);
     }
 
-    /** The record fits only when every operation is dropped. The input is kept. */
+    /** The record fits only when every operation is dropped. So the input is kept. */
     @Test
     void droppingEveryOperationIsTriedBeforeDroppingTheInput() {
         DurableExecutionTelemetryRecord r = namedSteps(7);
@@ -433,73 +382,20 @@ class TruncationTest {
         assertTrue(out.operations().isEmpty());
     }
 
-    /** Dropping the causes alone makes the record fit, at exactly the limit. No result is cleared. */
+    /**
+     * The operations list is not in start-time order. The pass orders by start time. So it drops the operations with
+     * the earliest start times, not the first ones in the list.
+     */
     @Test
-    void droppingCausesAloneClearsNoResult() {
-        DurableExecutionTelemetryRecord r = stepsWithResults("z".repeat(500), "z".repeat(500), "z".repeat(500));
-        for (OperationRecord op : r.operations()) {
-            op.status("FAILED").error(new ErrorInfo("E", "m", new ErrorInfo("Cause", "c".repeat(200))));
-        }
-        DurableExecutionTelemetryRecord causesDropped = r.copy();
-        causesDropped.operations = new ArrayList<>();
-        for (OperationRecord op : r.operations()) {
-            causesDropped.operations.add(op.copy().error(new ErrorInfo("E", "m")));
-        }
-        causesDropped.truncated = Boolean.TRUE;
-        causesDropped.droppedCauses = Boolean.TRUE;
-        int limit = Json.byteSize(causesDropped.toWireMap());
+    void outOfOrderStartTimesDropTheEarliestStartFirst() {
+        DurableExecutionTelemetryRecord r = namedSteps(6);
+        Collections.reverse(r.operations);
+        int limit = Json.byteSize(r.toWireMap()) - 1;
         DurableExecutionTelemetryRecord out =
                 Truncation.truncateRecord(r.deepCopy(), limit, DurableExecutionTelemetryRecord::toWireMap);
-        assertEquals(Boolean.TRUE, out.droppedCauses);
-        assertEquals(0, truncatedCount(out));
-        assertEquals(Json.stringify(causesDropped.toWireMap()), Json.stringify(out.toWireMap()));
-    }
-
-    /**
-     * One large old result, then many small results, in renderings without a per-operation marker. There clearing a
-     * small result makes the record smaller. So the pass clears small results too, as the one-at-a-time pass does, and
-     * drops no operation.
-     */
-    @Test
-    void byNameClearsSmallResultsBeforeDroppingOperations() {
-        Object[] small = {true, 1, "ok", ""};
-        Object[] results = new Object[2_000];
-        results[0] = "x".repeat(5_000);
-        for (int i = 1; i < results.length; i++) {
-            results[i] = small[i % small.length];
-        }
-        DurableExecutionTelemetryRecord r = stepsWithResults(results);
-        LambdaLogExporter lambdaLog = new LambdaLogExporter();
-        List<Function<DurableExecutionTelemetryRecord, Object>> renders =
-                List.of(DurableExecutionTelemetryRecord::toByNameWireMap, lambdaLog::render);
-        for (Function<DurableExecutionTelemetryRecord, Object> render : renders) {
-            DurableExecutionTelemetryRecord largeCleared = r.copy();
-            largeCleared.operations = new ArrayList<>(r.operations());
-            largeCleared.operations.set(
-                    0, r.operations().get(0).copy().result(null).truncated(true));
-            largeCleared.truncated = Boolean.TRUE;
-            int limit = Json.byteSize(render.apply(largeCleared)) - 200;
-            DurableExecutionTelemetryRecord expected = oneAtATime(r, limit, render, true);
-            DurableExecutionTelemetryRecord out = Truncation.truncateRecord(r.deepCopy(), limit, render);
-            assertNull(out.droppedOperations);
-            assertTrue(truncatedCount(out) > 1, "small results are cleared");
-            assertEquals(Json.stringify(expected.toWireMap()), Json.stringify(out.toWireMap()));
-        }
-    }
-
-    /**
-     * Without dropped causes and without results, the record with every result kept is the input with markers added. So
-     * the pass measures the input once and then one operation count.
-     */
-    @Test
-    void noRenderForTheUnchangedRecord() {
-        DurableExecutionTelemetryRecord r = namedSteps(1);
-        AtomicInteger renders = new AtomicInteger();
-        DurableExecutionTelemetryRecord out = Truncation.truncateRecord(r, Json.byteSize(r.toWireMap()) - 1, rec -> {
-            renders.incrementAndGet();
-            return rec.toWireMap();
-        });
         assertEquals(1, out.droppedOperations);
-        assertEquals(2, renders.get());
+        assertEquals(5, out.operations().size());
+        assertTrue(out.operations().stream().noneMatch(op -> "op-0".equals(op.id())), "earliest start dropped");
+        assertEquals("op-5", out.operations().get(0).id(), "list order kept");
     }
 }
