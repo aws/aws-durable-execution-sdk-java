@@ -18,7 +18,10 @@ import java.util.function.BiFunction;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.core.exception.SdkClientException;
+import software.amazon.awssdk.http.SdkHttpResponse;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.StepSemantics;
@@ -237,6 +240,73 @@ class StepAtLeastOnceAsyncIntegrationTest {
 
         assertTrue(failure.isRetryable());
         assertEquals(List.of("invocation RETRYING"), events);
+    }
+
+    @Test
+    void transientSucceedFailureAfterHandlerThrowsRetriesTheInvocation() {
+        var client = new FailSucceedAfterHandlerThrows(AwsServiceException.builder()
+                .message("service unavailable")
+                .awsErrorDetails(errorDetails(503, "ServiceException"))
+                .build());
+
+        var failure = assertThrows(
+                UnrecoverableDurableExecutionException.class, () -> execute(client.handler(), config(client)));
+
+        assertTrue(failure.isRetryable());
+        assertEquals(List.of("invocation RETRYING"), events);
+    }
+
+    @Test
+    void executionScopeSucceedFailureAfterHandlerThrowsAnswersFailed() {
+        var client = new FailSucceedAfterHandlerThrows(AwsServiceException.builder()
+                .message("invalid payload")
+                .awsErrorDetails(errorDetails(400, "ValidationException"))
+                .build());
+
+        var output = execute(client.handler(), config(client));
+
+        assertEquals(ExecutionStatus.FAILED, output.status());
+        assertEquals(List.of("invocation FAILED"), events);
+    }
+
+    private static AwsErrorDetails errorDetails(int status, String code) {
+        return AwsErrorDetails.builder()
+                .errorCode(code)
+                .sdkHttpResponse(SdkHttpResponse.builder().statusCode(status).build())
+                .build();
+    }
+
+    /** Fails the async SUCCEED with the given error, after the handler threw. */
+    private static final class FailSucceedAfterHandlerThrows extends LocalMemoryExecutionClient {
+        private final CountDownLatch handlerThrew = new CountDownLatch(1);
+        private final RuntimeException error;
+
+        FailSucceedAfterHandlerThrows(RuntimeException error) {
+            this.error = error;
+        }
+
+        BiFunction<String, DurableContext, String> handler() {
+            return (input, ctx) -> {
+                ctx.step("work", String.class, stepCtx -> "done", ASYNC);
+                handlerThrew.countDown();
+                throw new IllegalStateException("handler failed");
+            };
+        }
+
+        @Override
+        public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {
+            if (updates.stream().anyMatch(u -> u.action() == OperationAction.SUCCEED)) {
+                try {
+                    assertTrue(handlerThrew.await(5, SECONDS));
+                    // Let the invocation select the handler failure before the checkpoint fails.
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                throw error;
+            }
+            return super.checkpoint(arn, token, updates);
+        }
     }
 
     @Test
