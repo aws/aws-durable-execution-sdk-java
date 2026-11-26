@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package software.amazon.lambda.durable.config;
 
+import software.amazon.lambda.durable.annotations.Experimental;
+
 /**
  * Delivery semantics for step operations.
  *
@@ -36,7 +38,11 @@ public enum StepSemantics {
      * or a client token for a later step.
      *
      * <p>Only the SUCCEED checkpoint is not awaited. A failed attempt waits for its RETRY or FAIL checkpoint.
+     *
+     * @apiNote <b>Experimental.</b> This value is experimental and may be changed or removed in future releases without
+     *     a major-version bump.
      */
+    @Experimental
     AT_LEAST_ONCE_ASYNC,
 
     /**
