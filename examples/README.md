@@ -84,6 +84,7 @@ mvn test -Dtest=CloudBasedIntegrationTest \
 | [SimpleStepExample](src/main/java/software/amazon/lambda/durable/examples/step/SimpleStepExample.java) | Basic sequential steps |
 | [WaitExample](src/main/java/software/amazon/lambda/durable/examples/wait/WaitExample.java) | Suspend execution with `wait()` |
 | [RetryExample](src/main/java/software/amazon/lambda/durable/examples/step/RetryExample.java) | Configuring retry strategies |
+| [AsyncStepSemanticsExample](src/main/java/software/amazon/lambda/durable/examples/step/AsyncStepSemanticsExample.java) | `AT_LEAST_ONCE_ASYNC` as the default step semantics, with an `AT_LEAST_ONCE` idempotency key step |
 | [ErrorHandlingExample](src/main/java/software/amazon/lambda/durable/examples/general/ErrorHandlingExample.java) | Handling `StepFailedException` and `StepInterruptedException` |
 | [GenericTypesExample](src/main/java/software/amazon/lambda/durable/examples/general/GenericTypesExample.java) | Working with `List<T>` and `Map<K,V>` |
 | [CustomConfigExample](src/main/java/software/amazon/lambda/durable/examples/general/CustomConfigExample.java) | Custom Lambda client and SerDes |
