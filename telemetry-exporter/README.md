@@ -325,15 +325,16 @@ and the `cause` chain.
   there clearing any result makes the record smaller. So when small results exist, the pass renders
   the record once with every small result cleared. If that render is smaller, small results are
   cleared like any other result. Otherwise they stay in the record, without the `truncated` mark.
-  The pass binary searches how many results, then how many operations,
-  to drop. So it measures a record of `n` operations about `2 * log2(n)` times, with any exporter.
-  The search assumes that dropping more never makes the record larger. In the array format that is
-  true, so the pass drops the fewest results and operations that fit. In the `operationsByName`
-  format, and in the by-name part of `BOTH`, it is not always true: dropping one of two operations
-  with the same name can add the other one's result and error to the summary. Only there can the
-  pass drop a few more old results or operations than the fewest that fit. The chosen record was
-  always measured to fit, so the output never goes over the limit. The execution `error` and
-  identity fields are never dropped.
+  The pass binary searches how many results, then how many operations, to drop. So it measures a
+  record of `n` operations about `2 * log2(n)` times, with any exporter. The search assumes that
+  dropping more never makes the record larger. That is not always true. So the pass can drop more
+  results or operations than a one-at-a-time pass. Two known cases: in the `operationsByName`
+  format, dropping one of two operations with the same name can add the other one's result and
+  error to the summary. In `OTelExporter`, the record is escaped into the log body string, so the
+  7-byte rule and the probe render can misjudge small results. The chosen record was always
+  measured to fit. So the output never goes over the limit, as long as dropping everything
+  droppable makes it fit. The execution `error` and identity fields are never dropped. So when
+  even dropping everything droppable does not fit, the output can be over the limit.
 - **Exporter isolation.** Every exporter receives its own copy of each record, truncated to its own
   limit; ordinary exporter failures are logged without preventing the other exporters from running.
 - **Export scheduling.** Exporter I/O never runs on the SDK threads that deliver plugin hooks.

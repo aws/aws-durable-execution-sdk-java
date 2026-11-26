@@ -39,11 +39,12 @@ import java.util.function.IntPredicate;
  *
  * <p>Steps 2 and 3 binary search how many results, then how many operations, to drop. So the pass renders the record
  * about {@code 2 * log2(n)} times for {@code n} operations, with any {@code render}. The search assumes that dropping
- * more never makes the record larger. In the array format that is true, so the pass drops the fewest results and
- * operations that fit. In the {@code operationsByName} rendering, and in the by-name part of "both", it is not always
- * true: dropping one of two operations with the same name can add the remaining operation's result and error to the
- * summary. Only there can the search drop a few more old results or operations than the fewest that fit. The chosen
- * record is always one that was measured to fit, so the output never goes over the limit.
+ * more never makes the record larger. That is not always true. So the pass can drop more results or operations than a
+ * one-at-a-time pass. Two known cases: in the {@code operationsByName} rendering, dropping one of two operations with
+ * the same name can add the remaining operation's result and error to the summary. In a rendering that escapes the
+ * record into a string, such as the OpenTelemetry body, the 7-byte rule and the probe render can misjudge small
+ * results. The chosen record is always one that was measured to fit. So the output never goes over the limit, as long
+ * as dropping everything droppable makes it fit. When even that does not fit, the output can be over the limit.
  */
 public final class Truncation {
 
