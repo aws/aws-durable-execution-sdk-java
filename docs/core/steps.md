@@ -111,6 +111,21 @@ var result = ctx.step("charge-payment", Result.class,
 
 Without this, a step using `AT_MOST_ONCE` with retries enabled could still execute multiple times across different retry attempts.
 
+### Default Step Semantics
+
+`DurableConfig.withDefaultStepSemantics()` sets the semantics of every step that does not set its own. It applies in every context of the execution: child contexts, map and parallel items, and steps that the SDK creates, such as the submitter step of `waitForCallback`. A step's own `semanticsPerRetry()` wins. Without the option, the default stays `AT_LEAST_ONCE`.
+
+```java
+@Override
+protected DurableConfig createConfiguration() {
+    return DurableConfig.builder()
+        .withDefaultStepSemantics(StepSemantics.AT_LEAST_ONCE_ASYNC)
+        .build();
+}
+```
+
+With `AT_LEAST_ONCE_ASYNC` as the default, set `AT_LEAST_ONCE` on each step whose result becomes an idempotency key or a client token for a later step.
+
 ### Generic Types
 
 When a step returns a parameterized type like `List<User>`, use `TypeToken` to preserve the type information:
