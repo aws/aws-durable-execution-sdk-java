@@ -93,9 +93,9 @@ class LambdaLogLineSizeTest {
     }
 
     /**
-     * Skipping checks does not change the outcome: on records with repeated names (whose summaries change when one
-     * occurrence is dropped), small and large results, failed operations with causes, and input and output, the
-     * measured pass returns the same record as measuring {@code render} after every step.
+     * Measuring with {@code renderedSize} does not change the outcome: on records with repeated names (whose summaries
+     * change when one occurrence is dropped), small and large results, failed operations with causes, and input and
+     * output, the measured pass returns the same record as measuring {@code render}.
      */
     @Test
     void measuredPassMatchesMeasuringEveryStep() {

@@ -76,7 +76,7 @@ The size limit bounds the printed line, envelope included: the exporter's `rende
 truncation pass measures exactly the line that is printed. The default limit is 256,000 bytes; CloudWatch Logs accepts
 log events of up to 1 MB. `message` is the record JSON escaped again, so a record with many `"` or `\` characters can
 grow to about twice its size. The exporter computes the line's size without building it (the envelope's fixed 68 bytes
-plus the record JSON's size once escaped again), so the size checks stay cheap on large records. Truncation drops
+plus the record JSON's size once escaped again), so each size check does not build the line. Truncation drops
 error causes first, then operation results, whole operations, input and output (see
 [Error names and causes](#error-names-and-causes) and [Design](#design)).
 
@@ -319,9 +319,23 @@ and the `cause` chain.
   input, then output — setting `truncated`, `droppedCauses`, `droppedOperations`, `droppedInput`,
   `droppedOutput` as applicable. Markers already on a record are kept. The size is measured against
   the exact value each exporter emits (its `render`). `LambdaLogExporter` computes that size without
-  building the line, and the pass skips checks that cannot succeed yet (each operation's largest
-  possible saving is sized once), so the cost grows with the record rather than with the number of
-  dropped operations times the record. The execution `error` and identity fields are never dropped.
+  building the line. The pass binary searches how many results, then how many operations, to drop.
+  So it measures a record of `n` operations about `2 * log2(n)` times, with any exporter. The
+  search assumes that dropping more never makes the record larger. That is not always true. Known
+  causes:
+  - In the `operationsByName` format, dropping one of two operations with the same name can add
+    the other operation's result and error to the summary.
+  - The `truncated` marker that replaces a dropped result is larger than a short result such as
+    `true`.
+  - `OTelExporter` escapes the record into the log body string, which changes each size.
+
+  So the pass can drop more results and operations than the fewest that fit. Example: 2,000
+  steps in the array format, one 100-byte result on the oldest step and `true` on every other
+  step, at 1 byte under the full size. Clearing the oldest result fits. The pass instead drops 41
+  operations and clears 1,959 results. The chosen record was always measured to fit. So the output
+  never goes over the limit, as long as dropping everything droppable makes it fit. The execution
+  `error` and identity fields are never dropped. So when even dropping everything droppable does
+  not fit, the output can be over the limit.
 - **Exporter isolation.** Every exporter receives its own copy of each record, truncated to its own
   limit; ordinary exporter failures are logged without preventing the other exporters from running.
 - **Export scheduling.** Exporter I/O never runs on the SDK threads that deliver plugin hooks.

@@ -7,7 +7,17 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
+import software.amazon.lambda.durable.telemetry.exporters.LambdaLogExporter;
+import software.amazon.lambda.durable.telemetry.exporters.OperationsFormat;
 
 class TruncationTest {
 
@@ -125,5 +135,267 @@ class TruncationTest {
         assertTrue(out.droppedOperations > 0);
         assertEquals(400, out.operations().size() + out.droppedOperations);
         assertTrue(Json.byteSize(out.toWireMap()) <= 100_000);
+    }
+
+    /** {@code n} successful steps with distinct names and no results, one second apart. */
+    static DurableExecutionTelemetryRecord namedSteps(int n) {
+        DurableExecutionTelemetryRecord r = new DurableExecutionTelemetryRecord();
+        r.executionArn = "arn:aws:lambda:us-west-2:1:function:f:$LATEST/durable-execution/e/i";
+        r.status = "SUCCEEDED";
+        r.startTime = "2026-08-05T00:00:00Z";
+        Instant start = Instant.parse("2026-08-05T00:00:00Z");
+        for (int i = 0; i < n; i++) {
+            r.operations.add(new OperationRecord()
+                    .id("op-" + i)
+                    .name("step-" + i)
+                    .type("STEP")
+                    .status("SUCCEEDED")
+                    .startTime(start.plusSeconds(i).toString())
+                    .durationMs(3L)
+                    .attempt(1));
+        }
+        return r;
+    }
+
+    /**
+     * Issue #877: 2,000 named steps in the by-name format, over the 256,000-byte limit. The pass renders the record a
+     * logarithmic number of times, not once per dropped operation.
+     */
+    @Test
+    void renderCountGrowsWithTheLogOfTheOperationCount() {
+        DurableExecutionTelemetryRecord r = namedSteps(2_000);
+        assertTrue(Json.byteSize(r.toByNameWireMap()) > 256_000, "the record is over the limit");
+        AtomicInteger renders = new AtomicInteger();
+        DurableExecutionTelemetryRecord out = Truncation.truncateRecord(r, 256_000, rec -> {
+            renders.incrementAndGet();
+            return rec.toByNameWireMap();
+        });
+        assertTrue(renders.get() < 40, renders + " renders");
+        assertTrue(Json.byteSize(out.toByNameWireMap()) <= 256_000);
+        assertEquals(2_000, out.operations().size() + out.droppedOperations);
+    }
+
+    /** A custom exporter's {@code render} gets the same bounded number of calls through the export path. */
+    @Test
+    void customRenderGetsABoundedRenderCount() {
+        AtomicInteger renders = new AtomicInteger();
+        AtomicInteger exportedOperations = new AtomicInteger(-1);
+        TelemetryExporter custom = new TelemetryExporter() {
+            @Override
+            public void export(DurableExecutionTelemetryRecord record) {
+                exportedOperations.set(record.operations().size() + record.droppedOperations);
+            }
+
+            @Override
+            public Integer maxRecordSizeBytes() {
+                return 256_000;
+            }
+
+            @Override
+            public Object render(DurableExecutionTelemetryRecord record) {
+                renders.incrementAndGet();
+                return Map.of("custom", record.toByNameWireMap());
+            }
+        };
+        DurableExecutionTelemetry.exportRecord(namedSteps(4_000), custom);
+        assertTrue(renders.get() < 40, renders + " renders");
+        assertEquals(4_000, exportedOperations.get());
+    }
+
+    /** A random record with quotes, backslashes, non-ASCII text, repeated and empty names, results and errors. */
+    private static DurableExecutionTelemetryRecord randomRecord(Random random, int n) {
+        String[] texts = {"", "a", "\"", "\\", "é", "😀", "\u2028", "\u0001", "x\"y\\z"};
+        DurableExecutionTelemetryRecord r = RecordFactory.sample();
+        r.operations.clear();
+        r.input = random.nextBoolean() ? null : texts[random.nextInt(texts.length)].repeat(random.nextInt(2_000));
+        r.output = random.nextBoolean() ? null : Map.of("k", texts[random.nextInt(texts.length)].repeat(500));
+        Instant start = Instant.parse("2026-08-05T00:00:00Z");
+        for (int i = 0; i < n; i++) {
+            String name = random.nextInt(4) == 0 ? "" : "n" + random.nextInt(Math.max(1, n / 3));
+            OperationRecord op = new OperationRecord()
+                    .id("id-" + i)
+                    .name(name + texts[random.nextInt(texts.length)])
+                    .type("STEP")
+                    .status("SUCCEEDED")
+                    .startTime(start.plusSeconds(i).toString())
+                    .durationMs((long) random.nextInt(10_000))
+                    .attempt(1 + random.nextInt(3));
+            if (random.nextBoolean()) {
+                op.result(texts[random.nextInt(texts.length)].repeat(random.nextInt(300)));
+            }
+            if (random.nextInt(4) == 0) {
+                op.status("FAILED")
+                        .error(new ErrorInfo(
+                                "E" + i, texts[random.nextInt(texts.length)].repeat(50), new ErrorInfo("C", "c")));
+            }
+            r.addOperation(op);
+        }
+        return r;
+    }
+
+    /**
+     * For random records, limits and renderings, the output never goes over the limit unless everything droppable is
+     * dropped, the pass renders a logarithmic number of times, and results and operations are dropped oldest first.
+     */
+    @Test
+    void randomRecordsStayWithinTheLimitAndDropOldestFirst() {
+        Random random = new Random(877);
+        List<Function<DurableExecutionTelemetryRecord, Object>> renders = List.of(
+                DurableExecutionTelemetryRecord::toWireMap,
+                DurableExecutionTelemetryRecord::toByNameWireMap,
+                OperationsFormat.BOTH::apply,
+                new LambdaLogExporter()::render);
+        for (int c = 0; c < 300; c++) {
+            int n = 1 + random.nextInt(120);
+            DurableExecutionTelemetryRecord r = randomRecord(random, n);
+            Function<DurableExecutionTelemetryRecord, Object> render = renders.get(c % renders.size());
+            int full = Json.byteSize(render.apply(r));
+            int limit = 200 + random.nextInt(full);
+            AtomicInteger count = new AtomicInteger();
+            DurableExecutionTelemetryRecord out = Truncation.truncateRecord(r.deepCopy(), limit, rec -> {
+                count.incrementAndGet();
+                return render.apply(rec);
+            });
+            String label = "case " + c + ", limit " + limit;
+            boolean everythingDropped = out.operations().isEmpty() && out.input == null && out.output == null;
+            assertTrue(Json.byteSize(render.apply(out)) <= limit || everythingDropped, label);
+            int log = 32 - Integer.numberOfLeadingZeros(n + 1);
+            assertTrue(count.get() <= 2 * log + 5, label + ": " + count + " renders");
+
+            int droppedOperations = out.droppedOperations == null ? 0 : out.droppedOperations;
+            assertEquals(n, out.operations().size() + droppedOperations, label);
+            for (int i = 0; i < out.operations().size(); i++) {
+                assertEquals(
+                        "id-" + (droppedOperations + i), out.operations().get(i).id(), label + ": newest kept");
+            }
+            boolean resultKept = false;
+            for (OperationRecord op : out.operations()) {
+                resultKept |= op.result() != null;
+                assertTrue(!resultKept || !Boolean.TRUE.equals(op.truncated()), label + ": oldest results first");
+            }
+        }
+    }
+
+    /**
+     * The one-at-a-time pass from before the binary search: the first record, in drop order, that fits. Records here
+     * have no causes, and every operation has a later start time than the one before it.
+     */
+    private static DurableExecutionTelemetryRecord oneAtATime(
+            DurableExecutionTelemetryRecord r, int limit, Function<DurableExecutionTelemetryRecord, Object> render) {
+        List<OperationRecord> ops = new ArrayList<>();
+        r.operations().forEach(op -> ops.add(op.copy()));
+        for (int j = 0; j <= ops.size(); j++) {
+            if (j > 0 && ops.get(j - 1).result() != null) {
+                ops.set(j - 1, ops.get(j - 1).copy().result(null).truncated(true));
+            }
+            DurableExecutionTelemetryRecord candidate = r.copy();
+            candidate.operations = new ArrayList<>(ops);
+            candidate.truncated = Boolean.TRUE;
+            if (Json.byteSize(render.apply(candidate)) <= limit) {
+                return candidate;
+            }
+        }
+        for (int k = 1; k <= ops.size(); k++) {
+            DurableExecutionTelemetryRecord candidate = r.copy();
+            candidate.operations = new ArrayList<>(ops.subList(k, ops.size()));
+            candidate.truncated = Boolean.TRUE;
+            candidate.droppedOperations = k;
+            if (Json.byteSize(render.apply(candidate)) <= limit) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * In the array format each drop makes the record smaller when every result is longer than 20 bytes. So the binary
+     * search drops exactly what the one-at-a-time pass drops.
+     */
+    @Test
+    void arrayFormatMatchesTheOneAtATimePass() {
+        Random random = new Random(881);
+        int compared = 0;
+        for (int c = 0; c < 300; c++) {
+            int n = 1 + random.nextInt(150);
+            DurableExecutionTelemetryRecord r = randomRecord(random, n);
+            r.input = null;
+            r.output = null;
+            r.operations.replaceAll(op -> op.error() == null ? op : op.copy().error(new ErrorInfo("E", "m")));
+            r.operations.replaceAll(op -> op.result() == null ? op : op.copy().result("r".repeat(21) + op.result()));
+            int full = Json.byteSize(r.toWireMap());
+            int limit = 400 + random.nextInt(full);
+            DurableExecutionTelemetryRecord expected = oneAtATime(r, limit, DurableExecutionTelemetryRecord::toWireMap);
+            if (expected == null || full <= limit) {
+                continue;
+            }
+            compared++;
+            DurableExecutionTelemetryRecord out =
+                    Truncation.truncateRecord(r.deepCopy(), limit, DurableExecutionTelemetryRecord::toWireMap);
+            assertEquals(Json.stringify(expected.toWireMap()), Json.stringify(out.toWireMap()), "case " + c);
+        }
+        assertTrue(compared > 200, compared + " cases compared");
+    }
+
+    /** {@code results.length} steps one second apart; step {@code i} has result {@code results[i]}. */
+    private static DurableExecutionTelemetryRecord stepsWithResults(Object... results) {
+        DurableExecutionTelemetryRecord r = namedSteps(results.length);
+        for (int i = 0; i < results.length; i++) {
+            r.operations.get(i).result(results[i]);
+        }
+        return r;
+    }
+
+    /** The record fits only when every result is cleared. So no operation is dropped. */
+    @Test
+    void clearingEveryResultIsTriedBeforeDroppingOperations() {
+        String big = "y".repeat(100);
+        DurableExecutionTelemetryRecord r = stepsWithResults(big, true, big, "ok", big, 1, big);
+        DurableExecutionTelemetryRecord allCleared = r.copy();
+        allCleared.operations = new ArrayList<>();
+        for (OperationRecord op : r.operations()) {
+            allCleared.operations.add(op.copy().result(null).truncated(true));
+        }
+        allCleared.truncated = Boolean.TRUE;
+        int limit = Json.byteSize(allCleared.toWireMap());
+        DurableExecutionTelemetryRecord out =
+                Truncation.truncateRecord(r.deepCopy(), limit, DurableExecutionTelemetryRecord::toWireMap);
+        assertNull(out.droppedOperations);
+        assertEquals(7, out.operations().size());
+        assertTrue(Json.byteSize(out.toWireMap()) <= limit);
+    }
+
+    /** The record fits only when every operation is dropped. So the input is kept. */
+    @Test
+    void droppingEveryOperationIsTriedBeforeDroppingTheInput() {
+        DurableExecutionTelemetryRecord r = namedSteps(7);
+        r.input = "input";
+        DurableExecutionTelemetryRecord noOperations = r.copy();
+        noOperations.operations = new ArrayList<>();
+        noOperations.truncated = Boolean.TRUE;
+        noOperations.droppedOperations = 7;
+        int limit = Json.byteSize(noOperations.toWireMap());
+        DurableExecutionTelemetryRecord out =
+                Truncation.truncateRecord(r.deepCopy(), limit, DurableExecutionTelemetryRecord::toWireMap);
+        assertEquals("input", out.input);
+        assertNull(out.droppedInput);
+        assertEquals(7, out.droppedOperations);
+        assertTrue(out.operations().isEmpty());
+    }
+
+    /**
+     * The operations list is not in start-time order. The pass orders by start time. So it drops the operations with
+     * the earliest start times, not the first ones in the list.
+     */
+    @Test
+    void outOfOrderStartTimesDropTheEarliestStartFirst() {
+        DurableExecutionTelemetryRecord r = namedSteps(6);
+        Collections.reverse(r.operations);
+        int limit = Json.byteSize(r.toWireMap()) - 1;
+        DurableExecutionTelemetryRecord out =
+                Truncation.truncateRecord(r.deepCopy(), limit, DurableExecutionTelemetryRecord::toWireMap);
+        assertEquals(1, out.droppedOperations);
+        assertEquals(5, out.operations().size());
+        assertTrue(out.operations().stream().noneMatch(op -> "op-0".equals(op.id())), "earliest start dropped");
+        assertEquals("op-5", out.operations().get(0).id(), "list order kept");
     }
 }
