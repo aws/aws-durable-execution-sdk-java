@@ -74,6 +74,7 @@ Control how steps behave when interrupted mid-execution:
 |----------|----------|----------|
 | `AT_LEAST_ONCE_PER_RETRY` (default) | Re-executes step if interrupted before completion | Idempotent operations (database upserts, API calls with idempotency keys) |
 | `AT_MOST_ONCE_PER_RETRY` | Re-executes step once per retry if interrupted. Throws `StepInterruptedException` if retries exhausted | Non-idempotent operations (sending emails, charging payments) |
+| `AT_LEAST_ONCE_ASYNC` | Like `AT_LEAST_ONCE_PER_RETRY`, but returns the result without waiting for the SUCCEED checkpoint | Idempotent operations where latency matters |
 
 ```java
 // Default: at-least-once per retry (step may re-run if interrupted)
@@ -92,6 +93,7 @@ var result = ctx.step("send-email", Result.class,
 
 - **AT_LEAST_ONCE_PER_RETRY**: The step executes at least once per retry. If the step succeeds but checkpointing fails (e.g., sandbox crash), the step re-executes on replay.
 - **AT_MOST_ONCE_PER_RETRY**: A checkpoint is created before execution. If failure occurs after checkpoint but before completion, the step is re-executed on a new retry attempt. `StepInterruptedException` is thrown if retries are exhausted.
+- **AT_LEAST_ONCE_ASYNC**: Like `AT_LEAST_ONCE_PER_RETRY`, but the step returns its result without waiting for the SUCCEED checkpoint. So the step has lower latency. The code after the step can run before the result is saved. Checkpoints are sent in order, and the invocation does not end or suspend before the service answers the SUCCEED checkpoint. If the invocation ends before the save, the step re-executes on replay. On replay the step can return a different value, and later steps run again with it. So do not use this mode for a step whose result becomes an idempotency key or a client token for a later step. A failed attempt still waits for its RETRY or FAIL checkpoint.
 
 To achieve step-level at-most-once semantics, combine with a no-retry strategy:
 

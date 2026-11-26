@@ -9,7 +9,9 @@ import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 import software.amazon.awssdk.services.lambda.model.OperationAction;
 import software.amazon.awssdk.services.lambda.model.OperationStatus;
+import software.amazon.awssdk.services.lambda.model.OperationType;
 import software.amazon.awssdk.services.lambda.model.OperationUpdate;
+import software.amazon.awssdk.services.lambda.model.StepDetails;
 import software.amazon.awssdk.services.lambda.model.StepOptions;
 import software.amazon.lambda.durable.StepContext;
 import software.amazon.lambda.durable.TypeToken;
@@ -40,6 +42,11 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
     private final Function<StepContext, T> function;
     private final StepConfig config;
+    /**
+     * The serialized result of an AT_LEAST_ONCE_ASYNC step. It is set before the SUCCEED checkpoint is sent, and the
+     * service may not have answered that checkpoint yet.
+     */
+    private volatile String unsavedResult;
 
     public StepOperation(
             OperationIdentifier operationIdentifier,
@@ -119,13 +126,14 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
             try (var ignored = DurableLogger.attachContext()) {
                 try {
+                    var attemptStart = Instant.now();
                     checkpointStarted();
 
                     // Execute the user function inside the plugin hook boundary so a failure is reported
                     // through onUserFunctionEnd; retry/checkpoint handling stays outside the boundary.
                     T result = runUserFunction(attempt, () -> function.apply(stepContext));
 
-                    handleStepSucceeded(result);
+                    handleStepSucceeded(result, attempt, attemptStart);
                 } catch (Throwable e) {
                     handleStepFailure(e, attempt, publishedWorker);
                 }
@@ -153,16 +161,55 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         }
     }
 
-    private void handleStepSucceeded(T result) {
+    private void handleStepSucceeded(T result, int attempt, Instant attemptStart) {
         var serializedResult = serializeAndDeserializeResult(result);
 
         // Send SUCCEED
         var successUpdate =
                 OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serializedResult.serialized());
 
+        if (config.semanticsPerRetry() == StepSemantics.AT_LEAST_ONCE_ASYNC) {
+            succeedWithoutWaiting(successUpdate, serializedResult.serialized(), attempt, attemptStart);
+            return;
+        }
+
         // sendOperationUpdate must be synchronous here. When waiting for the return of this call,
         // the context threads waiting for the result of this step operation will be wakened up and registered.
         sendOperationUpdate(successUpdate);
+    }
+
+    /**
+     * Completes the step before the service answers its SUCCEED checkpoint. The end hook reports SUCCEEDED with the
+     * result, because the operation in storage still shows the attempt as STARTED.
+     */
+    private void succeedWithoutWaiting(
+            OperationUpdate.Builder successUpdate, String serializedResult, int attempt, Instant attemptStart) {
+        // Set before sending, so onCheckpointComplete does not complete the step or fire the end hook a second time.
+        unsavedResult = serializedResult;
+        sendOperationUpdateInBackground(successUpdate);
+
+        var succeeded = Operation.builder()
+                .type(OperationType.STEP)
+                .status(OperationStatus.SUCCEEDED)
+                // The START answer may not have arrived either, so the start time is the start of this attempt.
+                .startTimestamp(attemptStart)
+                .endTimestamp(Instant.now())
+                .stepDetails(StepDetails.builder()
+                        .attempt(attempt)
+                        .result(serializedResult)
+                        .build())
+                .build();
+        fireOnOperationEnd(succeeded, null, false);
+        // Completing the step wakes and registers the context threads that wait for it, as sendOperationUpdate does.
+        executionManager.completeOperation(this);
+    }
+
+    @Override
+    public void onCheckpointComplete(Operation operation) {
+        // An AT_LEAST_ONCE_ASYNC step completed itself in succeedWithoutWaiting.
+        if (unsavedResult == null) {
+            super.onCheckpointComplete(operation);
+        }
     }
 
     private void handleStepFailure(
@@ -211,6 +258,13 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
     @Override
     public T get() {
+        executionManager.waitForOperationCompletion(this);
+        var queuedResult = unsavedResult;
+        if (queuedResult != null) {
+            // The SUCCEED checkpoint may not be answered yet, so storage may not hold the result.
+            return deserializeResult(queuedResult);
+        }
+
         var op = waitForOperationCompletion();
 
         if (op.status() == OperationStatus.SUCCEEDED) {

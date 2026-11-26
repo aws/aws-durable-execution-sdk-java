@@ -132,6 +132,8 @@ public class ExecutionManager implements SafeCloseable {
     // Requests and polling continuations; guarded by activeThreads so admission is atomic with last-thread suspension.
     private int checkpointRequestsInFlight;
     private volatile IllegalDurableOperationException invalidSuspensionException;
+    // The failure of a background update that ended this invocation. See sendOperationUpdateInBackground.
+    private volatile Throwable backgroundUpdateFailure;
     // Guarded by activeThreads; an observation future can be cancelled independently of its actual task.
     private final Map<Object, BaseDurableOperation> checkpointContinuations = new HashMap<>();
     private boolean closing;
@@ -1005,6 +1007,45 @@ public class ExecutionManager implements SafeCloseable {
     // when the checkpoint completes.
     public CompletableFuture<Void> sendOperationUpdate(OperationUpdate update) {
         return admitCheckpoint(() -> checkpointManager.checkpoint(update));
+    }
+
+    /**
+     * Sends an update that no caller waits for, such as the SUCCEED of an {@code AT_LEAST_ONCE_ASYNC} step.
+     *
+     * <p>The update counts as a checkpoint request in flight until the service answers it. So the execution does not
+     * suspend before the update is saved. Checkpoints are sent in order, so a later update that the service accepts
+     * also saves this one. If the update fails, the invocation ends with that failure, as for an awaited update.
+     *
+     * @param update the operation update to send
+     */
+    public void sendOperationUpdateInBackground(OperationUpdate update) {
+        var sent = sendOperationUpdate(update);
+        synchronized (activeThreads) {
+            checkpointRequestsInFlight++;
+        }
+        sent.whenComplete((ignored, failure) -> {
+            try {
+                if (failure != null) failInBackground(ExceptionHelper.unwrapCompletableFuture(failure));
+            } finally {
+                finishCheckpointProcessing();
+            }
+        });
+    }
+
+    private void failInBackground(Throwable failure) {
+        // Only a failure that ends the invocation is recorded. If the invocation already ended, its own cause stays.
+        if (executionExceptionFuture.completeExceptionally(failure)) {
+            backgroundUpdateFailure = failure;
+            stopAllOperations(failure);
+        }
+    }
+
+    /**
+     * Returns the failure of a background update that ended this invocation, or null. The handler can return before
+     * such a failure arrives. So the invocation reports this failure instead of the handler result.
+     */
+    Throwable getBackgroundUpdateFailure() {
+        return backgroundUpdateFailure;
     }
 
     // ===== Polling =====

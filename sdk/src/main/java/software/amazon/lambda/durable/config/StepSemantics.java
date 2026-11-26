@@ -18,5 +18,23 @@ public enum StepSemantics {
      * At-most-once delivery per retry attempt. START checkpoint is awaited before user code runs. If interrupted,
      * throws {@link software.amazon.lambda.durable.exception.StepInterruptedException}.
      */
-    AT_MOST_ONCE_PER_RETRY
+    AT_MOST_ONCE_PER_RETRY,
+
+    /**
+     * At-least-once delivery per retry attempt, without waiting for the result checkpoint.
+     *
+     * <p>Works like at-least-once, with one change. The step returns its result as soon as the SUCCEED checkpoint is
+     * queued. It does not wait for the service to save it. So the step has lower latency.
+     *
+     * <p>The code after the step can run before the result is saved. Checkpoints are sent in order, and the invocation
+     * does not end or suspend before the service answers the SUCCEED checkpoint. If that checkpoint fails, the
+     * invocation fails, and the step runs again on replay.
+     *
+     * <p>On that replay the step can return a different value. Later steps then run again with the new value, and their
+     * earlier side effects used the old one. So do not use this mode for a step whose result becomes an idempotency key
+     * or a client token for a later step.
+     *
+     * <p>Only the SUCCEED checkpoint is not awaited. A failed attempt waits for its RETRY or FAIL checkpoint.
+     */
+    AT_LEAST_ONCE_ASYNC
 }
