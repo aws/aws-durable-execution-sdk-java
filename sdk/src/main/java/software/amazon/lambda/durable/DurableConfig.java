@@ -22,6 +22,7 @@ import software.amazon.awssdk.services.lambda.LambdaClientBuilder;
 import software.amazon.awssdk.services.lambda.model.GetDurableExecutionStateRequest;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
+import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.logging.LoggerConfig;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.PluginRunner;
@@ -100,6 +101,7 @@ public final class DurableConfig {
     private final Duration checkpointDelay;
     private final boolean deserializeAfterSerialization;
     private final boolean checkpointEmptyMap;
+    private final StepSemantics defaultStepSemantics;
     private final List<DurableExecutionPluginFactory> pluginFactories;
 
     private DurableConfig(Builder builder) {
@@ -117,6 +119,8 @@ public final class DurableConfig {
         this.checkpointDelay = Objects.requireNonNullElseGet(builder.checkpointDelay, () -> Duration.ofSeconds(0));
         this.deserializeAfterSerialization = builder.deserializeAfterSerialization;
         this.checkpointEmptyMap = builder.checkpointEmptyMap;
+        this.defaultStepSemantics =
+                Objects.requireNonNullElse(builder.defaultStepSemantics, StepSemantics.AT_LEAST_ONCE);
 
         validateConfiguration();
     }
@@ -217,6 +221,16 @@ public final class DurableConfig {
     }
 
     /**
+     * Gets the semantics of every step in the execution that does not set its own. Defaults to
+     * {@link StepSemantics#AT_LEAST_ONCE}.
+     *
+     * @return the default step semantics (never null)
+     */
+    public StepSemantics getDefaultStepSemantics() {
+        return defaultStepSemantics;
+    }
+
+    /**
      * Gets the plugin factories registered via the builder or loaded dynamically, in dispatch order.
      *
      * <p>Each factory is called once per Lambda invocation to create that invocation's plugin instance; the SDK never
@@ -244,7 +258,8 @@ public final class DurableConfig {
                 .withPollingStrategy(pollingStrategy)
                 .withCheckpointDelay(checkpointDelay)
                 .withDeserializeAfterSerialization(deserializeAfterSerialization)
-                .withCheckpointEmptyMap(checkpointEmptyMap);
+                .withCheckpointEmptyMap(checkpointEmptyMap)
+                .withDefaultStepSemantics(defaultStepSemantics);
         builder.pluginFactories = new ArrayList<>(pluginFactories);
         builder.loadDynamicPlugins = false;
         return builder;
@@ -346,6 +361,7 @@ public final class DurableConfig {
         private Duration checkpointDelay;
         private boolean deserializeAfterSerialization = true;
         private boolean checkpointEmptyMap = false;
+        private StepSemantics defaultStepSemantics;
         private List<DurableExecutionPluginFactory> pluginFactories = new ArrayList<>();
         private boolean loadDynamicPlugins = true;
 
@@ -481,6 +497,20 @@ public final class DurableConfig {
          */
         public Builder withCheckpointEmptyMap(boolean checkpointEmptyMap) {
             this.checkpointEmptyMap = checkpointEmptyMap;
+            return this;
+        }
+
+        /**
+         * Sets the semantics of every step in the execution that does not set its own, including steps in child
+         * contexts, map and parallel items, and steps that the SDK creates, such as the submitter step of
+         * {@code waitForCallback}. A step's own {@link software.amazon.lambda.durable.config.StepConfig} semantics
+         * wins. If not set, defaults to {@link StepSemantics#AT_LEAST_ONCE}.
+         *
+         * @param defaultStepSemantics the semantics for steps that do not set their own
+         * @return This builder
+         */
+        public Builder withDefaultStepSemantics(StepSemantics defaultStepSemantics) {
+            this.defaultStepSemantics = defaultStepSemantics;
             return this;
         }
 

@@ -24,6 +24,7 @@ import software.amazon.awssdk.core.client.config.SdkAdvancedClientOption;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.lambda.durable.client.DurableExecutionClient;
 import software.amazon.lambda.durable.client.LambdaDurableFunctionsClient;
+import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.plugin.DurableExecutionPlugin;
 import software.amazon.lambda.durable.plugin.DurableExecutionPluginFactory;
 import software.amazon.lambda.durable.plugin.InvocationInfo;
@@ -108,6 +109,25 @@ class DurableConfigTest {
                 .build();
 
         assertFalse(config.shouldDeserializeAfterSerialization());
+    }
+
+    @Test
+    void testBuilder_DefaultStepSemanticsDefaultsToAtLeastOnce() {
+        var config =
+                DurableConfig.builder().withDurableExecutionClient(mockClient).build();
+
+        assertEquals(StepSemantics.AT_LEAST_ONCE, config.getDefaultStepSemantics());
+    }
+
+    @Test
+    void testToBuilder_KeepsDefaultStepSemantics() {
+        var config = DurableConfig.builder()
+                .withDurableExecutionClient(mockClient)
+                .withDefaultStepSemantics(StepSemantics.AT_LEAST_ONCE_ASYNC)
+                .build();
+
+        assertEquals(
+                StepSemantics.AT_LEAST_ONCE_ASYNC, config.toBuilder().build().getDefaultStepSemantics());
     }
 
     // Temporary: remove along with the checkpointEmptyMap flag in a future major version.

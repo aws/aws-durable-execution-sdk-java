@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -208,24 +210,92 @@ class StepSemanticsIntegrationTest {
         assertEquals(List.of(ExecutionStatus.FAILED, 1), outcomeAfterInterruption(StepSemantics.AT_MOST_ONCE));
     }
 
-    /** Runs a step without retries, marks it as interrupted, and returns the final status and the run count. */
+    @Test
+    void defaultStepSemanticsAppliesToStepWithoutSemantics() {
+        var outcome =
+                outcomeAfterInterruption(atMostOnceByDefault(), noRetry(), (context, step) -> step.apply(context));
+
+        assertEquals(List.of(ExecutionStatus.FAILED, 1), outcome);
+    }
+
+    @Test
+    void stepSemanticsWinsOverDefaultStepSemantics() {
+        var outcome = outcomeAfterInterruption(
+                atMostOnceByDefault(),
+                noRetry().semanticsPerRetry(StepSemantics.AT_LEAST_ONCE),
+                (context, step) -> step.apply(context));
+
+        assertEquals(List.of(ExecutionStatus.SUCCEEDED, 2), outcome);
+    }
+
+    @Test
+    void defaultStepSemanticsAppliesInChildContext() {
+        var outcome = outcomeAfterInterruption(
+                atMostOnceByDefault(),
+                noRetry(),
+                (context, step) -> context.runInChildContext("child", String.class, step::apply),
+                "child");
+
+        assertEquals(List.of(ExecutionStatus.FAILED, 1), outcome);
+    }
+
+    @Test
+    void defaultStepSemanticsAppliesInMapItem() {
+        var outcome = outcomeAfterInterruption(
+                atMostOnceByDefault(),
+                noRetry(),
+                (context, step) -> {
+                    var result = context.map(
+                            "map", List.of("item"), String.class, (item, index, child) -> step.apply(child));
+                    // A failed item does not fail the map, so the handler reports it.
+                    if (result.getError(0) != null) throw new IllegalStateException("item failed");
+                    return result.getResult(0);
+                },
+                "map",
+                "map-iteration-0");
+
+        assertEquals(List.of(ExecutionStatus.FAILED, 1), outcome);
+    }
+
+    private static DurableConfig atMostOnceByDefault() {
+        return DurableConfig.builder()
+                .withDefaultStepSemantics(StepSemantics.AT_MOST_ONCE)
+                .build();
+    }
+
+    private static StepConfig.Builder noRetry() {
+        return StepConfig.builder().retryStrategy(RetryStrategies.Presets.NO_RETRY);
+    }
+
     private static List<Object> outcomeAfterInterruption(StepSemantics semantics) {
+        return outcomeAfterInterruption(
+                null, noRetry().semanticsPerRetry(semantics), (context, step) -> step.apply(context));
+    }
+
+    /**
+     * Runs a step named "step" without retries, marks it as interrupted, and returns the final status and the run
+     * count. The handler runs the step through {@code around}, for example inside a child context. The completed
+     * contexts around the step are marked as interrupted too, so that the replay reaches the step.
+     */
+    private static List<Object> outcomeAfterInterruption(
+            DurableConfig config,
+            StepConfig.Builder stepConfig,
+            BiFunction<DurableContext, Function<DurableContext, String>, String> around,
+            String... interruptedParents) {
         var executionCount = new AtomicInteger(0);
-        var runner = LocalDurableTestRunner.create(
+        Function<DurableContext, String> step = context -> context.step(
+                "step",
                 String.class,
-                (input, context) -> context.step(
-                        "step",
-                        String.class,
-                        stepCtx -> {
-                            executionCount.incrementAndGet();
-                            return "result";
-                        },
-                        StepConfig.builder()
-                                .semanticsPerRetry(semantics)
-                                .retryStrategy(RetryStrategies.Presets.NO_RETRY)
-                                .build()));
+                stepCtx -> {
+                    executionCount.incrementAndGet();
+                    return "result";
+                },
+                stepConfig.build());
+        var runner =
+                LocalDurableTestRunner.create(String.class, (input, context) -> around.apply(context, step), config);
 
         runner.run("test");
+        for (var parent : interruptedParents) runner.resetCheckpointToStarted(parent);
         runner.resetCheckpointToStarted("step");
         var result = runner.runUntilComplete("test");
 

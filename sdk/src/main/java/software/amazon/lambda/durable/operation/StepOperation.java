@@ -42,6 +42,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
     private final Function<StepContext, T> function;
     private final StepConfig config;
+    private final StepSemantics semantics;
     /**
      * The serialized result of an AT_LEAST_ONCE_ASYNC step. It is set before the SUCCEED checkpoint is sent, and the
      * service may not have answered that checkpoint yet.
@@ -58,6 +59,8 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
         this.function = function;
         this.config = config;
+        this.semantics = config.semanticsPerRetryOrDefault(
+                durableContext.getDurableConfig().getDefaultStepSemantics());
     }
 
     /** Starts the operation. */
@@ -168,7 +171,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         var successUpdate =
                 OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serializedResult.serialized());
 
-        if (config.semanticsPerRetry() == StepSemantics.AT_LEAST_ONCE_ASYNC) {
+        if (semantics == StepSemantics.AT_LEAST_ONCE_ASYNC) {
             succeedWithoutWaiting(successUpdate, serializedResult.serialized(), attempt, attemptStart);
             return;
         }
@@ -295,7 +298,6 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
     // at-least-once.
     @SuppressWarnings("deprecation")
     private boolean isAtMostOnce() {
-        var semantics = config.semanticsPerRetry();
         return semantics == StepSemantics.AT_MOST_ONCE || semantics == StepSemantics.AT_MOST_ONCE_PER_RETRY;
     }
 }

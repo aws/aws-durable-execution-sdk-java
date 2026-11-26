@@ -37,6 +37,7 @@ public class OrderProcessor extends DurableHandler<Order, OrderResult> {
 | `withLoggerConfig()`        | Logger behavior configuration           | Suppress logs during replay   |
 | `withPollingStrategy()`     | Backend polling strategy                | Exponential backoff: 1s base, 2x rate, FULL jitter, 10s max |
 | `withCheckpointDelay()`     | How often the SDK checkpoints updates   | `Duration.ofSeconds(0)` (as soon as possible) |
+| `withDefaultStepSemantics()` | Semantics of every step that does not set its own, in every context of the execution | `StepSemantics.AT_LEAST_ONCE` |
 
 The `withExecutorService()` option configures the thread pool used for running user-defined operations. Internal SDK coordination (checkpoint batching, polling) runs on an SDK-managed thread pool.
 
