@@ -1,6 +1,6 @@
 # ADR-003: CompletableFuture-Based Operation Coordination
 
-**Status:** Accepted
+**Status:** Accepted. Amended by [ADR-006](006-at-least-once-async-step-completion.md) for `AT_LEAST_ONCE_ASYNC` steps.
 **Date:** 2026-02-18
 
 ## Context
