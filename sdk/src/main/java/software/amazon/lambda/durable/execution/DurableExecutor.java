@@ -209,9 +209,10 @@ public class DurableExecutor {
             // a handler failure, and a retryable failure, so it is checked before any of them.
             if (manager.isCheckpointTokenRevoked())
                 return finishFailure(new SuspendExecutionException(REVOKED_CHECKPOINT_TOKEN_MESSAGE));
-            // A step result that the handler used was not saved. So the handler outcome must not be reported.
-            var backgroundUpdateFailure = manager.getBackgroundUpdateFailure();
-            if (backgroundUpdateFailure != null) return finishFailure(backgroundUpdateFailure);
+            // The first termination cause wins over the handler outcome. For example, a checkpoint failed after the
+            // handler returned, so a step result that the handler used may not be saved.
+            var terminationCause = manager.getExecutionTerminationCause();
+            if (terminationCause != null) return finishFailure(terminationCause);
             if (failure != null) return finishFailure(ExceptionHelper.unwrapInvocationFailure(failure));
             DurableExecutionOutput output;
             try {

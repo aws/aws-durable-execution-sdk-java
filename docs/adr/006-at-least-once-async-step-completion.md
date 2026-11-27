@@ -35,7 +35,9 @@ The step is still executed at least once, for these reasons:
 2. The queued SUCCEED counts as a checkpoint request in flight. So the invocation does not suspend
    before the service answers it.
 3. The invocation drains its checkpoints before it reports an outcome.
-4. If the SUCCEED fails, the invocation ends with that failure. It does not report the handler
+4. If the SUCCEED fails, the invocation ends with that failure. Another failure, such as a failed
+   checkpoint of an unawaited step, can end the invocation first. Then the SUCCEED is not sent,
+   and the invocation ends with that first failure. In both cases it does not report the handler
    result or the handler failure. So the step runs again on replay.
 
 ## Consequences
@@ -55,4 +57,5 @@ The step is still executed at least once, for these reasons:
 - the step returns, also with a null result, while the SUCCEED is unanswered;
 - the end hook fires once before the SUCCEED is answered;
 - the invocation does not suspend or report an outcome before the SUCCEED is saved;
-- a failed SUCCEED ends the invocation, and the step runs again on replay.
+- a failed SUCCEED ends the invocation, and the step runs again on replay;
+- a failed checkpoint of an unawaited step ends the invocation before the SUCCEED is sent.

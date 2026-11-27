@@ -132,8 +132,6 @@ public class ExecutionManager implements SafeCloseable {
     // Requests and polling continuations; guarded by activeThreads so admission is atomic with last-thread suspension.
     private int checkpointRequestsInFlight;
     private volatile IllegalDurableOperationException invalidSuspensionException;
-    // The failure of a background update that ended this invocation. See sendOperationUpdateInBackground.
-    private volatile Throwable backgroundUpdateFailure;
     // Guarded by activeThreads; an observation future can be cancelled independently of its actual task.
     private final Map<Object, BaseDurableOperation> checkpointContinuations = new HashMap<>();
     private boolean closing;
@@ -1034,18 +1032,20 @@ public class ExecutionManager implements SafeCloseable {
 
     private void failInBackground(Throwable failure) {
         // Only a failure that ends the invocation is recorded. If the invocation already ended, its own cause stays.
-        if (executionExceptionFuture.completeExceptionally(failure)) {
-            backgroundUpdateFailure = failure;
-            stopAllOperations(failure);
-        }
+        if (executionExceptionFuture.completeExceptionally(failure)) stopAllOperations(failure);
     }
 
     /**
-     * Returns the failure of a background update that ended this invocation, or null. The handler can return before
-     * such a failure arrives. So the invocation reports this failure instead of the handler result.
+     * Returns the first cause that terminated this invocation, or null if the invocation was not terminated. A
+     * suspension is not a termination. An operation that the handler did not wait for, or the update of an
+     * {@code AT_LEAST_ONCE_ASYNC} step, can terminate the invocation after the handler returned. So the invocation
+     * reports this cause instead of the handler result.
      */
-    Throwable getBackgroundUpdateFailure() {
-        return backgroundUpdateFailure;
+    Throwable getExecutionTerminationCause() {
+        if (!executionExceptionFuture.isCompletedExceptionally()) return null;
+        var cause = ExceptionHelper.unwrapCompletableFuture(
+                executionExceptionFuture.handle((ignored, failure) -> failure).join());
+        return cause instanceof SuspendExecutionException ? null : cause;
     }
 
     // ===== Polling =====

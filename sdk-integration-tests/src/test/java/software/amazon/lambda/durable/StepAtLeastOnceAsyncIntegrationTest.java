@@ -346,6 +346,78 @@ class StepAtLeastOnceAsyncIntegrationTest {
     }
 
     @Test
+    void transientOrdinarySucceedFailureAfterHandlerReturnsRetriesTheInvocation() {
+        var client = new FailOrdinarySucceedAfterHandlerReturns(AwsServiceException.builder()
+                .message("service unavailable")
+                .awsErrorDetails(errorDetails(503, "ServiceException"))
+                .build());
+
+        var failure = assertThrows(
+                UnrecoverableDurableExecutionException.class, () -> execute(client.handler(), config(client)));
+
+        assertTrue(failure.isRetryable());
+        assertEquals(List.of("invocation RETRYING"), events);
+    }
+
+    @Test
+    void executionScopeOrdinarySucceedFailureAfterHandlerReturnsAnswersFailed() {
+        var client = new FailOrdinarySucceedAfterHandlerReturns(AwsServiceException.builder()
+                .message("invalid payload")
+                .awsErrorDetails(errorDetails(400, "ValidationException"))
+                .build());
+
+        var output = execute(client.handler(), config(client));
+
+        assertEquals(ExecutionStatus.FAILED, output.status());
+        assertEquals(List.of("invocation FAILED"), events);
+    }
+
+    /**
+     * Holds the SUCCEED of an unawaited ordinary step until the handler returned the result of an async step, then
+     * fails it with the given error. The async SUCCEED is queued behind it, so the failure ends the invocation first.
+     */
+    private static final class FailOrdinarySucceedAfterHandlerReturns extends LocalMemoryExecutionClient {
+        private final CountDownLatch ordinaryBlocked = new CountDownLatch(1);
+        private final CountDownLatch handlerReturned = new CountDownLatch(1);
+        private final RuntimeException error;
+
+        FailOrdinarySucceedAfterHandlerReturns(RuntimeException error) {
+            this.error = error;
+        }
+
+        BiFunction<String, DurableContext, String> handler() {
+            return (input, ctx) -> {
+                ctx.stepAsync("ordinary", String.class, stepCtx -> "ignored");
+                try {
+                    assertTrue(ordinaryBlocked.await(5, SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+                var result = ctx.step("work", String.class, stepCtx -> "done", ASYNC);
+                handlerReturned.countDown();
+                return result;
+            };
+        }
+
+        @Override
+        public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {
+            if (updates.stream().anyMatch(u -> u.action() == OperationAction.SUCCEED && "ordinary".equals(u.name()))) {
+                ordinaryBlocked.countDown();
+                try {
+                    assertTrue(handlerReturned.await(5, SECONDS));
+                    // Let the invocation select the handler result before the checkpoint fails.
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                throw error;
+            }
+            return super.checkpoint(arn, token, updates);
+        }
+    }
+
+    @Test
     void earlierTerminationKeepsItsCauseWhenQueuedSucceedIsSkipped() {
         var client = new LocalMemoryExecutionClient();
         // The delay keeps the SUCCEED queued until the termination below skips it.
