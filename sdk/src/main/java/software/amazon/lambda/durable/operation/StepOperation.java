@@ -40,6 +40,15 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
     private final Function<StepContext, T> function;
     private final StepConfig config;
+    private final StepSemantics semantics;
+    /**
+     * The serialized result of an AT_LEAST_ONCE_ASYNC step. It is set before the SUCCEED checkpoint is sent, and the
+     * service may not have answered that checkpoint yet. It is null for a null result, so
+     * {@link #succeededWithoutWaiting} marks that it is set.
+     */
+    private volatile String unsavedResult;
+
+    private volatile boolean succeededWithoutWaiting;
 
     public StepOperation(
             OperationIdentifier operationIdentifier,
@@ -51,6 +60,8 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
         this.function = function;
         this.config = config;
+        this.semantics = config.semanticsPerRetryOrDefault(
+                durableContext.getDurableConfig().getDefaultStepSemantics());
     }
 
     /** Starts the operation. */
@@ -160,9 +171,28 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         var successUpdate =
                 OperationUpdate.builder().action(OperationAction.SUCCEED).payload(serializedResult.serialized());
 
+        if (semantics == StepSemantics.AT_LEAST_ONCE_ASYNC) {
+            succeedWithoutWaiting(successUpdate, serializedResult.serialized());
+            return;
+        }
+
         // sendOperationUpdate must be synchronous here. When waiting for the return of this call,
         // the context threads waiting for the result of this step operation will be wakened up and registered.
         sendOperationUpdate(successUpdate);
+    }
+
+    /**
+     * Completes the step before the service answers its SUCCEED checkpoint. The end hook fires later, in
+     * onCheckpointComplete, when the service answers the SUCCEED, as for an AT_LEAST_ONCE step.
+     */
+    private void succeedWithoutWaiting(OperationUpdate.Builder successUpdate, String serializedResult) {
+        // Set before sending, so get() returns this result even if the service answers before the step completes.
+        unsavedResult = serializedResult;
+        succeededWithoutWaiting = true;
+        sendOperationUpdateInBackground(successUpdate);
+        // Completing the step wakes and registers the context threads that wait for it, as sendOperationUpdate does.
+        // If the service already answered, onCheckpointComplete completed the step and this call does nothing.
+        executionManager.completeOperation(this);
     }
 
     private void handleStepFailure(
@@ -211,6 +241,12 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
 
     @Override
     public T get() {
+        executionManager.waitForOperationCompletion(this);
+        if (succeededWithoutWaiting) {
+            // The SUCCEED checkpoint may not be answered yet, so storage may not hold the result.
+            return deserializeResult(unsavedResult);
+        }
+
         var op = waitForOperationCompletion();
 
         if (op.status() == OperationStatus.SUCCEEDED) {
@@ -236,7 +272,11 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
         }
     }
 
+    // The deprecated AT_MOST_ONCE_PER_RETRY is a separate constant with the same behavior. The deprecated
+    // AT_LEAST_ONCE_PER_RETRY needs no check, because every semantics that is not checked here behaves as
+    // at-least-once.
+    @SuppressWarnings("deprecation")
     private boolean isAtMostOnce() {
-        return config.semanticsPerRetry() == StepSemantics.AT_MOST_ONCE_PER_RETRY;
+        return semantics == StepSemantics.AT_MOST_ONCE || semantics == StepSemantics.AT_MOST_ONCE_PER_RETRY;
     }
 }

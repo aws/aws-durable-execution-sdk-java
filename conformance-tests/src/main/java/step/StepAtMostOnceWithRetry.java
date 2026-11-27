@@ -21,7 +21,7 @@ public class StepAtMostOnceWithRetry extends DurableHandler<Object, String> {
                     stepCtx.getLogger().info("{}", input);
 
                     // Use the SDK's built-in attempt number (1-based at runtime).
-                    // With AT_MOST_ONCE_PER_RETRY the interrupted first attempt is
+                    // With AT_MOST_ONCE the interrupted first attempt is
                     // checkpointed as a retry, so the re-executed step sees a higher
                     // attempt number and succeeds.
                     if (stepCtx.getAttempt() < 2) {
@@ -34,7 +34,7 @@ public class StepAtMostOnceWithRetry extends DurableHandler<Object, String> {
                     return "succeeded on second attempt";
                 },
                 StepConfig.builder()
-                        .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                        .semanticsPerRetry(StepSemantics.AT_MOST_ONCE)
                         .retryStrategy((error, attempt) -> {
                             if (attempt >= 3) return RetryDecision.fail();
                             return RetryDecision.retry(Duration.ofSeconds(1));

@@ -564,12 +564,7 @@ public abstract class BaseDurableOperation {
 
     /** Sends an operation update asynchronously. */
     protected CompletableFuture<Void> sendOperationUpdateAsync(OperationUpdate.Builder builder) {
-        var updateBuilder = builder.id(getOperationId())
-                .name(getName())
-                .type(getType())
-                .subType(getSubType().getValue())
-                .parentId(durableContext.getParentId());
-        var update = updateBuilder.build();
+        var update = buildOperationUpdate(builder);
         if (replayCompletedOperation.get()) {
             // We are replaying a completed operation, so complete the completableFuture without checkpointing
             logger.debug("Skipping send operation update for replay completed operation: {}", getOperationId());
@@ -578,6 +573,24 @@ public abstract class BaseDurableOperation {
         } else {
             return executionManager.sendOperationUpdate(update);
         }
+    }
+
+    /**
+     * Sends an operation update that no caller waits for.
+     *
+     * @see ExecutionManager#sendOperationUpdateInBackground(OperationUpdate)
+     */
+    protected void sendOperationUpdateInBackground(OperationUpdate.Builder builder) {
+        executionManager.sendOperationUpdateInBackground(buildOperationUpdate(builder));
+    }
+
+    private OperationUpdate buildOperationUpdate(OperationUpdate.Builder builder) {
+        return builder.id(getOperationId())
+                .name(getName())
+                .type(getType())
+                .subType(getSubType().getValue())
+                .parentId(durableContext.getParentId())
+                .build();
     }
 
     /** Validates that current operation matches checkpointed operation during replay. */

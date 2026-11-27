@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.config.StepConfig;
+import software.amazon.lambda.durable.config.StepSemantics;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
@@ -53,6 +54,22 @@ class CheckpointClientErrorIntegrationTest {
         assertEquals(ExecutionStatus.SUCCEEDED, output.status());
         assertEquals(InvocationStatus.SUCCEEDED, endInfo.get().invocationStatus());
         assertEquals(0, retryDecisions.get());
+    }
+
+    @Test
+    void dnsFailureOnAsyncStepSucceedCheckpointRetriesTheInvocation() {
+        var client = new FailingClient(OperationType.STEP, OperationAction.SUCCEED);
+        // The handler returns before the SUCCEED checkpoint fails. The invocation must still not report SUCCEEDED.
+        BiFunction<String, DurableContext, String> handler = (input, ctx) -> ctx.step(
+                "work",
+                String.class,
+                stepCtx -> "done",
+                stepConfig(RetryDecision.fail()).toBuilder()
+                        .semanticsPerRetry(StepSemantics.AT_LEAST_ONCE_ASYNC)
+                        .build());
+
+        assertInvocationRetries(client, handler);
+        assertNoUpdateAfterFailedCheckpoint(client);
     }
 
     @Test

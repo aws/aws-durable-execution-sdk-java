@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static software.amazon.lambda.durable.config.StepSemantics.AT_MOST_ONCE_PER_RETRY;
+import static software.amazon.lambda.durable.config.StepSemantics.AT_MOST_ONCE;
 import static software.amazon.lambda.durable.retry.RetryStrategies.Presets.NO_RETRY;
 
 import java.util.ArrayList;
@@ -123,7 +123,7 @@ class CheckpointTokenRevocationIntegrationTest {
 
     private StepConfig noRetryConfig() {
         return StepConfig.builder()
-                .semanticsPerRetry(AT_MOST_ONCE_PER_RETRY)
+                .semanticsPerRetry(AT_MOST_ONCE)
                 .retryStrategy(NO_RETRY)
                 .build();
     }

@@ -72,8 +72,9 @@ Control how steps behave when interrupted mid-execution:
 
 | Semantic | Behavior | Use Case |
 |----------|----------|----------|
-| `AT_LEAST_ONCE_PER_RETRY` (default) | Re-executes step if interrupted before completion | Idempotent operations (database upserts, API calls with idempotency keys) |
-| `AT_MOST_ONCE_PER_RETRY` | Re-executes step once per retry if interrupted. Throws `StepInterruptedException` if retries exhausted | Non-idempotent operations (sending emails, charging payments) |
+| `AT_LEAST_ONCE` (default) | Re-executes step if interrupted before completion | Idempotent operations (database upserts, API calls with idempotency keys) |
+| `AT_MOST_ONCE` | Re-executes step once per retry if interrupted. Throws `StepInterruptedException` if retries exhausted | Non-idempotent operations (sending emails, charging payments) |
+| `AT_LEAST_ONCE_ASYNC` (experimental) | Like `AT_LEAST_ONCE`, but returns the result without waiting for the SUCCEED checkpoint | Idempotent operations where latency matters |
 
 ```java
 // Default: at-least-once per retry (step may re-run if interrupted)
@@ -84,14 +85,17 @@ var result = ctx.step("idempotent-update", Result.class,
 var result = ctx.step("send-email", Result.class,
 	stepCtx -> emailService.send(notification),
 	StepConfig.builder()
-		.semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+		.semanticsPerRetry(StepSemantics.AT_MOST_ONCE)
 		.build());
 ```
 
+`AT_LEAST_ONCE_PER_RETRY` and `AT_MOST_ONCE_PER_RETRY` are deprecated names of `AT_LEAST_ONCE` and `AT_MOST_ONCE`. They have the same behavior.
+
 **Important**: These semantics apply *per retry attempt*, not per overall execution:
 
-- **AT_LEAST_ONCE_PER_RETRY**: The step executes at least once per retry. If the step succeeds but checkpointing fails (e.g., sandbox crash), the step re-executes on replay.
-- **AT_MOST_ONCE_PER_RETRY**: A checkpoint is created before execution. If failure occurs after checkpoint but before completion, the step is re-executed on a new retry attempt. `StepInterruptedException` is thrown if retries are exhausted.
+- **AT_LEAST_ONCE**: The step executes at least once per retry. If the step succeeds but checkpointing fails (e.g., sandbox crash), the step re-executes on replay.
+- **AT_MOST_ONCE**: A checkpoint is created before execution. If failure occurs after checkpoint but before completion, the step is re-executed on a new retry attempt. `StepInterruptedException` is thrown if retries are exhausted.
+- **AT_LEAST_ONCE_ASYNC** (experimental): Like `AT_LEAST_ONCE`, but the step returns its result without waiting for the SUCCEED checkpoint. So the step has lower latency. The code after the step can run before the result is saved. Checkpoints are sent in order, and the invocation does not end or suspend before the service answers the SUCCEED checkpoint. If the invocation ends before the save, the step re-executes on replay. On replay the step can return a different value, and later steps run again with it. So do not use this mode for a step whose result becomes an idempotency key or a client token for a later step. A failed attempt still waits for its RETRY or FAIL checkpoint.
 
 To achieve step-level at-most-once semantics, combine with a no-retry strategy:
 
@@ -100,12 +104,27 @@ To achieve step-level at-most-once semantics, combine with a no-retry strategy:
 var result = ctx.step("charge-payment", Result.class,
 	stepCtx -> paymentService.charge(amount),
 	StepConfig.builder()
-		.semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+		.semanticsPerRetry(StepSemantics.AT_MOST_ONCE)
 		.retryStrategy(RetryStrategies.Presets.NO_RETRY)
 		.build());
 ```
 
-Without this, a step using `AT_MOST_ONCE_PER_RETRY` with retries enabled could still execute multiple times across different retry attempts.
+Without this, a step using `AT_MOST_ONCE` with retries enabled could still execute multiple times across different retry attempts.
+
+### Default Step Semantics
+
+`DurableConfig.withDefaultStepSemantics()` sets the semantics of every step that does not set its own. It applies in every context of the execution: child contexts, map and parallel items, and steps that the SDK creates, such as the submitter step of `waitForCallback`. A step's own `semanticsPerRetry()` wins. Without the option, the default stays `AT_LEAST_ONCE`.
+
+```java
+@Override
+protected DurableConfig createConfiguration() {
+    return DurableConfig.builder()
+        .withDefaultStepSemantics(StepSemantics.AT_LEAST_ONCE_ASYNC)
+        .build();
+}
+```
+
+With `AT_LEAST_ONCE_ASYNC` as the default, set `AT_LEAST_ONCE` on each step whose result becomes an idempotency key or a client token for a later step.
 
 ### Generic Types
 

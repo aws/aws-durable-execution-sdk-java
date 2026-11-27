@@ -5,7 +5,7 @@ package software.amazon.lambda.durable.exception;
 import software.amazon.awssdk.services.lambda.model.ErrorObject;
 import software.amazon.awssdk.services.lambda.model.Operation;
 
-/** Exception thrown when a step with AT_MOST_ONCE_PER_RETRY semantics was started but interrupted before completion. */
+/** Exception thrown when a step with AT_MOST_ONCE semantics was started but interrupted before completion. */
 public class StepInterruptedException extends StepException {
     private static final String ERROR_TYPE = StepInterruptedException.class.getName();
 

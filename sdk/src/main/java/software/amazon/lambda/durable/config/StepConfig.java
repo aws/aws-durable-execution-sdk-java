@@ -28,9 +28,22 @@ public class StepConfig {
         return retryStrategy != null ? retryStrategy : RetryStrategies.Presets.DEFAULT;
     }
 
-    /** Returns the delivery semantics per retry for this step. */
+    /**
+     * Returns the delivery semantics per retry for this step, or {@link StepSemantics#AT_LEAST_ONCE} if not specified.
+     * A step that does not specify semantics uses {@code DurableConfig.getDefaultStepSemantics()}.
+     */
     public StepSemantics semanticsPerRetry() {
-        return semanticsPerRetry != null ? semanticsPerRetry : StepSemantics.AT_LEAST_ONCE_PER_RETRY;
+        return semanticsPerRetryOrDefault(StepSemantics.AT_LEAST_ONCE);
+    }
+
+    /**
+     * Returns the delivery semantics per retry for this step, or the given default if not specified.
+     *
+     * @param defaultSemantics the semantics to return when this step does not specify any
+     * @return the semantics of this step
+     */
+    public StepSemantics semanticsPerRetryOrDefault(StepSemantics defaultSemantics) {
+        return semanticsPerRetry != null ? semanticsPerRetry : defaultSemantics;
     }
 
     /** Returns the custom serializer for this step, or null if not specified (uses default SerDes). */

@@ -26,7 +26,7 @@ public class StepAtMostOnceNoRetry extends DurableHandler<Object, String> {
                     return "unreachable";
                 },
                 StepConfig.builder()
-                        .semanticsPerRetry(StepSemantics.AT_MOST_ONCE_PER_RETRY)
+                        .semanticsPerRetry(StepSemantics.AT_MOST_ONCE)
                         .retryStrategy(RetryStrategies.Presets.NO_RETRY)
                         .build());
     }

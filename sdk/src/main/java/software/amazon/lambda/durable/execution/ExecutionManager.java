@@ -337,6 +337,12 @@ public class ExecutionManager implements SafeCloseable {
         if (isCheckpointTokenRevoked()) {
             operation.getCompletionFuture().completeExceptionally(new SuspendExecutionException());
         }
+        // A failure in the background, such as a failed AT_LEAST_ONCE_ASYNC SUCCEED, does not stop the handler. An
+        // operation that the handler registers after that failure ends with the same cause, so its waiter returns.
+        var terminationCause = getExecutionTerminationCause();
+        if (terminationCause != null) {
+            operation.getCompletionFuture().completeExceptionally(terminationCause);
+        }
     }
 
     /** Submits the invocation's root handler and records its executor task separately from its logical result. */
@@ -1005,6 +1011,47 @@ public class ExecutionManager implements SafeCloseable {
     // when the checkpoint completes.
     public CompletableFuture<Void> sendOperationUpdate(OperationUpdate update) {
         return admitCheckpoint(() -> checkpointManager.checkpoint(update));
+    }
+
+    /**
+     * Sends an update that no caller waits for, such as the SUCCEED of an {@code AT_LEAST_ONCE_ASYNC} step.
+     *
+     * <p>The update counts as a checkpoint request in flight until the service answers it. So the execution does not
+     * suspend before the update is saved. Checkpoints are sent in order, so a later update that the service accepts
+     * also saves this one. If the update fails, the invocation ends with that failure, as for an awaited update.
+     *
+     * @param update the operation update to send
+     */
+    public void sendOperationUpdateInBackground(OperationUpdate update) {
+        var sent = sendOperationUpdate(update);
+        synchronized (activeThreads) {
+            checkpointRequestsInFlight++;
+        }
+        sent.whenComplete((ignored, failure) -> {
+            try {
+                if (failure != null) failInBackground(ExceptionHelper.unwrapCompletableFuture(failure));
+            } finally {
+                finishCheckpointProcessing();
+            }
+        });
+    }
+
+    private void failInBackground(Throwable failure) {
+        // Only a failure that ends the invocation is recorded. If the invocation already ended, its own cause stays.
+        if (executionExceptionFuture.completeExceptionally(failure)) stopAllOperations(failure);
+    }
+
+    /**
+     * Returns the first cause that terminated this invocation, or null if the invocation was not terminated. A
+     * suspension is not a termination. An operation that the handler did not wait for, or the update of an
+     * {@code AT_LEAST_ONCE_ASYNC} step, can terminate the invocation after the handler returned. So the invocation
+     * reports this cause instead of the handler result.
+     */
+    Throwable getExecutionTerminationCause() {
+        if (!executionExceptionFuture.isCompletedExceptionally()) return null;
+        var cause = ExceptionHelper.unwrapCompletableFuture(
+                executionExceptionFuture.handle((ignored, failure) -> failure).join());
+        return cause instanceof SuspendExecutionException ? null : cause;
     }
 
     // ===== Polling =====
