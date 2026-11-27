@@ -84,6 +84,12 @@ Replay (after wait):
   [INFO] Continuing after wait              ✓ Logged (new code path)
 ```
 
+The context leaves replay mode when the first operation that completed while the execution was
+suspended (a `wait`, or a callback `get()`) is consumed. The SDK relies on the invocation's
+`UpdatedOperationIds` for this. After an invocation that saved some operations and then failed or
+timed out, the retry can list those operations as updated, so logs written after them can appear
+again. Logs are not guaranteed to be emitted exactly once across failed invocations.
+
 To log during replay (e.g., for debugging):
 
 ```java
