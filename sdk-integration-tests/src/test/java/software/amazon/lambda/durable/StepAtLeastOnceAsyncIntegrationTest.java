@@ -15,7 +15,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
-import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
@@ -48,6 +47,7 @@ class StepAtLeastOnceAsyncIntegrationTest {
 
     private final List<String> events = new CopyOnWriteArrayList<>();
     private final List<OperationEndInfo> stepEnds = new CopyOnWriteArrayList<>();
+    private final List<String> hookOrder = new CopyOnWriteArrayList<>();
 
     @Test
     void asyncStepReturnsBeforeSucceedIsAnswered() throws Exception {
@@ -159,24 +159,53 @@ class StepAtLeastOnceAsyncIntegrationTest {
     }
 
     @Test
-    void endHookReportsSucceededOnceBeforeSucceedIsAnswered() throws Exception {
+    void endHookFiresOnceWhenSucceedIsAnswered() throws Exception {
         var client = new BlockingClient(OperationType.STEP, OperationAction.SUCCEED);
-        BiFunction<String, DurableContext, String> handler =
-                (input, ctx) -> ctx.step("work", String.class, stepCtx -> "done", ASYNC);
+        var stepReturned = new CountDownLatch(1);
+        BiFunction<String, DurableContext, String> handler = (input, ctx) -> {
+            var result = ctx.step("work", String.class, stepCtx -> "done", ASYNC);
+            stepReturned.countDown();
+            return result;
+        };
 
         var output = CompletableFuture.supplyAsync(() -> execute(handler, config(client)));
 
         assertTrue(client.blocked.await(5, SECONDS));
-        waitFor(() -> !stepEnds.isEmpty());
+        assertTrue(stepReturned.await(5, SECONDS));
+        Thread.sleep(100);
+        assertTrue(stepEnds.isEmpty(), "the end hook must wait for the SUCCEED answer");
+        client.release.countDown();
+        assertEquals(ExecutionStatus.SUCCEEDED, output.get().status());
+        assertEquals(1, stepEnds.size());
         var end = stepEnds.get(0);
         assertEquals("SUCCEEDED", end.status());
         assertEquals("\"done\"", end.result());
         assertEquals(1, end.attempt());
-        assertNotNull(end.startTimestamp());
-        assertNotNull(end.endTimestamp());
-        client.release.countDown();
-        assertEquals(ExecutionStatus.SUCCEEDED, output.get().status());
-        assertEquals(1, stepEnds.size());
+        // The end hook reports the timestamps from the service answer.
+        assertEquals(BlockingClient.SERVICE_TIME, end.startTimestamp());
+        assertEquals(BlockingClient.SERVICE_TIME, end.endTimestamp());
+        assertEquals(List.of("step end SUCCEEDED", "invocation SUCCEEDED"), hookOrder);
+    }
+
+    @Test
+    void failedSucceedFiresNoSucceededEndHook() {
+        var client = new LocalMemoryExecutionClient() {
+            @Override
+            public CheckpointDurableExecutionResponse checkpoint(
+                    String arn, String token, List<OperationUpdate> updates) {
+                if (updates.stream().anyMatch(u -> u.action() == OperationAction.SUCCEED)) {
+                    throw SdkClientException.create("checkpoint failed");
+                }
+                return super.checkpoint(arn, token, updates);
+            }
+        };
+        BiFunction<String, DurableContext, String> handler =
+                (input, ctx) -> ctx.step("work", String.class, stepCtx -> "done", ASYNC);
+
+        assertThrows(UnrecoverableDurableExecutionException.class, () -> execute(handler, config(client)));
+
+        assertTrue(stepEnds.stream().noneMatch(end -> "SUCCEEDED".equals(end.status())));
+        assertEquals(List.of("invocation RETRYING"), events);
     }
 
     @Test
@@ -471,22 +500,17 @@ class StepAtLeastOnceAsyncIntegrationTest {
                 .withDurableExecutionClient(client)
                 .withPlugins(info -> new DurableExecutionPlugin() {
                     public void onOperationEnd(OperationEndInfo end) {
-                        if ("STEP".equals(end.type())) stepEnds.add(end);
+                        if (!"STEP".equals(end.type())) return;
+                        stepEnds.add(end);
+                        hookOrder.add("step end " + end.status());
                     }
 
                     public void onInvocationEnd(InvocationEndInfo end) {
                         events.add("invocation " + end.invocationStatus());
+                        hookOrder.add("invocation " + end.invocationStatus());
                     }
                 })
                 .build();
-    }
-
-    private static void waitFor(BooleanSupplier condition) throws InterruptedException {
-        var deadline = Instant.now().plusSeconds(5);
-        while (!condition.getAsBoolean()) {
-            assertTrue(Instant.now().isBefore(deadline), "condition not met in time");
-            Thread.sleep(10);
-        }
     }
 
     private static DurableExecutionInput input(List<Operation> recorded) {
@@ -506,8 +530,12 @@ class StepAtLeastOnceAsyncIntegrationTest {
                 CheckpointUpdatedExecutionState.builder().operations(operations).build());
     }
 
-    /** Holds the first checkpoint that carries the given update until the test releases it. */
+    /**
+     * Holds the first checkpoint that carries the given update until the test releases it. Its answers carry
+     * {@link #SERVICE_TIME} as start and end time, as the service sets them.
+     */
     private static final class BlockingClient extends LocalMemoryExecutionClient {
+        static final Instant SERVICE_TIME = Instant.parse("2026-01-01T00:00:00Z");
         private final OperationType type;
         private final OperationAction action;
         private final CountDownLatch blocked = new CountDownLatch(1);
@@ -529,7 +557,18 @@ class StepAtLeastOnceAsyncIntegrationTest {
                     throw new IllegalStateException(e);
                 }
             }
-            return super.checkpoint(arn, token, updates);
+            var response = super.checkpoint(arn, token, updates);
+            var operations = response.newExecutionState().operations().stream()
+                    .map(op -> op.toBuilder()
+                            .startTimestamp(SERVICE_TIME)
+                            .endTimestamp(SERVICE_TIME)
+                            .build())
+                    .toList();
+            return response.toBuilder()
+                    .newExecutionState(response.newExecutionState().toBuilder()
+                            .operations(operations)
+                            .build())
+                    .build();
         }
     }
 

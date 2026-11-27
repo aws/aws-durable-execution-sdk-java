@@ -19,11 +19,13 @@
 A step with `StepSemantics.AT_LEAST_ONCE_ASYNC` changes the step completion of ADR-003:
 
 1. The step thread queues the SUCCEED checkpoint and does not wait for the answer.
-2. The step thread then fires `onOperationEnd` with status `SUCCEEDED` and the result.
-3. The step thread then completes the `CompletableFuture`. This registers and unblocks the
+2. The step thread then completes the `CompletableFuture`. This registers and unblocks the
    context threads that wait for the step, as the SDK thread does under ADR-003.
-4. `get()` returns the result that the step kept in memory. Storage may not hold it yet.
-5. The answer to the SUCCEED does not complete the step and does not fire a second end hook.
+3. `get()` returns the result that the step kept in memory. Storage may not hold it yet.
+4. The `onOperationEnd` hook fires when the service answers the SUCCEED, as for `AT_LEAST_ONCE`.
+   The invocation drains its checkpoints before it fires `onInvocationEnd`. So the step end hook
+   fires before the invocation end hook. A failed SUCCEED fires no end hook with status
+   `SUCCEEDED`.
 
 A failed attempt still waits for its RETRY or FAIL checkpoint. The other semantics keep ADR-003
 unchanged.
@@ -45,9 +47,8 @@ The step is still executed at least once, for these reasons:
 - The code after the step runs one checkpoint round trip earlier.
 - The code after the step can run before the result is saved. If the save fails, the step and
   that code run again on replay, and the step can return a different value.
-- A plugin can see `onOperationEnd` with status `SUCCEEDED` for an attempt that was not saved. If
-  the step runs again on replay, the plugin sees another `onOperationEnd` for the same operation.
-  So a plugin must not treat a `SUCCEEDED` end hook from such a step as saved.
+- A plugin sees the step end after the code after the step started. The end hook reports the
+  saved operation, as for `AT_LEAST_ONCE`.
 - `AT_LEAST_ONCE_ASYNC` is experimental.
 
 ## Enforcement
@@ -55,7 +56,8 @@ The step is still executed at least once, for these reasons:
 `StepAtLeastOnceAsyncIntegrationTest` covers these cases:
 
 - the step returns, also with a null result, while the SUCCEED is unanswered;
-- the end hook fires once before the SUCCEED is answered;
+- the end hook fires once when the SUCCEED is answered, before the invocation end hook;
+- a failed SUCCEED fires no end hook with status `SUCCEEDED`;
 - the invocation does not suspend or report an outcome before the SUCCEED is saved;
 - a failed SUCCEED ends the invocation, and the step runs again on replay;
 - a failed checkpoint of an unawaited step ends the invocation before the SUCCEED is sent.
