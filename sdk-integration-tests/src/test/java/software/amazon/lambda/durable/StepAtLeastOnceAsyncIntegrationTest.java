@@ -70,6 +70,42 @@ class StepAtLeastOnceAsyncIntegrationTest {
     }
 
     @Test
+    void asyncVoidStepReturnsNullBeforeSucceedIsAnswered() throws Exception {
+        var client = new BlockingClient(OperationType.STEP, OperationAction.SUCCEED);
+        var stepReturned = new CountDownLatch(1);
+        BiFunction<String, DurableContext, String> handler = (input, ctx) -> {
+            Void result = ctx.step("work", Void.class, stepCtx -> null, ASYNC);
+            stepReturned.countDown();
+            return result == null ? "null" : "not null";
+        };
+
+        var output = CompletableFuture.supplyAsync(() -> execute(handler, config(client)));
+
+        assertTrue(stepReturned.await(5, SECONDS), "the step must return null while SUCCEED is unanswered");
+        assertTrue(client.blocked.await(5, SECONDS));
+        client.release.countDown();
+        assertEquals(ExecutionStatus.SUCCEEDED, output.get().status());
+        assertEquals("\"null\"", output.get().result());
+        assertEquals(1, stepEnds.size());
+    }
+
+    @Test
+    void waitForCallbackSubmitterUnderAsyncDefaultSuspends() throws Exception {
+        var client = new BlockingClient(OperationType.STEP, OperationAction.SUCCEED);
+        BiFunction<String, DurableContext, String> handler =
+                (input, ctx) -> ctx.waitForCallback("approval", String.class, (callbackId, stepCtx) -> {});
+        var config = config(client).toBuilder()
+                .withDefaultStepSemantics(StepSemantics.AT_LEAST_ONCE_ASYNC)
+                .build();
+
+        var output = CompletableFuture.supplyAsync(() -> execute(handler, config));
+
+        assertTrue(client.blocked.await(5, SECONDS));
+        client.release.countDown();
+        assertEquals(ExecutionStatus.PENDING, output.get().status());
+    }
+
+    @Test
     void atLeastOnceStepWaitsForSucceed() throws Exception {
         var client = new BlockingClient(OperationType.STEP, OperationAction.SUCCEED);
         var stepReturned = new CountDownLatch(1);

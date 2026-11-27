@@ -45,9 +45,12 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
     private final StepSemantics semantics;
     /**
      * The serialized result of an AT_LEAST_ONCE_ASYNC step. It is set before the SUCCEED checkpoint is sent, and the
-     * service may not have answered that checkpoint yet.
+     * service may not have answered that checkpoint yet. It is null for a null result, so
+     * {@link #succeededWithoutWaiting} marks that it is set.
      */
     private volatile String unsavedResult;
+
+    private volatile boolean succeededWithoutWaiting;
 
     public StepOperation(
             OperationIdentifier operationIdentifier,
@@ -189,6 +192,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
             OperationUpdate.Builder successUpdate, String serializedResult, int attempt, Instant attemptStart) {
         // Set before sending, so onCheckpointComplete does not complete the step or fire the end hook a second time.
         unsavedResult = serializedResult;
+        succeededWithoutWaiting = true;
         sendOperationUpdateInBackground(successUpdate);
 
         var succeeded = Operation.builder()
@@ -210,7 +214,7 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
     @Override
     public void onCheckpointComplete(Operation operation) {
         // An AT_LEAST_ONCE_ASYNC step completed itself in succeedWithoutWaiting.
-        if (unsavedResult == null) {
+        if (!succeededWithoutWaiting) {
             super.onCheckpointComplete(operation);
         }
     }
@@ -262,10 +266,9 @@ public class StepOperation<T> extends SerializableDurableOperation<T> {
     @Override
     public T get() {
         executionManager.waitForOperationCompletion(this);
-        var queuedResult = unsavedResult;
-        if (queuedResult != null) {
+        if (succeededWithoutWaiting) {
             // The SUCCEED checkpoint may not be answered yet, so storage may not hold the result.
-            return deserializeResult(queuedResult);
+            return deserializeResult(unsavedResult);
         }
 
         var op = waitForOperationCompletion();
