@@ -24,6 +24,7 @@ import software.amazon.awssdk.http.SdkHttpResponse;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.lambda.durable.config.StepConfig;
 import software.amazon.lambda.durable.config.StepSemantics;
+import software.amazon.lambda.durable.context.DurableContextImpl;
 import software.amazon.lambda.durable.exception.UnrecoverableDurableExecutionException;
 import software.amazon.lambda.durable.execution.DurableExecutor;
 import software.amazon.lambda.durable.model.DurableExecutionInput;
@@ -437,6 +438,73 @@ class StepAtLeastOnceAsyncIntegrationTest {
                     assertTrue(handlerReturned.await(5, SECONDS));
                     // Let the invocation select the handler result before the checkpoint fails.
                     Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                throw error;
+            }
+            return super.checkpoint(arn, token, updates);
+        }
+    }
+
+    @Test
+    void transientSucceedFailureEndsAStepStartedAfterIt() {
+        var client = new FailSucceedBeforeLaterStep(AwsServiceException.builder()
+                .message("service unavailable")
+                .awsErrorDetails(errorDetails(503, "ServiceException"))
+                .build());
+
+        var failure = assertTimeoutPreemptively(
+                Duration.ofSeconds(10),
+                () -> assertThrows(
+                        UnrecoverableDurableExecutionException.class, () -> execute(client.handler(), config(client))));
+
+        assertTrue(failure.isRetryable());
+        assertEquals(List.of("invocation RETRYING"), events);
+    }
+
+    @Test
+    void executionScopeSucceedFailureEndsAStepStartedAfterIt() {
+        var client = new FailSucceedBeforeLaterStep(AwsServiceException.builder()
+                .message("invalid payload")
+                .awsErrorDetails(errorDetails(400, "ValidationException"))
+                .build());
+
+        var output = assertTimeoutPreemptively(Duration.ofSeconds(10), () -> execute(client.handler(), config(client)));
+
+        assertEquals(ExecutionStatus.FAILED, output.status());
+        assertEquals(List.of("invocation FAILED"), events);
+    }
+
+    /**
+     * Fails the SUCCEED of async step A with the given error. Only after the invocation selected that failure does the
+     * handler start the ordinary step B.
+     */
+    private static final class FailSucceedBeforeLaterStep extends LocalMemoryExecutionClient {
+        private final CountDownLatch stepReturned = new CountDownLatch(1);
+        private final RuntimeException error;
+
+        FailSucceedBeforeLaterStep(RuntimeException error) {
+            this.error = error;
+        }
+
+        BiFunction<String, DurableContext, String> handler() {
+            return (input, ctx) -> {
+                ctx.step("a", String.class, stepCtx -> "done", ASYNC);
+                stepReturned.countDown();
+                var manager = ((DurableContextImpl) ctx).getExecutionManager();
+                while (!manager.isExecutionCompletedExceptionally()) {
+                    Thread.onSpinWait();
+                }
+                return ctx.step("b", String.class, stepCtx -> "done");
+            };
+        }
+
+        @Override
+        public CheckpointDurableExecutionResponse checkpoint(String arn, String token, List<OperationUpdate> updates) {
+            if (updates.stream().anyMatch(u -> u.action() == OperationAction.SUCCEED && "a".equals(u.name()))) {
+                try {
+                    assertTrue(stepReturned.await(5, SECONDS));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }

@@ -337,6 +337,12 @@ public class ExecutionManager implements SafeCloseable {
         if (isCheckpointTokenRevoked()) {
             operation.getCompletionFuture().completeExceptionally(new SuspendExecutionException());
         }
+        // A failure in the background, such as a failed AT_LEAST_ONCE_ASYNC SUCCEED, does not stop the handler. An
+        // operation that the handler registers after that failure ends with the same cause, so its waiter returns.
+        var terminationCause = getExecutionTerminationCause();
+        if (terminationCause != null) {
+            operation.getCompletionFuture().completeExceptionally(terminationCause);
+        }
     }
 
     /** Submits the invocation's root handler and records its executor task separately from its logical result. */
